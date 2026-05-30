@@ -3,6 +3,11 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
+  type AutomodeDispatchResult,
+  type AutomodeGoal,
+  type AutomodeSnapshot,
+  type DelamainPeer,
+  type OpenGsdCommandResult,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -74,6 +79,16 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  GitsPlanningScanner,
+  type GitsPlanningScannerShape,
+} from "./gits/Services/GitsPlanningScanner.ts";
+import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
+import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
+import {
+  AutomodeSupervisor,
+  type AutomodeSupervisorShape,
+} from "./gits/Services/AutomodeSupervisor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import {
@@ -128,6 +143,88 @@ const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
 } as const;
+const defaultDelamainPeer: DelamainPeer = {
+  id: "peer-test",
+  name: "Peer Test",
+  engine: "codex",
+  model: "gpt-5.5",
+  status: "running",
+  rawStatus: "running",
+  integrationStatus: "pending",
+  sourceRepo: "/tmp/source-repo",
+  worktreePath: "/tmp/source-repo/.worktrees/peer-test",
+  branch: "codex-peer/peer-test",
+  baseBranch: "main",
+  mergeBranch: "main",
+  prUrl: null,
+  task: "Test peer",
+  lastEvent: "running",
+  startedAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  finishedAt: null,
+};
+const defaultOpenGsdCommandResult: OpenGsdCommandResult = {
+  command: "init",
+  projectDir: "/tmp/default-project",
+  status: "completed",
+  args: ["init", "@docs/prd.md", "--project-dir", "/tmp/default-project"],
+  exitCode: 0,
+  signal: null,
+  stdout: "ok",
+  stderr: "",
+  startedAt: "2026-01-01T00:00:00.000Z",
+  finishedAt: "2026-01-01T00:00:01.000Z",
+  durationMs: 1_000,
+};
+const defaultAutomodeGoal: AutomodeGoal = {
+  id: "goal-test",
+  title: "Test goal",
+  prompt: "Spawn a safe test peer.",
+  repo: "/tmp/source-repo",
+  model: "gpt-5.5",
+  status: "queued",
+  peerId: null,
+  blockedReason: null,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  approvedAt: null,
+  rejectedAt: null,
+};
+const defaultAutomodeSnapshot: AutomodeSnapshot = {
+  policy: {
+    mode: "manual",
+    killSwitchEnabled: true,
+    maxActivePeers: 1,
+    allowedRepos: [],
+    allowedModels: [],
+    defaultModel: null,
+    maxBudgetUsd: null,
+    maxRuntimeMinutes: 60,
+    requireApprovalForPeerSpawn: true,
+    requireApprovalBeforeIntegrate: true,
+    requireApprovalBeforeDestructiveAction: true,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  },
+  budgetUsage: {
+    source: "provider-runtime",
+    totalCostUsd: 0.25,
+    totalProcessedTokens: 12_000,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    note: null,
+  },
+  goals: [defaultAutomodeGoal],
+  activePeerCount: 0,
+  pendingApprovalCount: 0,
+  lastEvent: "ready",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+const defaultAutomodeDispatchResult: AutomodeDispatchResult = {
+  snapshot: defaultAutomodeSnapshot,
+  goal: defaultAutomodeGoal,
+  peer: null,
+  approvalRequired: false,
+  blockedReason: null,
+};
 const testEnvironmentDescriptor = {
   environmentId: EnvironmentId.make("environment-test"),
   label: "Test environment",
@@ -334,6 +431,10 @@ const buildAppUnderTest = (options?: {
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
+    gitsPlanningScanner?: Partial<GitsPlanningScannerShape>;
+    delamainAdapter?: Partial<DelamainAdapterShape>;
+    openGsdAdapter?: Partial<OpenGsdAdapterShape>;
+    automodeSupervisor?: Partial<AutomodeSupervisorShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
@@ -512,6 +613,79 @@ const buildAppUnderTest = (options?: {
           ...options.layers.vcsStatusBroadcaster,
         })
       : VcsStatusBroadcaster.layer.pipe(Layer.provide(gitWorkflowLayer));
+    const gitsTestLayer = Layer.mergeAll(
+      Layer.mock(GitsPlanningScanner)({
+        scan: () =>
+          Effect.succeed({
+            scannedAt: "1970-01-01T00:00:00.000Z",
+            projects: [],
+            totals: {
+              projectCount: 0,
+              planningProjectCount: 0,
+              phaseCount: 0,
+              verificationGateCount: 0,
+              pendingYourTurnCount: 0,
+              activeAgentSessionCount: 0,
+              peerCount: 0,
+            },
+          }),
+        ...options?.layers?.gitsPlanningScanner,
+      }),
+      Layer.mock(DelamainAdapter)({
+        listPeers: () =>
+          Effect.succeed({
+            capabilities: {
+              available: false,
+              binaryPath: null,
+              supported: [],
+              unsupported: ["list", "status", "log", "spawn", "kill", "reply", "wait", "integrate"],
+              checkedAt: "1970-01-01T00:00:00.000Z",
+            },
+            peers: [],
+          }),
+        ...options?.layers?.delamainAdapter,
+      }),
+      Layer.mock(OpenGsdAdapter)({
+        getStatus: () =>
+          Effect.succeed({
+            available: false,
+            binaryPath: "gsd-sdk",
+            packageName: "@opengsd/get-shit-done-redux",
+            cliName: "gsd-sdk",
+            version: null,
+            supported: [],
+            unsupported: ["detect", "init", "auto"],
+            checkedAt: "1970-01-01T00:00:00.000Z",
+          }),
+        initProject: (input) =>
+          Effect.succeed({
+            ...defaultOpenGsdCommandResult,
+            command: "init",
+            projectDir: input.projectDir,
+          }),
+        runAuto: (input) =>
+          Effect.succeed({
+            ...defaultOpenGsdCommandResult,
+            command: "auto",
+            projectDir: input.projectDir,
+          }),
+        ...options?.layers?.openGsdAdapter,
+      }),
+      Layer.mock(AutomodeSupervisor)({
+        getSnapshot: () => Effect.succeed(defaultAutomodeSnapshot),
+        updatePolicy: () => Effect.succeed(defaultAutomodeSnapshot),
+        enqueueGoal: () => Effect.succeed(defaultAutomodeSnapshot),
+        approveGoal: () => Effect.succeed(defaultAutomodeGoal),
+        rejectGoal: () =>
+          Effect.succeed({
+            ...defaultAutomodeGoal,
+            status: "rejected",
+            blockedReason: "Rejected by operator.",
+          }),
+        dispatchGoal: () => Effect.succeed(defaultAutomodeDispatchResult),
+        ...options?.layers?.automodeSupervisor,
+      }),
+    );
 
     const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
@@ -677,6 +851,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.projectionSnapshotQuery,
         }),
       ),
+      Layer.provide(gitsTestLayer),
       Layer.provide(
         Layer.mock(CheckpointDiffQuery)({
           getTurnDiff: () =>
@@ -2803,6 +2978,476 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(diffPreview.sources[0]?.diff, "dirty-diff");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc gits.cockpit.get", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      let scannedProjectCount = -1;
+      let scannedThreadCount = -1;
+      let scannedFallbackCwd = "";
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 1,
+                updatedAt: now,
+                projects: [
+                  {
+                    id: ProjectId.make("project-gits"),
+                    title: "GITS Project",
+                    workspaceRoot: "/tmp/gits-project",
+                    defaultModelSelection,
+                    scripts: [],
+                    createdAt: now,
+                    updatedAt: now,
+                    deletedAt: null,
+                  },
+                ],
+                threads: [
+                  {
+                    id: ThreadId.make("thread-gits"),
+                    projectId: ProjectId.make("project-gits"),
+                    title: "GITS Thread",
+                    modelSelection: defaultModelSelection,
+                    interactionMode: "default" as const,
+                    runtimeMode: "full-access" as const,
+                    branch: null,
+                    worktreePath: null,
+                    createdAt: now,
+                    updatedAt: now,
+                    archivedAt: null,
+                    latestTurn: null,
+                    latestUserMessageAt: null,
+                    messages: [],
+                    session: null,
+                    activities: [],
+                    proposedPlans: [],
+                    checkpoints: [],
+                    hasPendingApprovals: false,
+                    hasPendingUserInput: false,
+                    hasActionableProposedPlan: false,
+                    deletedAt: null,
+                  },
+                ],
+              }),
+          },
+          gitsPlanningScanner: {
+            scan: (input) =>
+              Effect.sync(() => {
+                scannedProjectCount = input.projects.length;
+                scannedThreadCount = input.threads.length;
+                scannedFallbackCwd = input.fallbackCwd;
+                return {
+                  scannedAt: now,
+                  projects: [],
+                  totals: {
+                    projectCount: input.projects.length,
+                    planningProjectCount: 0,
+                    phaseCount: 0,
+                    verificationGateCount: 0,
+                    pendingYourTurnCount: 0,
+                    activeAgentSessionCount: 0,
+                    peerCount: 0,
+                  },
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const cockpit = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsGetCockpit]({})),
+      );
+
+      assert.equal(cockpit.totals.projectCount, 1);
+      assert.equal(scannedProjectCount, 1);
+      assert.equal(scannedThreadCount, 1);
+      assert.equal(scannedFallbackCwd, process.cwd());
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc Delamain peer methods", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      yield* buildAppUnderTest({
+        layers: {
+          delamainAdapter: {
+            listPeers: () =>
+              Effect.sync(() => {
+                calls.push("list");
+                return {
+                  capabilities: {
+                    available: true,
+                    binaryPath: "delamain",
+                    supported: [
+                      "list",
+                      "status",
+                      "log",
+                      "spawn",
+                      "kill",
+                      "reply",
+                      "wait",
+                      "integrate",
+                    ],
+                    unsupported: [],
+                    checkedAt: "2026-01-01T00:00:00.000Z",
+                  },
+                  peers: [defaultDelamainPeer],
+                };
+              }),
+            getPeerStatus: (input) =>
+              Effect.sync(() => {
+                calls.push(`status:${input.peerId}`);
+                return defaultDelamainPeer;
+              }),
+            readPeerLog: (input) =>
+              Effect.sync(() => {
+                calls.push(`log:${input.peerId}:${input.lines ?? 0}`);
+                return {
+                  peerId: input.peerId,
+                  lines: input.lines ?? 120,
+                  text: "peer log",
+                };
+              }),
+            spawnPeer: (input) =>
+              Effect.sync(() => {
+                calls.push(`spawn:${input.repo}`);
+                return { ...defaultDelamainPeer, task: input.prompt };
+              }),
+            killPeer: (input) =>
+              Effect.sync(() => {
+                calls.push(`kill:${input.peerId}:${input.signal ?? "SIGTERM"}`);
+                return { ...defaultDelamainPeer, status: "killed", rawStatus: "killed" };
+              }),
+            sendPeerReply: (input) =>
+              Effect.sync(() => {
+                calls.push(`reply:${input.peerId}`);
+                return { ...defaultDelamainPeer, lastEvent: input.prompt };
+              }),
+            waitForPeer: (input) =>
+              Effect.sync(() => {
+                calls.push(`wait:${input.peerId}`);
+                return { ...defaultDelamainPeer, status: "done", rawStatus: "done" };
+              }),
+            integratePeer: (input) =>
+              Effect.sync(() => {
+                calls.push(`integrate:${input.peerId}`);
+                return {
+                  peer: {
+                    ...defaultDelamainPeer,
+                    integrationStatus: "opened",
+                    prUrl: "https://github.com/example/repo/pull/42",
+                  },
+                  prNumber: 42,
+                  prUrl: "https://github.com/example/repo/pull/42",
+                  autoMergeEnabled: true,
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const list = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsDelamainListPeers]({})),
+      );
+      assert.equal(list.peers[0]?.id, defaultDelamainPeer.id);
+
+      const status = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainGetPeerStatus]({ peerId: defaultDelamainPeer.id }),
+        ),
+      );
+      assert.equal(status.status, "running");
+
+      const log = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainReadPeerLog]({
+            peerId: defaultDelamainPeer.id,
+            lines: 12,
+          }),
+        ),
+      );
+      assert.equal(log.text, "peer log");
+
+      const spawned = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainSpawnPeer]({
+            repo: "/tmp/source-repo",
+            prompt: "spawn task",
+          }),
+        ),
+      );
+      assert.equal(spawned.task, "spawn task");
+
+      const killed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainKillPeer]({ peerId: defaultDelamainPeer.id }),
+        ),
+      );
+      assert.equal(killed.status, "killed");
+
+      const reply = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainSendPeerReply]({
+            peerId: defaultDelamainPeer.id,
+            prompt: "continue",
+          }),
+        ),
+      );
+      assert.equal(reply.lastEvent, "continue");
+
+      const waited = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainWaitForPeer]({ peerId: defaultDelamainPeer.id }),
+        ),
+      );
+      assert.equal(waited.status, "done");
+
+      const integrated = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainIntegratePeer]({ peerId: defaultDelamainPeer.id }),
+        ),
+      );
+      assert.equal(integrated.prNumber, 42);
+      assert.equal(integrated.autoMergeEnabled, true);
+      assert.deepEqual(calls, [
+        "list",
+        "status:peer-test",
+        "log:peer-test:12",
+        "spawn:/tmp/source-repo",
+        "kill:peer-test:SIGTERM",
+        "reply:peer-test",
+        "wait:peer-test",
+        "integrate:peer-test",
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc Open GSD methods", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      yield* buildAppUnderTest({
+        layers: {
+          openGsdAdapter: {
+            getStatus: () =>
+              Effect.sync(() => {
+                calls.push("status");
+                return {
+                  available: true,
+                  binaryPath: "gsd-sdk",
+                  packageName: "@opengsd/get-shit-done-redux",
+                  cliName: "gsd-sdk",
+                  version: "1.1.0",
+                  supported: ["detect", "init", "auto"],
+                  unsupported: [],
+                  checkedAt: "2026-01-01T00:00:00.000Z",
+                };
+              }),
+            initProject: (input) =>
+              Effect.sync(() => {
+                calls.push(`init:${input.projectDir}:${input.input}`);
+                return {
+                  ...defaultOpenGsdCommandResult,
+                  command: "init",
+                  projectDir: input.projectDir,
+                  args: ["init", input.input, "--project-dir", input.projectDir],
+                };
+              }),
+            runAuto: (input) =>
+              Effect.sync(() => {
+                calls.push(`auto:${input.projectDir}:${input.initInput ?? ""}`);
+                return {
+                  ...defaultOpenGsdCommandResult,
+                  command: "auto",
+                  projectDir: input.projectDir,
+                  args: input.initInput
+                    ? ["auto", "--init", input.initInput, "--project-dir", input.projectDir]
+                    : ["auto", "--project-dir", input.projectDir],
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const status = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsOpenGsdGetStatus]({})),
+      );
+      assert.equal(status.version, "1.1.0");
+
+      const initialized = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsOpenGsdInitProject]({
+            projectDir: "/tmp/default-project",
+            input: "@docs/prd.md",
+          }),
+        ),
+      );
+      assert.equal(initialized.command, "init");
+      assert.deepEqual(initialized.args, [
+        "init",
+        "@docs/prd.md",
+        "--project-dir",
+        "/tmp/default-project",
+      ]);
+
+      const auto = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsOpenGsdRunAuto]({
+            projectDir: "/tmp/default-project",
+            initInput: "@docs/prd.md",
+          }),
+        ),
+      );
+      assert.equal(auto.command, "auto");
+      assert.deepEqual(calls, [
+        "status",
+        "init:/tmp/default-project:@docs/prd.md",
+        "auto:/tmp/default-project:@docs/prd.md",
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc automode methods", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      yield* buildAppUnderTest({
+        layers: {
+          automodeSupervisor: {
+            getSnapshot: () =>
+              Effect.sync(() => {
+                calls.push("snapshot");
+                return defaultAutomodeSnapshot;
+              }),
+            updatePolicy: (input) =>
+              Effect.sync(() => {
+                calls.push(`policy:${input.mode ?? "none"}`);
+                return {
+                  ...defaultAutomodeSnapshot,
+                  policy: {
+                    ...defaultAutomodeSnapshot.policy,
+                    mode: input.mode ?? defaultAutomodeSnapshot.policy.mode,
+                    killSwitchEnabled:
+                      input.killSwitchEnabled ?? defaultAutomodeSnapshot.policy.killSwitchEnabled,
+                  },
+                };
+              }),
+            enqueueGoal: (input) =>
+              Effect.sync(() => {
+                calls.push(`enqueue:${input.repo}`);
+                return {
+                  ...defaultAutomodeSnapshot,
+                  goals: [
+                    {
+                      ...defaultAutomodeGoal,
+                      title: input.title,
+                      prompt: input.prompt,
+                      repo: input.repo,
+                      model: input.model ?? null,
+                    },
+                  ],
+                };
+              }),
+            approveGoal: (input) =>
+              Effect.sync(() => {
+                calls.push(`approve:${input.goalId}`);
+                return {
+                  ...defaultAutomodeGoal,
+                  approvedAt: "2026-01-01T00:00:02.000Z",
+                };
+              }),
+            rejectGoal: (input) =>
+              Effect.sync(() => {
+                calls.push(`reject:${input.goalId}:${input.reason ?? ""}`);
+                return {
+                  ...defaultAutomodeGoal,
+                  status: "rejected",
+                  blockedReason: input.reason ?? "Rejected by operator.",
+                };
+              }),
+            dispatchGoal: (input) =>
+              Effect.sync(() => {
+                calls.push(`dispatch:${input.goalId}`);
+                return {
+                  ...defaultAutomodeDispatchResult,
+                  peer: defaultDelamainPeer,
+                  goal: {
+                    ...defaultAutomodeGoal,
+                    status: "running",
+                    peerId: defaultDelamainPeer.id,
+                  },
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const snapshot = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsAutomodeGetSnapshot]({})),
+      );
+      assert.equal(snapshot.policy.mode, "manual");
+
+      const policy = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeUpdatePolicy]({
+            mode: "supervised",
+            killSwitchEnabled: false,
+          }),
+        ),
+      );
+      assert.equal(policy.policy.mode, "supervised");
+      assert.equal(policy.policy.killSwitchEnabled, false);
+
+      const queued = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeEnqueueGoal]({
+            title: "Queue goal",
+            prompt: "Run a safe peer.",
+            repo: "/tmp/source-repo",
+            model: "gpt-5.5",
+          }),
+        ),
+      );
+      assert.equal(queued.goals[0]?.title, "Queue goal");
+
+      const approved = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeApproveGoal]({ goalId: defaultAutomodeGoal.id }),
+        ),
+      );
+      assert.equal(approved.approvedAt, "2026-01-01T00:00:02.000Z");
+
+      const rejected = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeRejectGoal]({
+            goalId: defaultAutomodeGoal.id,
+            reason: "not now",
+          }),
+        ),
+      );
+      assert.equal(rejected.status, "rejected");
+
+      const dispatched = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeDispatchGoal]({ goalId: defaultAutomodeGoal.id }),
+        ),
+      );
+      assert.equal(dispatched.peer?.id, defaultDelamainPeer.id);
+      assert.deepEqual(calls, [
+        "snapshot",
+        "policy:supervised",
+        "enqueue:/tmp/source-repo",
+        "approve:goal-test",
+        "reject:goal-test:not now",
+        "dispatch:goal-test",
+      ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

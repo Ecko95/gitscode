@@ -225,6 +225,31 @@ function normalizeRuntimeTurnState(
   }
 }
 
+function buildUsageCostActivityPayload(event: ProviderRuntimeEvent):
+  | {
+      readonly state: "completed" | "failed" | "interrupted" | "cancelled";
+      readonly totalCostUsd: number;
+      readonly usage?: unknown;
+      readonly modelUsage?: Record<string, unknown>;
+    }
+  | undefined {
+  if (event.type !== "turn.completed") {
+    return undefined;
+  }
+
+  const totalCostUsd = event.payload.totalCostUsd;
+  if (typeof totalCostUsd !== "number" || !Number.isFinite(totalCostUsd) || totalCostUsd < 0) {
+    return undefined;
+  }
+
+  return {
+    state: normalizeRuntimeTurnState(event.payload.state),
+    totalCostUsd,
+    ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+    ...(event.payload.modelUsage !== undefined ? { modelUsage: event.payload.modelUsage } : {}),
+  };
+}
+
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
@@ -525,6 +550,26 @@ function runtimeEventToActivities(
           tone: "info",
           kind: "context-window.updated",
           summary: "Context window updated",
+          payload,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "turn.completed": {
+      const payload = buildUsageCostActivityPayload(event);
+      if (!payload) {
+        return [];
+      }
+
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "usage.cost.updated",
+          summary: "Usage cost updated",
           payload,
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

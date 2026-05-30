@@ -123,6 +123,32 @@ export interface WsRpcClient {
   readonly review: {
     readonly getDiffPreview: RpcUnaryMethod<typeof WS_METHODS.reviewGetDiffPreview>;
   };
+  readonly gits: {
+    readonly getCockpit: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsGetCockpit>;
+    readonly delamain: {
+      readonly listPeers: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsDelamainListPeers>;
+      readonly getPeerStatus: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainGetPeerStatus>;
+      readonly readPeerLog: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainReadPeerLog>;
+      readonly spawnPeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSpawnPeer>;
+      readonly killPeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainKillPeer>;
+      readonly sendPeerReply: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSendPeerReply>;
+      readonly waitForPeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainWaitForPeer>;
+      readonly integratePeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainIntegratePeer>;
+    };
+    readonly openGsd: {
+      readonly getStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsOpenGsdGetStatus>;
+      readonly initProject: RpcUnaryMethod<typeof WS_METHODS.gitsOpenGsdInitProject>;
+      readonly runAuto: RpcUnaryMethod<typeof WS_METHODS.gitsOpenGsdRunAuto>;
+    };
+    readonly automode: {
+      readonly getSnapshot: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsAutomodeGetSnapshot>;
+      readonly updatePolicy: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeUpdatePolicy>;
+      readonly enqueueGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeEnqueueGoal>;
+      readonly approveGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeApproveGoal>;
+      readonly rejectGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeRejectGoal>;
+      readonly dispatchGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeDispatchGoal>;
+    };
+  };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
     readonly refreshProviders: (
@@ -277,6 +303,48 @@ export function createWsRpcClient(
     review: {
       getDiffPreview: (input) =>
         transport.request((client) => client[WS_METHODS.reviewGetDiffPreview](input)),
+    },
+    gits: {
+      getCockpit: () => transport.request((client) => client[WS_METHODS.gitsGetCockpit]({})),
+      delamain: {
+        listPeers: () =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainListPeers]({})),
+        getPeerStatus: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainGetPeerStatus](input)),
+        readPeerLog: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainReadPeerLog](input)),
+        spawnPeer: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainSpawnPeer](input)),
+        killPeer: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainKillPeer](input)),
+        sendPeerReply: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainSendPeerReply](input)),
+        waitForPeer: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainWaitForPeer](input)),
+        integratePeer: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainIntegratePeer](input)),
+      },
+      openGsd: {
+        getStatus: () => transport.request((client) => client[WS_METHODS.gitsOpenGsdGetStatus]({})),
+        initProject: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsOpenGsdInitProject](input)),
+        runAuto: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsOpenGsdRunAuto](input)),
+      },
+      automode: {
+        getSnapshot: () =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeGetSnapshot]({})),
+        updatePolicy: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeUpdatePolicy](input)),
+        enqueueGoal: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeEnqueueGoal](input)),
+        approveGoal: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeApproveGoal](input)),
+        rejectGoal: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeRejectGoal](input)),
+        dispatchGoal: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeDispatchGoal](input)),
+      },
     },
     server: {
       getConfig: () => transport.request((client) => client[WS_METHODS.serverGetConfig]({})),

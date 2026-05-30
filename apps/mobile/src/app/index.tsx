@@ -48,10 +48,10 @@ export default function HomeRouteScreen() {
                 fontFamily: "DMSans_700Bold",
                 fontSize: 17,
                 color: iconColor,
-                letterSpacing: -0.4,
+                letterSpacing: 0,
               }}
             >
-              T3 Code
+              GITS
             </RNText>
             <View
               style={{
@@ -66,7 +66,7 @@ export default function HomeRouteScreen() {
                   fontFamily: "DMSans_700Bold",
                   fontSize: 10,
                   color: "#737373",
-                  letterSpacing: 1.1,
+                  letterSpacing: 0,
                   textTransform: "uppercase",
                 }}
               >

@@ -29,6 +29,10 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  AutomodeSupervisorError,
+  DelamainAdapterError,
+  GitsCockpitError,
+  OpenGsdAdapterError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -68,6 +72,10 @@ import { GitWorkflowService } from "./git/GitWorkflowService.ts";
 import { ReviewService } from "./review/ReviewService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
+import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
+import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
+import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
+import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -95,6 +103,10 @@ import {
 import { respondToAuthError } from "./auth/http.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
+const isGitsCockpitError = Schema.is(GitsCockpitError);
+const isDelamainAdapterError = Schema.is(DelamainAdapterError);
+const isOpenGsdAdapterError = Schema.is(OpenGsdAdapterError);
+const isAutomodeSupervisorError = Schema.is(AutomodeSupervisorError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -186,6 +198,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const workspaceFileSystem = yield* WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
+      const gitsPlanningScanner = yield* GitsPlanningScanner;
+      const delamainAdapter = yield* DelamainAdapter;
+      const openGsdAdapter = yield* OpenGsdAdapter;
+      const automodeSupervisor = yield* AutomodeSupervisor;
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
@@ -1128,6 +1144,145 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
             "rpc.aggregate": "review",
           }),
+        [WS_METHODS.gitsGetCockpit]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsGetCockpit,
+            projectionSnapshotQuery.getShellSnapshot().pipe(
+              Effect.flatMap((snapshot) =>
+                gitsPlanningScanner.scan({
+                  projects: snapshot.projects,
+                  threads: snapshot.threads,
+                  fallbackCwd: config.cwd,
+                }),
+              ),
+              Effect.mapError((cause) =>
+                isGitsCockpitError(cause)
+                  ? cause
+                  : new GitsCockpitError({
+                      message: "Failed to load GITS cockpit state.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsDelamainListPeers]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainListPeers,
+            delamainAdapter.listPeers().pipe(
+              Effect.mapError((cause) =>
+                isDelamainAdapterError(cause)
+                  ? cause
+                  : new DelamainAdapterError({
+                      message: "Failed to list Delamain peers.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsDelamainGetPeerStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainGetPeerStatus,
+            delamainAdapter.getPeerStatus(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsDelamainReadPeerLog]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsDelamainReadPeerLog, delamainAdapter.readPeerLog(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsDelamainSpawnPeer]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsDelamainSpawnPeer, delamainAdapter.spawnPeer(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsDelamainKillPeer]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsDelamainKillPeer, delamainAdapter.killPeer(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsDelamainSendPeerReply]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainSendPeerReply,
+            delamainAdapter.sendPeerReply(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsDelamainWaitForPeer]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsDelamainWaitForPeer, delamainAdapter.waitForPeer(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsDelamainIntegratePeer]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainIntegratePeer,
+            delamainAdapter.integratePeer(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsOpenGsdGetStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsOpenGsdGetStatus,
+            openGsdAdapter.getStatus().pipe(
+              Effect.mapError((cause) =>
+                isOpenGsdAdapterError(cause)
+                  ? cause
+                  : new OpenGsdAdapterError({
+                      message: "Failed to detect Open GSD.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsOpenGsdInitProject]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsOpenGsdInitProject, openGsdAdapter.initProject(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsOpenGsdRunAuto]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsOpenGsdRunAuto, openGsdAdapter.runAuto(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsAutomodeGetSnapshot]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeGetSnapshot,
+            automodeSupervisor.getSnapshot().pipe(
+              Effect.mapError((cause) =>
+                isAutomodeSupervisorError(cause)
+                  ? cause
+                  : new AutomodeSupervisorError({
+                      message: "Failed to load automode state.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeUpdatePolicy]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeUpdatePolicy,
+            automodeSupervisor.updatePolicy(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeEnqueueGoal]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeEnqueueGoal,
+            automodeSupervisor.enqueueGoal(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeApproveGoal]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeApproveGoal,
+            automodeSupervisor.approveGoal(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeRejectGoal]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeRejectGoal,
+            automodeSupervisor.rejectGoal(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeDispatchGoal]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeDispatchGoal,
+            automodeSupervisor.dispatchGoal(input),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

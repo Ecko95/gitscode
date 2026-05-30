@@ -10,6 +10,39 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  AutomodeDispatchResult,
+  AutomodeEnqueueGoalInput,
+  AutomodeGoal,
+  AutomodeGoalInput,
+  AutomodePolicyUpdateInput,
+  AutomodeRejectGoalInput,
+  AutomodeSnapshot,
+  AutomodeSnapshotInput,
+  AutomodeSupervisorError,
+  DelamainAdapterError,
+  DelamainPeer,
+  DelamainPeerIntegrateInput,
+  DelamainPeerIntegrateResult,
+  DelamainPeerKillInput,
+  DelamainPeerListInput,
+  DelamainPeerListResult,
+  DelamainPeerLogInput,
+  DelamainPeerLogResult,
+  DelamainPeerReplyInput,
+  DelamainSpawnPeerInput,
+  DelamainPeerStatusInput,
+  DelamainPeerWaitInput,
+  GitsCockpitError,
+  GitsCockpitInput,
+  GitsCockpitSnapshot,
+  OpenGsdAdapterError,
+  OpenGsdCommandResult,
+  OpenGsdInitProjectInput,
+  OpenGsdRunAutoInput,
+  OpenGsdStatusInput,
+  OpenGsdStatusResult,
+} from "./gits.ts";
+import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
@@ -138,6 +171,26 @@ export const WS_METHODS = {
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
+
+  // GITS cockpit methods
+  gitsGetCockpit: "gits.cockpit.get",
+  gitsDelamainListPeers: "gits.delamain.peers.list",
+  gitsDelamainGetPeerStatus: "gits.delamain.peers.status",
+  gitsDelamainReadPeerLog: "gits.delamain.peers.log",
+  gitsDelamainSpawnPeer: "gits.delamain.peers.spawn",
+  gitsDelamainKillPeer: "gits.delamain.peers.kill",
+  gitsDelamainSendPeerReply: "gits.delamain.peers.reply",
+  gitsDelamainWaitForPeer: "gits.delamain.peers.wait",
+  gitsDelamainIntegratePeer: "gits.delamain.peers.integrate",
+  gitsOpenGsdGetStatus: "gits.openGsd.status",
+  gitsOpenGsdInitProject: "gits.openGsd.init",
+  gitsOpenGsdRunAuto: "gits.openGsd.auto",
+  gitsAutomodeGetSnapshot: "gits.automode.snapshot",
+  gitsAutomodeUpdatePolicy: "gits.automode.policy.update",
+  gitsAutomodeEnqueueGoal: "gits.automode.goals.enqueue",
+  gitsAutomodeApproveGoal: "gits.automode.goals.approve",
+  gitsAutomodeRejectGoal: "gits.automode.goals.reject",
+  gitsAutomodeDispatchGoal: "gits.automode.goals.dispatch",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -383,6 +436,114 @@ export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPrevie
   error: ReviewDiffPreviewError,
 });
 
+export const WsGitsGetCockpitRpc = Rpc.make(WS_METHODS.gitsGetCockpit, {
+  payload: GitsCockpitInput,
+  success: GitsCockpitSnapshot,
+  error: GitsCockpitError,
+});
+
+export const WsGitsDelamainListPeersRpc = Rpc.make(WS_METHODS.gitsDelamainListPeers, {
+  payload: DelamainPeerListInput,
+  success: DelamainPeerListResult,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainGetPeerStatusRpc = Rpc.make(WS_METHODS.gitsDelamainGetPeerStatus, {
+  payload: DelamainPeerStatusInput,
+  success: DelamainPeer,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainReadPeerLogRpc = Rpc.make(WS_METHODS.gitsDelamainReadPeerLog, {
+  payload: DelamainPeerLogInput,
+  success: DelamainPeerLogResult,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainSpawnPeerRpc = Rpc.make(WS_METHODS.gitsDelamainSpawnPeer, {
+  payload: DelamainSpawnPeerInput,
+  success: DelamainPeer,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainKillPeerRpc = Rpc.make(WS_METHODS.gitsDelamainKillPeer, {
+  payload: DelamainPeerKillInput,
+  success: DelamainPeer,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainSendPeerReplyRpc = Rpc.make(WS_METHODS.gitsDelamainSendPeerReply, {
+  payload: DelamainPeerReplyInput,
+  success: DelamainPeer,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainWaitForPeerRpc = Rpc.make(WS_METHODS.gitsDelamainWaitForPeer, {
+  payload: DelamainPeerWaitInput,
+  success: DelamainPeer,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainIntegratePeerRpc = Rpc.make(WS_METHODS.gitsDelamainIntegratePeer, {
+  payload: DelamainPeerIntegrateInput,
+  success: DelamainPeerIntegrateResult,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsOpenGsdGetStatusRpc = Rpc.make(WS_METHODS.gitsOpenGsdGetStatus, {
+  payload: OpenGsdStatusInput,
+  success: OpenGsdStatusResult,
+  error: OpenGsdAdapterError,
+});
+
+export const WsGitsOpenGsdInitProjectRpc = Rpc.make(WS_METHODS.gitsOpenGsdInitProject, {
+  payload: OpenGsdInitProjectInput,
+  success: OpenGsdCommandResult,
+  error: OpenGsdAdapterError,
+});
+
+export const WsGitsOpenGsdRunAutoRpc = Rpc.make(WS_METHODS.gitsOpenGsdRunAuto, {
+  payload: OpenGsdRunAutoInput,
+  success: OpenGsdCommandResult,
+  error: OpenGsdAdapterError,
+});
+
+export const WsGitsAutomodeGetSnapshotRpc = Rpc.make(WS_METHODS.gitsAutomodeGetSnapshot, {
+  payload: AutomodeSnapshotInput,
+  success: AutomodeSnapshot,
+  error: AutomodeSupervisorError,
+});
+
+export const WsGitsAutomodeUpdatePolicyRpc = Rpc.make(WS_METHODS.gitsAutomodeUpdatePolicy, {
+  payload: AutomodePolicyUpdateInput,
+  success: AutomodeSnapshot,
+  error: AutomodeSupervisorError,
+});
+
+export const WsGitsAutomodeEnqueueGoalRpc = Rpc.make(WS_METHODS.gitsAutomodeEnqueueGoal, {
+  payload: AutomodeEnqueueGoalInput,
+  success: AutomodeSnapshot,
+  error: AutomodeSupervisorError,
+});
+
+export const WsGitsAutomodeApproveGoalRpc = Rpc.make(WS_METHODS.gitsAutomodeApproveGoal, {
+  payload: AutomodeGoalInput,
+  success: AutomodeGoal,
+  error: AutomodeSupervisorError,
+});
+
+export const WsGitsAutomodeRejectGoalRpc = Rpc.make(WS_METHODS.gitsAutomodeRejectGoal, {
+  payload: AutomodeRejectGoalInput,
+  success: AutomodeGoal,
+  error: AutomodeSupervisorError,
+});
+
+export const WsGitsAutomodeDispatchGoalRpc = Rpc.make(WS_METHODS.gitsAutomodeDispatchGoal, {
+  payload: AutomodeGoalInput,
+  success: AutomodeDispatchResult,
+  error: AutomodeSupervisorError,
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -542,6 +703,24 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
+  WsGitsGetCockpitRpc,
+  WsGitsDelamainListPeersRpc,
+  WsGitsDelamainGetPeerStatusRpc,
+  WsGitsDelamainReadPeerLogRpc,
+  WsGitsDelamainSpawnPeerRpc,
+  WsGitsDelamainKillPeerRpc,
+  WsGitsDelamainSendPeerReplyRpc,
+  WsGitsDelamainWaitForPeerRpc,
+  WsGitsDelamainIntegratePeerRpc,
+  WsGitsOpenGsdGetStatusRpc,
+  WsGitsOpenGsdInitProjectRpc,
+  WsGitsOpenGsdRunAutoRpc,
+  WsGitsAutomodeGetSnapshotRpc,
+  WsGitsAutomodeUpdatePolicyRpc,
+  WsGitsAutomodeEnqueueGoalRpc,
+  WsGitsAutomodeApproveGoalRpc,
+  WsGitsAutomodeRejectGoalRpc,
+  WsGitsAutomodeDispatchGoalRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

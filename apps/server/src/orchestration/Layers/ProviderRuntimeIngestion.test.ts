@@ -2631,6 +2631,60 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("projects provider turn cost into normalized usage activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-cost"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cost"),
+      payload: {
+        state: "completed",
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 250,
+        },
+        modelUsage: {
+          claude: {
+            input_tokens: 1000,
+            output_tokens: 250,
+          },
+        },
+        totalCostUsd: 0.42,
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "usage.cost.updated",
+      ),
+    );
+
+    const costActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "usage.cost.updated",
+    );
+    expect(costActivity?.id).toBe("evt-turn-completed-cost");
+    expect(costActivity?.turnId).toBe("turn-cost");
+    expect(costActivity?.payload).toMatchObject({
+      state: "completed",
+      totalCostUsd: 0.42,
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 250,
+      },
+      modelUsage: {
+        claude: {
+          input_tokens: 1000,
+          output_tokens: 250,
+        },
+      },
+    });
+  });
+
   it("projects Codex camelCase token usage payloads into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

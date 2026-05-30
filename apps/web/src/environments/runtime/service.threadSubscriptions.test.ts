@@ -131,6 +131,32 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     review: {
       getDiffPreview: vi.fn(),
     },
+    gits: {
+      getCockpit: vi.fn(),
+      delamain: {
+        listPeers: vi.fn(),
+        getPeerStatus: vi.fn(),
+        readPeerLog: vi.fn(),
+        spawnPeer: vi.fn(),
+        killPeer: vi.fn(),
+        sendPeerReply: vi.fn(),
+        waitForPeer: vi.fn(),
+        integratePeer: vi.fn(),
+      },
+      openGsd: {
+        getStatus: vi.fn(),
+        initProject: vi.fn(),
+        runAuto: vi.fn(),
+      },
+      automode: {
+        getSnapshot: vi.fn(),
+        updatePolicy: vi.fn(),
+        enqueueGoal: vi.fn(),
+        approveGoal: vi.fn(),
+        rejectGoal: vi.fn(),
+        dispatchGoal: vi.fn(),
+      },
+    },
     server: {
       getConfig: vi.fn(),
       refreshProviders: vi.fn(),

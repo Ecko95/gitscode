@@ -49,6 +49,11 @@ import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdent
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import { DelamainCliAdapterLive } from "./gits/Layers/DelamainCliAdapter.ts";
+import { GitsPlanningScannerLive } from "./gits/Layers/GitsPlanningScanner.ts";
+import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
+import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
+import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -205,6 +210,22 @@ const ReviewLayerLive = ReviewService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 
+const AutomodeUsageMeterLayerLive = AutomodeUsageMeterLive.pipe(
+  Layer.provide(OrchestrationLayerLive.pipe(Layer.provide(PersistenceLayerLive))),
+);
+
+const GitsLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(DelamainCliAdapterLive),
+  Layer.provideMerge(OpenGsdCliAdapterLive),
+  Layer.provideMerge(GitsPlanningScannerLive),
+  Layer.provideMerge(
+    AutomodeSupervisorLive.pipe(
+      Layer.provide(DelamainCliAdapterLive),
+      Layer.provide(AutomodeUsageMeterLayerLive),
+    ),
+  ),
+);
+
 const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(VcsProjectConfig.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
@@ -279,6 +300,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(OpenCodeRuntimeLive),
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(WorkspaceLayerLive),
+  Layer.provideMerge(GitsLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(RepositoryIdentityResolverLive),
   Layer.provideMerge(ServerEnvironmentLive),
