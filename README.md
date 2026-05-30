@@ -1,11 +1,11 @@
-# T3 Code
+# GITS
 
-T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and OpenCode, more coming soon).
+GITS is the DevOS IDE and control plane for coding agents. It keeps the T3 Code remote shell and adds a GITS cockpit for Open GSD, Delamain peers, provider sessions, and remote operator workflows.
 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex, Claude, and OpenCode.
+> GITS currently supports Codex, Claude, OpenCode, and Cursor Agent where available.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
@@ -18,15 +18,15 @@ T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and Ope
 npx t3
 ```
 
+The CLI/package names are still inherited from upstream T3 Code while the GITS fork is being productized.
+
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/joshuaduffill/t3code/releases), or build it from source.
 
 #### Windows (`winget`)
 
-```bash
-winget install T3Tools.T3Code
-```
+Package-registry entries may still use upstream T3 Code identifiers until GITS distribution is cut.
 
 #### macOS (Homebrew)
 
