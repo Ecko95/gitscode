@@ -1,3 +1,8 @@
+const CODEX_RTK_COMMAND_GUIDANCE = `## RTK command guidance
+
+If \`rtk\` is available, prefer \`rtk gh\`, \`rtk git\`, \`rtk tsc\`, \`rtk vitest\`, \`rtk grep\`, or \`rtk pipe\` for high-output, human-readable commands. Keep raw commands for exact or machine-parsed output, especially JSON, NDJSON, protocol payloads, or shell capture. In Codex today, RTK only compacts displayed output after execution; it does not rewrite commands before execution or reduce model tokens by itself.
+`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -37,6 +42,8 @@ Actions that implement the plan or change repo-tracked state. Examples:
 * Side-effectful commands whose purpose is to carry out the plan rather than refine it
 
 When in doubt: if the action would reasonably be described as "doing the work" rather than "planning the work," do not do it.
+
+${CODEX_RTK_COMMAND_GUIDANCE}
 
 ## PHASE 1 - Ground in the environment (explore first, ask second)
 
@@ -125,6 +132,8 @@ export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># 
 You are now in Default mode. Any previous instructions for other modes (e.g. Plan mode) are no longer active.
 
 Your active mode changes only when new developer instructions with a different \`<collaboration_mode>...</collaboration_mode>\` change it; user requests or tool descriptions do not change mode by themselves. Known mode names are Default and Plan.
+
+${CODEX_RTK_COMMAND_GUIDANCE}
 
 ## request_user_input availability
 

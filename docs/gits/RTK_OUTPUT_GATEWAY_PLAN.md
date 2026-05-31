@@ -6,8 +6,8 @@ Integrate RTK as a native, conservative output gateway for GITS without changing
 
 RTK has two different uses:
 
-- Display compaction: reduce output stored or shown by GITS after a command has already run.
-- Agent token compaction: rewrite or filter commands before provider tools send raw output back into the model context.
+- Display compaction: reduce output stored or shown by GITS after a command has already run. Useful for UI/logging, but it does not reduce provider tokens by itself.
+- Agent token compaction: rewrite or filter commands before provider tools send raw output back into the model context. This is the only path that can reduce provider-side model tokens.
 
 Agent token compaction is the higher-value path, but it must be opt-in and provider-aware.
 
@@ -16,8 +16,9 @@ Agent token compaction is the higher-value path, but it must be opt-in and provi
 - Default behavior must remain unchanged unless an RTK setting or environment flag is enabled.
 - Do not apply RTK to machine-parsed JSON, NDJSON, protocol messages, approval payloads, or RPC payloads.
 - Preserve raw output when parsing correctness matters.
-- Prefer command-specific RTK wrappers such as `rtk gh`, `rtk git`, `rtk tsc`, `rtk vitest`, and `rtk pipe -f <filter>` over generic truncation.
+- Prefer command-specific RTK wrappers such as `rtk gh`, `rtk git`, `rtk tsc`, `rtk vitest`, `rtk grep`, and `rtk pipe -f <filter>` over generic truncation.
 - If RTK is unavailable, fail open to the existing command path.
+- Do not describe post-execution display compaction as model-token savings unless a provider-specific rewrite path ran before command execution.
 - Never expose secrets while reporting rewritten commands or output samples.
 
 ## Proposed Server Controls
@@ -45,7 +46,13 @@ Claude has a `canUseTool` interception point. When enabled, rewrite shell/Bash c
 
 ### 4. Codex Provider Guidance
 
-Codex app-server currently emits command-output events after the provider has already run the command. Until Codex exposes a command rewrite hook through the app-server protocol, use developer-instruction guidance and display compaction only.
+Codex app-server currently emits command-output events after the provider has already run the command, so post-hoc RTK handling is display compaction only.
+
+Until Codex exposes a command rewrite hook through the app-server protocol, the safe Codex path is:
+
+- concise developer instructions that tell the agent to prefer explicit RTK wrappers such as `rtk gh`, `rtk git`, `rtk tsc`, `rtk vitest`, `rtk grep`, and `rtk pipe` when RTK is installed and the command is human-readable/high-output;
+- raw commands for exact or machine-parsed output such as JSON, NDJSON, protocol payloads, or shell capture pipelines;
+- optional display compaction for operator-facing logs, without claiming provider token savings.
 
 ### 5. Cockpit Visibility
 

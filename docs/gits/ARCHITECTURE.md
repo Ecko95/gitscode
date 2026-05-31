@@ -35,6 +35,15 @@ The fork keeps T3 Code's existing web, desktop, server, mobile, pairing, Tailsca
 - `packages/tailscale`: Tailnet endpoint discovery and Tailscale Serve setup.
 - `packages/shared`: shared runtime utilities with explicit subpath exports.
 
+## RTK Output Boundary
+
+RTK integration must separate post-execution display shaping from true provider-token savings:
+
+- Display compaction rewrites or filters output after a command already ran. It is useful for operator-facing logs, stored transcript size, and UI readability, but it does not reduce provider tokens by itself.
+- Agent token compaction requires rewriting the command path before the provider tool runs so the provider never emits the raw high-volume output into model context.
+- Codex app-server currently emits command-output events only after the command has already run. For Codex sessions, the safe first path is concise developer guidance to prefer explicit RTK wrappers such as `rtk gh`, `rtk git`, `rtk tsc`, `rtk vitest`, `rtk grep`, and `rtk pipe` when RTK is available, while preserving raw commands for JSON, NDJSON, protocol payloads, and other exact-output flows.
+- Claude-style tool interception remains the place where future provider-aware command rewriting can produce actual token savings.
+
 ## Milestone 1 Read-Only Flow
 
 The first GITS surface is intentionally read-only:

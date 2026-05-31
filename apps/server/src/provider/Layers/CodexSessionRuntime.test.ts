@@ -149,6 +149,25 @@ describe("buildTurnStartParams", () => {
   });
 });
 
+describe("Codex developer instructions", () => {
+  it("mentions RTK wrappers and the Codex display-only limitation", () => {
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      assert.match(
+        instructions,
+        /`rtk gh`, `rtk git`, `rtk tsc`, `rtk vitest`, `rtk grep`, or `rtk pipe`/,
+      );
+      assert.match(instructions, /only compacts displayed output after execution/);
+      assert.match(
+        instructions,
+        /does not rewrite commands before execution or reduce model tokens by itself/,
+      );
+    }
+  });
+});
+
 describe("isRecoverableThreadResumeError", () => {
   it("matches missing thread errors", () => {
     assert.equal(
