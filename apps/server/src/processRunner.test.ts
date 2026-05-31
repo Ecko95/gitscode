@@ -198,7 +198,10 @@ describe("runProcess", () => {
       const calls: ChildProcessCommand[] = [];
       const spawner = makeSpawner((command) =>
         Effect.sync(() => {
-          calls.push(command);
+          calls.push({
+            command: command.command,
+            args: command.args,
+          });
           if (command.command === "fake") {
             return makeHandle({ stdout: "raw output" });
           }
@@ -221,7 +224,7 @@ describe("runProcess", () => {
               timedOut: false,
             };
           }),
-      });
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       const layer = Layer.effect(ProcessRunner, makeProcessRunner()).pipe(
         Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         Layer.provide(Layer.succeed(RtkGateway, rtkGateway)),
@@ -238,9 +241,7 @@ describe("runProcess", () => {
 
       expect(result.stdout).toBe("compacted output");
       expect(result.stderr).toBe("");
-      expect(calls).toEqual([
-        { command: "fake", args: ["--transform"] },
-      ]);
+      expect(calls).toEqual([{ command: "fake", args: ["--transform"] }]);
     }),
   );
 
@@ -254,7 +255,7 @@ describe("runProcess", () => {
           rtkCallCount += 1;
           return Effect.die("rtk should not run");
         },
-      });
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       const layer = Layer.effect(ProcessRunner, makeProcessRunner()).pipe(
         Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         Layer.provide(Layer.succeed(RtkGateway, rtkGateway)),

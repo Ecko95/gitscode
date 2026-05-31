@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import {
   DelamainAdapterError,
@@ -44,6 +45,7 @@ const DEFAULT_LOG_LINES = 160;
 const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_MS = 2_000;
 const COMMAND_TIMEOUT_MS = 30_000;
+const isDelamainAdapterError = Schema.is(DelamainAdapterError);
 const TERMINAL_STATUSES = new Set<PeerStatus>([
   "done",
   "completed",
@@ -168,7 +170,7 @@ function execDelamain(
         return Effect.succeed(normalized);
       }),
       Effect.mapError((cause) =>
-        cause instanceof DelamainAdapterError
+        isDelamainAdapterError(cause)
           ? cause
           : toDelamainError(delamainFailureMessage(cause), cause),
       ),

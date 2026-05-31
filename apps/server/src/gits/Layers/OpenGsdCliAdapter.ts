@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import {
   OpenGsdAdapterError,
@@ -32,6 +33,7 @@ const ALL_CAPABILITIES: ReadonlyArray<OpenGsdCapability> = ["detect", "init", "a
 const COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
+const isOpenGsdAdapterError = Schema.is(OpenGsdAdapterError);
 
 interface ExecResult {
   readonly stdout: string;
@@ -127,9 +129,7 @@ function execOpenGsd(
         } satisfies ExecResult);
       }),
       Effect.mapError((cause) =>
-        cause instanceof OpenGsdAdapterError
-          ? cause
-          : toOpenGsdError(openGsdFailureMessage(cause), cause),
+        isOpenGsdAdapterError(cause) ? cause : toOpenGsdError(openGsdFailureMessage(cause), cause),
       ),
     );
 }

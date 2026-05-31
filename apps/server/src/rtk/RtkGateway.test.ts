@@ -6,6 +6,7 @@ import {
   makeRtkGateway,
   resolveRtkSettings,
   type MakeRtkGatewayOptions,
+  RtkGatewayCommandError,
   type RtkCommandResult,
 } from "./RtkGateway.ts";
 
@@ -23,6 +24,14 @@ function makeCommandResult(
     code: input.code === null ? null : ChildProcessSpawner.ExitCode(input.code ?? 0),
     timedOut: input.timedOut ?? false,
   };
+}
+
+const unusedSpawner = ChildProcessSpawner.make(() => Effect.die("unexpected RTK child process"));
+
+function makeTestRtkGateway(options: MakeRtkGatewayOptions) {
+  return makeRtkGateway(options).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, unusedSpawner),
+  );
 }
 
 describe("resolveRtkSettings", () => {
@@ -48,11 +57,15 @@ describe("makeRtkGateway", () => {
   it.effect("reports availability without throwing when RTK is missing", () =>
     Effect.gen(function* () {
       const calls: Parameters<NonNullable<MakeRtkGatewayOptions["runCommand"]>>[0][] = [];
-      const gateway = yield* makeRtkGateway({
+      const gateway = yield* makeTestRtkGateway({
         env: { GITS_RTK_OUTPUT_GATEWAY: "1" },
         runCommand: (input) => {
           calls.push(input);
-          return Effect.fail(new Error("spawn rtk ENOENT"));
+          return Effect.fail(
+            new RtkGatewayCommandError({
+              message: "spawn rtk ENOENT",
+            }),
+          );
         },
       });
 
@@ -79,7 +92,7 @@ describe("makeRtkGateway", () => {
   it.effect("returns a rewritten command when RTK rewrites successfully", () =>
     Effect.gen(function* () {
       const calls: Parameters<NonNullable<MakeRtkGatewayOptions["runCommand"]>>[0][] = [];
-      const gateway = yield* makeRtkGateway({
+      const gateway = yield* makeTestRtkGateway({
         env: { GITS_RTK_REWRITE_TOOLS: "1" },
         runCommand: (input) => {
           calls.push(input);
@@ -104,7 +117,7 @@ describe("makeRtkGateway", () => {
 
   it.effect("returns a no-op rewrite when RTK declines", () =>
     Effect.gen(function* () {
-      const gateway = yield* makeRtkGateway({
+      const gateway = yield* makeTestRtkGateway({
         env: { GITS_RTK_REWRITE_TOOLS: "1" },
         runCommand: () => Effect.succeed(makeCommandResult({ stdout: "git status\n" })),
       });
@@ -121,7 +134,7 @@ describe("makeRtkGateway", () => {
   it.effect("pipes text through RTK with ultra-compact output when enabled", () =>
     Effect.gen(function* () {
       const calls: Parameters<NonNullable<MakeRtkGatewayOptions["runCommand"]>>[0][] = [];
-      const gateway = yield* makeRtkGateway({
+      const gateway = yield* makeTestRtkGateway({
         env: {
           GITS_RTK_OUTPUT_GATEWAY: "1",
           GITS_RTK_ULTRA_COMPACT: "yes",
@@ -150,7 +163,7 @@ describe("makeRtkGateway", () => {
 
   it.effect("preserves original text when RTK output filtering fails", () =>
     Effect.gen(function* () {
-      const gateway = yield* makeRtkGateway({
+      const gateway = yield* makeTestRtkGateway({
         env: { GITS_RTK_OUTPUT_GATEWAY: "1" },
         runCommand: () => Effect.succeed(makeCommandResult({ code: 1, stderr: "filter failed" })),
       });

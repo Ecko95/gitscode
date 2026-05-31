@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,9 +48,27 @@ export interface RtkCommandResult {
   readonly timedOut: boolean;
 }
 
+export class RtkGatewayCommandError extends Data.TaggedError("RtkGatewayCommandError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+export class RtkGatewayOutputLimitError extends Data.TaggedError("RtkGatewayOutputLimitError")<{
+  readonly maxBytes: number;
+}> {}
+
+export class RtkGatewayTimeoutError extends Data.TaggedError("RtkGatewayTimeoutError")<{
+  readonly timeout: Duration.Input;
+}> {}
+
+export type RtkCommandError =
+  | RtkGatewayCommandError
+  | RtkGatewayOutputLimitError
+  | RtkGatewayTimeoutError;
+
 export type RtkCommandRunner = (
   input: RtkCommandInput,
-) => Effect.Effect<RtkCommandResult, unknown>;
+) => Effect.Effect<RtkCommandResult, RtkCommandError>;
 
 export interface MakeRtkGatewayOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
@@ -62,7 +81,9 @@ export interface RtkGatewayShape {
   readonly pipeText: (input: RtkPipeInput) => Effect.Effect<string>;
 }
 
-export class RtkGateway extends Context.Service<RtkGateway, RtkGatewayShape>()("t3/rtkGateway") {}
+export class RtkGateway extends Context.Service<RtkGateway, RtkGatewayShape>()(
+  "t3/rtk/RtkGateway",
+) {}
 
 function nonEmptyString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -87,20 +108,31 @@ const collectText = Effect.fn("RtkGateway.collectText")(function* (
   stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
 ) {
   const collected = yield* stream.pipe(
+    Stream.mapError(
+      (cause) =>
+        new RtkGatewayCommandError({
+          message: "RTK output read failed.",
+          cause,
+        }),
+    ),
     Stream.runFoldEffect<
       {
         readonly chunks: Uint8Array[];
         readonly bytes: number;
       },
       Uint8Array,
-      PlatformError.PlatformError | Error,
+      RtkGatewayCommandError | RtkGatewayOutputLimitError,
       never
     >(
       () => ({ chunks: [], bytes: 0 }),
       (state, chunk) => {
         const nextBytes = state.bytes + chunk.byteLength;
         if (nextBytes > MAX_RTK_OUTPUT_BYTES) {
-          return Effect.fail(new Error("RTK output exceeded max buffer."));
+          return Effect.fail(
+            new RtkGatewayOutputLimitError({
+              maxBytes: MAX_RTK_OUTPUT_BYTES,
+            }),
+          );
         }
 
         state.chunks.push(chunk);
@@ -115,48 +147,81 @@ const collectText = Effect.fn("RtkGateway.collectText")(function* (
   return Buffer.concat(collected.chunks, collected.bytes).toString("utf8");
 });
 
-const makeChildProcessCommandRunner = Effect.fn("RtkGateway.makeChildProcessCommandRunner")(function* () {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+const makeChildProcessCommandRunner = Effect.fn("RtkGateway.makeChildProcessCommandRunner")(
+  function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runCommand: RtkCommandRunner = (input) =>
-    Effect.gen(function* () {
-      const child = yield* spawner.spawn(
-        ChildProcess.make(input.command, [...input.args], {
-          shell: false,
-        }),
+    const runCommand: RtkCommandRunner = (input) =>
+      Effect.gen(function* () {
+        const child = yield* spawner
+          .spawn(
+            ChildProcess.make(input.command, [...input.args], {
+              shell: false,
+            }),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new RtkGatewayCommandError({
+                  message: "RTK command spawn failed.",
+                  cause,
+                }),
+            ),
+          );
+
+        const writeStdin =
+          input.stdin === undefined
+            ? Effect.void
+            : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new RtkGatewayCommandError({
+                      message: "RTK stdin write failed.",
+                      cause,
+                    }),
+                ),
+              );
+
+        const [stdout, stderr] = yield* Effect.all(
+          [collectText(child.stdout), collectText(child.stderr), writeStdin],
+          { concurrency: "unbounded" },
+        );
+
+        const exitCode = yield* child.exitCode.pipe(
+          Effect.mapError(
+            (cause) =>
+              new RtkGatewayCommandError({
+                message: "RTK exit code read failed.",
+                cause,
+              }),
+          ),
+        );
+
+        return {
+          stdout,
+          stderr,
+          code: exitCode,
+          timedOut: false,
+        } satisfies RtkCommandResult;
+      }).pipe(
+        Effect.scoped,
+        Effect.timeoutOption(Duration.fromInputUnsafe(input.timeout ?? DEFAULT_RTK_TIMEOUT)),
+        Effect.flatMap((result) =>
+          Option.match(result, {
+            onNone: () =>
+              Effect.fail(
+                new RtkGatewayTimeoutError({
+                  timeout: input.timeout ?? DEFAULT_RTK_TIMEOUT,
+                }),
+              ),
+            onSome: Effect.succeed,
+          }),
+        ),
       );
 
-      const writeStdin =
-        input.stdin === undefined
-          ? Effect.void
-          : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin);
-
-      const [stdout, stderr] = yield* Effect.all(
-        [collectText(child.stdout), collectText(child.stderr), writeStdin],
-        { concurrency: "unbounded" },
-      );
-
-      const exitCode = yield* child.exitCode;
-
-      return {
-        stdout,
-        stderr,
-        code: exitCode,
-        timedOut: false,
-      } satisfies RtkCommandResult;
-    }).pipe(
-      Effect.scoped,
-      Effect.timeoutOption(Duration.fromInputUnsafe(input.timeout ?? DEFAULT_RTK_TIMEOUT)),
-      Effect.flatMap((result) =>
-        Option.match(result, {
-          onNone: () => Effect.fail(new Error("RTK command timed out.")),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
-
-  return runCommand;
-});
+    return runCommand;
+  },
+);
 
 function isRewriteDeclined(rawCommand: string, output: string): boolean {
   const normalizedOutput = output.trim();
@@ -166,9 +231,7 @@ function isRewriteDeclined(rawCommand: string, output: string): boolean {
 }
 
 function pipeArgs(settings: RtkSettings, filter: string): ReadonlyArray<string> {
-  return settings.ultraCompact
-    ? ["pipe", "-f", filter, "--ultra-compact"]
-    : ["pipe", "-f", filter];
+  return settings.ultraCompact ? ["pipe", "-f", filter, "--ultra-compact"] : ["pipe", "-f", filter];
 }
 
 function isCommandAvailable(
@@ -181,7 +244,7 @@ function isCommandAvailable(
     timeout: "2 seconds",
   }).pipe(
     Effect.map((result) => result.code === 0 && !result.timedOut),
-    Effect.catchAllCause(() => Effect.succeed(false)),
+    Effect.catchCause(() => Effect.succeed(false)),
   );
 }
 
@@ -190,9 +253,10 @@ export const makeRtkGateway = Effect.fn("makeRtkGateway")(function* (
 ) {
   const settings = resolveRtkSettings(options.env);
   const enabled = settings.outputGatewayEnabled || settings.rewriteToolsEnabled;
-  const runCommand = options.runCommand ?? (yield* makeChildProcessCommandRunner());
+  const runCommand =
+    options.runCommand !== undefined ? options.runCommand : yield* makeChildProcessCommandRunner();
 
-  const getStatus = isCommandAvailable(runCommand, settings).pipe(
+  const getStatus = Effect.suspend(() => isCommandAvailable(runCommand, settings)).pipe(
     Effect.map(
       (available): RtkGatewayStatus => ({
         ...settings,
@@ -215,9 +279,14 @@ export const makeRtkGateway = Effect.fn("makeRtkGateway")(function* (
       const result = yield* runCommand({
         command: settings.binaryPath,
         args: ["rewrite", rawCommand],
-      }).pipe(Effect.catchAllCause(() => Effect.succeed<RtkCommandResult | null>(null)));
+      }).pipe(Effect.catchCause(() => Effect.succeed<RtkCommandResult | null>(null)));
 
-      if (result === null || result.timedOut || result.code !== 0 || isRewriteDeclined(rawCommand, result.stdout)) {
+      if (
+        result === null ||
+        result.timedOut ||
+        result.code !== 0 ||
+        isRewriteDeclined(rawCommand, result.stdout)
+      ) {
         return {
           command: rawCommand,
           rewritten: false,
@@ -243,7 +312,7 @@ export const makeRtkGateway = Effect.fn("makeRtkGateway")(function* (
       command: settings.binaryPath,
       args: pipeArgs(settings, filter),
       stdin: input.text,
-    }).pipe(Effect.catchAllCause(() => Effect.succeed<RtkCommandResult | null>(null)));
+    }).pipe(Effect.catchCause(() => Effect.succeed<RtkCommandResult | null>(null)));
 
     if (result === null || result.timedOut || result.code !== 0) {
       return input.text;

@@ -12,11 +12,7 @@ import {
   collectUint8StreamText,
   type CollectedUint8StreamText,
 } from "./stream/collectUint8StreamText.ts";
-import {
-  RtkGateway,
-  layer as RtkGatewayLive,
-  type RtkGatewayShape,
-} from "./rtk/RtkGateway.ts";
+import { RtkGateway, layer as RtkGatewayLive, type RtkGatewayShape } from "./rtk/RtkGateway.ts";
 
 export interface ProcessRunOutputTransform {
   readonly kind: "rtk-pipe";
