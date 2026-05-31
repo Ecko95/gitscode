@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import { execFile } from "node:child_process";
-
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -17,11 +14,24 @@ import {
 } from "@t3tools/contracts";
 
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "../Services/OpenGsdAdapter.ts";
+import {
+  ProcessOutputLimitError,
+  ProcessReadError,
+  ProcessRunner,
+  ProcessSpawnError,
+  ProcessStdinError,
+  ProcessTimeoutError,
+  isWindowsCommandNotFound,
+  layer as ProcessRunnerLive,
+  type ProcessRunError,
+} from "../../processRunner.ts";
 
 const PACKAGE_NAME = "@opengsd/get-shit-done-redux";
 const CLI_NAME = "gsd-sdk";
 const ALL_CAPABILITIES: ReadonlyArray<OpenGsdCapability> = ["detect", "init", "auto"];
 const COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 
 interface ExecResult {
   readonly stdout: string;
@@ -42,87 +52,86 @@ function resolveBinaryPath() {
   return process.env.GITS_GSD_SDK_BIN?.trim() || process.env.GSD_SDK_BIN?.trim() || CLI_NAME;
 }
 
-function errorExitCode(error: unknown): number | null {
-  if (typeof error !== "object" || error === null || !("code" in error)) {
-    return null;
+function errorText(cause: unknown): string {
+  if (cause instanceof Error) {
+    return cause.message;
   }
-  const code = (error as { readonly code?: unknown }).code;
-  return typeof code === "number" ? code : null;
+  return String(cause);
 }
 
-function errorSignal(error: unknown): string | null {
-  if (typeof error !== "object" || error === null || !("signal" in error)) {
-    return null;
-  }
-  const signal = (error as { readonly signal?: unknown }).signal;
-  return typeof signal === "string" && signal.trim().length > 0 ? signal.trim() : null;
+function isCommandMissing(cause: unknown): boolean {
+  return errorText(cause).toLowerCase().includes("enoent");
 }
 
-function errorTimedOut(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) {
-    return false;
+function openGsdFailureMessage(cause: ProcessRunError): string {
+  if (cause instanceof ProcessSpawnError && isCommandMissing(cause.cause)) {
+    return "Open GSD command failed. Confirm `gsd-sdk` is installed and on PATH.";
   }
-  if ("killed" in error && (error as { readonly killed?: unknown }).killed === true) {
-    return true;
+
+  if (cause instanceof ProcessTimeoutError) {
+    return `Open GSD command timed out after ${cause.timeoutMs}ms.`;
   }
-  return errorSignal(error) === "SIGTERM";
+
+  if (cause instanceof ProcessOutputLimitError) {
+    return `Open GSD command output exceeded ${cause.maxBytes} bytes.`;
+  }
+
+  if (cause instanceof ProcessReadError) {
+    return `Open GSD command failed while reading ${cause.stream}.`;
+  }
+
+  if (cause instanceof ProcessStdinError) {
+    return "Open GSD command failed while writing stdin.";
+  }
+
+  return "Open GSD command failed.";
 }
 
-function execOpenGsd(args: ReadonlyArray<string>, options?: { cwd?: string; timeoutMs?: number }) {
+function execOpenGsd(
+  processRunner: ProcessRunner["Service"],
+  args: ReadonlyArray<string>,
+  options?: {
+    readonly cwd?: string | undefined;
+    readonly timeoutMs?: number | undefined;
+    readonly outputMode?: "error" | "truncate" | undefined;
+    readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
+  },
+) {
   const binaryPath = resolveBinaryPath();
-  return Effect.tryPromise({
-    try: () =>
-      new Promise<ExecResult>((resolve, reject) => {
-        execFile(
-          binaryPath,
-          [...args],
-          {
-            cwd: options?.cwd,
-            encoding: "utf8",
-            maxBuffer: 8 * 1024 * 1024,
-            timeout: options?.timeoutMs ?? COMMAND_TIMEOUT_MS,
-          },
-          (error, stdout, stderr) => {
-            if (!error) {
-              resolve({
-                stdout,
-                stderr,
-                exitCode: 0,
-                signal: null,
-                timedOut: false,
-              });
-              return;
-            }
+  return processRunner
+    .run({
+      command: binaryPath,
+      args,
+      ...(options?.cwd ? { cwd: options.cwd } : {}),
+      timeout: options?.timeoutMs ?? COMMAND_TIMEOUT_MS,
+      maxOutputBytes: MAX_OUTPUT_BYTES,
+      outputMode: options?.outputMode ?? "error",
+      truncatedMarker: options?.outputMode === "truncate" ? OUTPUT_TRUNCATED_MARKER : "",
+      timeoutBehavior: options?.timeoutBehavior ?? "error",
+      shell: process.platform === "win32",
+    })
+    .pipe(
+      Effect.flatMap((result) => {
+        if (isWindowsCommandNotFound(result.code, result.stderr)) {
+          return Effect.fail(
+            toOpenGsdError("Open GSD command failed. Confirm `gsd-sdk` is installed and on PATH."),
+          );
+        }
 
-            const exitCode = errorExitCode(error);
-            if (exitCode !== null || errorSignal(error) !== null) {
-              resolve({
-                stdout,
-                stderr,
-                exitCode,
-                signal: errorSignal(error),
-                timedOut: errorTimedOut(error),
-              });
-              return;
-            }
-
-            reject({ error, stderr, stdout });
-          },
-        );
+        return Effect.succeed({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.code,
+          signal: null,
+          timedOut: result.timedOut,
+        } satisfies ExecResult);
       }),
-    catch: (cause) => {
-      const detail =
-        typeof cause === "object" && cause !== null && "stderr" in cause
-          ? String((cause as { readonly stderr?: unknown }).stderr ?? "").trim()
-          : "";
-      return toOpenGsdError(
-        detail.length > 0
-          ? `Open GSD command failed: ${detail}`
-          : "Open GSD command failed. Confirm `gsd-sdk` is installed and on PATH.",
-        cause,
-      );
-    },
-  });
+      Effect.mapError((cause) =>
+        cause instanceof OpenGsdAdapterError
+          ? cause
+          : toOpenGsdError(openGsdFailureMessage(cause), cause),
+      ),
+    );
 }
 
 function parseVersionOutput(stdout: string): string | null {
@@ -154,12 +163,12 @@ function capabilitySnapshot(input: {
   };
 }
 
-function getStatus() {
+function getStatus(processRunner: ProcessRunner["Service"]) {
   return Effect.gen(function* () {
     const checkedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
     const result = yield* Effect.all({
-      help: execOpenGsd(["--help"]).pipe(Effect.result),
-      version: execOpenGsd(["--version"]).pipe(Effect.result),
+      help: execOpenGsd(processRunner, ["--help"]).pipe(Effect.result),
+      version: execOpenGsd(processRunner, ["--version"]).pipe(Effect.result),
     });
 
     const helpText = Result.isSuccess(result.help) ? result.help.success.stdout : null;
@@ -207,6 +216,7 @@ function statusFromResult(result: ExecResult): OpenGsdCommandStatus {
 }
 
 function runCommand(
+  processRunner: ProcessRunner["Service"],
   command: OpenGsdCommandName,
   projectDir: string,
   args: ReadonlyArray<string>,
@@ -216,8 +226,20 @@ function runCommand(
     const startedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
     const startedMs = yield* Clock.currentTimeMillis;
     const result = yield* execOpenGsd(
+      processRunner,
       args,
-      timeoutMs === undefined ? { cwd: projectDir } : { cwd: projectDir, timeoutMs },
+      timeoutMs === undefined
+        ? {
+            cwd: projectDir,
+            outputMode: "truncate",
+            timeoutBehavior: "timedOutResult",
+          }
+        : {
+            cwd: projectDir,
+            timeoutMs,
+            outputMode: "truncate",
+            timeoutBehavior: "timedOutResult",
+          },
     );
     const finishedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
     const finishedMs = yield* Clock.currentTimeMillis;
@@ -238,12 +260,18 @@ function runCommand(
   });
 }
 
-const makeOpenGsdCliAdapterShape: OpenGsdAdapterShape = {
-  getStatus,
-  initProject: (input) => runCommand("init", input.projectDir, initArgs(input), input.timeoutMs),
-  runAuto: (input) => runCommand("auto", input.projectDir, autoArgs(input), input.timeoutMs),
-};
+export const makeOpenGsdCliAdapter = Effect.gen(function* () {
+  const processRunner = yield* ProcessRunner;
 
-export const makeOpenGsdCliAdapter = Effect.succeed(makeOpenGsdCliAdapterShape);
+  return {
+    getStatus: () => getStatus(processRunner),
+    initProject: (input) =>
+      runCommand(processRunner, "init", input.projectDir, initArgs(input), input.timeoutMs),
+    runAuto: (input) =>
+      runCommand(processRunner, "auto", input.projectDir, autoArgs(input), input.timeoutMs),
+  } satisfies OpenGsdAdapterShape;
+});
 
-export const OpenGsdCliAdapterLive = Layer.effect(OpenGsdAdapter, makeOpenGsdCliAdapter);
+export const OpenGsdCliAdapterLive = Layer.effect(OpenGsdAdapter, makeOpenGsdCliAdapter).pipe(
+  Layer.provide(ProcessRunnerLive),
+);

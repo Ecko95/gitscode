@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import { execFile } from "node:child_process";
-
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -20,6 +17,17 @@ import {
 } from "@t3tools/contracts";
 
 import { DelamainAdapter, type DelamainAdapterShape } from "../Services/DelamainAdapter.ts";
+import {
+  ProcessOutputLimitError,
+  ProcessReadError,
+  ProcessRunner,
+  ProcessSpawnError,
+  ProcessStdinError,
+  ProcessTimeoutError,
+  isWindowsCommandNotFound,
+  layer as ProcessRunnerLive,
+  type ProcessRunError,
+} from "../../processRunner.ts";
 
 const ALL_CAPABILITIES: ReadonlyArray<DelamainCapability> = [
   "list",
@@ -48,6 +56,7 @@ const TERMINAL_STATUSES = new Set<PeerStatus>([
 interface ExecResult {
   readonly stdout: string;
   readonly stderr: string;
+  readonly exitCode: number | null;
 }
 
 function toDelamainError(message: string, cause?: unknown) {
@@ -61,41 +70,109 @@ function resolveBinaryPath() {
   return process.env.GITS_DELAMAIN_BIN?.trim() || process.env.DELAMAIN_BIN?.trim() || "delamain";
 }
 
-function execDelamain(args: ReadonlyArray<string>, timeoutMs = COMMAND_TIMEOUT_MS) {
+const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
+
+function errorText(cause: unknown): string {
+  if (cause instanceof Error) {
+    return cause.message;
+  }
+  return String(cause);
+}
+
+function isCommandMissing(cause: unknown): boolean {
+  return errorText(cause).toLowerCase().includes("enoent");
+}
+
+function commandOutputDetail(result: ExecResult): string {
+  const stderr = result.stderr.trim();
+  if (stderr.length > 0) {
+    return stderr;
+  }
+
+  const stdout = result.stdout.trim();
+  if (stdout.length > 0) {
+    return stdout;
+  }
+
+  return result.exitCode === null
+    ? "Delamain command failed."
+    : `Delamain command exited with code ${result.exitCode}.`;
+}
+
+function delamainFailureMessage(cause: ProcessRunError): string {
+  if (cause instanceof ProcessSpawnError && isCommandMissing(cause.cause)) {
+    return "Delamain command failed. Confirm `delamain` is installed and on PATH.";
+  }
+
+  if (cause instanceof ProcessTimeoutError) {
+    return `Delamain command timed out after ${cause.timeoutMs}ms.`;
+  }
+
+  if (cause instanceof ProcessOutputLimitError) {
+    return `Delamain command output exceeded ${cause.maxBytes} bytes.`;
+  }
+
+  if (cause instanceof ProcessReadError) {
+    return `Delamain command failed while reading ${cause.stream}.`;
+  }
+
+  if (cause instanceof ProcessStdinError) {
+    return "Delamain command failed while writing stdin.";
+  }
+
+  return "Delamain command failed.";
+}
+
+function execDelamain(
+  processRunner: ProcessRunner["Service"],
+  args: ReadonlyArray<string>,
+  options?: {
+    readonly timeoutMs?: number | undefined;
+    readonly outputMode?: "error" | "truncate" | undefined;
+  },
+) {
   const binaryPath = resolveBinaryPath();
-  return Effect.tryPromise({
-    try: () =>
-      new Promise<ExecResult>((resolve, reject) => {
-        execFile(
-          binaryPath,
-          [...args],
-          {
-            encoding: "utf8",
-            maxBuffer: 8 * 1024 * 1024,
-            timeout: timeoutMs,
-          },
-          (error, stdout, stderr) => {
-            if (error) {
-              reject({ error, stderr, stdout });
-              return;
-            }
-            resolve({ stdout, stderr });
-          },
-        );
+  return processRunner
+    .run({
+      command: binaryPath,
+      args,
+      timeout: options?.timeoutMs ?? COMMAND_TIMEOUT_MS,
+      maxOutputBytes: MAX_OUTPUT_BYTES,
+      outputMode: options?.outputMode ?? "error",
+      truncatedMarker: options?.outputMode === "truncate" ? OUTPUT_TRUNCATED_MARKER : "",
+      shell: process.platform === "win32",
+    })
+    .pipe(
+      Effect.flatMap((result) => {
+        if (isWindowsCommandNotFound(result.code, result.stderr)) {
+          return Effect.fail(
+            toDelamainError(
+              "Delamain command failed. Confirm `delamain` is installed and on PATH.",
+            ),
+          );
+        }
+
+        const normalized = {
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.code,
+        } satisfies ExecResult;
+
+        if (result.code !== 0) {
+          return Effect.fail(
+            toDelamainError(`Delamain command failed: ${commandOutputDetail(normalized)}`),
+          );
+        }
+
+        return Effect.succeed(normalized);
       }),
-    catch: (cause) => {
-      const detail =
-        typeof cause === "object" && cause !== null && "stderr" in cause
-          ? String((cause as { readonly stderr?: unknown }).stderr ?? "").trim()
-          : "";
-      return toDelamainError(
-        detail.length > 0
-          ? `Delamain command failed: ${detail}`
-          : "Delamain command failed. Confirm `delamain` is installed and on PATH.",
-        cause,
-      );
-    },
-  });
+      Effect.mapError((cause) =>
+        cause instanceof DelamainAdapterError
+          ? cause
+          : toDelamainError(delamainFailureMessage(cause), cause),
+      ),
+    );
 }
 
 function parseJson<T>(operation: string, stdout: string): Effect.Effect<T, DelamainAdapterError> {
@@ -106,8 +183,12 @@ function parseJson<T>(operation: string, stdout: string): Effect.Effect<T, Delam
   });
 }
 
-function runJson<T>(operation: string, args: ReadonlyArray<string>) {
-  return execDelamain(args).pipe(
+function runJson<T>(
+  processRunner: ProcessRunner["Service"],
+  operation: string,
+  args: ReadonlyArray<string>,
+) {
+  return execDelamain(processRunner, args).pipe(
     Effect.flatMap((result) => parseJson<T>(operation, result.stdout)),
   );
 }
@@ -197,8 +278,8 @@ function capabilitySnapshot(helpText: string | null, checkedAt: string): Delamai
   };
 }
 
-function readCapabilities(checkedAt: string) {
-  return execDelamain(["--help"]).pipe(
+function readCapabilities(processRunner: ProcessRunner["Service"], checkedAt: string) {
+  return execDelamain(processRunner, ["--help"]).pipe(
     Effect.map((result) => capabilitySnapshot(result.stdout, checkedAt)),
     Effect.catch(() => Effect.succeed(capabilitySnapshot(null, checkedAt))),
   );
@@ -224,81 +305,94 @@ function replyArgs(input: Parameters<DelamainAdapterShape["sendPeerReply"]>[0]):
   return args;
 }
 
-const makeDelamainCliAdapterShape: DelamainAdapterShape = {
-  listPeers: () =>
-    Effect.gen(function* () {
-      const checkedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-      const [capabilities, peers] = yield* Effect.all([
-        readCapabilities(checkedAt),
-        runJson<unknown[]>("list", ["list"]),
-      ]);
-      return {
-        capabilities,
-        peers: peers.map(normalizePeer),
-      } satisfies DelamainPeerListResult;
-    }),
-  getPeerStatus: (input) =>
-    runJson<unknown>("status", ["status", input.peerId]).pipe(Effect.map(normalizePeer)),
-  readPeerLog: (input) => {
-    const lines = input.lines ?? DEFAULT_LOG_LINES;
-    return execDelamain(["log", input.peerId, String(lines)]).pipe(
-      Effect.map(
-        (result) =>
-          ({
-            peerId: input.peerId,
-            lines,
-            text: result.stdout,
-          }) satisfies DelamainPeerLogResult,
-      ),
-    );
-  },
-  spawnPeer: (input) => runJson<unknown>("spawn", spawnArgs(input)).pipe(Effect.map(normalizePeer)),
-  killPeer: (input) =>
-    runJson<unknown>("kill", ["kill", input.peerId, input.signal ?? "SIGTERM"]).pipe(
-      Effect.map(normalizePeer),
-    ),
-  sendPeerReply: (input) =>
-    runJson<unknown>("resume", replyArgs(input)).pipe(Effect.map(normalizePeer)),
-  waitForPeer: (input) =>
-    Effect.gen(function* () {
-      const timeoutMs = input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-      const startedAt = yield* Clock.currentTimeMillis;
-      const deadline = startedAt + timeoutMs;
+export const makeDelamainCliAdapter = Effect.gen(function* () {
+  const processRunner = yield* ProcessRunner;
 
-      while (true) {
-        const peer = yield* makeDelamainCliAdapterShape.getPeerStatus({ peerId: input.peerId });
-        if (TERMINAL_STATUSES.has(peer.status)) {
-          return peer;
-        }
-
-        const now = yield* Clock.currentTimeMillis;
-        if (now >= deadline) {
-          return yield* toDelamainError(`Timed out waiting for peer ${input.peerId}.`);
-        }
-
-        yield* Effect.sleep(Duration.millis(POLL_INTERVAL_MS));
-      }
-    }),
-  integratePeer: (input) =>
-    runJson<unknown>("integrate", ["integrate", input.peerId]).pipe(
-      Effect.map((value) => {
-        const record = rawRecord(value);
-        const peer = normalizePeer(record.peer ?? record);
+  const adapter: DelamainAdapterShape = {
+    listPeers: () =>
+      Effect.gen(function* () {
+        const checkedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+        const [capabilities, peers] = yield* Effect.all([
+          readCapabilities(processRunner, checkedAt),
+          runJson<unknown[]>(processRunner, "list", ["list"]),
+        ]);
         return {
-          peer,
-          prNumber:
-            typeof record.pr_number === "number"
-              ? record.pr_number
-              : typeof record.prNumber === "number"
-                ? record.prNumber
-                : null,
-          prUrl: nullableString(record.pr_url ?? record.prUrl),
-          autoMergeEnabled: Boolean(record.auto_merge_enabled ?? record.autoMergeEnabled),
-        } satisfies DelamainPeerIntegrateResult;
+          capabilities,
+          peers: peers.map(normalizePeer),
+        } satisfies DelamainPeerListResult;
       }),
-    ),
-};
+    getPeerStatus: (input) =>
+      runJson<unknown>(processRunner, "status", ["status", input.peerId]).pipe(
+        Effect.map(normalizePeer),
+      ),
+    readPeerLog: (input) => {
+      const lines = input.lines ?? DEFAULT_LOG_LINES;
+      return execDelamain(processRunner, ["log", input.peerId, String(lines)], {
+        outputMode: "truncate",
+      }).pipe(
+        Effect.map(
+          (result) =>
+            ({
+              peerId: input.peerId,
+              lines,
+              text: result.stdout,
+            }) satisfies DelamainPeerLogResult,
+        ),
+      );
+    },
+    spawnPeer: (input) =>
+      runJson<unknown>(processRunner, "spawn", spawnArgs(input)).pipe(Effect.map(normalizePeer)),
+    killPeer: (input) =>
+      runJson<unknown>(processRunner, "kill", [
+        "kill",
+        input.peerId,
+        input.signal ?? "SIGTERM",
+      ]).pipe(Effect.map(normalizePeer)),
+    sendPeerReply: (input) =>
+      runJson<unknown>(processRunner, "resume", replyArgs(input)).pipe(Effect.map(normalizePeer)),
+    waitForPeer: (input) =>
+      Effect.gen(function* () {
+        const timeoutMs = input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+        const startedAt = yield* Clock.currentTimeMillis;
+        const deadline = startedAt + timeoutMs;
 
-export const makeDelamainCliAdapter = Effect.succeed(makeDelamainCliAdapterShape);
+        while (true) {
+          const peer = yield* adapter.getPeerStatus({ peerId: input.peerId });
+          if (TERMINAL_STATUSES.has(peer.status)) {
+            return peer;
+          }
 
-export const DelamainCliAdapterLive = Layer.effect(DelamainAdapter, makeDelamainCliAdapter);
+          const now = yield* Clock.currentTimeMillis;
+          if (now >= deadline) {
+            return yield* toDelamainError(`Timed out waiting for peer ${input.peerId}.`);
+          }
+
+          yield* Effect.sleep(Duration.millis(POLL_INTERVAL_MS));
+        }
+      }),
+    integratePeer: (input) =>
+      runJson<unknown>(processRunner, "integrate", ["integrate", input.peerId]).pipe(
+        Effect.map((value) => {
+          const record = rawRecord(value);
+          const peer = normalizePeer(record.peer ?? record);
+          return {
+            peer,
+            prNumber:
+              typeof record.pr_number === "number"
+                ? record.pr_number
+                : typeof record.prNumber === "number"
+                  ? record.prNumber
+                  : null,
+            prUrl: nullableString(record.pr_url ?? record.prUrl),
+            autoMergeEnabled: Boolean(record.auto_merge_enabled ?? record.autoMergeEnabled),
+          } satisfies DelamainPeerIntegrateResult;
+        }),
+      ),
+  };
+
+  return adapter;
+});
+
+export const DelamainCliAdapterLive = Layer.effect(DelamainAdapter, makeDelamainCliAdapter).pipe(
+  Layer.provide(ProcessRunnerLive),
+);
