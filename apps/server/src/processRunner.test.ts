@@ -11,12 +11,14 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   isWindowsCommandNotFound,
+  make as makeProcessRunner,
   ProcessOutputLimitError,
   ProcessRunner,
   ProcessTimeoutError,
   layer as ProcessRunnerLive,
   type ProcessRunInput,
 } from "./processRunner.ts";
+import { RtkGateway, makeRtkGateway } from "./rtk/RtkGateway.ts";
 
 type ChildProcessCommand = {
   readonly command: string;
@@ -77,6 +79,17 @@ const runWith =
         ),
       ),
     );
+
+const runWithLayer = (layer: Layer.Layer<ProcessRunner>) => (input: ProcessRunInput) =>
+  Effect.service(ProcessRunner).pipe(
+    Effect.flatMap((runner) =>
+      runner.run({
+        ...input,
+        shell: input.shell ?? false,
+      }),
+    ),
+    Effect.provide(layer),
+  );
 
 describe("runProcess", () => {
   it.effect("collects stdout through an injected ChildProcessSpawner", () =>
@@ -177,6 +190,87 @@ describe("runProcess", () => {
       expect(result.stdout.length).toBeLessThanOrEqual(128);
       expect(result.stdoutTruncated).toBe(true);
       expect(result.stderrTruncated).toBe(false);
+    }),
+  );
+
+  it.effect("applies the opt-in RTK output transform to human-facing stdout", () =>
+    Effect.gen(function* () {
+      const calls: ChildProcessCommand[] = [];
+      const spawner = makeSpawner((command) =>
+        Effect.sync(() => {
+          calls.push(command);
+          if (command.command === "fake") {
+            return makeHandle({ stdout: "raw output" });
+          }
+          expect(command.command).toBe("rtk");
+          expect(command.args).toEqual(["pipe", "-f", "vitest"]);
+          return makeHandle({ stdout: "compacted output" });
+        }),
+      );
+      const rtkGateway = yield* makeRtkGateway({
+        env: { GITS_RTK_OUTPUT_GATEWAY: "1" },
+        runCommand: (input) =>
+          Effect.sync(() => {
+            expect(input.command).toBe("rtk");
+            expect(input.args).toEqual(["pipe", "-f", "vitest"]);
+            expect(input.stdin).toBe("raw output");
+            return {
+              stdout: "compacted output",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+            };
+          }),
+      });
+      const layer = Layer.effect(ProcessRunner, makeProcessRunner()).pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(Layer.succeed(RtkGateway, rtkGateway)),
+      );
+
+      const result = yield* runWithLayer(layer)({
+        command: "fake",
+        args: ["--transform"],
+        outputTransform: {
+          kind: "rtk-pipe",
+          filter: "vitest",
+        },
+      });
+
+      expect(result.stdout).toBe("compacted output");
+      expect(result.stderr).toBe("");
+      expect(calls).toEqual([
+        { command: "fake", args: ["--transform"] },
+      ]);
+    }),
+  );
+
+  it.effect("leaves output unchanged when the RTK gateway flag is off", () =>
+    Effect.gen(function* () {
+      let rtkCallCount = 0;
+      const spawner = makeSpawner(() => Effect.succeed(makeHandle({ stdout: "raw output" })));
+      const rtkGateway = yield* makeRtkGateway({
+        env: { GITS_RTK_OUTPUT_GATEWAY: "0" },
+        runCommand: () => {
+          rtkCallCount += 1;
+          return Effect.die("rtk should not run");
+        },
+      });
+      const layer = Layer.effect(ProcessRunner, makeProcessRunner()).pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(Layer.succeed(RtkGateway, rtkGateway)),
+      );
+
+      const result = yield* runWithLayer(layer)({
+        command: "fake",
+        args: ["--no-transform"],
+        outputTransform: {
+          kind: "rtk-pipe",
+          filter: "vitest",
+        },
+      });
+
+      expect(result.stdout).toBe("raw output");
+      expect(rtkCallCount).toBe(0);
     }),
   );
 

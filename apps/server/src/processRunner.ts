@@ -12,6 +12,17 @@ import {
   collectUint8StreamText,
   type CollectedUint8StreamText,
 } from "./stream/collectUint8StreamText.ts";
+import {
+  RtkGateway,
+  layer as RtkGatewayLive,
+  type RtkGatewayShape,
+} from "./rtk/RtkGateway.ts";
+
+export interface ProcessRunOutputTransform {
+  readonly kind: "rtk-pipe";
+  readonly filter: string;
+  readonly streams?: ReadonlyArray<"stdout" | "stderr"> | undefined;
+}
 
 export interface ProcessRunInput {
   readonly command: string;
@@ -24,6 +35,7 @@ export interface ProcessRunInput {
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
+  readonly outputTransform?: ProcessRunOutputTransform | undefined;
   readonly shell?: boolean | string | undefined;
   /**
    * On timeout, return a synthetic timedOut result.
@@ -95,6 +107,9 @@ export class ProcessRunner extends Context.Service<ProcessRunner, ProcessRunnerS
 
 const DEFAULT_TIMEOUT = "60 seconds";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const DEFAULT_OUTPUT_TRANSFORM_STREAMS = ["stdout"] as const satisfies ReadonlyArray<
+  "stdout" | "stderr"
+>;
 
 const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
   /is not recognized as an internal or external command/i,
@@ -113,6 +128,13 @@ export function isWindowsCommandNotFound(code: number | null, stderr: string): b
   if (process.platform !== "win32") return false;
   if (code === 9009) return true;
   return hasWindowsCommandNotFoundMessage(stderr);
+}
+
+function outputTransformIncludesStream(
+  transform: ProcessRunOutputTransform,
+  stream: "stdout" | "stderr",
+): boolean {
+  return (transform.streams ?? DEFAULT_OUTPUT_TRANSFORM_STREAMS).includes(stream);
 }
 
 const collectText = Effect.fn("processRunner.collectText")(function* (input: {
@@ -322,15 +344,55 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
+const applyOutputTransform = Effect.fn("processRunner.applyOutputTransform")(function* (
+  rtkGateway: RtkGatewayShape,
+  input: ProcessRunInput,
+  output: ProcessRunOutput,
+) {
+  const transform = input.outputTransform;
+  if (transform === undefined) {
+    return output;
+  }
+
+  switch (transform.kind) {
+    case "rtk-pipe": {
+      const stdout = outputTransformIncludesStream(transform, "stdout")
+        ? yield* rtkGateway.pipeText({
+            filter: transform.filter,
+            text: output.stdout,
+          })
+        : output.stdout;
+      const stderr = outputTransformIncludesStream(transform, "stderr")
+        ? yield* rtkGateway.pipeText({
+            filter: transform.filter,
+            text: output.stderr,
+          })
+        : output.stderr;
+
+      return {
+        ...output,
+        stdout,
+        stderr,
+      } satisfies ProcessRunOutput;
+    }
+  }
+});
+
 export const make = Effect.fn("makeProcessRunner")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const rtkGateway = yield* RtkGateway;
 
   const run: ProcessRunnerShape["run"] = (input) =>
-    finalizeRunProcess(runProcessCore(spawner, input), input);
+    finalizeRunProcess(
+      runProcessCore(spawner, input).pipe(
+        Effect.flatMap((output) => applyOutputTransform(rtkGateway, input, output)),
+      ),
+      input,
+    );
 
   return ProcessRunner.of({
     run,
   });
 });
 
-export const layer = Layer.effect(ProcessRunner, make());
+export const layer = Layer.effect(ProcessRunner, make()).pipe(Layer.provideMerge(RtkGatewayLive));
