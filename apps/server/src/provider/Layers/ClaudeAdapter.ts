@@ -76,6 +76,10 @@ import {
   resolveClaudeEffort,
 } from "./ClaudeProvider.ts";
 import {
+  rewriteClaudeToolInputWithRtkIfEnabled,
+  type ClaudeRtkRewriteRunner,
+} from "./ClaudeRtkToolRewrite.ts";
+import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
   ProviderAdapterSessionClosedError,
@@ -198,6 +202,7 @@ export interface ClaudeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+  readonly rtkRewriteRunner?: ClaudeRtkRewriteRunner;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -2779,17 +2784,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
+        const updatedToolInput = yield* Effect.promise(() =>
+          rewriteClaudeToolInputWithRtkIfEnabled(toolName, toolInput, {
+            env: claudeEnvironment,
+            ...(options?.rtkRewriteRunner ? { run: options.rtkRewriteRunner } : {}),
+          }),
+        );
+
         const runtimeMode = input.runtimeMode ?? "full-access";
         if (runtimeMode === "full-access") {
           return {
             behavior: "allow",
-            updatedInput: toolInput,
+            updatedInput: updatedToolInput,
           } satisfies PermissionResult;
         }
 
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
         const requestType = classifyRequestType(toolName);
-        const detail = summarizeToolRequest(toolName, toolInput);
+        const detail = summarizeToolRequest(toolName, updatedToolInput);
         const decisionDeferred = yield* Deferred.make<ProviderApprovalDecision>();
         const pendingApproval: PendingApproval = {
           requestType,
@@ -2812,7 +2824,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             detail,
             args: {
               toolName,
-              input: toolInput,
+              input: updatedToolInput,
               ...(callbackOptions.toolUseID ? { toolUseId: callbackOptions.toolUseID } : {}),
             },
           },
@@ -2824,7 +2836,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             method: "canUseTool/request",
             payload: {
               toolName,
-              input: toolInput,
+              input: updatedToolInput,
             },
           },
         });
@@ -2874,7 +2886,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         if (decision === "accept" || decision === "acceptForSession") {
           return {
             behavior: "allow",
-            updatedInput: toolInput,
+            updatedInput: updatedToolInput,
             ...(decision === "acceptForSession" && pendingApproval.suggestions
               ? {
                   updatedPermissions: [...pendingApproval.suggestions],

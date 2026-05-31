@@ -38,6 +38,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import type { ClaudeRtkRewriteRunner } from "./ClaudeRtkToolRewrite.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -156,6 +157,8 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly rtkRewriteRunner?: ClaudeRtkRewriteRunner;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -167,10 +170,16 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.environment ? { environment: config.environment } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
     },
+    ...(config?.rtkRewriteRunner
+      ? {
+          rtkRewriteRunner: config.rtkRewriteRunner,
+        }
+      : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -2532,6 +2541,329 @@ describe("ClaudeAdapterLive", () => {
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
       assert.equal((permissionResult as PermissionResult).behavior, "allow");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rewrites Bash tool inputs before approval and returns the rewritten input", () => {
+    const rewriteCalls: Array<{
+      readonly bin: string;
+      readonly command: string;
+      readonly env: NodeJS.ProcessEnv;
+    }> = [];
+    const harness = makeHarness({
+      environment: {
+        ...process.env,
+        GITS_RTK_REWRITE_TOOLS: "1",
+        GITS_RTK_BIN: "/custom/rtk",
+      },
+      rtkRewriteRunner: async (input) => {
+        rewriteCalls.push(input);
+        return {
+          code: 0,
+          stdout: `rtk wrapped -- ${input.command}\n`,
+        };
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionPromise = canUseTool(
+        "Bash",
+        { command: "git diff --stat", cwd: "/repo" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-rewrite-approval",
+        },
+      );
+
+      const requested = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(requested._tag, "Some");
+      if (requested._tag !== "Some" || requested.value.type !== "request.opened") {
+        return;
+      }
+      assert.deepEqual(rewriteCalls, [
+        {
+          bin: "/custom/rtk",
+          command: "git diff --stat",
+          env: {
+            ...process.env,
+            GITS_RTK_REWRITE_TOOLS: "1",
+            GITS_RTK_BIN: "/custom/rtk",
+          },
+        },
+      ]);
+      assert.equal(requested.value.payload.detail, "Bash: rtk wrapped -- git diff --stat");
+      assert.deepEqual(requested.value.payload.args, {
+        toolName: "Bash",
+        input: {
+          command: "rtk wrapped -- git diff --stat",
+          cwd: "/repo",
+        },
+        toolUseId: "tool-rewrite-approval",
+      });
+
+      yield* adapter.respondToRequest(
+        session.threadId,
+        ApprovalRequestId.make(String(requested.value.requestId)),
+        "accept",
+      );
+      yield* Stream.runHead(adapter.streamEvents);
+
+      const permissionResult = yield* Effect.promise(() => permissionPromise);
+      assert.deepEqual(permissionResult, {
+        behavior: "allow",
+        updatedInput: {
+          command: "rtk wrapped -- git diff --stat",
+          cwd: "/repo",
+        },
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rewrites Bash tool inputs in full-access mode", () => {
+    const harness = makeHarness({
+      environment: {
+        ...process.env,
+        GITS_RTK_REWRITE_TOOLS: "true",
+        RTK_BIN: "/fallback/rtk",
+      },
+      rtkRewriteRunner: async (input) => ({
+        code: 0,
+        stdout: `rewritten:${input.bin}:${input.command}\n`,
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionResult = yield* Effect.promise(() =>
+        canUseTool(
+          "Bash",
+          { command: "pwd", cwd: "/repo" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-rewrite-full-access",
+          },
+        ),
+      );
+
+      assert.deepEqual(permissionResult, {
+        behavior: "allow",
+        updatedInput: {
+          command: "rewritten:/fallback/rtk:pwd",
+          cwd: "/repo",
+        },
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("skips Claude RTK rewrites when the flag is disabled", () => {
+    const rewriteCalls: Array<string> = [];
+    const harness = makeHarness({
+      environment: {
+        ...process.env,
+        GITS_RTK_REWRITE_TOOLS: "0",
+      },
+      rtkRewriteRunner: async (input) => {
+        rewriteCalls.push(input.command);
+        return {
+          code: 0,
+          stdout: "rewritten-but-should-not-run\n",
+        };
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionResult = yield* Effect.promise(() =>
+        canUseTool(
+          "Bash",
+          { command: "pwd", cwd: "/repo" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-rewrite-disabled",
+          },
+        ),
+      );
+
+      assert.deepEqual(permissionResult, {
+        behavior: "allow",
+        updatedInput: {
+          command: "pwd",
+          cwd: "/repo",
+        },
+      } satisfies PermissionResult);
+      assert.deepEqual(rewriteCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("falls back to the original Bash input when RTK is unavailable", () => {
+    const harness = makeHarness({
+      environment: {
+        ...process.env,
+        GITS_RTK_REWRITE_TOOLS: "1",
+      },
+      rtkRewriteRunner: async () => {
+        throw new Error("spawn ENOENT");
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionResult = yield* Effect.promise(() =>
+        canUseTool(
+          "Bash",
+          { command: "pwd", cwd: "/repo" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-rewrite-unavailable",
+          },
+        ),
+      );
+
+      assert.deepEqual(permissionResult, {
+        behavior: "allow",
+        updatedInput: {
+          command: "pwd",
+          cwd: "/repo",
+        },
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not rewrite non-shell Claude tools", () => {
+    const rewriteCalls: Array<string> = [];
+    const harness = makeHarness({
+      environment: {
+        ...process.env,
+        GITS_RTK_REWRITE_TOOLS: "1",
+      },
+      rtkRewriteRunner: async (input) => {
+        rewriteCalls.push(input.command);
+        return {
+          code: 0,
+          stdout: "rewritten\n",
+        };
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionResult = yield* Effect.promise(() =>
+        canUseTool(
+          "Edit",
+          { command: "pwd", file_path: "src/app.ts", old_string: "a", new_string: "b" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-rewrite-edit",
+          },
+        ),
+      );
+
+      assert.deepEqual(permissionResult, {
+        behavior: "allow",
+        updatedInput: {
+          command: "pwd",
+          file_path: "src/app.ts",
+          old_string: "a",
+          new_string: "b",
+        },
+      } satisfies PermissionResult);
+      assert.deepEqual(rewriteCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
