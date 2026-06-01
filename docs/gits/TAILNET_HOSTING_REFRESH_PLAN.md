@@ -77,41 +77,68 @@ Use `bun run dev` for local iteration. Use built `dist/bin.mjs serve` for the pe
 
 ## Build And Deploy Flow
 
-Create a deploy script in the next implementation slice:
+The repo now carries reviewable deployment scripts under `scripts/gits-hosting/`.
+
+1. Install or refresh the WSL user service from the interactive checkout:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-cd /home/joshua/dev/projects/t3code-gits-hosted
-git fetch origin feat/gits-rtk-output-gateway
-git checkout feat/gits-rtk-output-gateway
-git reset --hard origin/feat/gits-rtk-output-gateway
-bun install --frozen-lockfile
-bun run build
-systemctl --user restart gits-cockpit.service
-systemctl --user status --no-pager gits-cockpit.service
-curl -I --max-time 8 http://127.0.0.1:13773/gits
-curl -k -I --max-time 8 https://subject28.taild6d729.ts.net:8443/gits
+cd /home/joshua/dev/projects/t3code
+./scripts/gits-hosting/install-wsl-user-service.sh \
+  --repo /home/joshua/dev/projects/t3code \
+  --worktree /home/joshua/dev/projects/t3code-gits-hosted \
+  --branch feat/gits-rtk-output-gateway \
+  --service gits-cockpit.service \
+  --port 13773 \
+  --t3code-home /home/joshua/.t3
 ```
 
-Do not run this against `/home/joshua/dev/projects/t3code`; that checkout is dirty and should stay available for interactive work.
+2. Create or refresh the clean deploy worktree, build it, write metadata, and restart the user service:
+
+```bash
+cd /home/joshua/dev/projects/t3code
+./scripts/gits-hosting/deploy-gits-tailnet-hosted.sh \
+  --repo /home/joshua/dev/projects/t3code \
+  --worktree /home/joshua/dev/projects/t3code-gits-hosted \
+  --branch feat/gits-rtk-output-gateway \
+  --service gits-cockpit.service \
+  --port 13773
+```
+
+Behavior:
+
+- Fetches `origin/feat/gits-rtk-output-gateway`
+- Creates `/home/joshua/dev/projects/t3code-gits-hosted` as a managed detached worktree on first run
+- Hard-resets the managed worktree to the remote branch on subsequent runs
+- Runs `bun install --frozen-lockfile`
+- Runs `bun run build --filter=t3`
+- Writes build provenance to `/home/joshua/dev/projects/t3code-gits-hosted/apps/server/dist/gits-build-metadata.json`
+- Restarts `gits-cockpit.service`
+- Runs a local `curl -I http://127.0.0.1:13773/gits` health check when `curl` is available
+
+Do not point these scripts at `/home/joshua/dev/projects/t3code` as the served worktree. That checkout is intentionally dirty and should remain available for interactive work.
 
 ## Systemd Service
 
-Create a WSL user service:
+`scripts/gits-hosting/install-wsl-user-service.sh` writes the unit to:
+
+```text
+~/.config/systemd/user/gits-cockpit.service
+```
+
+Installed unit shape:
 
 ```ini
 [Unit]
-Description=GITS Cockpit
+Description=Hosted GITS cockpit
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=/home/joshua/dev/projects/t3code-gits-hosted
 Environment=NODE_ENV=production
 Environment=T3CODE_HOME=/home/joshua/.t3
-ExecStart=/home/joshua/.nvm/versions/node/v24.12.0/bin/node apps/server/dist/bin.mjs serve --host 0.0.0.0 --port 13773
+ExecStart=<detected-node-path> apps/server/dist/bin.mjs serve --host 0.0.0.0 --port 13773
 Restart=on-failure
 RestartSec=3
 
@@ -122,8 +149,8 @@ WantedBy=default.target
 Notes:
 
 - `T3CODE_HOME=/home/joshua/.t3` preserves current state behavior because the existing process has no explicit `T3CODE_HOME` and therefore uses the default.
-- User linger is already enabled, so the service can survive terminal logout.
-- The first implementation slice should confirm the exact Node path at deploy time instead of hard-coding a stale version forever.
+- The install script rewrites `ExecStart` using the current `command -v node`, so the unit refresh does not stay pinned to an obsolete Node path.
+- If linger is not already enabled, the install script prints `sudo loginctl enable-linger $USER`.
 
 ## Tailnet Exposure Model
 
@@ -136,13 +163,31 @@ Tailnet HTTPS :8443
   -> WSL GITS server on <WSL-IP>:13773
 ```
 
-Required Windows-side verification:
+Configure the Windows side from an elevated PowerShell session:
+
+```powershell
+cd C:\Users\joshua\dev\projects\t3code
+powershell -ExecutionPolicy Bypass -File .\scripts\gits-hosting\Set-GitsTailnetPortProxy.ps1 `
+  -WslDistro Ubuntu `
+  -LocalPort 13773 `
+  -TailnetHttpsPort 8443
+```
+
+Script behavior:
+
+- Resolves the current WSL IPv4 address
+- Replaces the Windows `netsh interface portproxy` rule for `127.0.0.1:13773`
+- Runs `tailscale funnel --https=8443 http://127.0.0.1:13773 off` best-effort
+- Runs `tailscale serve --bg --https=8443 http://127.0.0.1:13773`
+- Prints `tailscale serve status`, `tailscale funnel status`, and `netsh interface portproxy show v4tov4`
+
+Required Windows-side verification after the script runs:
 
 ```powershell
 tailscale serve status
 tailscale funnel status
 netsh interface portproxy show v4tov4
-Get-NetFirewallRule | ? DisplayName -match 'GITS|13773|8443|Tailscale'
+Get-NetFirewallRule | Where-Object DisplayName -match 'GITS|13773|8443|Tailscale'
 ```
 
 Security requirements:
@@ -158,15 +203,23 @@ The WSL process may need to listen on `0.0.0.0:13773` if Windows portproxy conne
 
 Add build provenance before relying on the hosted cockpit for operations.
 
-Recommended implementation:
+Current implementation:
 
-- Generate a build metadata file during deploy or build:
+- `scripts/gits-hosting/deploy-gits-tailnet-hosted.sh` writes `apps/server/dist/gits-build-metadata.json` with:
   - branch
+  - source ref
   - commit SHA
+  - short SHA
   - build time
-  - dirty flag
-  - source worktree path
-- Expose it through a small server endpoint, for example `/api/gits/build-info`.
+  - tracked dirty flag
+  - source repo path
+  - worktree path
+  - Node version
+  - Bun version
+
+Follow-up implementation still needed:
+
+- Expose the metadata through a server endpoint, for example `/api/gits/build-info`.
 - Render it in the GITS cockpit header or footer.
 
 Acceptance:
@@ -176,21 +229,18 @@ Acceptance:
 
 ## Rollout Plan
 
-1. Prepare the clean deploy worktree from `origin/feat/gits-rtk-output-gateway`.
-2. Run `bun install --frozen-lockfile`.
-3. Run `bun run build`.
-4. Add build provenance endpoint/UI.
-5. Create and enable `gits-cockpit.service`.
-6. Stop the manual `dist/bin.mjs serve` process.
-7. Start `gits-cockpit.service`.
-8. Verify local health: `curl -I http://127.0.0.1:13773/gits`.
-9. Verify Tailnet health: `curl -k -I https://subject28.taild6d729.ts.net:8443/gits`.
-10. Verify cockpit surfaces:
-    - Delamain peer fleet visible
-    - Open GSD visible
-    - Automode visible
-    - Build info shows the latest deployed commit
-11. Verify Windows Tailscale Serve remains Tailnet-only and Funnel is off for `:8443`.
+1. Run `./scripts/gits-hosting/install-wsl-user-service.sh --repo /home/joshua/dev/projects/t3code --worktree /home/joshua/dev/projects/t3code-gits-hosted --branch feat/gits-rtk-output-gateway --service gits-cockpit.service --port 13773 --t3code-home /home/joshua/.t3`.
+2. Run `./scripts/gits-hosting/deploy-gits-tailnet-hosted.sh --repo /home/joshua/dev/projects/t3code --worktree /home/joshua/dev/projects/t3code-gits-hosted --branch feat/gits-rtk-output-gateway --service gits-cockpit.service --port 13773`.
+3. Stop the manual `dist/bin.mjs serve` process once the user service is healthy.
+4. Run `powershell -ExecutionPolicy Bypass -File .\scripts\gits-hosting\Set-GitsTailnetPortProxy.ps1 -WslDistro Ubuntu -LocalPort 13773 -TailnetHttpsPort 8443` from an elevated Windows PowerShell session.
+5. Verify local health: `curl -I http://127.0.0.1:13773/gits`.
+6. Verify Tailnet health: `curl -k -I https://subject28.taild6d729.ts.net:8443/gits`.
+7. Verify cockpit surfaces:
+   - Delamain peer fleet visible
+   - Open GSD visible
+   - Automode visible
+   - `apps/server/dist/gits-build-metadata.json` shows the latest deployed commit
+8. Verify Windows Tailscale Serve remains Tailnet-only and Funnel is off for `:8443`.
 
 ## Open Decisions
 
