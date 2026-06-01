@@ -227,6 +227,15 @@ export type GitsCockpitSnapshot = typeof GitsCockpitSnapshot.Type;
 export const GitsCockpitInput = Schema.Struct({});
 export type GitsCockpitInput = typeof GitsCockpitInput.Type;
 
+export const GitsBuildInfo = Schema.Struct({
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  commit: Schema.NullOr(TrimmedNonEmptyString),
+  time: Schema.NullOr(TrimmedNonEmptyString),
+  dirty: Schema.NullOr(Schema.Boolean),
+  sourcePath: Schema.NullOr(PathString),
+});
+export type GitsBuildInfo = typeof GitsBuildInfo.Type;
+
 export const DelamainEngine = Schema.Literals(["codex", "cursor", "unknown"]);
 export type DelamainEngine = typeof DelamainEngine.Type;
 

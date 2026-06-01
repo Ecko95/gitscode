@@ -7,6 +7,7 @@ import {
   type AutomodeGoal,
   type AutomodeSnapshot,
   type DelamainPeer,
+  type GitsBuildInfo,
   type OpenGsdCommandResult,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -83,6 +84,10 @@ import {
   GitsPlanningScanner,
   type GitsPlanningScannerShape,
 } from "./gits/Services/GitsPlanningScanner.ts";
+import {
+  GitsBuildInfoResolver,
+  type GitsBuildInfoResolverShape,
+} from "./gits/Services/GitsBuildInfo.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
 import {
@@ -224,6 +229,13 @@ const defaultAutomodeDispatchResult: AutomodeDispatchResult = {
   peer: null,
   approvalRequired: false,
   blockedReason: null,
+};
+const defaultGitsBuildInfo: GitsBuildInfo = {
+  branch: null,
+  commit: null,
+  time: null,
+  dirty: null,
+  sourcePath: null,
 };
 const testEnvironmentDescriptor = {
   environmentId: EnvironmentId.make("environment-test"),
@@ -432,6 +444,7 @@ const buildAppUnderTest = (options?: {
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
     gitsPlanningScanner?: Partial<GitsPlanningScannerShape>;
+    gitsBuildInfoResolver?: Partial<GitsBuildInfoResolverShape>;
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
     automodeSupervisor?: Partial<AutomodeSupervisorShape>;
@@ -614,6 +627,10 @@ const buildAppUnderTest = (options?: {
         })
       : VcsStatusBroadcaster.layer.pipe(Layer.provide(gitWorkflowLayer));
     const gitsTestLayer = Layer.mergeAll(
+      Layer.mock(GitsBuildInfoResolver)({
+        getBuildInfo: () => Effect.succeed(defaultGitsBuildInfo),
+        ...options?.layers?.gitsBuildInfoResolver,
+      }),
       Layer.mock(GitsPlanningScanner)({
         scan: () =>
           Effect.succeed({
@@ -1216,6 +1233,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assertBrowserApiCorsHeaders(response.headers);
       assert.deepEqual(body, testEnvironmentDescriptor);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves public GITS build info without requiring auth", () =>
+    Effect.gen(function* () {
+      const expectedBuildInfo: GitsBuildInfo = {
+        branch: "feat/gits-tailnet-hosting-refresh",
+        commit: "abcdef1234567890",
+        time: "2026-06-02T10:00:00.000Z",
+        dirty: false,
+        sourcePath: "/srv/t3code/current",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitsBuildInfoResolver: {
+            getBuildInfo: () => Effect.succeed(expectedBuildInfo),
+          },
+        },
+      });
+
+      const response = yield* HttpClient.get("/api/gits/build-info", {
+        headers: {
+          origin: crossOriginClientOrigin,
+        },
+      });
+      const body = (yield* response.json) as GitsBuildInfo;
+
+      assert.equal(response.status, 200);
+      assertBrowserApiCorsHeaders(response.headers);
+      assert.deepEqual(body, expectedBuildInfo);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

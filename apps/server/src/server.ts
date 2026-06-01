@@ -50,6 +50,7 @@ import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { DelamainCliAdapterLive } from "./gits/Layers/DelamainCliAdapter.ts";
+import { GitsBuildInfoResolverLive } from "./gits/Layers/GitsBuildInfo.ts";
 import { GitsPlanningScannerLive } from "./gits/Layers/GitsPlanningScanner.ts";
 import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
 import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
@@ -96,6 +97,7 @@ import {
 } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import { gitsBuildInfoRouteLayer } from "./gits/http.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -215,6 +217,7 @@ const AutomodeUsageMeterLayerLive = AutomodeUsageMeterLive.pipe(
 );
 
 const GitsLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(GitsBuildInfoResolverLive),
   Layer.provideMerge(DelamainCliAdapterLive),
   Layer.provideMerge(OpenGsdCliAdapterLive),
   Layer.provideMerge(GitsPlanningScannerLive),
@@ -334,6 +337,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   attachmentsRouteLayer,
+  gitsBuildInfoRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
   otlpTracesProxyRouteLayer,
