@@ -91,10 +91,10 @@ function decodeBuildInfoJson(input: unknown): GitsBuildInfo {
   const record = input as Record<string, unknown>;
   return decodeNormalizedBuildInfo({
     branch: normalizeOptionalString("branch", record.branch),
-    commit: normalizeOptionalString("commit", record.commit),
-    time: normalizeOptionalString("time", record.time ?? record.buildTime),
-    dirty: normalizeOptionalBoolean("dirty", record.dirty),
-    sourcePath: normalizeOptionalString("sourcePath", record.sourcePath),
+    commit: normalizeOptionalString("commit", record.commit ?? record.commitSha),
+    time: normalizeOptionalString("time", record.time ?? record.buildTime ?? record.buildTimeUtc),
+    dirty: normalizeOptionalBoolean("dirty", record.dirty ?? record.trackedDirty),
+    sourcePath: normalizeOptionalString("sourcePath", record.sourcePath ?? record.worktree),
   });
 }
 

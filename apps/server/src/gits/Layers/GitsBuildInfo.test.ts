@@ -17,7 +17,7 @@ describe("GitsBuildInfoResolverLive", () => {
       const filePath = path.join(tempDir, "build-info.json");
       yield* fileSystem.writeFileString(
         filePath,
-        `{"branch":"feat/file","commit":"file-commit","buildTime":"2026-06-02T10:00:00.000Z","dirty":false,"sourcePath":"/srv/file-build"}`,
+        `{"branch":"feat/file","commitSha":"file-commit","buildTimeUtc":"2026-06-02T10:00:00.000Z","trackedDirty":false,"worktree":"/srv/file-build"}`,
       );
 
       const resolver = yield* makeGitsBuildInfoResolver({

@@ -16,7 +16,7 @@ Options:
   --repo PATH                    Source repo that owns the git worktree.
   --worktree PATH                Clean deploy worktree path.
   --remote NAME                  Git remote to fetch. Default: origin
-  --branch NAME                  Branch to deploy. Default: feat/gits-rtk-output-gateway
+  --branch NAME                  Branch to deploy. Default: feat/gits-tailnet-hosting-refresh
   --service NAME                 User service name. Default: gits-cockpit.service
   --port PORT                    Hosted HTTP port inside WSL. Default: 13773
   --t3code-home PATH             T3 Code state directory. Default: $HOME/.t3
@@ -129,10 +129,15 @@ const [
 const metadata = {
   branch,
   sourceRef: `${remote}/${branch}`,
+  commit: commitSha,
   commitSha,
   commitShortSha,
+  time: buildTimeUtc,
+  buildTime: buildTimeUtc,
   buildTimeUtc,
+  dirty: trackedDirty === "true",
   trackedDirty: trackedDirty === "true",
+  sourcePath: worktree,
   sourceRepo,
   worktree,
   nodeVersion,

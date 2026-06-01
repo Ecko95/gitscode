@@ -6,7 +6,7 @@ fi
 readonly GITS_HOSTING_COMMON_SH_LOADED=1
 
 readonly GITS_HOSTING_DEFAULT_REMOTE="origin"
-readonly GITS_HOSTING_DEFAULT_BRANCH="feat/gits-rtk-output-gateway"
+readonly GITS_HOSTING_DEFAULT_BRANCH="feat/gits-tailnet-hosting-refresh"
 readonly GITS_HOSTING_DEFAULT_REPO="${HOME}/dev/projects/t3code"
 readonly GITS_HOSTING_DEFAULT_WORKTREE="${HOME}/dev/projects/t3code-gits-hosted"
 readonly GITS_HOSTING_DEFAULT_SERVICE="gits-cockpit.service"

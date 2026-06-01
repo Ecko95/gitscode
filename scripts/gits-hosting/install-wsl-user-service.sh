@@ -15,7 +15,7 @@ Options:
   --repo PATH                 Source repo used to run the deploy scripts.
   --worktree PATH             Clean deploy worktree served by systemd.
   --remote NAME               Git remote to fetch. Default: origin
-  --branch NAME               Branch to deploy. Default: feat/gits-rtk-output-gateway
+  --branch NAME               Branch to deploy. Default: feat/gits-tailnet-hosting-refresh
   --service NAME              User service name. Default: gits-cockpit.service
   --port PORT                 Hosted HTTP port inside WSL. Default: 13773
   --t3code-home PATH          T3 Code state directory. Default: $HOME/.t3
@@ -55,6 +55,7 @@ gits_hosting_require_command node
 
 node_path="$(command -v node)"
 unit_path="$(gits_hosting_service_unit_path)"
+metadata_path="$(gits_hosting_metadata_path)"
 mkdir -p "$(dirname "$unit_path")"
 
 cat >"$unit_path" <<EOF
@@ -68,6 +69,7 @@ Type=simple
 WorkingDirectory=${gits_hosting_worktree}
 Environment=NODE_ENV=production
 Environment=T3CODE_HOME=${gits_hosting_t3code_home}
+Environment=GITS_BUILD_INFO_PATH=${metadata_path}
 ExecStart=${node_path} apps/server/dist/bin.mjs serve --host 0.0.0.0 --port ${gits_hosting_port}
 Restart=on-failure
 RestartSec=3
@@ -85,6 +87,7 @@ fi
 
 gits_hosting_log "Installed user service: $unit_path"
 gits_hosting_log "Service command: ${node_path} apps/server/dist/bin.mjs serve --host 0.0.0.0 --port ${gits_hosting_port}"
+gits_hosting_log "Build metadata path: $metadata_path"
 
 if command -v loginctl >/dev/null 2>&1; then
   linger_status="$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)"

@@ -95,16 +95,13 @@ Invoke-Checked -Command netsh -Arguments @(
 )
 
 if (-not $SkipFunnelDisable) {
-    Write-Step "Disabling Funnel on :$TailnetHttpsPort if it exists"
-    try {
-        Invoke-Checked -Command tailscale -Arguments @(
-            "funnel",
-            "--https=$TailnetHttpsPort",
-            "http://${ListenAddress}:$LocalPort",
-            "off"
-        )
-    } catch {
-        Write-Step "No matching Funnel route was disabled."
+    Write-Step "Checking Funnel status for :$TailnetHttpsPort"
+    $funnelStatus = (& tailscale funnel status 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0 -and $funnelStatus -match ":$TailnetHttpsPort(\b|/)") {
+        throw "Funnel appears to be enabled on :$TailnetHttpsPort. Remove that Funnel route before running this script. Refusing to run 'tailscale funnel reset' because it can remove unrelated public funnels."
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Step "Could not read Funnel status; continuing without changing Funnel config."
     }
 }
 
@@ -113,6 +110,7 @@ if (-not $SkipServe) {
     Invoke-Checked -Command tailscale -Arguments @(
         "serve",
         "--bg",
+        "--yes",
         "--https=$TailnetHttpsPort",
         "http://${ListenAddress}:$LocalPort"
     )

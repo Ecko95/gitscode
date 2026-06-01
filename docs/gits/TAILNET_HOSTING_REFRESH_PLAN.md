@@ -23,6 +23,8 @@ Observed from WSL:
 - Live repo state: dirty with GITS branding/assets work
 - Latest RTK/GITS integration branch: `feat/gits-rtk-output-gateway`
 - Latest RTK/GITS integration head: `943e0c73`
+- `origin/main` has been fast-forwarded to `943e0c73`, so main now includes both `feat/gits-readonly-foundation` and `feat/gits-rtk-output-gateway`.
+- Hosting refresh implementation branch: `feat/gits-tailnet-hosting-refresh`
 
 Interpretation:
 
@@ -57,7 +59,7 @@ Recommended deploy worktree:
 Recommended source branch for the next deploy:
 
 ```text
-origin/feat/gits-rtk-output-gateway
+origin/feat/gits-tailnet-hosting-refresh
 ```
 
 The systemd service should run a built artifact from this clean deploy worktree:
@@ -86,7 +88,7 @@ cd /home/joshua/dev/projects/t3code
 ./scripts/gits-hosting/install-wsl-user-service.sh \
   --repo /home/joshua/dev/projects/t3code \
   --worktree /home/joshua/dev/projects/t3code-gits-hosted \
-  --branch feat/gits-rtk-output-gateway \
+  --branch feat/gits-tailnet-hosting-refresh \
   --service gits-cockpit.service \
   --port 13773 \
   --t3code-home /home/joshua/.t3
@@ -99,14 +101,14 @@ cd /home/joshua/dev/projects/t3code
 ./scripts/gits-hosting/deploy-gits-tailnet-hosted.sh \
   --repo /home/joshua/dev/projects/t3code \
   --worktree /home/joshua/dev/projects/t3code-gits-hosted \
-  --branch feat/gits-rtk-output-gateway \
+  --branch feat/gits-tailnet-hosting-refresh \
   --service gits-cockpit.service \
   --port 13773
 ```
 
 Behavior:
 
-- Fetches `origin/feat/gits-rtk-output-gateway`
+- Fetches `origin/feat/gits-tailnet-hosting-refresh`
 - Creates `/home/joshua/dev/projects/t3code-gits-hosted` as a managed detached worktree on first run
 - Hard-resets the managed worktree to the remote branch on subsequent runs
 - Runs `bun install --frozen-lockfile`
@@ -138,6 +140,7 @@ Type=simple
 WorkingDirectory=/home/joshua/dev/projects/t3code-gits-hosted
 Environment=NODE_ENV=production
 Environment=T3CODE_HOME=/home/joshua/.t3
+Environment=GITS_BUILD_INFO_PATH=/home/joshua/dev/projects/t3code-gits-hosted/apps/server/dist/gits-build-metadata.json
 ExecStart=<detected-node-path> apps/server/dist/bin.mjs serve --host 0.0.0.0 --port 13773
 Restart=on-failure
 RestartSec=3
@@ -149,6 +152,7 @@ WantedBy=default.target
 Notes:
 
 - `T3CODE_HOME=/home/joshua/.t3` preserves current state behavior because the existing process has no explicit `T3CODE_HOME` and therefore uses the default.
+- `GITS_BUILD_INFO_PATH` points at the metadata file written by the deploy script, so the hosted cockpit can prove which branch/commit it is serving.
 - The install script rewrites `ExecStart` using the current `command -v node`, so the unit refresh does not stay pinned to an obsolete Node path.
 - If linger is not already enabled, the install script prints `sudo loginctl enable-linger $USER`.
 
@@ -177,8 +181,8 @@ Script behavior:
 
 - Resolves the current WSL IPv4 address
 - Replaces the Windows `netsh interface portproxy` rule for `127.0.0.1:13773`
-- Runs `tailscale funnel --https=8443 http://127.0.0.1:13773 off` best-effort
-- Runs `tailscale serve --bg --https=8443 http://127.0.0.1:13773`
+- Checks `tailscale funnel status` and refuses to continue if Funnel appears to use `:8443`
+- Runs `tailscale serve --bg --yes --https=8443 http://127.0.0.1:13773`
 - Prints `tailscale serve status`, `tailscale funnel status`, and `netsh interface portproxy show v4tov4`
 
 Required Windows-side verification after the script runs:
@@ -201,8 +205,6 @@ The WSL process may need to listen on `0.0.0.0:13773` if Windows portproxy conne
 
 ## Version Visibility
 
-Add build provenance before relying on the hosted cockpit for operations.
-
 Current implementation:
 
 - `scripts/gits-hosting/deploy-gits-tailnet-hosted.sh` writes `apps/server/dist/gits-build-metadata.json` with:
@@ -216,21 +218,18 @@ Current implementation:
   - worktree path
   - Node version
   - Bun version
-
-Follow-up implementation still needed:
-
-- Expose the metadata through a server endpoint, for example `/api/gits/build-info`.
-- Render it in the GITS cockpit header or footer.
+- `GET /api/gits/build-info` exposes normalized build metadata without auth.
+- The GITS cockpit Overview tab renders the provenance when the endpoint is available and degrades cleanly when it is missing.
 
 Acceptance:
 
-- The hosted page visibly reports `feat/gits-rtk-output-gateway` and the current commit.
+- The hosted page visibly reports `feat/gits-tailnet-hosting-refresh` and the current commit.
 - The operator can tell immediately whether Tailnet is showing a stale build.
 
 ## Rollout Plan
 
-1. Run `./scripts/gits-hosting/install-wsl-user-service.sh --repo /home/joshua/dev/projects/t3code --worktree /home/joshua/dev/projects/t3code-gits-hosted --branch feat/gits-rtk-output-gateway --service gits-cockpit.service --port 13773 --t3code-home /home/joshua/.t3`.
-2. Run `./scripts/gits-hosting/deploy-gits-tailnet-hosted.sh --repo /home/joshua/dev/projects/t3code --worktree /home/joshua/dev/projects/t3code-gits-hosted --branch feat/gits-rtk-output-gateway --service gits-cockpit.service --port 13773`.
+1. Run `./scripts/gits-hosting/install-wsl-user-service.sh --repo /home/joshua/dev/projects/t3code --worktree /home/joshua/dev/projects/t3code-gits-hosted --branch feat/gits-tailnet-hosting-refresh --service gits-cockpit.service --port 13773 --t3code-home /home/joshua/.t3`.
+2. Run `./scripts/gits-hosting/deploy-gits-tailnet-hosted.sh --repo /home/joshua/dev/projects/t3code --worktree /home/joshua/dev/projects/t3code-gits-hosted --branch feat/gits-tailnet-hosting-refresh --service gits-cockpit.service --port 13773`.
 3. Stop the manual `dist/bin.mjs serve` process once the user service is healthy.
 4. Run `powershell -ExecutionPolicy Bypass -File .\scripts\gits-hosting\Set-GitsTailnetPortProxy.ps1 -WslDistro Ubuntu -LocalPort 13773 -TailnetHttpsPort 8443` from an elevated Windows PowerShell session.
 5. Verify local health: `curl -I http://127.0.0.1:13773/gits`.
@@ -239,12 +238,13 @@ Acceptance:
    - Delamain peer fleet visible
    - Open GSD visible
    - Automode visible
-   - `apps/server/dist/gits-build-metadata.json` shows the latest deployed commit
+   - Overview tab visible
+   - `/api/gits/build-info` shows the latest deployed commit
 8. Verify Windows Tailscale Serve remains Tailnet-only and Funnel is off for `:8443`.
 
 ## Open Decisions
 
-- Should the deployed source branch remain `feat/gits-rtk-output-gateway`, or should we create a longer-lived `gits-hosted` branch that merges RTK, Skills, and future cockpit features?
+- After this branch is reviewed, should the hosted source switch back to `main`, or should `feat/gits-tailnet-hosting-refresh` remain the preview channel until Skills Intelligence lands?
 - Should the hosted cockpit use production build only, or should there be a separate Tailnet dev preview route that points directly to Vite?
 - Should the Skills Intelligence branch be implemented before the next Tailnet deploy, or should we first deploy the already-implemented Delamain/Open GSD/Automode surfaces?
 - Should the Windows portproxy be the long-term bridge, or should we move Serve into WSL for a stricter loopback-only Linux service?

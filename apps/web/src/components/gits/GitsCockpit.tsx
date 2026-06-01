@@ -197,20 +197,25 @@ function normalizeBuildInfo(value: unknown): BuildInfoSnapshot {
   const fields = dedupeBuildInfoFields(
     [
       { label: "Version", value: getNestedString(value, ["version"]) },
+      { label: "Commit", value: getNestedString(value, ["commit"]) },
       { label: "Commit", value: getNestedString(value, ["commitSha"]) },
       { label: "Commit", value: getNestedString(value, ["gitSha"]) },
       { label: "Commit", value: getNestedString(value, ["git", "sha"]) },
       { label: "Branch", value: getNestedString(value, ["branch"]) },
       { label: "Branch", value: getNestedString(value, ["gitBranch"]) },
       { label: "Branch", value: getNestedString(value, ["git", "branch"]) },
+      { label: "Built", value: getNestedString(value, ["time"]) },
       { label: "Built", value: getNestedString(value, ["builtAt"]) },
       { label: "Built", value: getNestedString(value, ["buildTime"]) },
+      { label: "Built", value: getNestedString(value, ["buildTimeUtc"]) },
       { label: "Built", value: getNestedString(value, ["build", "time"]) },
       { label: "Built", value: getNestedString(value, ["timestamp"]) },
       { label: "Environment", value: getNestedString(value, ["environment"]) },
       { label: "Environment", value: getNestedString(value, ["deploymentEnv"]) },
       { label: "Environment", value: getNestedString(value, ["deploy", "environment"]) },
+      { label: "Source", value: getNestedString(value, ["sourcePath"]) },
       { label: "Source", value: getNestedString(value, ["source"]) },
+      { label: "Source", value: getNestedString(value, ["worktree"]) },
       { label: "Source", value: getNestedString(value, ["builder"]) },
     ]
       .filter((field): field is BuildInfoField => field.value !== null)
