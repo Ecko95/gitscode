@@ -164,7 +164,7 @@ if ((skip_restart == 0)) && command -v curl >/dev/null 2>&1; then
   health_url="http://127.0.0.1:${gits_hosting_port}/gits"
   healthy=0
   for attempt in $(seq 1 30); do
-    if curl --fail --silent --show-error --head "$health_url"; then
+    if curl --fail --silent --show-error --head --connect-timeout 2 --max-time 5 "$health_url"; then
       healthy=1
       break
     fi
