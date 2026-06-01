@@ -236,6 +236,96 @@ export const GitsBuildInfo = Schema.Struct({
 });
 export type GitsBuildInfo = typeof GitsBuildInfo.Type;
 
+export const GitsSkillProvider = Schema.Literals(["codex", "claude", "cursor", "gits", "unknown"]);
+export type GitsSkillProvider = typeof GitsSkillProvider.Type;
+
+export const GitsSkillKind = Schema.Literals([
+  "skill",
+  "agent",
+  "rule",
+  "slash-command",
+  "prompt",
+  "workflow",
+  "unknown",
+]);
+export type GitsSkillKind = typeof GitsSkillKind.Type;
+
+export const GitsSkillPortability = Schema.Literals([
+  "native",
+  "ported",
+  "candidate",
+  "missing-port",
+  "unknown",
+]);
+export type GitsSkillPortability = typeof GitsSkillPortability.Type;
+
+export const GitsSkillInventoryItem = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  provider: GitsSkillProvider,
+  kind: GitsSkillKind,
+  name: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  description: Schema.NullOr(SummaryString),
+  path: PathString,
+  sourceRoot: PathString,
+  rating: Schema.NullOr(NonNegativeInt),
+  review: Schema.NullOr(SummaryString),
+  usageCount: NonNegativeInt,
+  lastUsedAt: Schema.NullOr(IsoDateTime),
+  lastModifiedAt: Schema.NullOr(IsoDateTime),
+  portability: GitsSkillPortability,
+  tags: Schema.Array(TrimmedNonEmptyString),
+});
+export type GitsSkillInventoryItem = typeof GitsSkillInventoryItem.Type;
+
+export const GitsSkillProviderSummary = Schema.Struct({
+  provider: GitsSkillProvider,
+  totalCount: NonNegativeInt,
+  nativeCount: NonNegativeInt,
+  missingPortCount: NonNegativeInt,
+  ratedCount: NonNegativeInt,
+  reviewedCount: NonNegativeInt,
+});
+export type GitsSkillProviderSummary = typeof GitsSkillProviderSummary.Type;
+
+export const GitsSkillInsightKind = Schema.Literals([
+  "missing-provider-port",
+  "weak-description",
+  "duplicate-name",
+  "hermes-candidate",
+]);
+export type GitsSkillInsightKind = typeof GitsSkillInsightKind.Type;
+
+export const GitsSkillInsight = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: GitsSkillInsightKind,
+  title: TrimmedNonEmptyString,
+  detail: SummaryString,
+  severity: YourTurnSeverity,
+  skillIds: Schema.Array(TrimmedNonEmptyString),
+});
+export type GitsSkillInsight = typeof GitsSkillInsight.Type;
+
+export const GitsSkillInventoryTotals = Schema.Struct({
+  skillCount: NonNegativeInt,
+  providerCount: NonNegativeInt,
+  ratedCount: NonNegativeInt,
+  reviewedCount: NonNegativeInt,
+  missingPortCount: NonNegativeInt,
+  hermesCandidateCount: NonNegativeInt,
+});
+export type GitsSkillInventoryTotals = typeof GitsSkillInventoryTotals.Type;
+
+export const GitsSkillInventorySnapshot = Schema.Struct({
+  scannedAt: IsoDateTime,
+  skills: Schema.Array(GitsSkillInventoryItem),
+  providers: Schema.Array(GitsSkillProviderSummary),
+  totals: GitsSkillInventoryTotals,
+  warnings: Schema.Array(TrimmedNonEmptyString),
+  insights: Schema.Array(GitsSkillInsight),
+});
+export type GitsSkillInventorySnapshot = typeof GitsSkillInventorySnapshot.Type;
+
 export const DelamainEngine = Schema.Literals(["codex", "cursor", "unknown"]);
 export type DelamainEngine = typeof DelamainEngine.Type;
 

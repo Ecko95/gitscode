@@ -6,6 +6,9 @@ import type {
   DelamainPeerListResult,
   GitsCockpitProject,
   GitsCockpitSnapshot,
+  GitsSkillInventoryItem,
+  GitsSkillInventorySnapshot,
+  GitsSkillProvider,
   GsdPhase,
   OpenGsdCommandResult,
   OpenGsdStatusResult,
@@ -17,6 +20,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Option from "effect/Option";
 import {
   AlertTriangleIcon,
+  BookOpenCheckIcon,
   BotIcon,
   CheckCircle2Icon,
   CircleStopIcon,
@@ -28,8 +32,11 @@ import {
   PlayIcon,
   PowerIcon,
   RefreshCwIcon,
+  SearchIcon,
   SendIcon,
   ShieldCheckIcon,
+  SparklesIcon,
+  StarIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -99,7 +106,7 @@ const GATE_STATUS_LABELS: Record<VerificationGate["status"], string> = {
   passed: "Passed",
 };
 
-type GitsCockpitTab = "overview" | "fleet" | "automode" | "gsd" | "projects";
+type GitsCockpitTab = "overview" | "fleet" | "automode" | "gsd" | "skills" | "projects";
 
 const GITS_COCKPIT_TABS: ReadonlyArray<{
   id: GitsCockpitTab;
@@ -110,6 +117,7 @@ const GITS_COCKPIT_TABS: ReadonlyArray<{
   { id: "fleet", label: "Fleet", icon: GitBranchIcon },
   { id: "automode", label: "Automode", icon: PowerIcon },
   { id: "gsd", label: "Open GSD", icon: ListChecksIcon },
+  { id: "skills", label: "Skills", icon: BookOpenCheckIcon },
   { id: "projects", label: "Projects", icon: CircleIcon },
 ];
 
@@ -129,6 +137,16 @@ type BuildInfoSnapshot =
       readonly fields: [];
       readonly note: null;
     };
+
+type SkillReviewState = Record<
+  string,
+  {
+    readonly rating: number | null;
+    readonly review: string;
+  }
+>;
+
+const SKILL_REVIEW_STORAGE_KEY = "gits:skills:reviews:v1";
 
 function formatCount(value: number): string {
   return NUMBER_FORMAT.format(value);
@@ -226,6 +244,83 @@ function normalizeBuildInfo(value: unknown): BuildInfoSnapshot {
     getNestedString(value, ["deploy", "provider"]) ??
     getNestedString(value, ["provider"]);
   return { status: "available", fields, note };
+}
+
+function loadSkillReviewState(): SkillReviewState {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(SKILL_REVIEW_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
+      return {};
+    }
+    const reviews: SkillReviewState = {};
+    for (const [skillId, value] of Object.entries(parsed)) {
+      if (!isRecord(value)) {
+        continue;
+      }
+      const rating = typeof value.rating === "number" ? value.rating : null;
+      const review = typeof value.review === "string" ? value.review : "";
+      reviews[skillId] = {
+        rating:
+          rating !== null && Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null,
+        review,
+      };
+    }
+    return reviews;
+  } catch {
+    return {};
+  }
+}
+
+function saveSkillReviewState(reviews: SkillReviewState): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(SKILL_REVIEW_STORAGE_KEY, JSON.stringify(reviews));
+}
+
+function formatSkillProvider(provider: GitsSkillProvider): string {
+  if (provider === "gits") {
+    return "GITS";
+  }
+  return provider.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatSkillKind(kind: GitsSkillInventoryItem["kind"]): string {
+  return kind.replaceAll("-", " ");
+}
+
+function portabilityTone(
+  portability: GitsSkillInventoryItem["portability"],
+): ReturnType<typeof statusTone> {
+  if (portability === "native" || portability === "ported") {
+    return "success";
+  }
+  if (portability === "missing-port" || portability === "candidate") {
+    return "warning";
+  }
+  return "default";
+}
+
+function applySkillReviews(
+  skill: GitsSkillInventoryItem,
+  reviews: SkillReviewState,
+): GitsSkillInventoryItem {
+  const review = reviews[skill.id];
+  if (!review) {
+    return skill;
+  }
+  return {
+    ...skill,
+    rating: review.rating,
+    review: review.review.trim().length > 0 ? review.review : null,
+  };
 }
 
 function statusTone(status: string): "default" | "warning" | "danger" | "success" {
@@ -1429,6 +1524,306 @@ function OpenGsdPanel({
   );
 }
 
+function SkillsPanel({
+  snapshot,
+  loading,
+  error,
+  reviews,
+  onRefresh,
+  onRatingChange,
+  onReviewChange,
+}: {
+  snapshot: GitsSkillInventorySnapshot | undefined;
+  loading: boolean;
+  error: unknown;
+  reviews: SkillReviewState;
+  onRefresh: () => void;
+  onRatingChange: (skillId: string, rating: number | null) => void;
+  onReviewChange: (skillId: string, review: string) => void;
+}) {
+  const [providerFilter, setProviderFilter] = useState<GitsSkillProvider | "all">("all");
+  const [search, setSearch] = useState("");
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const skills = useMemo(
+    () => (snapshot?.skills ?? []).map((skill) => applySkillReviews(skill, reviews)),
+    [reviews, snapshot?.skills],
+  );
+  const visibleSkills = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return skills.filter((skill) => {
+      if (providerFilter !== "all" && skill.provider !== providerFilter) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      return [
+        skill.name,
+        skill.title,
+        skill.description ?? "",
+        skill.path,
+        skill.provider,
+        skill.kind,
+        skill.portability,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [providerFilter, search, skills]);
+  const selectedSkill =
+    (selectedSkillId ? skills.find((skill) => skill.id === selectedSkillId) : null) ??
+    visibleSkills[0] ??
+    null;
+  const ratedCount = skills.filter((skill) => skill.rating !== null).length;
+  const reviewedCount = skills.filter((skill) => skill.review !== null).length;
+  const errorMessage = error instanceof Error ? error.message : null;
+
+  useEffect(() => {
+    if (selectedSkillId && visibleSkills.some((skill) => skill.id === selectedSkillId)) {
+      return;
+    }
+    setSelectedSkillId(visibleSkills[0]?.id ?? null);
+  }, [selectedSkillId, visibleSkills]);
+
+  return (
+    <section className="border-b border-border bg-background">
+      <div className="flex flex-col gap-3 border-b border-border/70 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-base font-semibold">Skills Intelligence</h2>
+            <StatusPill
+              label={loading && !snapshot ? "scanning" : "read-only"}
+              tone={loading && !snapshot ? "warning" : "success"}
+            />
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatCount(snapshot?.totals.skillCount ?? 0)} skills |{" "}
+            {formatCount(snapshot?.totals.missingPortCount ?? 0)} missing ports |{" "}
+            {formatCount(ratedCount)} rated | {formatCount(reviewedCount)} reviewed
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
+          <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+
+      {errorMessage ? (
+        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 border-b border-border/60 sm:grid-cols-4">
+        <StatBlock
+          label="Skills"
+          value={formatCount(snapshot?.totals.skillCount ?? 0)}
+          icon={BookOpenCheckIcon}
+        />
+        <StatBlock
+          label="Providers"
+          value={formatCount(snapshot?.totals.providerCount ?? 0)}
+          icon={CircleIcon}
+        />
+        <StatBlock
+          label="Missing Ports"
+          value={formatCount(snapshot?.totals.missingPortCount ?? 0)}
+          icon={GitBranchIcon}
+        />
+        <StatBlock
+          label="HERMES"
+          value={formatCount(snapshot?.totals.hermesCandidateCount ?? 0)}
+          icon={SparklesIcon}
+        />
+      </div>
+
+      <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.85fr)]">
+        <div className="min-w-0 border-r border-border/60">
+          <div className="grid gap-2 border-b border-border/60 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_180px] sm:px-5">
+            <div className="relative min-w-0">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                nativeInput
+                size="sm"
+                value={search}
+                placeholder="Search skills"
+                className="pl-8"
+                onChange={(event) => setSearch(event.currentTarget.value)}
+              />
+            </div>
+            <select
+              value={providerFilter}
+              className="h-8 min-w-0 rounded-md border border-input bg-background px-3 text-xs"
+              onChange={(event) =>
+                setProviderFilter(event.currentTarget.value as GitsSkillProvider | "all")
+              }
+            >
+              <option value="all">All providers</option>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+              <option value="cursor">Cursor</option>
+            </select>
+          </div>
+
+          <SectionHeader title="Inventory" count={visibleSkills.length} />
+          {loading && visibleSkills.length === 0 ? (
+            <EmptyState label="Scanning local provider skills..." />
+          ) : visibleSkills.length === 0 ? (
+            <EmptyState label="No skills match the current filters." />
+          ) : (
+            <div className="divide-y divide-border/60">
+              {visibleSkills.slice(0, 160).map((skill) => (
+                <button
+                  key={skill.id}
+                  type="button"
+                  className={cn(
+                    "flex w-full min-w-0 cursor-pointer items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/35 sm:px-5",
+                    selectedSkill?.id === skill.id && "bg-muted/55",
+                  )}
+                  onClick={() => setSelectedSkillId(skill.id)}
+                >
+                  <BookOpenCheckIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className="truncate text-xs font-medium">{skill.title}</span>
+                      <StatusPill label={formatSkillProvider(skill.provider)} tone="default" />
+                      <StatusPill
+                        label={skill.portability.replaceAll("-", " ")}
+                        tone={portabilityTone(skill.portability)}
+                      />
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                      {skill.description ?? skill.path}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0">
+          <SectionHeader title="Review" count={selectedSkill ? 1 : 0} />
+          {selectedSkill ? (
+            <div className="grid gap-4 px-4 py-4 text-xs sm:px-5">
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h3 className="truncate text-sm font-semibold">{selectedSkill.title}</h3>
+                  <StatusPill
+                    label={`${formatSkillProvider(selectedSkill.provider)} ${formatSkillKind(
+                      selectedSkill.kind,
+                    )}`}
+                    tone="default"
+                  />
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                  {selectedSkill.path}
+                </div>
+                {selectedSkill.description ? (
+                  <p className="mt-2 text-muted-foreground">{selectedSkill.description}</p>
+                ) : null}
+              </div>
+
+              <div className="grid gap-2">
+                <div className="text-[11px] font-medium uppercase text-muted-foreground/80">
+                  Rating
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {[1, 2, 3, 4, 5].map((rating) => {
+                    const selected = (selectedSkill.rating ?? 0) >= rating;
+                    return (
+                      <Button
+                        key={rating}
+                        size="icon-sm"
+                        variant={selected ? "default" : "outline"}
+                        onClick={() =>
+                          onRatingChange(
+                            selectedSkill.id,
+                            selectedSkill.rating === rating ? null : rating,
+                          )
+                        }
+                        aria-label={`Rate ${rating}`}
+                      >
+                        <StarIcon className={cn("size-3.5", selected && "fill-current")} />
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="text-[11px] font-medium uppercase text-muted-foreground/80">
+                  Review
+                </div>
+                <Textarea
+                  value={reviews[selectedSkill.id]?.review ?? ""}
+                  placeholder="Notes, quality issues, porting ideas"
+                  className="min-h-28 text-xs"
+                  onChange={(event) => onReviewChange(selectedSkill.id, event.currentTarget.value)}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <SectionHeader title="Provider summaries" count={snapshot?.providers.length ?? 0} />
+                <div className="overflow-hidden rounded-md border border-border/70">
+                  {(snapshot?.providers ?? []).map((provider) => (
+                    <div
+                      key={provider.provider}
+                      className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b border-border/60 px-3 py-2 last:border-b-0"
+                    >
+                      <span className="truncate font-medium">
+                        {formatSkillProvider(provider.provider)}
+                      </span>
+                      <span className="font-mono text-muted-foreground">
+                        {formatCount(provider.totalCount)}
+                      </span>
+                      <span className="font-mono text-muted-foreground">
+                        {formatCount(provider.missingPortCount)} ports
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <SectionHeader title="Insights" count={snapshot?.insights.length ?? 0} />
+                {(snapshot?.insights ?? []).length === 0 ? (
+                  <EmptyState label="No skill insights yet." />
+                ) : (
+                  <div className="grid gap-2">
+                    {(snapshot?.insights ?? []).map((insight) => (
+                      <div key={insight.id} className="rounded-md border border-border/70 p-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <SparklesIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate font-medium">{insight.title}</span>
+                          <StatusPill
+                            label={insight.severity}
+                            tone={statusTone(insight.severity)}
+                          />
+                        </div>
+                        <p className="mt-1 text-muted-foreground">{insight.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {(snapshot?.warnings ?? []).length > 0 ? (
+                <div className="rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-amber-700 dark:text-amber-300">
+                  {(snapshot?.warnings ?? []).slice(0, 3).join(" | ")}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <EmptyState label="Select a skill to review." />
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function parseLines(value: string): string[] {
   return value
     .split(/\r?\n/)
@@ -1949,6 +2344,7 @@ export function GitsCockpit() {
   const [automodeRequireIntegrateApproval, setAutomodeRequireIntegrateApproval] = useState(true);
   const [automodeRequireDestructiveApproval, setAutomodeRequireDestructiveApproval] =
     useState(true);
+  const [skillReviews, setSkillReviews] = useState<SkillReviewState>(() => loadSkillReviewState());
   const [automodeGoalTitle, setAutomodeGoalTitle] = useState("");
   const [automodeGoalRepo, setAutomodeGoalRepo] = useState("");
   const [automodeGoalModel, setAutomodeGoalModel] = useState("");
@@ -2041,6 +2437,20 @@ export function GitsCockpit() {
         throw new Error(`Build info request failed with ${response.status}.`);
       }
       return normalizeBuildInfo(await response.json());
+    },
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const skillsQuery = useQuery({
+    queryKey: ["gits", "skills"],
+    queryFn: async (): Promise<GitsSkillInventorySnapshot> => {
+      const response = await fetch("/api/gits/skills", {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`Skills inventory request failed with ${response.status}.`);
+      }
+      return (await response.json()) as GitsSkillInventorySnapshot;
     },
     refetchInterval: 60_000,
     retry: false,
@@ -2230,6 +2640,19 @@ export function GitsCockpit() {
     automodeApproveMutation.isPending ||
     automodeRejectMutation.isPending ||
     automodeDispatchMutation.isPending;
+  const updateSkillReview = (
+    skillId: string,
+    updater: (current: SkillReviewState[string]) => SkillReviewState[string],
+  ) => {
+    setSkillReviews((current) => {
+      const next = {
+        ...current,
+        [skillId]: updater(current[skillId] ?? { rating: null, review: "" }),
+      };
+      saveSkillReviewState(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (selectedPeerId !== null && peerIds.has(selectedPeerId)) {
@@ -2279,6 +2702,7 @@ export function GitsCockpit() {
       fleet: formatCount(delamainQuery.data?.peers.length ?? 0),
       automode: formatCount(automodeQuery.data?.goals.length ?? 0),
       gsd: openGsdQuery.data?.available ? "ready" : "check",
+      skills: formatCount(skillsQuery.data?.totals.skillCount ?? 0),
       projects: formatCount(query.data?.totals.projectCount ?? 0),
     }),
     [
@@ -2286,6 +2710,7 @@ export function GitsCockpit() {
       delamainQuery.data?.peers.length,
       openGsdQuery.data?.available,
       query.data?.totals.projectCount,
+      skillsQuery.data?.totals.skillCount,
     ],
   );
   const isRefreshing =
@@ -2294,7 +2719,8 @@ export function GitsCockpit() {
     automodeQuery.isFetching ||
     openGsdQuery.isFetching ||
     resourceQuery.isFetching ||
-    buildInfoQuery.isFetching;
+    buildInfoQuery.isFetching ||
+    skillsQuery.isFetching;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -2317,6 +2743,7 @@ export function GitsCockpit() {
               openGsdQuery.refetch(),
               resourceQuery.refetch(),
               buildInfoQuery.refetch(),
+              skillsQuery.refetch(),
             ]);
           }}
           disabled={isRefreshing}
@@ -2486,6 +2913,21 @@ export function GitsCockpit() {
                     void gsdAutoMutation.mutate();
                   }
                 }}
+              />
+            ) : null}
+            {activeTab === "skills" ? (
+              <SkillsPanel
+                snapshot={skillsQuery.data}
+                loading={skillsQuery.isPending || skillsQuery.isFetching}
+                error={skillsQuery.error}
+                reviews={skillReviews}
+                onRefresh={() => void skillsQuery.refetch()}
+                onRatingChange={(skillId, rating) =>
+                  updateSkillReview(skillId, (current) => ({ ...current, rating }))
+                }
+                onReviewChange={(skillId, review) =>
+                  updateSkillReview(skillId, (current) => ({ ...current, review }))
+                }
               />
             ) : null}
             {activeTab === "projects" ? <CockpitContent snapshot={query.data} /> : null}

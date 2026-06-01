@@ -8,6 +8,7 @@ import {
   type AutomodeSnapshot,
   type DelamainPeer,
   type GitsBuildInfo,
+  type GitsSkillInventorySnapshot,
   type OpenGsdCommandResult,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -88,6 +89,10 @@ import {
   GitsBuildInfoResolver,
   type GitsBuildInfoResolverShape,
 } from "./gits/Services/GitsBuildInfo.ts";
+import {
+  GitsSkillInventoryResolver,
+  type GitsSkillInventoryResolverShape,
+} from "./gits/Services/GitsSkillInventory.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
 import {
@@ -236,6 +241,21 @@ const defaultGitsBuildInfo: GitsBuildInfo = {
   time: null,
   dirty: null,
   sourcePath: null,
+};
+const defaultGitsSkillInventory: GitsSkillInventorySnapshot = {
+  scannedAt: "1970-01-01T00:00:00.000Z",
+  skills: [],
+  providers: [],
+  totals: {
+    skillCount: 0,
+    providerCount: 0,
+    ratedCount: 0,
+    reviewedCount: 0,
+    missingPortCount: 0,
+    hermesCandidateCount: 0,
+  },
+  warnings: [],
+  insights: [],
 };
 const testEnvironmentDescriptor = {
   environmentId: EnvironmentId.make("environment-test"),
@@ -445,6 +465,7 @@ const buildAppUnderTest = (options?: {
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
     gitsPlanningScanner?: Partial<GitsPlanningScannerShape>;
     gitsBuildInfoResolver?: Partial<GitsBuildInfoResolverShape>;
+    gitsSkillInventoryResolver?: Partial<GitsSkillInventoryResolverShape>;
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
     automodeSupervisor?: Partial<AutomodeSupervisorShape>;
@@ -630,6 +651,10 @@ const buildAppUnderTest = (options?: {
       Layer.mock(GitsBuildInfoResolver)({
         getBuildInfo: () => Effect.succeed(defaultGitsBuildInfo),
         ...options?.layers?.gitsBuildInfoResolver,
+      }),
+      Layer.mock(GitsSkillInventoryResolver)({
+        getSnapshot: () => Effect.succeed(defaultGitsSkillInventory),
+        ...options?.layers?.gitsSkillInventoryResolver,
       }),
       Layer.mock(GitsPlanningScanner)({
         scan: () =>
@@ -1264,6 +1289,72 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assertBrowserApiCorsHeaders(response.headers);
       assert.deepEqual(body, expectedBuildInfo);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves public GITS skills inventory without requiring auth", () =>
+    Effect.gen(function* () {
+      const expectedSnapshot: GitsSkillInventorySnapshot = {
+        scannedAt: "2026-06-02T10:00:00.000Z",
+        skills: [
+          {
+            id: "codex:skill:/home/test/.codex/skills/review/SKILL.md",
+            provider: "codex",
+            kind: "skill",
+            name: "review",
+            title: "Review",
+            description: "Review changed source files.",
+            path: "/home/test/.codex/skills/review/SKILL.md",
+            sourceRoot: "/home/test/.codex/skills",
+            rating: null,
+            review: null,
+            usageCount: 0,
+            lastUsedAt: null,
+            lastModifiedAt: "2026-06-02T09:00:00.000Z",
+            portability: "native",
+            tags: ["codex", "skill"],
+          },
+        ],
+        providers: [
+          {
+            provider: "codex",
+            totalCount: 1,
+            nativeCount: 1,
+            missingPortCount: 0,
+            ratedCount: 0,
+            reviewedCount: 0,
+          },
+        ],
+        totals: {
+          skillCount: 1,
+          providerCount: 1,
+          ratedCount: 0,
+          reviewedCount: 0,
+          missingPortCount: 0,
+          hermesCandidateCount: 0,
+        },
+        warnings: [],
+        insights: [],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitsSkillInventoryResolver: {
+            getSnapshot: () => Effect.succeed(expectedSnapshot),
+          },
+        },
+      });
+
+      const response = yield* HttpClient.get("/api/gits/skills", {
+        headers: {
+          origin: crossOriginClientOrigin,
+        },
+      });
+      const body = (yield* response.json) as GitsSkillInventorySnapshot;
+
+      assert.equal(response.status, 200);
+      assertBrowserApiCorsHeaders(response.headers);
+      assert.deepEqual(body, expectedSnapshot);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
