@@ -22,6 +22,7 @@ import {
   CircleStopIcon,
   CircleIcon,
   FilePlus2Icon,
+  GaugeIcon,
   GitBranchIcon,
   ListChecksIcon,
   PlayIcon,
@@ -98,12 +99,128 @@ const GATE_STATUS_LABELS: Record<VerificationGate["status"], string> = {
   passed: "Passed",
 };
 
+type GitsCockpitTab = "overview" | "fleet" | "automode" | "gsd" | "projects";
+
+const GITS_COCKPIT_TABS: ReadonlyArray<{
+  id: GitsCockpitTab;
+  label: string;
+  icon: typeof CircleIcon;
+}> = [
+  { id: "overview", label: "Overview", icon: GaugeIcon },
+  { id: "fleet", label: "Fleet", icon: GitBranchIcon },
+  { id: "automode", label: "Automode", icon: PowerIcon },
+  { id: "gsd", label: "Open GSD", icon: ListChecksIcon },
+  { id: "projects", label: "Projects", icon: CircleIcon },
+];
+
+type BuildInfoField = {
+  readonly label: string;
+  readonly value: string;
+};
+
+type BuildInfoSnapshot =
+  | {
+      readonly status: "available";
+      readonly fields: ReadonlyArray<BuildInfoField>;
+      readonly note: string | null;
+    }
+  | {
+      readonly status: "missing";
+      readonly fields: [];
+      readonly note: null;
+    };
+
 function formatCount(value: number): string {
   return NUMBER_FORMAT.format(value);
 }
 
 function formatUsd(value: number): string {
   return USD_FORMAT.format(value);
+}
+
+function formatIsoDate(value: string | null | undefined): string {
+  if (!value) {
+    return "unknown";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function formatPercent(value: number | null | undefined): string {
+  return value === null || value === undefined ? "..." : `${value.toFixed(0)}%`;
+}
+
+function tallyValues<T extends string>(values: ReadonlyArray<T>): Record<string, number> {
+  return values.reduce<Record<string, number>>((counts, value) => {
+    counts[value] = (counts[value] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getNestedString(value: unknown, path: ReadonlyArray<string>): string | null {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!isRecord(current) || !(key in current)) {
+      return null;
+    }
+    current = current[key];
+  }
+  if (typeof current !== "string") {
+    return null;
+  }
+  const trimmed = current.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function dedupeBuildInfoFields(
+  fields: ReadonlyArray<BuildInfoField>,
+): ReadonlyArray<BuildInfoField> {
+  const seen = new Set<string>();
+  return fields.filter((field) => {
+    const key = `${field.label}:${field.value}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeBuildInfo(value: unknown): BuildInfoSnapshot {
+  if (!isRecord(value)) {
+    return { status: "available", fields: [], note: null };
+  }
+  const fields = dedupeBuildInfoFields(
+    [
+      { label: "Version", value: getNestedString(value, ["version"]) },
+      { label: "Commit", value: getNestedString(value, ["commitSha"]) },
+      { label: "Commit", value: getNestedString(value, ["gitSha"]) },
+      { label: "Commit", value: getNestedString(value, ["git", "sha"]) },
+      { label: "Branch", value: getNestedString(value, ["branch"]) },
+      { label: "Branch", value: getNestedString(value, ["gitBranch"]) },
+      { label: "Branch", value: getNestedString(value, ["git", "branch"]) },
+      { label: "Built", value: getNestedString(value, ["builtAt"]) },
+      { label: "Built", value: getNestedString(value, ["buildTime"]) },
+      { label: "Built", value: getNestedString(value, ["build", "time"]) },
+      { label: "Built", value: getNestedString(value, ["timestamp"]) },
+      { label: "Environment", value: getNestedString(value, ["environment"]) },
+      { label: "Environment", value: getNestedString(value, ["deploymentEnv"]) },
+      { label: "Environment", value: getNestedString(value, ["deploy", "environment"]) },
+      { label: "Source", value: getNestedString(value, ["source"]) },
+      { label: "Source", value: getNestedString(value, ["builder"]) },
+    ]
+      .filter((field): field is BuildInfoField => field.value !== null)
+      .slice(0, 6),
+  );
+  const note =
+    getNestedString(value, ["generatedBy"]) ??
+    getNestedString(value, ["deploy", "provider"]) ??
+    getNestedString(value, ["provider"]);
+  return { status: "available", fields, note };
 }
 
 function statusTone(status: string): "default" | "warning" | "danger" | "success" {
@@ -291,6 +408,429 @@ function AgentSessionList({ sessions }: { sessions: ReadonlyArray<AgentSession> 
         </div>
       ))}
     </div>
+  );
+}
+
+function barToneClass(tone: ReturnType<typeof statusTone>): string {
+  if (tone === "success") {
+    return "bg-emerald-500";
+  }
+  if (tone === "warning") {
+    return "bg-amber-500";
+  }
+  if (tone === "danger") {
+    return "bg-destructive";
+  }
+  return "bg-muted-foreground/45";
+}
+
+function DistributionPanel({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: ReadonlyArray<{
+    label: string;
+    value: number;
+    tone: ReturnType<typeof statusTone>;
+  }>;
+}) {
+  const total = rows.reduce((sum, row) => sum + row.value, 0);
+
+  return (
+    <div className="min-w-0 border-b border-r border-border/60 last:border-r-0 xl:border-b-0">
+      <SectionHeader title={title} count={total} />
+      <div className="grid gap-2 px-4 py-3 sm:px-5">
+        {rows.length === 0 ? (
+          <EmptyState label="No data." />
+        ) : (
+          rows.map((row) => {
+            const width = total === 0 ? 0 : Math.max(4, Math.round((row.value / total) * 100));
+            return (
+              <div key={row.label} className="grid gap-1.5 text-xs">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <span className="truncate text-muted-foreground">{row.label}</span>
+                  <span className="font-mono text-[11px] tabular-nums">
+                    {formatCount(row.value)}
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-sm bg-muted">
+                  <div
+                    className={cn("h-full rounded-sm", barToneClass(row.tone))}
+                    style={{ width: `${width}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SignalRow({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone: ReturnType<typeof statusTone>;
+}) {
+  return (
+    <div className="grid min-h-16 gap-1 border-b border-r border-border/60 px-4 py-3 last:border-r-0 sm:px-5">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="truncate text-xs font-medium text-foreground">{label}</span>
+        <StatusPill label={value} tone={tone} />
+      </div>
+      <div className="line-clamp-2 text-[11px] text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
+function CockpitTabNav({
+  activeTab,
+  counts,
+  onTabChange,
+}: {
+  activeTab: GitsCockpitTab;
+  counts: Record<GitsCockpitTab, string>;
+  onTabChange: (tab: GitsCockpitTab) => void;
+}) {
+  return (
+    <div className="sticky top-0 z-10 border-b border-border bg-card/95 px-2 py-2 backdrop-blur">
+      <div
+        role="tablist"
+        aria-label="GITS cockpit sections"
+        className="flex min-w-0 gap-1 overflow-x-auto"
+      >
+        {GITS_COCKPIT_TABS.map((tab) => {
+          const Icon = tab.icon;
+          const selected = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              className={cn(
+                "inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-xs font-medium transition-colors",
+                selected
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+              onClick={() => onTabChange(tab.id)}
+            >
+              <Icon className="size-3.5" />
+              <span>{tab.label}</span>
+              <span
+                className={cn(
+                  "rounded-sm px-1.5 py-0.5 font-mono text-[10px] tabular-nums",
+                  selected ? "bg-primary-foreground/15" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {counts[tab.id]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BuildProvenancePanel({
+  buildInfo,
+  loading,
+  error,
+  onRefresh,
+}: {
+  buildInfo: BuildInfoSnapshot | undefined;
+  loading: boolean;
+  error: unknown;
+  onRefresh: () => void;
+}) {
+  const errorMessage = error instanceof Error ? error.message : null;
+  const fields = buildInfo?.status === "available" ? buildInfo.fields : [];
+  const note = buildInfo?.status === "available" ? buildInfo.note : null;
+
+  return (
+    <section className="border-b border-border bg-background">
+      <div className="flex flex-col gap-3 border-b border-border/70 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-base font-semibold">Build Provenance</h2>
+            <StatusPill
+              label={
+                loading && !buildInfo
+                  ? "checking"
+                  : buildInfo?.status === "missing"
+                    ? "unavailable"
+                    : buildInfo?.status === "available"
+                      ? "available"
+                      : "checking"
+              }
+              tone={
+                loading && !buildInfo
+                  ? "warning"
+                  : buildInfo?.status === "available"
+                    ? "success"
+                    : buildInfo?.status === "missing"
+                      ? "default"
+                      : "warning"
+              }
+            />
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {buildInfo?.status === "missing"
+              ? "This host does not expose /api/gits/build-info."
+              : (note ?? "Compact host build metadata when available.")}
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
+          <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+
+      {errorMessage ? (
+        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {buildInfo?.status === "missing" ? (
+        <EmptyState label="Build provenance endpoint not detected." />
+      ) : loading && !buildInfo ? (
+        <EmptyState label="Checking build provenance..." />
+      ) : fields.length === 0 ? (
+        <EmptyState label="No recognized provenance fields returned." />
+      ) : (
+        <div className="grid gap-2 px-4 py-3 sm:grid-cols-2 sm:px-5 xl:grid-cols-4">
+          {fields.map((field) => (
+            <div
+              key={`${field.label}:${field.value}`}
+              className="min-w-0 rounded-md border border-border/60 bg-muted/20 px-3 py-2.5"
+            >
+              <div className="text-[11px] font-medium uppercase text-muted-foreground/70">
+                {field.label}
+              </div>
+              <div className="mt-1 truncate font-mono text-xs text-foreground">
+                {field.label === "Built" ? formatIsoDate(field.value) : field.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CockpitOverviewPanel({
+  snapshot,
+  delamain,
+  automode,
+  openGsd,
+  history,
+  buildInfo,
+}: {
+  snapshot: GitsCockpitSnapshot;
+  delamain: DelamainPeerListResult | undefined;
+  automode: AutomodeSnapshot | undefined;
+  openGsd: OpenGsdStatusResult | undefined;
+  history: ServerProcessResourceHistoryResult | undefined;
+  buildInfo: BuildInfoSnapshot | undefined;
+}) {
+  const phases = snapshot.projects.flatMap((project) => project.phases);
+  const gates = snapshot.projects.flatMap((project) => project.verificationGates);
+  const yourTurn = snapshot.projects.flatMap((project) => project.yourTurn);
+  const peers = delamain?.peers ?? [];
+  const phaseCounts = tallyValues(phases.map((phase) => phase.status));
+  const gateCounts = tallyValues(gates.map((gate) => gate.status));
+  const peerCounts = tallyValues(peers.map((peer) => peer.status));
+  const phaseRows = (Object.keys(PHASE_STATUS_LABELS) as Array<GsdPhase["status"]>)
+    .map((status) => ({
+      label: PHASE_STATUS_LABELS[status],
+      value: phaseCounts[status] ?? 0,
+      tone: statusTone(status),
+    }))
+    .filter((row) => row.value > 0);
+  const gateRows = (Object.keys(GATE_STATUS_LABELS) as Array<VerificationGate["status"]>)
+    .map((status) => ({
+      label: GATE_STATUS_LABELS[status],
+      value: gateCounts[status] ?? 0,
+      tone: statusTone(status),
+    }))
+    .filter((row) => row.value > 0);
+  const peerRows = Object.entries(peerCounts)
+    .map(([status, value]) => ({
+      label: status,
+      value,
+      tone: statusTone(status),
+    }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+  const blockedPhaseCount = phases.filter((phase) => phase.status === "blocked").length;
+  const failedGateCount = gates.filter(
+    (gate) => gate.status === "failed" || gate.status === "blocked",
+  ).length;
+  const criticalTurnCount = yourTurn.filter((card) => card.severity === "critical").length;
+  const issueCount =
+    blockedPhaseCount + failedGateCount + criticalTurnCount + (automode?.pendingApprovalCount ?? 0);
+  const resourceError = history ? Option.getOrNull(history.error) : null;
+
+  return (
+    <section className="border-b border-border bg-background">
+      <div className="flex flex-col gap-2 border-b border-border/70 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h2 className="truncate text-base font-semibold">Overview</h2>
+            <StatusPill
+              label={issueCount === 0 ? "clear" : `${formatCount(issueCount)} attention`}
+              tone={issueCount === 0 ? "success" : "warning"}
+            />
+            <StatusPill
+              label={buildInfo?.status === "available" ? "provenance" : "runtime"}
+              tone={buildInfo?.status === "available" ? "success" : "default"}
+            />
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            scanned {formatIsoDate(snapshot.scannedAt)} |{" "}
+            {formatCount(snapshot.totals.projectCount)} projects |{" "}
+            {formatCount(snapshot.totals.phaseCount)} phases
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 border-b border-border/60 sm:grid-cols-4 xl:grid-cols-8">
+        <StatBlock
+          label="Projects"
+          value={formatCount(snapshot.totals.projectCount)}
+          icon={CircleIcon}
+        />
+        <StatBlock
+          label="Planning"
+          value={formatCount(snapshot.totals.planningProjectCount)}
+          icon={CheckCircle2Icon}
+        />
+        <StatBlock
+          label="Phases"
+          value={formatCount(snapshot.totals.phaseCount)}
+          icon={GitBranchIcon}
+        />
+        <StatBlock
+          label="Gates"
+          value={formatCount(snapshot.totals.verificationGateCount)}
+          icon={ShieldCheckIcon}
+        />
+        <StatBlock
+          label="Your Turn"
+          value={formatCount(snapshot.totals.pendingYourTurnCount)}
+          icon={AlertTriangleIcon}
+        />
+        <StatBlock
+          label="Agents"
+          value={formatCount(snapshot.totals.activeAgentSessionCount)}
+          icon={BotIcon}
+        />
+        <StatBlock
+          label="Peers"
+          value={formatCount(peers.length || snapshot.totals.peerCount)}
+          icon={CircleIcon}
+        />
+        <StatBlock
+          label="Approvals"
+          value={formatCount(automode?.pendingApprovalCount ?? 0)}
+          icon={PowerIcon}
+        />
+      </div>
+
+      <div className="grid min-w-0 border-b border-border/60 sm:grid-cols-2 xl:grid-cols-5">
+        <SignalRow
+          label="Delamain"
+          value={delamain?.capabilities.available ? "ready" : "offline"}
+          tone={delamain?.capabilities.available ? "success" : "warning"}
+          detail={`${formatCount(peers.length)} live peers`}
+        />
+        <SignalRow
+          label="Automode"
+          value={automode?.policy.mode ?? "unknown"}
+          tone={
+            automode?.policy.killSwitchEnabled
+              ? "warning"
+              : automode?.policy.mode === "autonomous"
+                ? "success"
+                : "default"
+          }
+          detail={
+            automode
+              ? `${formatCount(automode.goals.length)} goals | ${formatCount(
+                  automode.pendingApprovalCount,
+                )} approvals`
+              : "Automode state unavailable"
+          }
+        />
+        <SignalRow
+          label="Open GSD"
+          value={openGsd?.available ? "ready" : "check"}
+          tone={openGsd?.available ? "success" : "warning"}
+          detail={openGsd?.version ?? openGsd?.packageName ?? "GSD CLI state unavailable"}
+        />
+        <SignalRow
+          label="Resources"
+          value={history ? formatPercent(history.topProcesses[0]?.currentCpuPercent ?? 0) : "check"}
+          tone={resourceError ? "warning" : history ? "success" : "default"}
+          detail={
+            resourceError
+              ? resourceError.message
+              : history
+                ? `${formatCount(history.retainedSampleCount)} samples | ${formatCpuTime(
+                    history.totalCpuSecondsApprox,
+                  )} CPU`
+                : "Runtime resource history unavailable"
+          }
+        />
+        <SignalRow
+          label="Build"
+          value={
+            buildInfo?.status === "available"
+              ? "ready"
+              : buildInfo?.status === "missing"
+                ? "missing"
+                : "check"
+          }
+          tone={
+            buildInfo?.status === "available"
+              ? "success"
+              : buildInfo?.status === "missing"
+                ? "default"
+                : "warning"
+          }
+          detail={
+            buildInfo?.status === "available"
+              ? buildInfo.fields
+                  .slice(0, 2)
+                  .map((field) =>
+                    field.label === "Built"
+                      ? `${field.label} ${formatIsoDate(field.value)}`
+                      : `${field.label} ${field.value}`,
+                  )
+                  .join(" | ") || "Build metadata detected"
+              : buildInfo?.status === "missing"
+                ? "No /api/gits/build-info endpoint"
+                : "Checking build provenance"
+          }
+        />
+      </div>
+
+      <div className="grid min-w-0 xl:grid-cols-3">
+        <DistributionPanel title="Phase states" rows={phaseRows} />
+        <DistributionPanel title="Verification gates" rows={gateRows} />
+        <DistributionPanel title="Peer status" rows={peerRows} />
+      </div>
+    </section>
   );
 }
 
@@ -1381,6 +1921,7 @@ export function GitsCockpit() {
     activeEnvironmentId ? state.byId[activeEnvironmentId] : null,
   );
   const targetEnvironmentId = activeEnvironmentId ?? primaryEnvironmentId;
+  const [activeTab, setActiveTab] = useState<GitsCockpitTab>("overview");
   const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
   const [spawnRepo, setSpawnRepo] = useState("");
   const [spawnName, setSpawnName] = useState("");
@@ -1481,6 +2022,23 @@ export function GitsCockpit() {
         bucketMs: 60_000,
       }),
     refetchInterval: 10_000,
+  });
+  const buildInfoQuery = useQuery({
+    queryKey: ["gits", "build-info"],
+    queryFn: async (): Promise<BuildInfoSnapshot> => {
+      const response = await fetch("/api/gits/build-info", {
+        headers: { accept: "application/json" },
+      });
+      if (response.status === 404 || response.status === 501) {
+        return { status: "missing", fields: [], note: null };
+      }
+      if (!response.ok) {
+        throw new Error(`Build info request failed with ${response.status}.`);
+      }
+      return normalizeBuildInfo(await response.json());
+    },
+    refetchInterval: 60_000,
+    retry: false,
   });
   const peerIds = useMemo(
     () => new Set((delamainQuery.data?.peers ?? []).map((peer) => peer.id)),
@@ -1710,6 +2268,29 @@ export function GitsCockpit() {
     setAutomodeGoalRepo(selectedProjectRoot);
   }, [automodeGoalRepo, selectedProjectRoot]);
 
+  const tabCounts = useMemo<Record<GitsCockpitTab, string>>(
+    () => ({
+      overview: "live",
+      fleet: formatCount(delamainQuery.data?.peers.length ?? 0),
+      automode: formatCount(automodeQuery.data?.goals.length ?? 0),
+      gsd: openGsdQuery.data?.available ? "ready" : "check",
+      projects: formatCount(query.data?.totals.projectCount ?? 0),
+    }),
+    [
+      automodeQuery.data?.goals.length,
+      delamainQuery.data?.peers.length,
+      openGsdQuery.data?.available,
+      query.data?.totals.projectCount,
+    ],
+  );
+  const isRefreshing =
+    query.isFetching ||
+    delamainQuery.isFetching ||
+    automodeQuery.isFetching ||
+    openGsdQuery.isFetching ||
+    resourceQuery.isFetching ||
+    buildInfoQuery.isFetching;
+
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 sm:px-5">
@@ -1723,10 +2304,19 @@ export function GitsCockpit() {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => void query.refetch()}
-          disabled={query.isFetching}
+          onClick={() => {
+            void Promise.all([
+              query.refetch(),
+              delamainQuery.refetch(),
+              automodeQuery.refetch(),
+              openGsdQuery.refetch(),
+              resourceQuery.refetch(),
+              buildInfoQuery.refetch(),
+            ]);
+          }}
+          disabled={isRefreshing}
         >
-          <RefreshCwIcon className={cn("size-3.5", query.isFetching && "animate-spin")} />
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
           Refresh
         </Button>
       </header>
@@ -1740,133 +2330,160 @@ export function GitsCockpit() {
           </div>
         ) : query.data ? (
           <>
-            <ResourceVisibilityPanel
-              snapshot={query.data}
-              automode={automodeQuery.data}
-              history={resourceQuery.data}
-              loading={resourceQuery.isPending || resourceQuery.isFetching}
-              error={resourceQuery.error}
-              onRefresh={() => void resourceQuery.refetch()}
-            />
-            <PeerFleetPanel
-              list={delamainQuery.data}
-              loading={delamainQuery.isPending || delamainQuery.isFetching}
-              error={delamainQuery.error}
-              selectedPeerId={selectedPeer?.id ?? selectedPeerId}
-              logText={logQuery.data?.text}
-              logLoading={logQuery.isPending || logQuery.isFetching}
-              actionError={actionError}
-              spawnRepo={spawnRepo}
-              spawnName={spawnName}
-              spawnPrompt={spawnPrompt}
-              replyText={replyText}
-              actionPending={actionPending}
-              onRefresh={() => void delamainQuery.refetch()}
-              onSelectPeer={setSelectedPeerId}
-              onSpawnRepoChange={setSpawnRepo}
-              onSpawnNameChange={setSpawnName}
-              onSpawnPromptChange={setSpawnPrompt}
-              onReplyTextChange={setReplyText}
-              onSpawn={() => void spawnMutation.mutate()}
-              onReply={() => void replyMutation.mutate()}
-              onWait={() => void waitMutation.mutate()}
-              onKill={() => {
-                if (!selectedPeerId) {
-                  return;
-                }
-                if (window.confirm(`Kill Delamain peer ${selectedPeerId}?`)) {
-                  void killMutation.mutate();
-                }
-              }}
-              onIntegrate={() => {
-                if (!selectedPeerId) {
-                  return;
-                }
-                if (window.confirm(`Open an integration PR for Delamain peer ${selectedPeerId}?`)) {
-                  void integrateMutation.mutate();
-                }
-              }}
-            />
-            <AutomodePanel
-              snapshot={automodeQuery.data}
-              loading={automodeQuery.isPending || automodeQuery.isFetching}
-              error={automodeQuery.error}
-              actionError={automodeActionError}
-              actionPending={automodeActionPending}
-              policyMode={automodeMode}
-              killSwitchEnabled={automodeKillSwitch}
-              maxActivePeers={automodeMaxPeers}
-              allowedRepos={automodeAllowedRepos}
-              allowedModels={automodeAllowedModels}
-              defaultModel={automodeDefaultModel}
-              maxBudget={automodeMaxBudget}
-              maxRuntime={automodeMaxRuntime}
-              requireSpawnApproval={automodeRequireSpawnApproval}
-              requireIntegrateApproval={automodeRequireIntegrateApproval}
-              requireDestructiveApproval={automodeRequireDestructiveApproval}
-              goalTitle={automodeGoalTitle}
-              goalRepo={automodeGoalRepo}
-              goalModel={automodeGoalModel}
-              goalPrompt={automodeGoalPrompt}
-              onRefresh={() => void automodeQuery.refetch()}
-              onPolicyModeChange={setAutomodeMode}
-              onKillSwitchChange={(next) => {
-                setAutomodeKillSwitch(next);
-                void automodeKillSwitchMutation.mutate(next);
-              }}
-              onMaxActivePeersChange={setAutomodeMaxPeers}
-              onAllowedReposChange={setAutomodeAllowedRepos}
-              onAllowedModelsChange={setAutomodeAllowedModels}
-              onDefaultModelChange={setAutomodeDefaultModel}
-              onMaxBudgetChange={setAutomodeMaxBudget}
-              onMaxRuntimeChange={setAutomodeMaxRuntime}
-              onRequireSpawnApprovalChange={setAutomodeRequireSpawnApproval}
-              onRequireIntegrateApprovalChange={setAutomodeRequireIntegrateApproval}
-              onRequireDestructiveApprovalChange={setAutomodeRequireDestructiveApproval}
-              onGoalTitleChange={setAutomodeGoalTitle}
-              onGoalRepoChange={setAutomodeGoalRepo}
-              onGoalModelChange={setAutomodeGoalModel}
-              onGoalPromptChange={setAutomodeGoalPrompt}
-              onSavePolicy={() => void automodePolicyMutation.mutate()}
-              onEnqueueGoal={() => void automodeEnqueueMutation.mutate()}
-              onApproveGoal={(goalId) => void automodeApproveMutation.mutate(goalId)}
-              onRejectGoal={(goalId) => {
-                if (window.confirm(`Reject automode goal ${goalId}?`)) {
-                  void automodeRejectMutation.mutate(goalId);
-                }
-              }}
-              onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
-            />
-            <OpenGsdPanel
-              status={openGsdQuery.data}
-              loading={openGsdQuery.isPending || openGsdQuery.isFetching}
-              error={openGsdQuery.error}
-              projects={query.data.projects}
-              selectedProjectRoot={selectedProjectRoot}
-              initInput={gsdInitInput}
-              autoInitInput={gsdAutoInitInput}
-              model={gsdModel}
-              maxBudget={gsdMaxBudget}
-              commandResult={openGsdCommandResult}
-              actionError={openGsdActionError}
-              actionPending={openGsdActionPending}
-              onRefresh={() => void openGsdQuery.refetch()}
-              onProjectRootChange={setSelectedProjectRoot}
-              onInitInputChange={setGsdInitInput}
-              onAutoInitInputChange={setGsdAutoInitInput}
-              onModelChange={setGsdModel}
-              onMaxBudgetChange={setGsdMaxBudget}
-              onInit={() => void gsdInitMutation.mutate()}
-              onAuto={() => {
-                if (!selectedProjectRoot) {
-                  return;
-                }
-                if (window.confirm(`Run gsd-sdk auto in ${selectedProjectRoot}?`)) {
-                  void gsdAutoMutation.mutate();
-                }
-              }}
-            />
-            <CockpitContent snapshot={query.data} />
+            <CockpitTabNav activeTab={activeTab} counts={tabCounts} onTabChange={setActiveTab} />
+            {activeTab === "overview" ? (
+              <>
+                <CockpitOverviewPanel
+                  snapshot={query.data}
+                  delamain={delamainQuery.data}
+                  automode={automodeQuery.data}
+                  openGsd={openGsdQuery.data}
+                  history={resourceQuery.data}
+                  buildInfo={buildInfoQuery.data}
+                />
+                <BuildProvenancePanel
+                  buildInfo={buildInfoQuery.data}
+                  loading={buildInfoQuery.isPending || buildInfoQuery.isFetching}
+                  error={buildInfoQuery.error}
+                  onRefresh={() => void buildInfoQuery.refetch()}
+                />
+                <ResourceVisibilityPanel
+                  snapshot={query.data}
+                  automode={automodeQuery.data}
+                  history={resourceQuery.data}
+                  loading={resourceQuery.isPending || resourceQuery.isFetching}
+                  error={resourceQuery.error}
+                  onRefresh={() => void resourceQuery.refetch()}
+                />
+              </>
+            ) : null}
+            {activeTab === "fleet" ? (
+              <PeerFleetPanel
+                list={delamainQuery.data}
+                loading={delamainQuery.isPending || delamainQuery.isFetching}
+                error={delamainQuery.error}
+                selectedPeerId={selectedPeer?.id ?? selectedPeerId}
+                logText={logQuery.data?.text}
+                logLoading={logQuery.isPending || logQuery.isFetching}
+                actionError={actionError}
+                spawnRepo={spawnRepo}
+                spawnName={spawnName}
+                spawnPrompt={spawnPrompt}
+                replyText={replyText}
+                actionPending={actionPending}
+                onRefresh={() => void delamainQuery.refetch()}
+                onSelectPeer={setSelectedPeerId}
+                onSpawnRepoChange={setSpawnRepo}
+                onSpawnNameChange={setSpawnName}
+                onSpawnPromptChange={setSpawnPrompt}
+                onReplyTextChange={setReplyText}
+                onSpawn={() => void spawnMutation.mutate()}
+                onReply={() => void replyMutation.mutate()}
+                onWait={() => void waitMutation.mutate()}
+                onKill={() => {
+                  if (!selectedPeerId) {
+                    return;
+                  }
+                  if (window.confirm(`Kill Delamain peer ${selectedPeerId}?`)) {
+                    void killMutation.mutate();
+                  }
+                }}
+                onIntegrate={() => {
+                  if (!selectedPeerId) {
+                    return;
+                  }
+                  if (
+                    window.confirm(`Open an integration PR for Delamain peer ${selectedPeerId}?`)
+                  ) {
+                    void integrateMutation.mutate();
+                  }
+                }}
+              />
+            ) : null}
+            {activeTab === "automode" ? (
+              <AutomodePanel
+                snapshot={automodeQuery.data}
+                loading={automodeQuery.isPending || automodeQuery.isFetching}
+                error={automodeQuery.error}
+                actionError={automodeActionError}
+                actionPending={automodeActionPending}
+                policyMode={automodeMode}
+                killSwitchEnabled={automodeKillSwitch}
+                maxActivePeers={automodeMaxPeers}
+                allowedRepos={automodeAllowedRepos}
+                allowedModels={automodeAllowedModels}
+                defaultModel={automodeDefaultModel}
+                maxBudget={automodeMaxBudget}
+                maxRuntime={automodeMaxRuntime}
+                requireSpawnApproval={automodeRequireSpawnApproval}
+                requireIntegrateApproval={automodeRequireIntegrateApproval}
+                requireDestructiveApproval={automodeRequireDestructiveApproval}
+                goalTitle={automodeGoalTitle}
+                goalRepo={automodeGoalRepo}
+                goalModel={automodeGoalModel}
+                goalPrompt={automodeGoalPrompt}
+                onRefresh={() => void automodeQuery.refetch()}
+                onPolicyModeChange={setAutomodeMode}
+                onKillSwitchChange={(next) => {
+                  setAutomodeKillSwitch(next);
+                  void automodeKillSwitchMutation.mutate(next);
+                }}
+                onMaxActivePeersChange={setAutomodeMaxPeers}
+                onAllowedReposChange={setAutomodeAllowedRepos}
+                onAllowedModelsChange={setAutomodeAllowedModels}
+                onDefaultModelChange={setAutomodeDefaultModel}
+                onMaxBudgetChange={setAutomodeMaxBudget}
+                onMaxRuntimeChange={setAutomodeMaxRuntime}
+                onRequireSpawnApprovalChange={setAutomodeRequireSpawnApproval}
+                onRequireIntegrateApprovalChange={setAutomodeRequireIntegrateApproval}
+                onRequireDestructiveApprovalChange={setAutomodeRequireDestructiveApproval}
+                onGoalTitleChange={setAutomodeGoalTitle}
+                onGoalRepoChange={setAutomodeGoalRepo}
+                onGoalModelChange={setAutomodeGoalModel}
+                onGoalPromptChange={setAutomodeGoalPrompt}
+                onSavePolicy={() => void automodePolicyMutation.mutate()}
+                onEnqueueGoal={() => void automodeEnqueueMutation.mutate()}
+                onApproveGoal={(goalId) => void automodeApproveMutation.mutate(goalId)}
+                onRejectGoal={(goalId) => {
+                  if (window.confirm(`Reject automode goal ${goalId}?`)) {
+                    void automodeRejectMutation.mutate(goalId);
+                  }
+                }}
+                onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
+              />
+            ) : null}
+            {activeTab === "gsd" ? (
+              <OpenGsdPanel
+                status={openGsdQuery.data}
+                loading={openGsdQuery.isPending || openGsdQuery.isFetching}
+                error={openGsdQuery.error}
+                projects={query.data.projects}
+                selectedProjectRoot={selectedProjectRoot}
+                initInput={gsdInitInput}
+                autoInitInput={gsdAutoInitInput}
+                model={gsdModel}
+                maxBudget={gsdMaxBudget}
+                commandResult={openGsdCommandResult}
+                actionError={openGsdActionError}
+                actionPending={openGsdActionPending}
+                onRefresh={() => void openGsdQuery.refetch()}
+                onProjectRootChange={setSelectedProjectRoot}
+                onInitInputChange={setGsdInitInput}
+                onAutoInitInputChange={setGsdAutoInitInput}
+                onModelChange={setGsdModel}
+                onMaxBudgetChange={setGsdMaxBudget}
+                onInit={() => void gsdInitMutation.mutate()}
+                onAuto={() => {
+                  if (!selectedProjectRoot) {
+                    return;
+                  }
+                  if (window.confirm(`Run gsd-sdk auto in ${selectedProjectRoot}?`)) {
+                    void gsdAutoMutation.mutate();
+                  }
+                }}
+              />
+            ) : null}
+            {activeTab === "projects" ? <CockpitContent snapshot={query.data} /> : null}
           </>
         ) : null}
       </ScrollArea>
