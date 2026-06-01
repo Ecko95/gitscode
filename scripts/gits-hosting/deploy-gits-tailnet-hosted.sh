@@ -161,5 +161,20 @@ fi
 
 if ((skip_restart == 0)) && command -v curl >/dev/null 2>&1; then
   gits_hosting_log "Local health check"
-  curl --fail --silent --show-error --head "http://127.0.0.1:${gits_hosting_port}/gits"
+  health_url="http://127.0.0.1:${gits_hosting_port}/gits"
+  healthy=0
+  for attempt in $(seq 1 30); do
+    if curl --fail --silent --show-error --head "$health_url"; then
+      healthy=1
+      break
+    fi
+    if ((attempt == 1)); then
+      gits_hosting_log "Waiting for ${gits_hosting_service} to bind ${health_url}"
+    fi
+    sleep 1
+  done
+  if ((healthy == 0)); then
+    systemctl --user --no-pager --full status "$gits_hosting_service" || true
+    gits_hosting_die "Service did not pass health check after 30 seconds: ${health_url}"
+  fi
 fi
