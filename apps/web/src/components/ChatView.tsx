@@ -38,6 +38,7 @@ import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/ter
 import { Debouncer } from "@tanstack/react-pacer";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { useVcsStatus } from "~/lib/vcsStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
@@ -179,6 +180,7 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
+import { readGitsEnvironmentClient } from "../gitsClient";
 import {
   useServerAvailableEditors,
   useServerConfig,
@@ -1541,6 +1543,17 @@ export default function ChatView(props: ChatViewProps) {
     [activeLatestTurn?.turnId, threadActivities],
   );
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
+  const delamainPeersQuery = useQuery({
+    queryKey: ["gits", "delamain", "peers", environmentId],
+    queryFn: async () => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) return null;
+      return client.delamain.listPeers();
+    },
+    refetchInterval: 10_000,
+    retry: false,
+  });
+  const hasDeployedDelamainPeers = (delamainPeersQuery.data?.peers.length ?? 0) > 0;
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
@@ -3862,6 +3875,7 @@ export default function ChatView(props: ChatViewProps) {
                   sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
                   planSidebarLabel={planSidebarLabel}
                   planSidebarOpen={planSidebarOpen}
+                  hasDeployedDelamainPeers={hasDeployedDelamainPeers}
                   runtimeMode={runtimeMode}
                   interactionMode={interactionMode}
                   lockedProvider={lockedProvider}

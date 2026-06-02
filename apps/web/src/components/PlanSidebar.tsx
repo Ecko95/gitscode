@@ -1,19 +1,23 @@
-import { memo, useState, useCallback } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { memo, useState, useCallback, useMemo } from "react";
+import type { DelamainPeer, EnvironmentId } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { useQuery } from "@tanstack/react-query";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import ChatMarkdown from "./ChatMarkdown";
 import {
+  BotIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   EllipsisIcon,
+  GitBranchIcon,
   LoaderIcon,
   PanelRightCloseIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { readGitsEnvironmentClient } from "~/gitsClient";
 import type { ActivePlanState } from "../session-logic";
 import type { LatestProposedPlanState } from "../session-logic";
 import { formatTimestamp } from "../timestampFormat";
@@ -51,6 +55,42 @@ function stepStatusIcon(status: string): React.ReactNode {
   );
 }
 
+const ACTIVE_PEER_STATUSES = new Set(["pending", "running", "blocked", "waiting", "frozen"]);
+
+function delamainStatusClassName(peer: DelamainPeer): string {
+  if (peer.status === "done" || peer.status === "completed") {
+    return "bg-emerald-500/10 text-emerald-500";
+  }
+  if (peer.status === "failed" || peer.status === "killed" || peer.status === "halted") {
+    return "bg-destructive/10 text-destructive";
+  }
+  if (peer.status === "waiting" || peer.status === "blocked" || peer.status === "frozen") {
+    return "bg-amber-500/10 text-amber-500";
+  }
+  if (peer.status === "running" || peer.status === "pending") {
+    return "bg-blue-500/10 text-blue-400";
+  }
+  return "bg-muted text-muted-foreground";
+}
+
+function pathLabel(path: string | null): string | null {
+  if (!path) return null;
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length === 0) return path;
+  return parts.slice(-2).join("/");
+}
+
+function peerSortValue(peer: DelamainPeer): string {
+  return peer.updatedAt ?? peer.startedAt ?? "";
+}
+
+function sortDelamainPeers(left: DelamainPeer, right: DelamainPeer): number {
+  const leftActive = ACTIVE_PEER_STATUSES.has(left.status) ? 1 : 0;
+  const rightActive = ACTIVE_PEER_STATUSES.has(right.status) ? 1 : 0;
+  if (leftActive !== rightActive) return rightActive - leftActive;
+  return peerSortValue(right).localeCompare(peerSortValue(left));
+}
+
 interface PlanSidebarProps {
   activePlan: ActivePlanState | null;
   activeProposedPlan: LatestProposedPlanState | null;
@@ -81,6 +121,22 @@ const PlanSidebar = memo(function PlanSidebar({
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
+  const delamainPeersQuery = useQuery({
+    queryKey: ["gits", "delamain", "peers", environmentId],
+    queryFn: async () => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) return null;
+      return client.delamain.listPeers();
+    },
+    refetchInterval: 10_000,
+    retry: false,
+  });
+  const delamainPeers = useMemo(
+    () => [...(delamainPeersQuery.data?.peers ?? [])].sort(sortDelamainPeers),
+    [delamainPeersQuery.data?.peers],
+  );
+  const visibleDelamainPeers = delamainPeers.slice(0, 6);
+  const hiddenDelamainPeerCount = Math.max(0, delamainPeers.length - visibleDelamainPeers.length);
 
   const handleCopyPlan = useCallback(() => {
     if (!planMarkdown) return;
@@ -194,6 +250,69 @@ const PlanSidebar = memo(function PlanSidebar({
       {/* Content */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-3 space-y-4">
+          {visibleDelamainPeers.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase">
+                  Deployed Delamain peers
+                </p>
+                <Badge
+                  variant="secondary"
+                  className="rounded-md bg-muted px-1.5 py-0 text-[10px] text-muted-foreground"
+                >
+                  {delamainPeers.length}
+                </Badge>
+              </div>
+              <div className="space-y-1.5">
+                {visibleDelamainPeers.map((peer) => {
+                  const repoLabel = pathLabel(peer.sourceRepo ?? peer.worktreePath);
+                  const title = peer.name ?? peer.id;
+                  return (
+                    <div
+                      key={peer.id}
+                      className="rounded-lg border border-border/50 bg-background/45 px-2.5 py-2"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <BotIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
+                        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground/85">
+                          {title}
+                        </span>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium",
+                            delamainStatusClassName(peer),
+                          )}
+                        >
+                          {peer.rawStatus}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground/55">
+                        <GitBranchIcon className="size-3 shrink-0" />
+                        <span className="truncate">{peer.branch ?? "no branch"}</span>
+                        {repoLabel ? (
+                          <>
+                            <span className="shrink-0 text-muted-foreground/30">|</span>
+                            <span className="truncate">{repoLabel}</span>
+                          </>
+                        ) : null}
+                      </div>
+                      {peer.lastEvent || peer.task ? (
+                        <p className="mt-1 truncate text-[11px] text-muted-foreground/45">
+                          {peer.lastEvent ?? peer.task}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+              {hiddenDelamainPeerCount > 0 ? (
+                <p className="px-1 text-[11px] text-muted-foreground/40">
+                  +{hiddenDelamainPeerCount} more in Delamain.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* Explanation */}
           {activePlan?.explanation ? (
             <p className="text-[13px] leading-relaxed text-muted-foreground/80">
@@ -264,7 +383,7 @@ const PlanSidebar = memo(function PlanSidebar({
           ) : null}
 
           {/* Empty state */}
-          {!activePlan && !planMarkdown ? (
+          {!activePlan && !planMarkdown && visibleDelamainPeers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <p className="text-[13px] text-muted-foreground/40">No active plan yet.</p>
               <p className="mt-1 text-[11px] text-muted-foreground/30">
