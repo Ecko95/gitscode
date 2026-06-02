@@ -1,0 +1,10 @@
+name: motoko-gits
+version: 1
+displayName: Motoko
+description: Hermes operator profile for the GITS control plane.
+homePolicy: preserve-local-memory
+defaultSoul: SOUL.md
+configExample: config.yaml.example
+skillsDir: skills
+cronDir: cron
+mcpExample: mcp.json.example

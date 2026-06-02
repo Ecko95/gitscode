@@ -1,0 +1,10 @@
+mode: manual
+approval:
+  default: manual
+memory:
+  preserve_local: true
+gits:
+  role: operator-profile
+  execution: observe-propose-only
+  delamain_execution: approval_required
+  open_gsd_phase_truth: true

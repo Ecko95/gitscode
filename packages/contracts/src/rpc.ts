@@ -32,9 +32,37 @@ import {
   DelamainSpawnPeerInput,
   DelamainPeerStatusInput,
   DelamainPeerWaitInput,
+  GitsCapacityError,
+  GitsCapacitySnapshot,
+  GitsCapacitySnapshotInput,
   GitsCockpitError,
   GitsCockpitInput,
   GitsCockpitSnapshot,
+  HermesAdapterError,
+  HermesChatInput,
+  HermesCheckInput,
+  HermesCommandResult,
+  HermesConfigInput,
+  HermesDraftFromProposalInput,
+  HermesExecutionDraft,
+  HermesInspectGitsProposalInput,
+  HermesLogTailInput,
+  HermesLogTailResult,
+  HermesProjectContextInput,
+  HermesProjectContextResult,
+  HermesProposalCard,
+  HermesProposalDecisionInput,
+  HermesProposalListInput,
+  HermesProposalListResult,
+  HermesSafeConfig,
+  HermesScheduleRunInput,
+  HermesScheduleRunResult,
+  HermesSessionListInput,
+  HermesSessionListResult,
+  HermesSetupCodexOAuthInput,
+  HermesStartAcpSessionInput,
+  HermesStatusInput,
+  HermesStatusResult,
   OpenGsdAdapterError,
   OpenGsdCommandResult,
   OpenGsdInitProjectInput,
@@ -191,6 +219,21 @@ export const WS_METHODS = {
   gitsAutomodeApproveGoal: "gits.automode.goals.approve",
   gitsAutomodeRejectGoal: "gits.automode.goals.reject",
   gitsAutomodeDispatchGoal: "gits.automode.goals.dispatch",
+  gitsCapacityGetSnapshot: "gits.capacity.snapshot",
+  gitsHermesGetStatus: "gits.hermes.status",
+  gitsHermesGetConfig: "gits.hermes.config",
+  gitsHermesCheck: "gits.hermes.check",
+  gitsHermesSetupCodexOAuth: "gits.hermes.setupCodexOAuth",
+  gitsHermesStartAcpSession: "gits.hermes.acp.start",
+  gitsHermesListSessions: "gits.hermes.sessions.list",
+  gitsHermesTailLog: "gits.hermes.logs.tail",
+  gitsHermesListProposals: "gits.hermes.proposals.list",
+  gitsHermesInspectGits: "gits.hermes.proposals.inspectGits",
+  gitsHermesChat: "gits.hermes.chat",
+  gitsHermesDecideProposal: "gits.hermes.proposals.decide",
+  gitsHermesWriteProjectContext: "gits.hermes.context.write",
+  gitsHermesDraftFromProposal: "gits.hermes.proposals.draft",
+  gitsHermesRunSchedule: "gits.hermes.schedules.run",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -544,6 +587,99 @@ export const WsGitsAutomodeDispatchGoalRpc = Rpc.make(WS_METHODS.gitsAutomodeDis
   error: AutomodeSupervisorError,
 });
 
+export const WsGitsCapacityGetSnapshotRpc = Rpc.make(WS_METHODS.gitsCapacityGetSnapshot, {
+  payload: GitsCapacitySnapshotInput,
+  success: GitsCapacitySnapshot,
+  error: GitsCapacityError,
+});
+
+export const WsGitsHermesGetStatusRpc = Rpc.make(WS_METHODS.gitsHermesGetStatus, {
+  payload: HermesStatusInput,
+  success: HermesStatusResult,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesGetConfigRpc = Rpc.make(WS_METHODS.gitsHermesGetConfig, {
+  payload: HermesConfigInput,
+  success: HermesSafeConfig,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesCheckRpc = Rpc.make(WS_METHODS.gitsHermesCheck, {
+  payload: HermesCheckInput,
+  success: HermesCommandResult,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesSetupCodexOAuthRpc = Rpc.make(WS_METHODS.gitsHermesSetupCodexOAuth, {
+  payload: HermesSetupCodexOAuthInput,
+  success: HermesCommandResult,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesStartAcpSessionRpc = Rpc.make(WS_METHODS.gitsHermesStartAcpSession, {
+  payload: HermesStartAcpSessionInput,
+  success: HermesCommandResult,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesListSessionsRpc = Rpc.make(WS_METHODS.gitsHermesListSessions, {
+  payload: HermesSessionListInput,
+  success: HermesSessionListResult,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesTailLogRpc = Rpc.make(WS_METHODS.gitsHermesTailLog, {
+  payload: HermesLogTailInput,
+  success: HermesLogTailResult,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesListProposalsRpc = Rpc.make(WS_METHODS.gitsHermesListProposals, {
+  payload: HermesProposalListInput,
+  success: HermesProposalListResult,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesInspectGitsRpc = Rpc.make(WS_METHODS.gitsHermesInspectGits, {
+  payload: HermesInspectGitsProposalInput,
+  success: HermesProposalCard,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesChatRpc = Rpc.make(WS_METHODS.gitsHermesChat, {
+  payload: HermesChatInput,
+  success: HermesProposalCard,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesDecideProposalRpc = Rpc.make(WS_METHODS.gitsHermesDecideProposal, {
+  payload: HermesProposalDecisionInput,
+  success: HermesProposalCard,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesWriteProjectContextRpc = Rpc.make(
+  WS_METHODS.gitsHermesWriteProjectContext,
+  {
+    payload: HermesProjectContextInput,
+    success: HermesProjectContextResult,
+    error: HermesAdapterError,
+  },
+);
+
+export const WsGitsHermesDraftFromProposalRpc = Rpc.make(WS_METHODS.gitsHermesDraftFromProposal, {
+  payload: HermesDraftFromProposalInput,
+  success: HermesExecutionDraft,
+  error: HermesAdapterError,
+});
+
+export const WsGitsHermesRunScheduleRpc = Rpc.make(WS_METHODS.gitsHermesRunSchedule, {
+  payload: HermesScheduleRunInput,
+  success: HermesScheduleRunResult,
+  error: HermesAdapterError,
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -721,6 +857,21 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsAutomodeApproveGoalRpc,
   WsGitsAutomodeRejectGoalRpc,
   WsGitsAutomodeDispatchGoalRpc,
+  WsGitsCapacityGetSnapshotRpc,
+  WsGitsHermesGetStatusRpc,
+  WsGitsHermesGetConfigRpc,
+  WsGitsHermesCheckRpc,
+  WsGitsHermesSetupCodexOAuthRpc,
+  WsGitsHermesStartAcpSessionRpc,
+  WsGitsHermesListSessionsRpc,
+  WsGitsHermesTailLogRpc,
+  WsGitsHermesListProposalsRpc,
+  WsGitsHermesInspectGitsRpc,
+  WsGitsHermesChatRpc,
+  WsGitsHermesDecideProposalRpc,
+  WsGitsHermesWriteProjectContextRpc,
+  WsGitsHermesDraftFromProposalRpc,
+  WsGitsHermesRunScheduleRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

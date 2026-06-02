@@ -148,6 +148,25 @@ export interface WsRpcClient {
       readonly rejectGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeRejectGoal>;
       readonly dispatchGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeDispatchGoal>;
     };
+    readonly capacity: {
+      readonly getSnapshot: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsCapacityGetSnapshot>;
+    };
+    readonly hermes: {
+      readonly getStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsHermesGetStatus>;
+      readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsHermesGetConfig>;
+      readonly check: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsHermesCheck>;
+      readonly setupCodexOAuth: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsHermesSetupCodexOAuth>;
+      readonly startAcpSession: RpcUnaryMethod<typeof WS_METHODS.gitsHermesStartAcpSession>;
+      readonly listSessions: RpcUnaryMethod<typeof WS_METHODS.gitsHermesListSessions>;
+      readonly tailLog: RpcUnaryMethod<typeof WS_METHODS.gitsHermesTailLog>;
+      readonly listProposals: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsHermesListProposals>;
+      readonly inspectGits: RpcUnaryMethod<typeof WS_METHODS.gitsHermesInspectGits>;
+      readonly chat: RpcUnaryMethod<typeof WS_METHODS.gitsHermesChat>;
+      readonly decideProposal: RpcUnaryMethod<typeof WS_METHODS.gitsHermesDecideProposal>;
+      readonly writeProjectContext: RpcUnaryMethod<typeof WS_METHODS.gitsHermesWriteProjectContext>;
+      readonly draftFromProposal: RpcUnaryMethod<typeof WS_METHODS.gitsHermesDraftFromProposal>;
+      readonly runSchedule: RpcUnaryMethod<typeof WS_METHODS.gitsHermesRunSchedule>;
+    };
   };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
@@ -344,6 +363,36 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsAutomodeRejectGoal](input)),
         dispatchGoal: (input) =>
           transport.request((client) => client[WS_METHODS.gitsAutomodeDispatchGoal](input)),
+      },
+      capacity: {
+        getSnapshot: () =>
+          transport.request((client) => client[WS_METHODS.gitsCapacityGetSnapshot]({})),
+      },
+      hermes: {
+        getStatus: () => transport.request((client) => client[WS_METHODS.gitsHermesGetStatus]({})),
+        getConfig: () => transport.request((client) => client[WS_METHODS.gitsHermesGetConfig]({})),
+        check: () => transport.request((client) => client[WS_METHODS.gitsHermesCheck]({})),
+        setupCodexOAuth: () =>
+          transport.request((client) => client[WS_METHODS.gitsHermesSetupCodexOAuth]({})),
+        startAcpSession: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesStartAcpSession](input)),
+        listSessions: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesListSessions](input)),
+        tailLog: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesTailLog](input)),
+        listProposals: () =>
+          transport.request((client) => client[WS_METHODS.gitsHermesListProposals]({})),
+        inspectGits: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesInspectGits](input)),
+        chat: (input) => transport.request((client) => client[WS_METHODS.gitsHermesChat](input)),
+        decideProposal: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesDecideProposal](input)),
+        writeProjectContext: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesWriteProjectContext](input)),
+        draftFromProposal: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesDraftFromProposal](input)),
+        runSchedule: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsHermesRunSchedule](input)),
       },
     },
     server: {

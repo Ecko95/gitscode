@@ -620,6 +620,444 @@ export const AutomodeDispatchResult = Schema.Struct({
 });
 export type AutomodeDispatchResult = typeof AutomodeDispatchResult.Type;
 
+export const GitsProviderName = Schema.Literals(["codex", "cursor"]);
+export type GitsProviderName = typeof GitsProviderName.Type;
+
+export const GitsProviderStatus = Schema.Literals([
+  "available",
+  "configured",
+  "degraded",
+  "unavailable",
+  "unknown",
+]);
+export type GitsProviderStatus = typeof GitsProviderStatus.Type;
+
+export const GitsUsageLevel = Schema.Literals(["green", "yellow", "red", "critical", "unknown"]);
+export type GitsUsageLevel = typeof GitsUsageLevel.Type;
+
+export const GitsUsageSource = Schema.Literals([
+  "codex-log",
+  "codex-session-jsonl",
+  "cursor-budget-config",
+  "cursor-cli",
+  "cursor-dashboard",
+  "cursor-dashboard-cookie",
+  "manual-config",
+  "env",
+  "unavailable",
+]);
+export type GitsUsageSource = typeof GitsUsageSource.Type;
+
+export const GitsUsageWindow = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  usedPercent: Schema.NullOr(NonNegativeNumber),
+  remainingPercent: Schema.NullOr(NonNegativeNumber),
+  windowMinutes: Schema.NullOr(NonNegativeInt),
+  resetAt: Schema.NullOr(IsoDateTime),
+  level: GitsUsageLevel,
+  source: GitsUsageSource,
+  note: Schema.NullOr(SummaryString),
+});
+export type GitsUsageWindow = typeof GitsUsageWindow.Type;
+
+export const GitsProviderUsage = Schema.Struct({
+  provider: GitsProviderName,
+  displayName: TrimmedNonEmptyString,
+  status: GitsProviderStatus,
+  source: GitsUsageSource,
+  accountLabel: Schema.NullOr(TrimmedNonEmptyString),
+  planLabel: Schema.NullOr(TrimmedNonEmptyString),
+  windows: Schema.Array(GitsUsageWindow),
+  monthlyBudgetUsd: Schema.NullOr(NonNegativeNumber),
+  monthlySpendUsd: Schema.NullOr(NonNegativeNumber),
+  monthlyUtilizationPercent: Schema.NullOr(NonNegativeNumber),
+  monthlyRemainingUsd: Schema.NullOr(NonNegativeNumber),
+  monthlyResetAt: Schema.NullOr(IsoDateTime),
+  note: Schema.NullOr(SummaryString),
+  updatedAt: IsoDateTime,
+});
+export type GitsProviderUsage = typeof GitsProviderUsage.Type;
+
+export const GitsCapacityRecommendation = Schema.Struct({
+  recommendedEngine: DelamainEngine,
+  confidence: Schema.Literals(["high", "medium", "low"]),
+  reason: SummaryString,
+  codexRemainingPercent: Schema.NullOr(NonNegativeNumber),
+  cursorRemainingPercent: Schema.NullOr(NonNegativeNumber),
+});
+export type GitsCapacityRecommendation = typeof GitsCapacityRecommendation.Type;
+
+export const GitsCapacitySnapshotInput = Schema.Struct({});
+export type GitsCapacitySnapshotInput = typeof GitsCapacitySnapshotInput.Type;
+
+export const GitsCapacitySnapshot = Schema.Struct({
+  checkedAt: IsoDateTime,
+  codex: GitsProviderUsage,
+  cursor: GitsProviderUsage,
+  recommendation: GitsCapacityRecommendation,
+  notes: Schema.Array(SummaryString),
+});
+export type GitsCapacitySnapshot = typeof GitsCapacitySnapshot.Type;
+
+export const HermesCapability = Schema.Literals([
+  "status",
+  "doctor",
+  "acp",
+  "codex-oauth",
+  "chat",
+  "sessions",
+  "logs",
+  "proposals",
+  "profile",
+  "project-context",
+  "drafts",
+  "schedules",
+]);
+export type HermesCapability = typeof HermesCapability.Type;
+
+export const HermesHealthStatus = Schema.Literals([
+  "unknown",
+  "ok",
+  "warning",
+  "error",
+  "unavailable",
+]);
+export type HermesHealthStatus = typeof HermesHealthStatus.Type;
+
+export const HermesApprovalMode = Schema.Literals(["manual", "smart", "off", "unknown"]);
+export type HermesApprovalMode = typeof HermesApprovalMode.Type;
+
+export const HermesAuthState = Schema.Literals(["unknown", "detected", "missing", "needs-reauth"]);
+export type HermesAuthState = typeof HermesAuthState.Type;
+
+export const HermesAuthSource = Schema.Literals([
+  "hermes-home",
+  "codex-cli",
+  "both",
+  "missing",
+  "unknown",
+]);
+export type HermesAuthSource = typeof HermesAuthSource.Type;
+
+export const HermesCommandStatus = Schema.Literals([
+  "completed",
+  "failed",
+  "timed-out",
+  "action-required",
+  "started",
+]);
+export type HermesCommandStatus = typeof HermesCommandStatus.Type;
+
+export const HermesProposalActionKind = Schema.Literals([
+  "read-only",
+  "worktree-spawn",
+  "repo-write",
+  "integrate",
+  "destructive-shell",
+]);
+export type HermesProposalActionKind = typeof HermesProposalActionKind.Type;
+
+export const HermesProposalRisk = Schema.Literals(["low", "medium", "high", "blocked"]);
+export type HermesProposalRisk = typeof HermesProposalRisk.Type;
+
+export const HermesProposalExecutor = Schema.Literals(["none", "delamain", "open-gsd", "operator"]);
+export type HermesProposalExecutor = typeof HermesProposalExecutor.Type;
+
+export const HermesProposalStatus = Schema.Literals([
+  "proposed",
+  "approved",
+  "rejected",
+  "deferred",
+  "blocked",
+  "drafted",
+]);
+export type HermesProposalStatus = typeof HermesProposalStatus.Type;
+
+export const HermesProposalDecision = Schema.Literals(["approve", "reject", "defer"]);
+export type HermesProposalDecision = typeof HermesProposalDecision.Type;
+
+export const HermesPolicySnapshot = Schema.Struct({
+  mode: Schema.Literal("observe-propose-only"),
+  directMergeAllowed: Schema.Boolean,
+  directDestructiveShellAllowed: Schema.Boolean,
+  repoWritesRequireDelamain: Schema.Boolean,
+  humanApprovalRequiredForWriteActions: Schema.Boolean,
+  notes: Schema.Array(TrimmedNonEmptyString),
+});
+export type HermesPolicySnapshot = typeof HermesPolicySnapshot.Type;
+
+export const MotokoProfileStatus = Schema.Struct({
+  exists: Schema.Boolean,
+  managedByGits: Schema.Boolean,
+  distributionPath: PathString,
+  soulPath: PathString,
+  configExamplePath: PathString,
+  summary: SummaryString,
+  updatedAt: Schema.NullOr(IsoDateTime),
+});
+export type MotokoProfileStatus = typeof MotokoProfileStatus.Type;
+
+export const HermesSafeConfig = Schema.Struct({
+  hermesHome: PathString,
+  usingDefaultGitsHome: Schema.Boolean,
+  configPath: PathString,
+  soulPath: PathString,
+  approvalMode: HermesApprovalMode,
+  yoloModeDetected: Schema.Boolean,
+  codexCliAuthPath: PathString,
+});
+export type HermesSafeConfig = typeof HermesSafeConfig.Type;
+
+export const HermesCommandCheck = Schema.Struct({
+  status: HermesHealthStatus,
+  exitCode: Schema.NullOr(Schema.Number),
+  stdout: Schema.String,
+  stderr: Schema.String,
+  checkedAt: IsoDateTime,
+});
+export type HermesCommandCheck = typeof HermesCommandCheck.Type;
+
+export const HermesCodexAuthStatus = Schema.Struct({
+  state: HermesAuthState,
+  source: HermesAuthSource,
+  hermesAuthExists: Schema.Boolean,
+  codexCliAuthExists: Schema.Boolean,
+  message: SummaryString,
+});
+export type HermesCodexAuthStatus = typeof HermesCodexAuthStatus.Type;
+
+export const HermesSoulStatus = Schema.Struct({
+  exists: Schema.Boolean,
+  managedByGits: Schema.Boolean,
+  path: PathString,
+  summary: SummaryString,
+  updatedAt: Schema.NullOr(IsoDateTime),
+});
+export type HermesSoulStatus = typeof HermesSoulStatus.Type;
+
+export const HermesAcpStatus = Schema.Struct({
+  available: Schema.Boolean,
+  check: HermesCommandCheck,
+  version: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type HermesAcpStatus = typeof HermesAcpStatus.Type;
+
+export const HermesStatusInput = Schema.Struct({});
+export type HermesStatusInput = typeof HermesStatusInput.Type;
+
+export const HermesStatusResult = Schema.Struct({
+  available: Schema.Boolean,
+  binaryPath: Schema.NullOr(TrimmedNonEmptyString),
+  version: Schema.NullOr(TrimmedNonEmptyString),
+  checkedAt: IsoDateTime,
+  capabilities: Schema.Array(HermesCapability),
+  unsupported: Schema.Array(HermesCapability),
+  config: HermesSafeConfig,
+  codexAuth: HermesCodexAuthStatus,
+  soul: HermesSoulStatus,
+  acp: HermesAcpStatus,
+  doctor: HermesCommandCheck,
+  policy: HermesPolicySnapshot,
+  motokoProfile: MotokoProfileStatus,
+  proposalCount: NonNegativeInt,
+  setupWarnings: Schema.Array(SummaryString),
+});
+export type HermesStatusResult = typeof HermesStatusResult.Type;
+
+export const HermesConfigInput = Schema.Struct({});
+export type HermesConfigInput = typeof HermesConfigInput.Type;
+
+export const HermesCheckInput = Schema.Struct({});
+export type HermesCheckInput = typeof HermesCheckInput.Type;
+
+export const HermesSetupCodexOAuthInput = Schema.Struct({});
+export type HermesSetupCodexOAuthInput = typeof HermesSetupCodexOAuthInput.Type;
+
+export const HermesStartAcpSessionInput = Schema.Struct({
+  cwd: Schema.optional(PathString),
+});
+export type HermesStartAcpSessionInput = typeof HermesStartAcpSessionInput.Type;
+
+export const HermesInspectGitsProposalInput = Schema.Struct({
+  projectDir: PathString,
+  prompt: Schema.optional(SummaryString),
+  timeoutMs: Schema.optional(NonNegativeInt),
+});
+export type HermesInspectGitsProposalInput = typeof HermesInspectGitsProposalInput.Type;
+
+export const HermesChatInput = Schema.Struct({
+  message: SummaryString,
+  projectDir: Schema.optional(PathString),
+  timeoutMs: Schema.optional(NonNegativeInt),
+});
+export type HermesChatInput = typeof HermesChatInput.Type;
+
+export const HermesCommandAction = Schema.Literals([
+  "check",
+  "setup-codex-oauth",
+  "start-acp-session",
+  "inspect-gits-proposal",
+  "write-project-context",
+  "run-scheduled-briefing",
+]);
+export type HermesCommandAction = typeof HermesCommandAction.Type;
+
+export const HermesCommandResult = Schema.Struct({
+  action: HermesCommandAction,
+  status: HermesCommandStatus,
+  args: Schema.Array(TrimmedNonEmptyString),
+  exitCode: Schema.NullOr(Schema.Number),
+  signal: Schema.NullOr(TrimmedNonEmptyString),
+  stdout: Schema.String,
+  stderr: Schema.String,
+  startedAt: IsoDateTime,
+  finishedAt: IsoDateTime,
+  durationMs: NonNegativeInt,
+  nextCommand: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type HermesCommandResult = typeof HermesCommandResult.Type;
+
+export const HermesSessionListInput = Schema.Struct({
+  limit: Schema.optional(NonNegativeInt),
+});
+export type HermesSessionListInput = typeof HermesSessionListInput.Type;
+
+export const HermesSession = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  title: Schema.NullOr(TrimmedNonEmptyString),
+  status: Schema.Literals(["unknown", "active", "completed", "background"]),
+  updatedAt: Schema.NullOr(IsoDateTime),
+  summary: Schema.NullOr(SummaryString),
+});
+export type HermesSession = typeof HermesSession.Type;
+
+export const HermesSessionListResult = Schema.Struct({
+  sessions: Schema.Array(HermesSession),
+  checkedAt: IsoDateTime,
+  source: TrimmedNonEmptyString,
+});
+export type HermesSessionListResult = typeof HermesSessionListResult.Type;
+
+export const HermesLogTailInput = Schema.Struct({
+  lines: Schema.optional(NonNegativeInt),
+});
+export type HermesLogTailInput = typeof HermesLogTailInput.Type;
+
+export const HermesLogTailResult = Schema.Struct({
+  path: Schema.NullOr(PathString),
+  lines: NonNegativeInt,
+  text: Schema.String,
+  checkedAt: IsoDateTime,
+});
+export type HermesLogTailResult = typeof HermesLogTailResult.Type;
+
+export const HermesProposalCard = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  summary: SummaryString,
+  detail: SummaryString,
+  evidence: Schema.Array(SummaryString),
+  scope: Schema.Array(SummaryString),
+  risk: HermesProposalRisk,
+  actionKind: HermesProposalActionKind,
+  status: HermesProposalStatus,
+  requiresApproval: Schema.Boolean,
+  recommendedExecutor: HermesProposalExecutor,
+  verificationPlan: Schema.Array(SummaryString),
+  nextCommandOrPrompt: Schema.NullOr(SummaryString),
+  blockedReason: Schema.NullOr(SummaryString),
+  source: TrimmedNonEmptyString,
+  projectDir: Schema.NullOr(PathString),
+  decisionReason: Schema.NullOr(SummaryString),
+  decidedAt: Schema.NullOr(IsoDateTime),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type HermesProposalCard = typeof HermesProposalCard.Type;
+
+export const HermesProposalListInput = Schema.Struct({});
+export type HermesProposalListInput = typeof HermesProposalListInput.Type;
+
+export const HermesProposalListResult = Schema.Struct({
+  proposals: Schema.Array(HermesProposalCard),
+  checkedAt: IsoDateTime,
+});
+export type HermesProposalListResult = typeof HermesProposalListResult.Type;
+
+export const HermesProposalDecisionInput = Schema.Struct({
+  proposalId: TrimmedNonEmptyString,
+  decision: HermesProposalDecision,
+  reason: Schema.optional(SummaryString),
+});
+export type HermesProposalDecisionInput = typeof HermesProposalDecisionInput.Type;
+
+export const HermesProjectContextInput = Schema.Struct({
+  projectDir: PathString,
+});
+export type HermesProjectContextInput = typeof HermesProjectContextInput.Type;
+
+export const HermesProjectContextResult = Schema.Struct({
+  projectId: TrimmedNonEmptyString,
+  projectDir: PathString,
+  path: PathString,
+  markdown: SummaryString,
+  writtenAt: IsoDateTime,
+});
+export type HermesProjectContextResult = typeof HermesProjectContextResult.Type;
+
+export const HermesDraftKind = Schema.Literals(["delamain-peer", "open-gsd", "verification"]);
+export type HermesDraftKind = typeof HermesDraftKind.Type;
+
+export const HermesDraftStatus = Schema.Literals(["draft", "blocked"]);
+export type HermesDraftStatus = typeof HermesDraftStatus.Type;
+
+export const HermesDraftFromProposalInput = Schema.Struct({
+  proposalId: TrimmedNonEmptyString,
+});
+export type HermesDraftFromProposalInput = typeof HermesDraftFromProposalInput.Type;
+
+export const HermesExecutionDraft = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  proposalId: TrimmedNonEmptyString,
+  kind: HermesDraftKind,
+  status: HermesDraftStatus,
+  title: TrimmedNonEmptyString,
+  repo: Schema.NullOr(PathString),
+  sourceBranch: Schema.NullOr(TrimmedNonEmptyString),
+  targetBranch: Schema.NullOr(TrimmedNonEmptyString),
+  prompt: SummaryString,
+  risk: HermesProposalRisk,
+  fileOwnership: Schema.Array(SummaryString),
+  verificationCommands: Schema.Array(SummaryString),
+  blockedReason: Schema.NullOr(SummaryString),
+  createdAt: IsoDateTime,
+});
+export type HermesExecutionDraft = typeof HermesExecutionDraft.Type;
+
+export const HermesScheduleKind = Schema.Literals([
+  "daily-briefing",
+  "weekly-stale-scan",
+  "tailnet-health",
+  "skills-review",
+  "memory-review",
+  "verification-sentinel",
+]);
+export type HermesScheduleKind = typeof HermesScheduleKind.Type;
+
+export const HermesScheduleRunInput = Schema.Struct({
+  kind: HermesScheduleKind,
+  projectDir: Schema.optional(PathString),
+});
+export type HermesScheduleRunInput = typeof HermesScheduleRunInput.Type;
+
+export const HermesScheduleRunResult = Schema.Struct({
+  kind: HermesScheduleKind,
+  ranAt: IsoDateTime,
+  proposals: Schema.Array(HermesProposalCard),
+  blockedReason: Schema.NullOr(SummaryString),
+});
+export type HermesScheduleRunResult = typeof HermesScheduleRunResult.Type;
+
 export class AutomodeSupervisorError extends Schema.TaggedErrorClass<AutomodeSupervisorError>()(
   "AutomodeSupervisorError",
   {
@@ -646,6 +1084,22 @@ export class DelamainAdapterError extends Schema.TaggedErrorClass<DelamainAdapte
 
 export class GitsCockpitError extends Schema.TaggedErrorClass<GitsCockpitError>()(
   "GitsCockpitError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class GitsCapacityError extends Schema.TaggedErrorClass<GitsCapacityError>()(
+  "GitsCapacityError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class HermesAdapterError extends Schema.TaggedErrorClass<HermesAdapterError>()(
+  "HermesAdapterError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

@@ -31,7 +31,9 @@ import {
   FilesystemBrowseError,
   AutomodeSupervisorError,
   DelamainAdapterError,
+  GitsCapacityError,
   GitsCockpitError,
+  HermesAdapterError,
   OpenGsdAdapterError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -74,6 +76,8 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
 import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
+import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
+import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
@@ -105,6 +109,8 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isGitsCockpitError = Schema.is(GitsCockpitError);
 const isDelamainAdapterError = Schema.is(DelamainAdapterError);
+const isGitsCapacityError = Schema.is(GitsCapacityError);
+const isHermesAdapterError = Schema.is(HermesAdapterError);
 const isOpenGsdAdapterError = Schema.is(OpenGsdAdapterError);
 const isAutomodeSupervisorError = Schema.is(AutomodeSupervisorError);
 
@@ -200,6 +206,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const gitsPlanningScanner = yield* GitsPlanningScanner;
       const delamainAdapter = yield* DelamainAdapter;
+      const gitsCapacityMonitor = yield* GitsCapacityMonitor;
+      const hermesAdapter = yield* HermesAdapter;
       const openGsdAdapter = yield* OpenGsdAdapter;
       const automodeSupervisor = yield* AutomodeSupervisor;
       const serverEnvironment = yield* ServerEnvironment;
@@ -1283,6 +1291,98 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             automodeSupervisor.dispatchGoal(input),
             { "rpc.aggregate": "gits" },
           ),
+        [WS_METHODS.gitsCapacityGetSnapshot]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCapacityGetSnapshot,
+            gitsCapacityMonitor.getSnapshot().pipe(
+              Effect.mapError((cause) =>
+                isGitsCapacityError(cause)
+                  ? cause
+                  : new GitsCapacityError({
+                      message: "Failed to load GITS capacity snapshot.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsHermesGetStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsHermesGetStatus,
+            hermesAdapter.getStatus().pipe(
+              Effect.mapError((cause) =>
+                isHermesAdapterError(cause)
+                  ? cause
+                  : new HermesAdapterError({
+                      message: "Failed to load Hermes status.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsHermesGetConfig]: (_input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesGetConfig, hermesAdapter.getConfig(), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsHermesCheck]: (_input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesCheck, hermesAdapter.check(), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsHermesSetupCodexOAuth]: (_input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesSetupCodexOAuth, hermesAdapter.setupCodexOAuth(), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsHermesStartAcpSession]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsHermesStartAcpSession,
+            hermesAdapter.startAcpSession(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsHermesListSessions]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesListSessions, hermesAdapter.listSessions(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsHermesTailLog]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesTailLog, hermesAdapter.tailLog(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsHermesListProposals]: (_input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesListProposals, hermesAdapter.listProposals(), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsHermesInspectGits]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsHermesInspectGits,
+            hermesAdapter.inspectGitsAndPropose(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsHermesChat]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesChat, hermesAdapter.chat(input), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsHermesDecideProposal]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsHermesDecideProposal,
+            hermesAdapter.decideProposal(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsHermesWriteProjectContext]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsHermesWriteProjectContext,
+            hermesAdapter.writeProjectContext(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsHermesDraftFromProposal]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsHermesDraftFromProposal,
+            hermesAdapter.draftFromProposal(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsHermesRunSchedule]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsHermesRunSchedule, hermesAdapter.runSchedule(input), {
+            "rpc.aggregate": "gits",
+          }),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

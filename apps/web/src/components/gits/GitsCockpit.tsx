@@ -4,12 +4,22 @@ import type {
   AutomodeSnapshot,
   DelamainPeer,
   DelamainPeerListResult,
+  GitsCapacitySnapshot,
   GitsCockpitProject,
   GitsCockpitSnapshot,
   GitsSkillInventoryItem,
   GitsSkillInventorySnapshot,
   GitsSkillProvider,
   GsdPhase,
+  HermesCommandResult,
+  HermesExecutionDraft,
+  HermesLogTailResult,
+  HermesProposalCard,
+  HermesProposalListResult,
+  HermesScheduleKind,
+  HermesScheduleRunResult,
+  HermesSessionListResult,
+  HermesStatusResult,
   OpenGsdCommandResult,
   OpenGsdStatusResult,
   ServerProcessResourceHistoryResult,
@@ -106,7 +116,7 @@ const GATE_STATUS_LABELS: Record<VerificationGate["status"], string> = {
   passed: "Passed",
 };
 
-type GitsCockpitTab = "overview" | "fleet" | "automode" | "gsd" | "skills" | "projects";
+type GitsCockpitTab = "overview" | "motoko" | "fleet" | "automode" | "gsd" | "skills" | "projects";
 
 const GITS_COCKPIT_TABS: ReadonlyArray<{
   id: GitsCockpitTab;
@@ -114,6 +124,7 @@ const GITS_COCKPIT_TABS: ReadonlyArray<{
   icon: typeof CircleIcon;
 }> = [
   { id: "overview", label: "Overview", icon: GaugeIcon },
+  { id: "motoko", label: "Motoko", icon: SparklesIcon },
   { id: "fleet", label: "Fleet", icon: GitBranchIcon },
   { id: "automode", label: "Automode", icon: PowerIcon },
   { id: "gsd", label: "Open GSD", icon: ListChecksIcon },
@@ -734,6 +745,9 @@ function CockpitOverviewPanel({
   delamain,
   automode,
   openGsd,
+  hermes,
+  proposals,
+  capacity,
   history,
   buildInfo,
 }: {
@@ -741,6 +755,9 @@ function CockpitOverviewPanel({
   delamain: DelamainPeerListResult | undefined;
   automode: AutomodeSnapshot | undefined;
   openGsd: OpenGsdStatusResult | undefined;
+  hermes: HermesStatusResult | undefined;
+  proposals: HermesProposalListResult | undefined;
+  capacity: GitsCapacitySnapshot | undefined;
   history: ServerProcessResourceHistoryResult | undefined;
   buildInfo: BuildInfoSnapshot | undefined;
 }) {
@@ -780,6 +797,9 @@ function CockpitOverviewPanel({
   const issueCount =
     blockedPhaseCount + failedGateCount + criticalTurnCount + (automode?.pendingApprovalCount ?? 0);
   const resourceError = history ? Option.getOrNull(history.error) : null;
+  const pendingProposalCount =
+    proposals?.proposals.filter((proposal) => proposal.status === "proposed").length ?? 0;
+  const topProposal = proposals?.proposals.find((proposal) => proposal.status === "proposed");
 
   return (
     <section className="border-b border-border bg-background">
@@ -847,7 +867,36 @@ function CockpitOverviewPanel({
         />
       </div>
 
-      <div className="grid min-w-0 border-b border-border/60 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid min-w-0 border-b border-border/60 sm:grid-cols-2 xl:grid-cols-7">
+        <SignalRow
+          label="Motoko"
+          value={hermes?.available ? "ready" : "setup"}
+          tone={hermes?.available ? "success" : "warning"}
+          detail={
+            hermes
+              ? (hermes.setupWarnings[0] ??
+                `${formatCount(hermes.proposalCount)} proposals | ${hermes.config.hermesHome}`)
+              : "Hermes operator status unavailable"
+          }
+        />
+        <SignalRow
+          label="Proposals"
+          value={formatCount(pendingProposalCount)}
+          tone={pendingProposalCount > 0 ? "warning" : "success"}
+          detail={topProposal?.title ?? "No pending Motoko proposals"}
+        />
+        <SignalRow
+          label="Capacity"
+          value={capacity?.recommendation.recommendedEngine ?? "check"}
+          tone={
+            capacity?.recommendation.confidence === "high"
+              ? "success"
+              : capacity
+                ? "warning"
+                : "default"
+          }
+          detail={capacity?.recommendation.reason ?? "Provider capacity unavailable"}
+        />
         <SignalRow
           label="Delamain"
           value={delamain?.capabilities.available ? "ready" : "offline"}
@@ -1335,6 +1384,439 @@ function commandResultTone(status: OpenGsdCommandResult["status"]): ReturnType<t
     return "success";
   }
   return status === "timed-out" ? "warning" : "danger";
+}
+
+function hermesCommandResultTone(
+  status: HermesCommandResult["status"],
+): ReturnType<typeof statusTone> {
+  if (status === "completed" || status === "started") {
+    return "success";
+  }
+  if (status === "action-required" || status === "timed-out") {
+    return "warning";
+  }
+  return "danger";
+}
+
+function hermesProposalTone(status: HermesProposalCard["status"]): ReturnType<typeof statusTone> {
+  if (status === "approved" || status === "drafted") {
+    return "success";
+  }
+  if (status === "blocked" || status === "rejected") {
+    return "danger";
+  }
+  if (status === "deferred") {
+    return "default";
+  }
+  return "warning";
+}
+
+const MOTOKO_SCHEDULE_OPTIONS: ReadonlyArray<{
+  readonly value: HermesScheduleKind;
+  readonly label: string;
+}> = [
+  { value: "daily-briefing", label: "Daily briefing" },
+  { value: "weekly-stale-scan", label: "Weekly stale scan" },
+  { value: "tailnet-health", label: "Tailnet health" },
+  { value: "skills-review", label: "Skills review" },
+  { value: "memory-review", label: "Memory review" },
+  { value: "verification-sentinel", label: "Verification sentinel" },
+];
+
+function MotokoPanel({
+  status,
+  capacity,
+  sessions,
+  log,
+  proposals,
+  loading,
+  error,
+  actionError,
+  commandResult,
+  draft,
+  scheduleResult,
+  selectedProjectRoot,
+  chatInput,
+  scheduleKind,
+  actionPending,
+  onRefresh,
+  onProjectRootChange,
+  onChatInputChange,
+  onScheduleKindChange,
+  onCheck,
+  onSetupCodexOAuth,
+  onStartAcp,
+  onInspectGits,
+  onChatSubmit,
+  onDecision,
+  onWriteContext,
+  onDraft,
+  onRunSchedule,
+}: {
+  status: HermesStatusResult | undefined;
+  capacity: GitsCapacitySnapshot | undefined;
+  sessions: HermesSessionListResult | undefined;
+  log: HermesLogTailResult | undefined;
+  proposals: HermesProposalListResult | undefined;
+  loading: boolean;
+  error: unknown;
+  actionError: unknown;
+  commandResult: HermesCommandResult | undefined;
+  draft: HermesExecutionDraft | undefined;
+  scheduleResult: HermesScheduleRunResult | undefined;
+  selectedProjectRoot: string;
+  chatInput: string;
+  scheduleKind: HermesScheduleKind;
+  actionPending: boolean;
+  onRefresh: () => void;
+  onProjectRootChange: (value: string) => void;
+  onChatInputChange: (value: string) => void;
+  onScheduleKindChange: (value: HermesScheduleKind) => void;
+  onCheck: () => void;
+  onSetupCodexOAuth: () => void;
+  onStartAcp: () => void;
+  onInspectGits: () => void;
+  onChatSubmit: () => void;
+  onDecision: (proposalId: string, decision: "approve" | "reject" | "defer") => void;
+  onWriteContext: () => void;
+  onDraft: (proposalId: string) => void;
+  onRunSchedule: () => void;
+}) {
+  const cards = proposals?.proposals ?? [];
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : actionError instanceof Error
+        ? actionError.message
+        : null;
+  const pendingCount = cards.filter((proposal) => proposal.status === "proposed").length;
+
+  return (
+    <section className="border-b border-border bg-background">
+      <div className="flex flex-col gap-3 border-b border-border/70 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-base font-semibold">Motoko</h2>
+            <StatusPill
+              label={status?.available ? "ready" : "setup"}
+              tone={status?.available ? "success" : "warning"}
+            />
+            <StatusPill
+              label={status?.acp.available ? "ACP" : "ACP check"}
+              tone={status?.acp.available ? "success" : "warning"}
+            />
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            Hermes operator for GITS | {status?.version ?? "version unknown"} |{" "}
+            {status?.config.hermesHome ?? "~/.gits/hermes"}
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
+          <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+
+      {errorMessage ? (
+        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 border-b border-border/60 sm:grid-cols-4 xl:grid-cols-6">
+        <StatBlock label="Proposals" value={formatCount(cards.length)} icon={SparklesIcon} />
+        <StatBlock label="Pending" value={formatCount(pendingCount)} icon={AlertTriangleIcon} />
+        <StatBlock
+          label="OAuth"
+          value={status?.codexAuth.source ?? "unknown"}
+          icon={ShieldCheckIcon}
+        />
+        <StatBlock label="Mode" value={status?.config.approvalMode ?? "unknown"} icon={PowerIcon} />
+        <StatBlock
+          label="Router"
+          value={capacity?.recommendation.recommendedEngine ?? "check"}
+          icon={BotIcon}
+        />
+        <StatBlock
+          label="Sessions"
+          value={formatCount(sessions?.sessions.length ?? 0)}
+          icon={BotIcon}
+        />
+      </div>
+
+      {status?.setupWarnings.length ? (
+        <div className="divide-y divide-border/60 border-b border-border/60">
+          {status.setupWarnings.slice(0, 5).map((warning) => (
+            <div key={warning} className="px-4 py-2 text-xs text-amber-600 sm:px-5">
+              {warning}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.8fr)]">
+        <div className="min-w-0 border-r border-border/60">
+          <div className="grid gap-2 border-b border-border/60 px-4 py-4 sm:px-5">
+            <Input
+              nativeInput
+              size="sm"
+              value={selectedProjectRoot}
+              placeholder="Selected project root"
+              onChange={(event) => onProjectRootChange(event.currentTarget.value)}
+            />
+            <Textarea
+              value={chatInput}
+              placeholder="Ask Motoko"
+              className="min-h-24 text-xs"
+              onChange={(event) => onChatInputChange(event.currentTarget.value)}
+            />
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={onCheck} disabled={actionPending}>
+                <CheckCircle2Icon className="size-3.5" />
+                Check
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onSetupCodexOAuth}
+                disabled={actionPending}
+              >
+                <ShieldCheckIcon className="size-3.5" />
+                Setup OAuth
+              </Button>
+              <Button size="sm" variant="outline" onClick={onStartAcp} disabled={actionPending}>
+                <BotIcon className="size-3.5" />
+                Start ACP
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onWriteContext}
+                disabled={actionPending || selectedProjectRoot.trim().length === 0}
+              >
+                <FilePlus2Icon className="size-3.5" />
+                Write Context
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onInspectGits}
+                disabled={actionPending || selectedProjectRoot.trim().length === 0}
+              >
+                <SearchIcon className="size-3.5" />
+                Inspect
+              </Button>
+              <Button
+                size="sm"
+                onClick={onChatSubmit}
+                disabled={actionPending || chatInput.trim().length === 0}
+              >
+                <SendIcon className="size-3.5" />
+                Ask
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-2 border-b border-border/60 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:px-5">
+            <select
+              value={scheduleKind}
+              className="h-8 min-w-0 rounded-md border border-input bg-background px-3 text-xs"
+              onChange={(event) =>
+                onScheduleKindChange(event.currentTarget.value as HermesScheduleKind)
+              }
+            >
+              {MOTOKO_SCHEDULE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <Button size="sm" variant="outline" onClick={onRunSchedule} disabled={actionPending}>
+              <PlayIcon className="size-3.5" />
+              Run
+            </Button>
+          </div>
+
+          <SectionHeader title="Proposal cards" count={cards.length} />
+          {loading && cards.length === 0 ? (
+            <EmptyState label="Loading Motoko proposals..." />
+          ) : cards.length === 0 ? (
+            <EmptyState label="No Motoko proposals." />
+          ) : (
+            <div className="divide-y divide-border/60">
+              {cards.slice(0, 80).map((proposal) => (
+                <div key={proposal.id} className="grid gap-3 px-4 py-3 text-xs sm:px-5">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                      {proposal.title}
+                    </span>
+                    <StatusPill
+                      label={proposal.status}
+                      tone={hermesProposalTone(proposal.status)}
+                    />
+                    <StatusPill
+                      label={proposal.risk}
+                      tone={proposal.risk === "blocked" ? "danger" : "default"}
+                    />
+                    <StatusPill label={proposal.recommendedExecutor} tone="default" />
+                  </div>
+                  <p className="line-clamp-3 text-muted-foreground">{proposal.summary}</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground/80">
+                        Evidence
+                      </div>
+                      <ul className="grid gap-1 text-[11px] text-muted-foreground">
+                        {proposal.evidence.slice(0, 3).map((item) => (
+                          <li key={item} className="line-clamp-2">
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground/80">
+                        Verification
+                      </div>
+                      <ul className="grid gap-1 text-[11px] text-muted-foreground">
+                        {proposal.verificationPlan.slice(0, 3).map((item) => (
+                          <li key={item} className="line-clamp-2">
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  {proposal.blockedReason ? (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                      {proposal.blockedReason}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onDecision(proposal.id, "defer")}
+                      disabled={actionPending}
+                    >
+                      Defer
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive-outline"
+                      onClick={() => onDecision(proposal.id, "reject")}
+                      disabled={actionPending}
+                    >
+                      Reject
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onDecision(proposal.id, "approve")}
+                      disabled={actionPending || proposal.status === "blocked"}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => onDraft(proposal.id)}
+                      disabled={actionPending || proposal.status !== "approved"}
+                    >
+                      Draft
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0">
+          <SectionHeader title="Result" count={commandResult || draft || scheduleResult ? 1 : 0} />
+          <div className="grid gap-3 px-4 py-3 text-xs sm:px-5">
+            {commandResult ? (
+              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <StatusPill
+                    label={commandResult.status}
+                    tone={hermesCommandResultTone(commandResult.status)}
+                  />
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {commandResult.action} | {formatCount(commandResult.durationMs)} ms
+                  </span>
+                </div>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
+                  {[commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n") ||
+                    "No command output."}
+                </pre>
+              </div>
+            ) : null}
+            {draft ? (
+              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <StatusPill
+                    label={draft.status}
+                    tone={draft.status === "draft" ? "success" : "danger"}
+                  />
+                  <StatusPill label={draft.kind} tone="default" />
+                </div>
+                <div className="truncate font-medium">{draft.title}</div>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
+                  {draft.prompt}
+                </pre>
+              </div>
+            ) : null}
+            {scheduleResult ? (
+              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <StatusPill
+                    label={scheduleResult.blockedReason ? "blocked" : scheduleResult.kind}
+                    tone={scheduleResult.blockedReason ? "danger" : "success"}
+                  />
+                  <span className="text-muted-foreground">
+                    {formatIsoDate(scheduleResult.ranAt)}
+                  </span>
+                </div>
+                <div className="text-muted-foreground">
+                  {scheduleResult.blockedReason ??
+                    `${formatCount(scheduleResult.proposals.length)} proposal cards generated.`}
+                </div>
+              </div>
+            ) : null}
+            <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
+              <div className="border-b border-border/60 px-3 py-2 font-medium text-muted-foreground">
+                Log
+              </div>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                {log?.text ?? "No Hermes log output."}
+              </pre>
+            </div>
+            <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
+              <div className="border-b border-border/60 px-3 py-2 font-medium text-muted-foreground">
+                Sessions
+              </div>
+              {(sessions?.sessions.length ?? 0) === 0 ? (
+                <EmptyState label="No Hermes sessions found." />
+              ) : (
+                <div className="divide-y divide-border/60">
+                  {sessions?.sessions.map((session) => (
+                    <div key={session.id} className="px-3 py-2">
+                      <div className="truncate font-mono text-[11px] text-foreground">
+                        {session.id}
+                      </div>
+                      <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                        {session.title ?? session.summary ?? session.status}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function OpenGsdPanel({
@@ -2328,6 +2810,9 @@ export function GitsCockpit() {
   const [spawnPrompt, setSpawnPrompt] = useState("");
   const [replyText, setReplyText] = useState("");
   const [selectedProjectRoot, setSelectedProjectRoot] = useState("");
+  const [motokoChatInput, setMotokoChatInput] = useState("");
+  const [motokoScheduleKind, setMotokoScheduleKind] =
+    useState<HermesScheduleKind>("daily-briefing");
   const [gsdInitInput, setGsdInitInput] = useState("");
   const [gsdAutoInitInput, setGsdAutoInitInput] = useState("");
   const [gsdModel, setGsdModel] = useState("");
@@ -2409,6 +2894,65 @@ export function GitsCockpit() {
     queryFn: async () => readGitsClient().automode.getSnapshot(),
     refetchInterval: 5_000,
   });
+  const capacityQuery = useQuery({
+    queryKey: [
+      "gits",
+      "capacity",
+      targetEnvironmentId,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
+    queryFn: async () => readGitsClient().capacity.getSnapshot(),
+    refetchInterval: 30_000,
+  });
+  const hermesQuery = useQuery({
+    queryKey: [
+      "gits",
+      "hermes",
+      "status",
+      targetEnvironmentId,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
+    queryFn: async () => readGitsClient().hermes.getStatus(),
+    refetchInterval: 30_000,
+  });
+  const hermesSessionsQuery = useQuery({
+    queryKey: [
+      "gits",
+      "hermes",
+      "sessions",
+      targetEnvironmentId,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
+    queryFn: async () => readGitsClient().hermes.listSessions({ limit: 8 }),
+    refetchInterval: 30_000,
+  });
+  const hermesLogQuery = useQuery({
+    queryKey: [
+      "gits",
+      "hermes",
+      "log",
+      targetEnvironmentId,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
+    queryFn: async () => readGitsClient().hermes.tailLog({ lines: 80 }),
+    refetchInterval: 30_000,
+  });
+  const hermesProposalsQuery = useQuery({
+    queryKey: [
+      "gits",
+      "hermes",
+      "proposals",
+      targetEnvironmentId,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
+    queryFn: async () => readGitsClient().hermes.listProposals(),
+    refetchInterval: 10_000,
+  });
   const resourceQuery = useQuery({
     queryKey: [
       "gits",
@@ -2468,6 +3012,88 @@ export function GitsCockpit() {
       readGitsClient().delamain.readPeerLog({ peerId: selectedPeerId!, lines: 160 }),
     enabled: selectedPeerId !== null,
     refetchInterval: selectedPeerId ? 5_000 : false,
+  });
+  const hermesCheckMutation = useMutation({
+    mutationFn: async () => readGitsClient().hermes.check(),
+    onSuccess: async () => {
+      await hermesQuery.refetch();
+    },
+  });
+  const hermesSetupMutation = useMutation({
+    mutationFn: async () => readGitsClient().hermes.setupCodexOAuth(),
+    onSuccess: async () => {
+      await Promise.all([hermesQuery.refetch(), hermesLogQuery.refetch()]);
+    },
+  });
+  const hermesAcpMutation = useMutation({
+    mutationFn: async () =>
+      readGitsClient().hermes.startAcpSession(
+        selectedProjectRoot.trim().length > 0 ? { cwd: selectedProjectRoot.trim() } : {},
+      ),
+    onSuccess: async () => {
+      await Promise.all([hermesQuery.refetch(), hermesLogQuery.refetch()]);
+    },
+  });
+  const hermesContextMutation = useMutation({
+    mutationFn: async () =>
+      readGitsClient().hermes.writeProjectContext({ projectDir: selectedProjectRoot.trim() }),
+    onSuccess: async () => {
+      await hermesLogQuery.refetch();
+    },
+  });
+  const hermesInspectMutation = useMutation({
+    mutationFn: async () =>
+      readGitsClient().hermes.inspectGits({ projectDir: selectedProjectRoot.trim() }),
+    onSuccess: async () => {
+      await Promise.all([
+        hermesProposalsQuery.refetch(),
+        hermesLogQuery.refetch(),
+        hermesQuery.refetch(),
+      ]);
+    },
+  });
+  const hermesChatMutation = useMutation({
+    mutationFn: async () =>
+      readGitsClient().hermes.chat({
+        message: motokoChatInput.trim(),
+        ...(selectedProjectRoot.trim().length > 0
+          ? { projectDir: selectedProjectRoot.trim() }
+          : {}),
+      }),
+    onSuccess: async () => {
+      setMotokoChatInput("");
+      await Promise.all([
+        hermesProposalsQuery.refetch(),
+        hermesLogQuery.refetch(),
+        hermesQuery.refetch(),
+      ]);
+    },
+  });
+  const hermesDecisionMutation = useMutation({
+    mutationFn: async (input: { proposalId: string; decision: "approve" | "reject" | "defer" }) =>
+      readGitsClient().hermes.decideProposal(input),
+    onSuccess: async () => {
+      await Promise.all([hermesProposalsQuery.refetch(), hermesQuery.refetch()]);
+    },
+  });
+  const hermesDraftMutation = useMutation({
+    mutationFn: async (proposalId: string) =>
+      readGitsClient().hermes.draftFromProposal({ proposalId }),
+    onSuccess: async () => {
+      await hermesProposalsQuery.refetch();
+    },
+  });
+  const hermesScheduleMutation = useMutation({
+    mutationFn: async () =>
+      readGitsClient().hermes.runSchedule({
+        kind: motokoScheduleKind,
+        ...(selectedProjectRoot.trim().length > 0
+          ? { projectDir: selectedProjectRoot.trim() }
+          : {}),
+      }),
+    onSuccess: async () => {
+      await Promise.all([hermesProposalsQuery.refetch(), hermesQuery.refetch()]);
+    },
   });
   const spawnMutation = useMutation({
     mutationFn: async () =>
@@ -2626,6 +3252,28 @@ export function GitsCockpit() {
   const openGsdActionError = gsdInitMutation.error ?? gsdAutoMutation.error;
   const openGsdActionPending = gsdInitMutation.isPending || gsdAutoMutation.isPending;
   const openGsdCommandResult = gsdAutoMutation.data ?? gsdInitMutation.data;
+  const hermesActionError =
+    hermesCheckMutation.error ??
+    hermesSetupMutation.error ??
+    hermesAcpMutation.error ??
+    hermesContextMutation.error ??
+    hermesInspectMutation.error ??
+    hermesChatMutation.error ??
+    hermesDecisionMutation.error ??
+    hermesDraftMutation.error ??
+    hermesScheduleMutation.error;
+  const hermesActionPending =
+    hermesCheckMutation.isPending ||
+    hermesSetupMutation.isPending ||
+    hermesAcpMutation.isPending ||
+    hermesContextMutation.isPending ||
+    hermesInspectMutation.isPending ||
+    hermesChatMutation.isPending ||
+    hermesDecisionMutation.isPending ||
+    hermesDraftMutation.isPending ||
+    hermesScheduleMutation.isPending;
+  const hermesCommandResult =
+    hermesAcpMutation.data ?? hermesSetupMutation.data ?? hermesCheckMutation.data;
   const automodeActionError =
     automodePolicyMutation.error ??
     automodeKillSwitchMutation.error ??
@@ -2699,6 +3347,7 @@ export function GitsCockpit() {
   const tabCounts = useMemo<Record<GitsCockpitTab, string>>(
     () => ({
       overview: "live",
+      motoko: formatCount(hermesProposalsQuery.data?.proposals.length ?? 0),
       fleet: formatCount(delamainQuery.data?.peers.length ?? 0),
       automode: formatCount(automodeQuery.data?.goals.length ?? 0),
       gsd: openGsdQuery.data?.available ? "ready" : "check",
@@ -2708,6 +3357,7 @@ export function GitsCockpit() {
     [
       automodeQuery.data?.goals.length,
       delamainQuery.data?.peers.length,
+      hermesProposalsQuery.data?.proposals.length,
       openGsdQuery.data?.available,
       query.data?.totals.projectCount,
       skillsQuery.data?.totals.skillCount,
@@ -2717,6 +3367,11 @@ export function GitsCockpit() {
     query.isFetching ||
     delamainQuery.isFetching ||
     automodeQuery.isFetching ||
+    capacityQuery.isFetching ||
+    hermesQuery.isFetching ||
+    hermesSessionsQuery.isFetching ||
+    hermesLogQuery.isFetching ||
+    hermesProposalsQuery.isFetching ||
     openGsdQuery.isFetching ||
     resourceQuery.isFetching ||
     buildInfoQuery.isFetching ||
@@ -2740,6 +3395,11 @@ export function GitsCockpit() {
               query.refetch(),
               delamainQuery.refetch(),
               automodeQuery.refetch(),
+              capacityQuery.refetch(),
+              hermesQuery.refetch(),
+              hermesSessionsQuery.refetch(),
+              hermesLogQuery.refetch(),
+              hermesProposalsQuery.refetch(),
               openGsdQuery.refetch(),
               resourceQuery.refetch(),
               buildInfoQuery.refetch(),
@@ -2770,6 +3430,9 @@ export function GitsCockpit() {
                   delamain={delamainQuery.data}
                   automode={automodeQuery.data}
                   openGsd={openGsdQuery.data}
+                  hermes={hermesQuery.data}
+                  proposals={hermesProposalsQuery.data}
+                  capacity={capacityQuery.data}
                   history={resourceQuery.data}
                   buildInfo={buildInfoQuery.data}
                 />
@@ -2882,6 +3545,61 @@ export function GitsCockpit() {
                   }
                 }}
                 onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
+              />
+            ) : null}
+            {activeTab === "motoko" ? (
+              <MotokoPanel
+                status={hermesQuery.data}
+                capacity={capacityQuery.data}
+                sessions={hermesSessionsQuery.data}
+                log={hermesLogQuery.data}
+                proposals={hermesProposalsQuery.data}
+                loading={
+                  hermesQuery.isPending ||
+                  hermesQuery.isFetching ||
+                  hermesSessionsQuery.isFetching ||
+                  hermesLogQuery.isFetching ||
+                  hermesProposalsQuery.isFetching ||
+                  capacityQuery.isFetching
+                }
+                error={
+                  hermesQuery.error ??
+                  hermesSessionsQuery.error ??
+                  hermesLogQuery.error ??
+                  hermesProposalsQuery.error ??
+                  capacityQuery.error
+                }
+                actionError={hermesActionError}
+                commandResult={hermesCommandResult}
+                draft={hermesDraftMutation.data}
+                scheduleResult={hermesScheduleMutation.data}
+                selectedProjectRoot={selectedProjectRoot}
+                chatInput={motokoChatInput}
+                scheduleKind={motokoScheduleKind}
+                actionPending={hermesActionPending}
+                onRefresh={() => {
+                  void Promise.all([
+                    hermesQuery.refetch(),
+                    hermesSessionsQuery.refetch(),
+                    hermesLogQuery.refetch(),
+                    hermesProposalsQuery.refetch(),
+                    capacityQuery.refetch(),
+                  ]);
+                }}
+                onProjectRootChange={setSelectedProjectRoot}
+                onChatInputChange={setMotokoChatInput}
+                onScheduleKindChange={setMotokoScheduleKind}
+                onCheck={() => void hermesCheckMutation.mutate()}
+                onSetupCodexOAuth={() => void hermesSetupMutation.mutate()}
+                onStartAcp={() => void hermesAcpMutation.mutate()}
+                onInspectGits={() => void hermesInspectMutation.mutate()}
+                onChatSubmit={() => void hermesChatMutation.mutate()}
+                onDecision={(proposalId, decision) =>
+                  void hermesDecisionMutation.mutate({ proposalId, decision })
+                }
+                onWriteContext={() => void hermesContextMutation.mutate()}
+                onDraft={(proposalId) => void hermesDraftMutation.mutate(proposalId)}
+                onRunSchedule={() => void hermesScheduleMutation.mutate()}
               />
             ) : null}
             {activeTab === "gsd" ? (
