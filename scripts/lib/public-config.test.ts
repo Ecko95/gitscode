@@ -19,6 +19,7 @@ describe("loadRepoEnv", () => {
     const env = loadRepoEnv({ baseEnv: {}, repoRoot: makeTemporaryDirectory() });
 
     expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    expect(env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
     expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.T3_RELAY_URL).toBeUndefined();
@@ -29,11 +30,11 @@ describe("loadRepoEnv", () => {
     const repoRoot = makeTemporaryDirectory();
     writeFileSync(
       join(repoRoot, ".env"),
-      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_root\nT3_RELAY_URL=https://root.example.test\n",
+      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_root\nT3CODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nT3_RELAY_URL=https://root.example.test\n",
     );
     writeFileSync(
       join(repoRoot, ".env.local"),
-      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_local\nT3_RELAY_URL=https://local.example.test\n",
+      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_local\nT3CODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_local\nT3_RELAY_URL=https://local.example.test\n",
     );
 
     expect(loadRepoEnv({ baseEnv: {}, repoRoot }).T3_RELAY_URL).toBe("https://local.example.test");
@@ -41,12 +42,14 @@ describe("loadRepoEnv", () => {
       loadRepoEnv({
         baseEnv: {
           T3CODE_CLERK_PUBLISHABLE_KEY: "pk_ci",
+          T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
           T3_RELAY_URL: "https://ci.example.test",
         },
         repoRoot,
       }),
     ).toMatchObject({
       T3CODE_CLERK_PUBLISHABLE_KEY: "pk_ci",
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
       VITE_CLERK_PUBLISHABLE_KEY: "pk_ci",
       EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_ci",
       T3_RELAY_URL: "https://ci.example.test",
@@ -58,10 +61,12 @@ describe("loadRepoEnv", () => {
     expect(
       resolvePublicConfig({
         VITE_CLERK_PUBLISHABLE_KEY: "pk_legacy",
+        CLERK_CLI_OAUTH_CLIENT_ID: "oauth_legacy",
         VITE_T3_RELAY_URL: "https://legacy.example.test",
       }),
     ).toEqual({
       clerkPublishableKey: "pk_legacy",
+      clerkCliOAuthClientId: "oauth_legacy",
       relayUrl: "https://legacy.example.test",
     });
   });
