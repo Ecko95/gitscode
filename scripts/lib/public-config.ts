@@ -60,11 +60,7 @@ export function resolvePublicConfig(...sources: readonly Environment[]): T3CodeP
       "VITE_CLERK_PUBLISHABLE_KEY",
       "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
     ),
-    clerkCliOAuthClientId: firstNonEmpty(
-      sources,
-      "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
-      "CLERK_CLI_OAUTH_CLIENT_ID",
-    ),
+    clerkCliOAuthClientId: firstNonEmpty(sources, "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID"),
     relayUrl: firstNonEmpty(sources, "T3_RELAY_URL", "VITE_T3_RELAY_URL"),
   };
 }
