@@ -18,6 +18,7 @@ Options:
   --remote NAME                  Git remote to fetch. Default: origin
   --branch NAME                  Branch to deploy. Default: feat/gits-tailnet-hosting-refresh
   --service NAME                 User service name. Default: gits-cockpit.service
+  --host HOST                    Hosted HTTP bind host inside WSL. Default: 127.0.0.1
   --port PORT                    Hosted HTTP port inside WSL. Default: 13773
   --t3code-home PATH             T3 Code state directory. Default: $HOME/.t3
   --metadata-relative-path PATH  Metadata JSON path inside the deploy worktree.
@@ -161,7 +162,7 @@ fi
 
 if ((skip_restart == 0)) && command -v curl >/dev/null 2>&1; then
   gits_hosting_log "Local health check"
-  health_url="http://127.0.0.1:${gits_hosting_port}/gits"
+  health_url="http://$(gits_hosting_health_host):${gits_hosting_port}/gits"
   healthy=0
   for attempt in $(seq 1 30); do
     if curl --fail --silent --show-error --head --connect-timeout 2 --max-time 5 "$health_url"; then

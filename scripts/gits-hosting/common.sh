@@ -7,9 +7,10 @@ readonly GITS_HOSTING_COMMON_SH_LOADED=1
 
 readonly GITS_HOSTING_DEFAULT_REMOTE="origin"
 readonly GITS_HOSTING_DEFAULT_BRANCH="feat/gits-tailnet-hosting-refresh"
-readonly GITS_HOSTING_DEFAULT_REPO="${HOME}/dev/projects/t3code"
+readonly GITS_HOSTING_DEFAULT_REPO="${HOME}/dev/projects/t3code-tailnet-hosting-refresh"
 readonly GITS_HOSTING_DEFAULT_WORKTREE="${HOME}/dev/projects/t3code-gits-hosted"
 readonly GITS_HOSTING_DEFAULT_SERVICE="gits-cockpit.service"
+readonly GITS_HOSTING_DEFAULT_HOST="127.0.0.1"
 readonly GITS_HOSTING_DEFAULT_PORT="13773"
 readonly GITS_HOSTING_DEFAULT_TAILNET_HTTPS_PORT="8443"
 readonly GITS_HOSTING_DEFAULT_T3CODE_HOME="${HOME}/.t3"
@@ -22,6 +23,7 @@ gits_hosting_load_defaults() {
   gits_hosting_remote="${GITS_HOSTING_REMOTE:-$GITS_HOSTING_DEFAULT_REMOTE}"
   gits_hosting_branch="${GITS_HOSTING_BRANCH:-$GITS_HOSTING_DEFAULT_BRANCH}"
   gits_hosting_service="${GITS_HOSTING_SERVICE:-$GITS_HOSTING_DEFAULT_SERVICE}"
+  gits_hosting_host="${GITS_HOSTING_HOST:-$GITS_HOSTING_DEFAULT_HOST}"
   gits_hosting_port="${GITS_HOSTING_PORT:-$GITS_HOSTING_DEFAULT_PORT}"
   gits_hosting_tailnet_https_port="${GITS_HOSTING_TAILNET_HTTPS_PORT:-$GITS_HOSTING_DEFAULT_TAILNET_HTTPS_PORT}"
   gits_hosting_t3code_home="${T3CODE_HOME:-$GITS_HOSTING_DEFAULT_T3CODE_HOME}"
@@ -79,6 +81,11 @@ gits_hosting_parse_common_args() {
         gits_hosting_service="$2"
         shift 2
         ;;
+      --host)
+        gits_hosting_require_option_value "$1" "${2:-}"
+        gits_hosting_host="$2"
+        shift 2
+        ;;
       --port)
         gits_hosting_require_option_value "$1" "${2:-}"
         gits_hosting_port="$2"
@@ -123,6 +130,14 @@ gits_hosting_service_unit_path() {
 
 gits_hosting_metadata_path() {
   printf '%s/%s' "$gits_hosting_worktree" "$gits_hosting_metadata_relative_path"
+}
+
+gits_hosting_health_host() {
+  if [[ "$gits_hosting_host" == "0.0.0.0" || "$gits_hosting_host" == "::" ]]; then
+    printf '127.0.0.1'
+  else
+    printf '%s' "$gits_hosting_host"
+  fi
 }
 
 gits_hosting_assert_git_repo() {
