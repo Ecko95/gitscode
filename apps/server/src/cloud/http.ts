@@ -39,8 +39,6 @@ import {
   signRelayJwt,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
-import { DEFAULT_T3_RELAY_URL } from "@t3tools/shared/relayAuth";
-import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -73,6 +71,7 @@ import {
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
+import { relayUrlConfig } from "./publicConfig.ts";
 import * as CliState from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
@@ -100,6 +99,15 @@ const failEnvironmentCloudInternalError =
     Effect.logError(message, { cause }).pipe(
       Effect.flatMap(() => Effect.fail(new EnvironmentHttpInternalServerError({ message }))),
     );
+
+const requireRelayUrl = relayUrlConfig.pipe(
+  Effect.mapError(
+    () =>
+      new EnvironmentHttpInternalServerError({
+        message: "T3_RELAY_URL is not configured.",
+      }),
+  ),
+);
 
 function bytesToString(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
@@ -505,10 +513,6 @@ const cloudReconcileHandler = Effect.fn("environment.cloud.reconcile")(
     }
     const localOrigin = new URL(requestUrl).origin;
     const localWsOrigin = localOrigin.replace(/^http/u, "ws");
-    const relayUrl = (yield* Config.string("T3_RELAY_URL").pipe(
-      Config.withDefault(DEFAULT_T3_RELAY_URL),
-      Effect.orDie,
-    )).replace(/\/+$/u, "");
     const token = yield* dependencies.cliTokenManager.getExisting.pipe(
       Effect.flatMap(
         Option.match({
@@ -522,6 +526,7 @@ const cloudReconcileHandler = Effect.fn("environment.cloud.reconcile")(
         }),
       ),
     );
+    const relayUrl = yield* requireRelayUrl;
     const challenge = yield* relayClientRequest(dependencies, {
       url: `${relayUrl}/v1/client/environment-link-challenges`,
       token: token.accessToken,
