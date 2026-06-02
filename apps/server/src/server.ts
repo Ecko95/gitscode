@@ -51,8 +51,10 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { DelamainCliAdapterLive } from "./gits/Layers/DelamainCliAdapter.ts";
 import { GitsBuildInfoResolverLive } from "./gits/Layers/GitsBuildInfo.ts";
+import { GitsCapacityMonitorLive } from "./gits/Layers/GitsCapacityMonitor.ts";
 import { GitsSkillInventoryResolverLive } from "./gits/Layers/GitsSkillInventory.ts";
 import { GitsPlanningScannerLive } from "./gits/Layers/GitsPlanningScanner.ts";
+import { HermesCliAdapterLive } from "./gits/Layers/HermesCliAdapter.ts";
 import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
 import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
@@ -217,18 +219,27 @@ const AutomodeUsageMeterLayerLive = AutomodeUsageMeterLive.pipe(
   Layer.provide(OrchestrationLayerLive.pipe(Layer.provide(PersistenceLayerLive))),
 );
 
+const AutomodeSupervisorLayerLive = AutomodeSupervisorLive.pipe(
+  Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(AutomodeUsageMeterLayerLive),
+);
+
+const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
+  Layer.provide(GitsCapacityMonitorLive),
+  Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(OpenGsdCliAdapterLive),
+  Layer.provide(AutomodeSupervisorLayerLive),
+);
+
 const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsBuildInfoResolverLive),
+  Layer.provideMerge(GitsCapacityMonitorLive),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
   Layer.provideMerge(DelamainCliAdapterLive),
   Layer.provideMerge(OpenGsdCliAdapterLive),
   Layer.provideMerge(GitsPlanningScannerLive),
-  Layer.provideMerge(
-    AutomodeSupervisorLive.pipe(
-      Layer.provide(DelamainCliAdapterLive),
-      Layer.provide(AutomodeUsageMeterLayerLive),
-    ),
-  ),
+  Layer.provideMerge(HermesAdapterLayerLive),
+  Layer.provideMerge(AutomodeSupervisorLayerLive),
 );
 
 const VcsLayerLive = Layer.empty.pipe(
