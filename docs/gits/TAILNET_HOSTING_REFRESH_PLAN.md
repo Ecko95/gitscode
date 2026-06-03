@@ -40,7 +40,7 @@ This avoids a LAN-facing WSL listener while still allowing Windows Tailscale Ser
 Interactive source worktree:
 
 ```text
-/home/joshua/dev/projects/t3code-tailnet-hosting-refresh
+/home/joshua/dev/projects/t3code-gits
 ```
 
 Managed deploy worktree:
@@ -51,16 +51,10 @@ Managed deploy worktree:
 
 Do not use the interactive checkout as the served worktree. The deploy script hard-resets the managed worktree to the selected remote branch and writes build metadata into the built server bundle.
 
-Default deploy branch while this feature is under review:
+Deployment branch:
 
 ```text
-origin/feat/gits-tailnet-hosting-refresh
-```
-
-After this branch merges, switch the hosted source to:
-
-```text
-origin/main
+origin/gits
 ```
 
 ## WSL Service
@@ -68,31 +62,15 @@ origin/main
 Install or refresh the user service:
 
 ```bash
-cd /home/joshua/dev/projects/t3code-tailnet-hosting-refresh
-./scripts/gits-hosting/install-wsl-user-service.sh \
-  --repo /home/joshua/dev/projects/t3code-tailnet-hosting-refresh \
-  --worktree /home/joshua/dev/projects/t3code-gits-hosted \
-  --remote origin \
-  --branch feat/gits-tailnet-hosting-refresh \
-  --host 127.0.0.1 \
-  --port 13773 \
-  --service gits-cockpit.service \
-  --t3code-home /home/joshua/.t3
+cd /home/joshua/dev/projects/t3code-gits
+./scripts/gits-hosting/install-wsl-user-service.sh
 ```
 
 Refresh the deploy worktree, build, write metadata, restart, and health-check:
 
 ```bash
-cd /home/joshua/dev/projects/t3code-tailnet-hosting-refresh
-./scripts/gits-hosting/deploy-gits-tailnet-hosted.sh \
-  --repo /home/joshua/dev/projects/t3code-tailnet-hosting-refresh \
-  --worktree /home/joshua/dev/projects/t3code-gits-hosted \
-  --remote origin \
-  --branch feat/gits-tailnet-hosting-refresh \
-  --host 127.0.0.1 \
-  --port 13773 \
-  --service gits-cockpit.service \
-  --t3code-home /home/joshua/.t3
+cd /home/joshua/dev/projects/t3code-gits
+./scripts/gits-hosting/deploy-subject28-gits.sh
 ```
 
 The install script writes:
@@ -120,7 +98,7 @@ Use Windows Tailscale Serve as the Tailnet entrypoint. The hardened default does
 Run from Windows PowerShell:
 
 ```powershell
-cd C:\Users\joshua\dev\projects\t3code-tailnet-hosting-refresh
+cd C:\Users\joshua\dev\projects\t3code-gits
 powershell -ExecutionPolicy Bypass -File .\scripts\gits-hosting\Set-GitsTailnetPortProxy.ps1 `
   -LocalPort 13773 `
   -TailnetHttpsPort 8443

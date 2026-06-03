@@ -15,7 +15,7 @@ Options:
   --repo PATH                 Source repo used to run the deploy scripts.
   --worktree PATH             Clean deploy worktree served by systemd.
   --remote NAME               Git remote to fetch. Default: origin
-  --branch NAME               Branch to deploy. Default: feat/gits-tailnet-hosting-refresh
+  --branch NAME               Branch to deploy. Default: gits
   --service NAME              User service name. Default: gits-cockpit.service
   --host HOST                 Hosted HTTP bind host inside WSL. Default: 127.0.0.1
   --port PORT                 Hosted HTTP port inside WSL. Default: 13773

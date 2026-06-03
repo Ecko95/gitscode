@@ -6,8 +6,8 @@ fi
 readonly GITS_HOSTING_COMMON_SH_LOADED=1
 
 readonly GITS_HOSTING_DEFAULT_REMOTE="origin"
-readonly GITS_HOSTING_DEFAULT_BRANCH="feat/gits-tailnet-hosting-refresh"
-readonly GITS_HOSTING_DEFAULT_REPO="${HOME}/dev/projects/t3code-tailnet-hosting-refresh"
+readonly GITS_HOSTING_DEFAULT_BRANCH="gits"
+readonly GITS_HOSTING_DEFAULT_REPO="${HOME}/dev/projects/t3code-gits"
 readonly GITS_HOSTING_DEFAULT_WORKTREE="${HOME}/dev/projects/t3code-gits-hosted"
 readonly GITS_HOSTING_DEFAULT_SERVICE="gits-cockpit.service"
 readonly GITS_HOSTING_DEFAULT_HOST="127.0.0.1"
@@ -16,6 +16,7 @@ readonly GITS_HOSTING_DEFAULT_TAILNET_HTTPS_PORT="8443"
 readonly GITS_HOSTING_DEFAULT_T3CODE_HOME="${HOME}/.t3"
 readonly GITS_HOSTING_DEFAULT_METADATA_RELATIVE_PATH="apps/server/dist/gits-build-metadata.json"
 readonly GITS_HOSTING_MANAGED_SENTINEL=".gits-hosting-managed"
+readonly GITS_HOSTING_DEFAULT_TAILNET_URL="https://subject28.taild6d729.ts.net:8443"
 
 gits_hosting_load_defaults() {
   gits_hosting_repo="${GITS_HOSTING_REPO:-$GITS_HOSTING_DEFAULT_REPO}"
