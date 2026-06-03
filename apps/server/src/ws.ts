@@ -33,6 +33,7 @@ import {
   DelamainAdapterError,
   GitsCapacityError,
   GitsCockpitError,
+  GitsDevCommandError,
   HermesAdapterError,
   OpenGsdAdapterError,
   ThreadId,
@@ -74,6 +75,7 @@ import { GitWorkflowService } from "./git/GitWorkflowService.ts";
 import { ReviewService } from "./review/ReviewService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
+import { GitsDevCommands } from "./gits/Services/GitsDevCommands.ts";
 import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
 import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
 import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
@@ -108,6 +110,7 @@ import { respondToAuthError } from "./auth/http.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isGitsCockpitError = Schema.is(GitsCockpitError);
+const isGitsDevCommandError = Schema.is(GitsDevCommandError);
 const isDelamainAdapterError = Schema.is(DelamainAdapterError);
 const isGitsCapacityError = Schema.is(GitsCapacityError);
 const isHermesAdapterError = Schema.is(HermesAdapterError);
@@ -204,6 +207,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const workspaceFileSystem = yield* WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
+      const gitsDevCommands = yield* GitsDevCommands;
       const gitsPlanningScanner = yield* GitsPlanningScanner;
       const delamainAdapter = yield* DelamainAdapter;
       const gitsCapacityMonitor = yield* GitsCapacityMonitor;
@@ -1168,6 +1172,21 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   ? cause
                   : new GitsCockpitError({
                       message: "Failed to load GITS cockpit state.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsDevCommandsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDevCommandsList,
+            gitsDevCommands.listCommands(input).pipe(
+              Effect.mapError((cause) =>
+                isGitsDevCommandError(cause)
+                  ? cause
+                  : new GitsDevCommandError({
+                      message: "Failed to list GITS dev commands.",
                       cause,
                     }),
               ),

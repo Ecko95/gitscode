@@ -236,6 +236,36 @@ export const GitsBuildInfo = Schema.Struct({
 });
 export type GitsBuildInfo = typeof GitsBuildInfo.Type;
 
+export const GitsDevCommand = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  description: Schema.NullOr(SummaryString),
+  cwd: PathString,
+  command: SummaryString,
+  localPort: Schema.NullOr(NonNegativeInt),
+  localHost: Schema.NullOr(TrimmedNonEmptyString),
+  publishOnTailnet: Schema.Boolean,
+  servePort: Schema.NullOr(NonNegativeInt),
+  previewUrl: Schema.NullOr(TrimmedNonEmptyString),
+  launchCommand: SummaryString,
+});
+export type GitsDevCommand = typeof GitsDevCommand.Type;
+
+export const GitsDevCommandListInput = Schema.Struct({
+  projectDir: PathString,
+});
+export type GitsDevCommandListInput = typeof GitsDevCommandListInput.Type;
+
+export const GitsDevCommandListResult = Schema.Struct({
+  projectDir: PathString,
+  configPath: Schema.NullOr(PathString),
+  tailscaleAvailable: Schema.Boolean,
+  magicDnsName: Schema.NullOr(TrimmedNonEmptyString),
+  commands: Schema.Array(GitsDevCommand),
+  warnings: Schema.Array(TrimmedNonEmptyString),
+});
+export type GitsDevCommandListResult = typeof GitsDevCommandListResult.Type;
+
 export const GitsSkillProvider = Schema.Literals(["codex", "claude", "cursor", "gits", "unknown"]);
 export type GitsSkillProvider = typeof GitsSkillProvider.Type;
 
@@ -1113,6 +1143,14 @@ export class GitsCockpitError extends Schema.TaggedErrorClass<GitsCockpitError>(
 
 export class GitsCapacityError extends Schema.TaggedErrorClass<GitsCapacityError>()(
   "GitsCapacityError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class GitsDevCommandError extends Schema.TaggedErrorClass<GitsDevCommandError>()(
+  "GitsDevCommandError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

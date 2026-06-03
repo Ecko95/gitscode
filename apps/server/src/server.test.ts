@@ -9,6 +9,7 @@ import {
   type DelamainPeer,
   type GitsBuildInfo,
   type GitsCapacitySnapshot,
+  type GitsDevCommandListResult,
   type GitsSkillInventorySnapshot,
   type HermesCommandResult,
   type HermesChatResult,
@@ -105,6 +106,7 @@ import {
   GitsSkillInventoryResolver,
   type GitsSkillInventoryResolverShape,
 } from "./gits/Services/GitsSkillInventory.ts";
+import { GitsDevCommands, type GitsDevCommandsShape } from "./gits/Services/GitsDevCommands.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
 import {
@@ -258,6 +260,28 @@ const defaultGitsBuildInfo: GitsBuildInfo = {
   time: null,
   dirty: null,
   sourcePath: null,
+};
+const defaultGitsDevCommands: GitsDevCommandListResult = {
+  projectDir: "/tmp/default-project",
+  configPath: "/tmp/default-project/.gits/dev-commands.json",
+  tailscaleAvailable: true,
+  magicDnsName: "subject28.tail.ts.net",
+  commands: [
+    {
+      id: "web-dev",
+      name: "Web dev",
+      description: "Start the web app dev server.",
+      cwd: "/tmp/default-project",
+      command: "bun run --filter=@t3tools/web dev -- --host 127.0.0.1 --port 3000",
+      localPort: 3000,
+      localHost: "127.0.0.1",
+      publishOnTailnet: true,
+      servePort: 3000,
+      previewUrl: "https://subject28.tail.ts.net:3000/",
+      launchCommand: "GITS_DEV_NAME='Web dev' bash '/tmp/default-project/scripts/dev/run-dev-command.sh'",
+    },
+  ],
+  warnings: [],
 };
 const defaultGitsSkillInventory: GitsSkillInventorySnapshot = {
   scannedAt: "1970-01-01T00:00:00.000Z",
@@ -685,6 +709,7 @@ const buildAppUnderTest = (options?: {
     gitsPlanningScanner?: Partial<GitsPlanningScannerShape>;
     gitsBuildInfoResolver?: Partial<GitsBuildInfoResolverShape>;
     gitsSkillInventoryResolver?: Partial<GitsSkillInventoryResolverShape>;
+    gitsDevCommands?: Partial<GitsDevCommandsShape>;
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
     automodeSupervisor?: Partial<AutomodeSupervisorShape>;
@@ -876,6 +901,10 @@ const buildAppUnderTest = (options?: {
       Layer.mock(GitsSkillInventoryResolver)({
         getSnapshot: () => Effect.succeed(defaultGitsSkillInventory),
         ...options?.layers?.gitsSkillInventoryResolver,
+      }),
+      Layer.mock(GitsDevCommands)({
+        listCommands: () => Effect.succeed(defaultGitsDevCommands),
+        ...options?.layers?.gitsDevCommands,
       }),
       Layer.mock(GitsPlanningScanner)({
         scan: () =>
@@ -3899,6 +3928,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const calls: string[] = [];
       yield* buildAppUnderTest({
         layers: {
+          gitsDevCommands: {
+            listCommands: (input) =>
+              Effect.sync(() => {
+                calls.push(`devCommands:${input.projectDir}`);
+                return {
+                  ...defaultGitsDevCommands,
+                  projectDir: input.projectDir,
+                };
+              }),
+          },
           hermesAdapter: {
             getStatus: () =>
               Effect.sync(() => {
@@ -4041,6 +4080,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(proposals.proposals[0]?.id, defaultHermesProposal.id);
 
+      const devCommands = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDevCommandsList]({ projectDir: "/tmp/default-project" }),
+        ),
+      );
+      assert.equal(devCommands.commands[0]?.id, defaultGitsDevCommands.commands[0]?.id);
+
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.gitsHermesInspectGits]({ projectDir: "/tmp/default-project" }),
@@ -4101,6 +4147,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "sessions:2",
         "log:5",
         "proposals",
+        "devCommands:/tmp/default-project",
         "inspect:/tmp/default-project",
         "chat:Plan next action",
         "decide:proposal-test:approve",

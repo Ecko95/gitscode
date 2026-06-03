@@ -7,6 +7,8 @@ import type {
   GitsCapacitySnapshot,
   GitsCockpitProject,
   GitsCockpitSnapshot,
+  GitsDevCommand,
+  GitsDevCommandListResult,
   GitsSkillInventoryItem,
   GitsSkillInventorySnapshot,
   GitsSkillProvider,
@@ -24,6 +26,7 @@ import type {
   OpenGsdCommandResult,
   OpenGsdStatusResult,
   ServerProcessResourceHistoryResult,
+  TerminalAttachStreamEvent,
   VerificationGate,
   YourTurnCard,
 } from "@t3tools/contracts";
@@ -49,9 +52,12 @@ import {
   ShieldCheckIcon,
   SparklesIcon,
   StarIcon,
+  ExternalLinkIcon,
+  SquareTerminalIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { readEnvironmentApi } from "../../environmentApi";
 import {
   getPrimaryEnvironmentConnection,
   readEnvironmentConnection,
@@ -118,7 +124,15 @@ const GATE_STATUS_LABELS: Record<VerificationGate["status"], string> = {
   passed: "Passed",
 };
 
-type GitsCockpitTab = "overview" | "motoko" | "fleet" | "automode" | "gsd" | "skills" | "projects";
+type GitsCockpitTab =
+  | "overview"
+  | "motoko"
+  | "dev"
+  | "fleet"
+  | "automode"
+  | "gsd"
+  | "skills"
+  | "projects";
 
 const GITS_COCKPIT_TABS: ReadonlyArray<{
   id: GitsCockpitTab;
@@ -127,6 +141,7 @@ const GITS_COCKPIT_TABS: ReadonlyArray<{
 }> = [
   { id: "overview", label: "Overview", icon: GaugeIcon },
   { id: "motoko", label: "Motoko", icon: SparklesIcon },
+  { id: "dev", label: "Dev", icon: SquareTerminalIcon },
   { id: "fleet", label: "Fleet", icon: GitBranchIcon },
   { id: "automode", label: "Automode", icon: PowerIcon },
   { id: "gsd", label: "Open GSD", icon: ListChecksIcon },
@@ -1433,8 +1448,116 @@ interface MotokoTranscriptEntry {
   readonly result?: HermesChatResult;
 }
 
+type DevCommandSessionState = {
+  readonly terminalId: string;
+  readonly status: "idle" | "starting" | "running" | "exited" | "error" | "closed";
+  readonly log: string;
+  readonly exitCode: number | null;
+  readonly label: string | null;
+  readonly updatedAt: string | null;
+  readonly pid: number | null;
+};
+
 function makeTranscriptEntryId(role: MotokoTranscriptEntry["role"], createdAt: string): string {
   return `${role}:${createdAt}:${Math.floor(performance.now() * 1000)}`;
+}
+
+function makeDevTerminalId(commandId: string): string {
+  return `gits-dev-${commandId}`;
+}
+
+function makeDevThreadId(projectDir: string): string {
+  return `gits-dev:${projectDir}`;
+}
+
+function trimTerminalLog(log: string): string {
+  const maxLength = 24_000;
+  return log.length <= maxLength ? log : log.slice(log.length - maxLength);
+}
+
+function reduceDevCommandEvent(
+  current: DevCommandSessionState,
+  event: TerminalAttachStreamEvent,
+): DevCommandSessionState {
+  if (event.type === "snapshot") {
+    return {
+      terminalId: event.snapshot.terminalId,
+      status: event.snapshot.status,
+      log: trimTerminalLog(event.snapshot.history),
+      exitCode: event.snapshot.exitCode,
+      label: event.snapshot.label,
+      updatedAt: event.snapshot.updatedAt,
+      pid: event.snapshot.pid,
+    };
+  }
+  if (event.type === "output") {
+    return {
+      ...current,
+      status: current.status === "idle" ? "running" : current.status,
+      log: trimTerminalLog(current.log + event.data),
+    };
+  }
+  if (event.type === "activity") {
+    return {
+      ...current,
+      status: event.hasRunningSubprocess ? "running" : current.status,
+      label: event.label,
+    };
+  }
+  if (event.type === "restarted") {
+    return {
+      terminalId: event.snapshot.terminalId,
+      status: event.snapshot.status,
+      log: trimTerminalLog(event.snapshot.history),
+      exitCode: event.snapshot.exitCode,
+      label: event.snapshot.label,
+      updatedAt: event.snapshot.updatedAt,
+      pid: event.snapshot.pid,
+    };
+  }
+  if (event.type === "exited") {
+    return {
+      ...current,
+      status: "exited",
+      exitCode: event.exitCode,
+      pid: null,
+    };
+  }
+  if (event.type === "error") {
+    return {
+      ...current,
+      status: "error",
+      log: trimTerminalLog(
+        `${current.log}${current.log.endsWith("\n") || current.log.length === 0 ? "" : "\n"}[error] ${event.message}\n`,
+      ),
+    };
+  }
+  if (event.type === "cleared") {
+    return {
+      ...current,
+      log: "",
+    };
+  }
+  return {
+    ...current,
+    status: "closed",
+    pid: null,
+  };
+}
+
+function devCommandStatusTone(
+  status: DevCommandSessionState["status"],
+): ReturnType<typeof statusTone> {
+  if (status === "running") {
+    return "success";
+  }
+  if (status === "starting") {
+    return "warning";
+  }
+  if (status === "error") {
+    return "danger";
+  }
+  return "default";
 }
 
 function MotokoPanel({
@@ -1573,324 +1696,342 @@ function MotokoPanel({
         </div>
       ) : null}
 
-      <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.8fr)]">
-        <div className="min-w-0 border-r border-border/60">
-          <div className="grid gap-2 border-b border-border/60 px-4 py-4 sm:px-5">
-            <Input
-              nativeInput
-              size="sm"
-              value={selectedProjectRoot}
-              placeholder="Selected project root"
-              onChange={(event) => onProjectRootChange(event.currentTarget.value)}
-            />
-            <Textarea
-              value={chatInput}
-              placeholder="Ask Motoko"
-              className="min-h-24 text-xs"
-              onChange={(event) => onChatInputChange(event.currentTarget.value)}
-            />
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button size="sm" variant="outline" onClick={onCheck} disabled={actionPending}>
-                <CheckCircle2Icon className="size-3.5" />
-                Check
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onSetupCodexOAuth}
-                disabled={actionPending}
-              >
-                <ShieldCheckIcon className="size-3.5" />
-                Setup OAuth
-              </Button>
-              <Button size="sm" variant="outline" onClick={onStartAcp} disabled={actionPending}>
-                <BotIcon className="size-3.5" />
-                Start ACP
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onWriteContext}
-                disabled={actionPending || selectedProjectRoot.trim().length === 0}
-              >
-                <FilePlus2Icon className="size-3.5" />
-                Write Context
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onInspectGits}
-                disabled={actionPending || selectedProjectRoot.trim().length === 0}
-              >
-                <SearchIcon className="size-3.5" />
-                Inspect
-              </Button>
-              <Button
-                size="sm"
-                onClick={onChatSubmit}
-                disabled={actionPending || chatInput.trim().length === 0}
-              >
-                <SendIcon className="size-3.5" />
-                Ask
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-2 border-b border-border/60 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:px-5">
-            <select
-              value={scheduleKind}
-              className="h-8 min-w-0 rounded-md border border-input bg-background px-3 text-xs"
-              onChange={(event) =>
-                onScheduleKindChange(event.currentTarget.value as HermesScheduleKind)
-              }
-            >
-              {MOTOKO_SCHEDULE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <Button size="sm" variant="outline" onClick={onRunSchedule} disabled={actionPending}>
-              <PlayIcon className="size-3.5" />
-              Run
-            </Button>
-          </div>
-
-          <SectionHeader title="Proposal cards" count={cards.length} />
-          {loading && cards.length === 0 ? (
-            <EmptyState label="Loading Motoko proposals..." />
-          ) : cards.length === 0 ? (
-            <EmptyState label="No Motoko proposals." />
-          ) : (
-            <div className="divide-y divide-border/60">
-              {cards.slice(0, 80).map((proposal) => (
-                <div key={proposal.id} className="grid gap-3 px-4 py-3 text-xs sm:px-5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                      {proposal.title}
-                    </span>
-                    <StatusPill
-                      label={proposal.status}
-                      tone={hermesProposalTone(proposal.status)}
-                    />
-                    <StatusPill
-                      label={proposal.risk}
-                      tone={proposal.risk === "blocked" ? "danger" : "default"}
-                    />
-                    <StatusPill label={proposal.recommendedExecutor} tone="default" />
-                  </div>
-                  <p className="line-clamp-3 text-muted-foreground">{proposal.summary}</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div>
-                      <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground/80">
-                        Evidence
+      <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.85fr)]">
+        <div className="min-w-0 border-b border-border/60 xl:border-b-0 xl:border-r">
+          <div className="flex min-h-[46rem] flex-col">
+            <SectionHeader title="Conversation" count={transcript.length} />
+            <div className="flex-1 overflow-auto px-4 py-3 text-xs sm:px-5">
+              {transcript.length === 0 ? (
+                <EmptyState label="No Motoko conversation yet." />
+              ) : (
+                <div className="grid gap-3">
+                  {transcript.slice(-20).map((entry) => (
+                    <div
+                      key={entry.id}
+                      className={cn(
+                        "grid gap-2 rounded-md border px-3 py-2",
+                        entry.role === "operator"
+                          ? "ml-auto max-w-[90%] border-border/70 bg-background"
+                          : "mr-auto max-w-[92%] border-border/70 bg-muted/20",
+                      )}
+                    >
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="font-medium text-foreground">
+                          {entry.role === "operator" ? "You" : "Motoko"}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {formatIsoDate(entry.createdAt)}
+                        </span>
                       </div>
-                      <ul className="grid gap-1 text-[11px] text-muted-foreground">
-                        {proposal.evidence.slice(0, 3).map((item) => (
-                          <li key={item} className="line-clamp-2">
-                            {item}
-                          </li>
-                        ))}
-                      </ul>
+                      <pre className="whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
+                        {entry.message}
+                      </pre>
+                      {entry.result?.status === "setup-required" ? (
+                        <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                          <div className="font-medium text-amber-700">
+                            {entry.result.setupTitle ?? "Hermes setup required"}
+                          </div>
+                          {entry.result.setupDetail ? (
+                            <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-amber-700">
+                              {entry.result.setupDetail}
+                            </pre>
+                          ) : null}
+                          {entry.result.setupCommand ? (
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background px-2 py-2">
+                              <code className="min-w-0 flex-1 overflow-auto text-[11px] text-foreground">
+                                {entry.result.setupCommand}
+                              </code>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  void navigator.clipboard.writeText(entry.result!.setupCommand!)
+                                }
+                              >
+                                <CopyIcon className="size-3.5" />
+                                Copy
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {entry.result?.proposal ? (
+                        <div className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] text-muted-foreground">
+                          Created proposal card:{" "}
+                          <span className="font-medium text-foreground">
+                            {entry.result.proposal.title}
+                          </span>
+                        </div>
+                      ) : null}
+                      {entry.result?.blockedReason &&
+                      entry.result.status !== "setup-required" ? (
+                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                          {entry.result.blockedReason}
+                        </div>
+                      ) : null}
                     </div>
-                    <div>
-                      <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground/80">
-                        Verification
-                      </div>
-                      <ul className="grid gap-1 text-[11px] text-muted-foreground">
-                        {proposal.verificationPlan.slice(0, 3).map((item) => (
-                          <li key={item} className="line-clamp-2">
-                            {item}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                  {proposal.blockedReason ? (
-                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-                      {proposal.blockedReason}
-                    </div>
-                  ) : null}
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onDecision(proposal.id, "defer")}
-                      disabled={actionPending}
-                    >
-                      Defer
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive-outline"
-                      onClick={() => onDecision(proposal.id, "reject")}
-                      disabled={actionPending}
-                    >
-                      Reject
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onDecision(proposal.id, "approve")}
-                      disabled={actionPending || proposal.status === "blocked"}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => onDraft(proposal.id)}
-                      disabled={actionPending || proposal.status !== "approved"}
-                    >
-                      Draft
-                    </Button>
-                  </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )}
+
+            <div className="border-t border-border/60 bg-background px-4 py-4 sm:px-5">
+              <div className="grid gap-2">
+                <Input
+                  nativeInput
+                  size="sm"
+                  value={selectedProjectRoot}
+                  placeholder="Selected project root"
+                  onChange={(event) => onProjectRootChange(event.currentTarget.value)}
+                />
+                <Textarea
+                  value={chatInput}
+                  placeholder="Ask Motoko"
+                  className="min-h-24 text-xs"
+                  onChange={(event) => onChatInputChange(event.currentTarget.value)}
+                />
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    size="sm"
+                    onClick={onChatSubmit}
+                    disabled={actionPending || chatInput.trim().length === 0}
+                  >
+                    <SendIcon className="size-3.5" />
+                    Send
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="min-w-0">
-          <SectionHeader title="Conversation" count={transcript.length} />
-          <div className="grid gap-3 px-4 py-3 text-xs sm:px-5">
-            {transcript.length === 0 ? (
-              <EmptyState label="No Motoko conversation yet." />
-            ) : (
-              <div className="grid gap-2">
-                {transcript.slice(-12).map((entry) => (
-                  <div
-                    key={entry.id}
-                    className={cn(
-                      "grid gap-2 rounded-md border px-3 py-2",
-                      entry.role === "operator"
-                        ? "border-border/70 bg-background"
-                        : "border-border/70 bg-muted/20",
-                    )}
-                  >
-                    <div className="flex min-w-0 items-center justify-between gap-2">
-                      <span className="font-medium text-foreground">
-                        {entry.role === "operator" ? "You" : "Motoko"}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {formatIsoDate(entry.createdAt)}
+          <div className="grid gap-4 px-4 py-4 text-xs sm:px-5">
+            <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-medium text-muted-foreground">Motoko actions</div>
+                <StatusPill label={status?.available ? "ready" : "setup"} tone={status?.available ? "success" : "warning"} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={onCheck} disabled={actionPending}>
+                  <CheckCircle2Icon className="size-3.5" />
+                  Check
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onSetupCodexOAuth}
+                  disabled={actionPending}
+                >
+                  <ShieldCheckIcon className="size-3.5" />
+                  Setup OAuth
+                </Button>
+                <Button size="sm" variant="outline" onClick={onStartAcp} disabled={actionPending}>
+                  <BotIcon className="size-3.5" />
+                  Start ACP
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onWriteContext}
+                  disabled={actionPending || selectedProjectRoot.trim().length === 0}
+                >
+                  <FilePlus2Icon className="size-3.5" />
+                  Write Context
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onInspectGits}
+                  disabled={actionPending || selectedProjectRoot.trim().length === 0}
+                >
+                  <SearchIcon className="size-3.5" />
+                  Inspect
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <select
+                  value={scheduleKind}
+                  className="h-8 min-w-0 rounded-md border border-input bg-background px-3 text-xs"
+                  onChange={(event) =>
+                    onScheduleKindChange(event.currentTarget.value as HermesScheduleKind)
+                  }
+                >
+                  {MOTOKO_SCHEDULE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onRunSchedule}
+                  disabled={actionPending}
+                >
+                  <PlayIcon className="size-3.5" />
+                  Run
+                </Button>
+              </div>
+            </div>
+
+            {chatResult || commandResult || draft || scheduleResult ? (
+              <div className="grid gap-3">
+                <SectionHeader title="Result" count={resultCount} />
+                {chatResult ? (
+                  <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <StatusPill
+                        label={chatResult.status}
+                        tone={
+                          chatResult.status === "blocked"
+                            ? "danger"
+                            : chatResult.status === "setup-required"
+                              ? "warning"
+                              : "success"
+                        }
+                      />
+                      <StatusPill label={chatResult.actionKind} tone="default" />
+                    </div>
+                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
+                      {chatResult.response}
+                    </pre>
+                  </div>
+                ) : null}
+                {commandResult ? (
+                  <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <StatusPill
+                        label={commandResult.status}
+                        tone={hermesCommandResultTone(commandResult.status)}
+                      />
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {commandResult.action} | {formatCount(commandResult.durationMs)} ms
                       </span>
                     </div>
-                    <pre className="whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
-                      {entry.message}
+                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
+                      {[commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n") ||
+                        "No command output."}
                     </pre>
-                    {entry.result?.status === "setup-required" ? (
-                      <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                        <div className="font-medium text-amber-700">
-                          {entry.result.setupTitle ?? "Hermes setup required"}
-                        </div>
-                        {entry.result.setupDetail ? (
-                          <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-amber-700">
-                            {entry.result.setupDetail}
-                          </pre>
-                        ) : null}
-                        {entry.result.setupCommand ? (
-                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background px-2 py-2">
-                            <code className="min-w-0 flex-1 overflow-auto text-[11px] text-foreground">
-                              {entry.result.setupCommand}
-                            </code>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void navigator.clipboard.writeText(entry.result!.setupCommand!)}
-                            >
-                              <CopyIcon className="size-3.5" />
-                              Copy
-                            </Button>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {entry.result?.proposal ? (
-                      <div className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] text-muted-foreground">
-                        Created proposal card: <span className="font-medium text-foreground">{entry.result.proposal.title}</span>
-                      </div>
-                    ) : null}
-                    {entry.result?.blockedReason &&
-                    entry.result.status !== "setup-required" ? (
-                      <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-                        {entry.result.blockedReason}
-                      </div>
-                    ) : null}
                   </div>
-                ))}
+                ) : null}
+                {draft ? (
+                  <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <StatusPill
+                        label={draft.status}
+                        tone={draft.status === "draft" ? "success" : "danger"}
+                      />
+                      <StatusPill label={draft.kind} tone="default" />
+                    </div>
+                    <div className="truncate font-medium">{draft.title}</div>
+                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
+                      {draft.prompt}
+                    </pre>
+                  </div>
+                ) : null}
+                {scheduleResult ? (
+                  <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <StatusPill
+                        label={scheduleResult.blockedReason ? "blocked" : scheduleResult.kind}
+                        tone={scheduleResult.blockedReason ? "danger" : "success"}
+                      />
+                      <span className="text-muted-foreground">
+                        {formatIsoDate(scheduleResult.ranAt)}
+                      </span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      {scheduleResult.blockedReason ??
+                        `${formatCount(scheduleResult.proposals.length)} proposal cards generated.`}
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            )}
+            ) : null}
 
-            <SectionHeader title="Result" count={resultCount} />
-            {chatResult ? (
-              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <StatusPill
-                    label={chatResult.status}
-                    tone={
-                      chatResult.status === "blocked"
-                        ? "danger"
-                        : chatResult.status === "setup-required"
-                          ? "warning"
-                          : "success"
-                    }
-                  />
-                  <StatusPill label={chatResult.actionKind} tone="default" />
+            <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
+              <SectionHeader title="Proposal cards" count={cards.length} />
+              {loading && cards.length === 0 ? (
+                <EmptyState label="Loading Motoko proposals..." />
+              ) : cards.length === 0 ? (
+                <EmptyState label="No Motoko proposals." />
+              ) : (
+                <div className="divide-y divide-border/60">
+                  {cards.slice(0, 80).map((proposal) => (
+                    <div key={proposal.id} className="grid gap-3 px-3 py-3">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                          {proposal.title}
+                        </span>
+                        <StatusPill
+                          label={proposal.status}
+                          tone={hermesProposalTone(proposal.status)}
+                        />
+                        <StatusPill
+                          label={proposal.risk}
+                          tone={proposal.risk === "blocked" ? "danger" : "default"}
+                        />
+                      </div>
+                      <p className="line-clamp-3 text-muted-foreground">{proposal.summary}</p>
+                      <div className="grid gap-2">
+                        <div>
+                          <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground/80">
+                            Evidence
+                          </div>
+                          <ul className="grid gap-1 text-[11px] text-muted-foreground">
+                            {proposal.evidence.slice(0, 3).map((item) => (
+                              <li key={item} className="line-clamp-2">
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                      {proposal.blockedReason ? (
+                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                          {proposal.blockedReason}
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onDecision(proposal.id, "defer")}
+                          disabled={actionPending}
+                        >
+                          Defer
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive-outline"
+                          onClick={() => onDecision(proposal.id, "reject")}
+                          disabled={actionPending}
+                        >
+                          Reject
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onDecision(proposal.id, "approve")}
+                          disabled={actionPending || proposal.status === "blocked"}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => onDraft(proposal.id)}
+                          disabled={actionPending || proposal.status !== "approved"}
+                        >
+                          Draft
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
-                  {chatResult.response}
-                </pre>
-              </div>
-            ) : null}
-            {commandResult ? (
-              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <StatusPill
-                    label={commandResult.status}
-                    tone={hermesCommandResultTone(commandResult.status)}
-                  />
-                  <span className="font-mono text-[11px] text-muted-foreground">
-                    {commandResult.action} | {formatCount(commandResult.durationMs)} ms
-                  </span>
-                </div>
-                <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
-                  {[commandResult.stdout, commandResult.stderr].filter(Boolean).join("\n") ||
-                    "No command output."}
-                </pre>
-              </div>
-            ) : null}
-            {draft ? (
-              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <StatusPill
-                    label={draft.status}
-                    tone={draft.status === "draft" ? "success" : "danger"}
-                  />
-                  <StatusPill label={draft.kind} tone="default" />
-                </div>
-                <div className="truncate font-medium">{draft.title}</div>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
-                  {draft.prompt}
-                </pre>
-              </div>
-            ) : null}
-            {scheduleResult ? (
-              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <StatusPill
-                    label={scheduleResult.blockedReason ? "blocked" : scheduleResult.kind}
-                    tone={scheduleResult.blockedReason ? "danger" : "success"}
-                  />
-                  <span className="text-muted-foreground">
-                    {formatIsoDate(scheduleResult.ranAt)}
-                  </span>
-                </div>
-                <div className="text-muted-foreground">
-                  {scheduleResult.blockedReason ??
-                    `${formatCount(scheduleResult.proposals.length)} proposal cards generated.`}
-                </div>
-              </div>
-            ) : null}
+              )}
+            </div>
+
             <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
               <div className="border-b border-border/60 px-3 py-2 font-medium text-muted-foreground">
                 Log
@@ -1899,6 +2040,7 @@ function MotokoPanel({
                 {log?.text ?? "No Hermes log output."}
               </pre>
             </div>
+
             <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
               <div className="border-b border-border/60 px-3 py-2 font-medium text-muted-foreground">
                 Sessions
@@ -1923,6 +2065,171 @@ function MotokoPanel({
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+function DevCommandPanel({
+  list,
+  loading,
+  error,
+  selectedProjectRoot,
+  onRefresh,
+  sessionStateByCommandId,
+  activeCommandId,
+  actionError,
+  actionPending,
+  onStart,
+  onStop,
+  onCopyLaunchCommand,
+  onOpenPreview,
+}: {
+  list: GitsDevCommandListResult | undefined;
+  loading: boolean;
+  error: unknown;
+  selectedProjectRoot: string;
+  onRefresh: () => void;
+  sessionStateByCommandId: Readonly<Record<string, DevCommandSessionState | undefined>>;
+  activeCommandId: string | null;
+  actionError: string | null;
+  actionPending: boolean;
+  onStart: (command: GitsDevCommand) => void;
+  onStop: (command: GitsDevCommand) => void;
+  onCopyLaunchCommand: (command: GitsDevCommand) => void;
+  onOpenPreview: (command: GitsDevCommand) => void;
+}) {
+  return (
+    <section className="border-b border-border/60">
+      <div className="flex min-w-0 flex-col gap-3 px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">Dev Commands</h2>
+            <p className="text-xs text-muted-foreground">
+              Repo launchers start terminal sessions directly and can publish previews on the
+              tailnet after the port is ready.
+            </p>
+          </div>
+          <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
+            <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} />
+            Refresh
+          </Button>
+        </div>
+        <div className="grid gap-1 text-xs text-muted-foreground">
+          <div>Project: {selectedProjectRoot || "No project selected"}</div>
+          <div>Config: {list?.configPath ?? "Missing"}</div>
+          {list?.magicDnsName ? <div>Tailnet: {list.magicDnsName}</div> : null}
+        </div>
+        {list?.warnings.length ? (
+          <div className="rounded-sm border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            {list.warnings.join(" ")}
+          </div>
+        ) : null}
+        {actionError ? (
+          <div className="rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {actionError}
+          </div>
+        ) : null}
+      </div>
+
+      {loading ? (
+        <div className="px-4 py-6 text-sm text-muted-foreground sm:px-5">Loading dev commands...</div>
+      ) : error ? (
+        <div className="px-4 py-6 text-sm text-destructive sm:px-5">
+          {error instanceof Error ? error.message : "Failed to load dev commands."}
+        </div>
+      ) : !list || list.commands.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-muted-foreground sm:px-5">
+          No repo launchers found.
+        </div>
+      ) : (
+        <div className="divide-y divide-border/60">
+          {list.commands.map((command) => {
+            const session = sessionStateByCommandId[command.id];
+            const status = session?.status ?? "idle";
+            return (
+              <div key={command.id} className="grid gap-3 px-4 py-4 sm:px-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-medium">{command.name}</h3>
+                      <StatusPill label={status} tone={devCommandStatusTone(status)} />
+                      {command.localPort !== null ? (
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {command.localHost ?? "127.0.0.1"}:{command.localPort}
+                        </span>
+                      ) : null}
+                      {command.previewUrl ? (
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {command.previewUrl}
+                        </span>
+                      ) : null}
+                    </div>
+                    {command.description ? (
+                      <p className="mt-1 text-xs text-muted-foreground">{command.description}</p>
+                    ) : null}
+                    <div className="mt-2 grid gap-1 font-mono text-[11px] text-muted-foreground">
+                      <div>{command.cwd}</div>
+                      <div>{command.command}</div>
+                      {session?.label ? <div>Session: {session.label}</div> : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => onStart(command)}
+                      disabled={actionPending && activeCommandId === command.id}
+                    >
+                      <PlayIcon className="size-3.5" />
+                      Start
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onStop(command)}
+                      disabled={actionPending && activeCommandId === command.id}
+                    >
+                      <CircleStopIcon className="size-3.5" />
+                      Stop
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => onCopyLaunchCommand(command)}
+                      aria-label={`Copy launch command for ${command.name}`}
+                    >
+                      <CopyIcon className="size-3.5" />
+                    </Button>
+                    {command.previewUrl ? (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => onOpenPreview(command)}
+                        aria-label={`Open preview for ${command.name}`}
+                      >
+                        <ExternalLinkIcon className="size-3.5" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="rounded-sm border border-border/60 bg-muted/20">
+                  <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
+                    <span className="text-[11px] font-medium uppercase text-muted-foreground">
+                      Terminal
+                    </span>
+                    <span className="font-mono text-[11px] text-muted-foreground">
+                      {session?.updatedAt ? formatIsoDate(session.updatedAt) : "idle"}
+                    </span>
+                  </div>
+                  <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] text-foreground">
+                    {session?.log?.trim().length ? session.log : "No output yet."}
+                  </pre>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -2943,6 +3250,13 @@ export function GitsCockpit() {
   const [automodeGoalRepo, setAutomodeGoalRepo] = useState("");
   const [automodeGoalModel, setAutomodeGoalModel] = useState("");
   const [automodeGoalPrompt, setAutomodeGoalPrompt] = useState("");
+  const [devSessionStateByCommandId, setDevSessionStateByCommandId] = useState<
+    Record<string, DevCommandSessionState | undefined>
+  >({});
+  const [devActionError, setDevActionError] = useState<string | null>(null);
+  const [devActiveCommandId, setDevActiveCommandId] = useState<string | null>(null);
+  const [devActionPending, setDevActionPending] = useState(false);
+  const devTerminalDetachByCommandIdRef = useRef(new Map<string, () => void>());
   const readEnvironmentClient = () => {
     if (targetEnvironmentId && targetEnvironmentId !== primaryEnvironmentId) {
       const connection = readEnvironmentConnection(targetEnvironmentId);
@@ -3061,6 +3375,19 @@ export function GitsCockpit() {
     ],
     queryFn: async () => readGitsClient().hermes.listProposals(),
     refetchInterval: 10_000,
+  });
+  const devCommandsQuery = useQuery({
+    queryKey: [
+      "gits",
+      "dev-commands",
+      targetEnvironmentId,
+      selectedProjectRoot,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
+    queryFn: async () => readGitsClient().devCommands.list({ projectDir: selectedProjectRoot }),
+    enabled: selectedProjectRoot.trim().length > 0,
+    refetchInterval: 30_000,
   });
   const resourceQuery = useQuery({
     queryKey: [
@@ -3378,6 +3705,141 @@ export function GitsCockpit() {
       await Promise.all([automodeQuery.refetch(), delamainQuery.refetch()]);
     },
   });
+  const handleDevStart = async (command: GitsDevCommand) => {
+    if (!targetEnvironmentId) {
+      setDevActionError("No target environment is available.");
+      return;
+    }
+    const api = readEnvironmentApi(targetEnvironmentId);
+    if (!api) {
+      setDevActionError("Environment API is not available.");
+      return;
+    }
+    const threadId = makeDevThreadId(selectedProjectRoot);
+    const terminalId = makeDevTerminalId(command.id);
+    setDevActionPending(true);
+    setDevActiveCommandId(command.id);
+    setDevActionError(null);
+    devTerminalDetachByCommandIdRef.current.get(command.id)?.();
+    devTerminalDetachByCommandIdRef.current.delete(command.id);
+    setDevSessionStateByCommandId((current) => ({
+      ...current,
+      [command.id]: {
+        terminalId,
+        status: "starting",
+        log: "",
+        exitCode: null,
+        label: null,
+        updatedAt: new Date().toISOString(),
+        pid: null,
+      },
+    }));
+    try {
+      await api.terminal.close({ threadId, terminalId, deleteHistory: true }).catch(() => undefined);
+      await api.terminal.open({ threadId, terminalId, cwd: command.cwd });
+      const detach = api.terminal.attach(
+        { threadId, terminalId, cwd: command.cwd, restartIfNotRunning: false },
+        (event) => {
+          setDevSessionStateByCommandId((current) => {
+            const previous =
+              current[command.id] ??
+              ({
+                terminalId,
+                status: "idle",
+                log: "",
+                exitCode: null,
+                label: null,
+                updatedAt: null,
+                pid: null,
+              } satisfies DevCommandSessionState);
+            return {
+              ...current,
+              [command.id]: reduceDevCommandEvent(previous, event),
+            };
+          });
+        },
+      );
+      devTerminalDetachByCommandIdRef.current.set(command.id, detach);
+      await api.terminal.write({ threadId, terminalId, data: `${command.launchCommand}\n` });
+    } catch (error) {
+      setDevActionError(error instanceof Error ? error.message : "Failed to start dev command.");
+      setDevSessionStateByCommandId((current) => ({
+        ...current,
+        [command.id]: {
+          terminalId,
+          status: "error",
+          log:
+            error instanceof Error
+              ? `[error] ${error.message}\n`
+              : "[error] Failed to start dev command.\n",
+          exitCode: null,
+          label: null,
+          updatedAt: new Date().toISOString(),
+          pid: null,
+        },
+      }));
+    } finally {
+      setDevActionPending(false);
+      setDevActiveCommandId(null);
+    }
+  };
+  const handleDevStop = async (command: GitsDevCommand) => {
+    if (!targetEnvironmentId) {
+      setDevActionError("No target environment is available.");
+      return;
+    }
+    const api = readEnvironmentApi(targetEnvironmentId);
+    if (!api) {
+      setDevActionError("Environment API is not available.");
+      return;
+    }
+    const threadId = makeDevThreadId(selectedProjectRoot);
+    const terminalId = makeDevTerminalId(command.id);
+    setDevActionPending(true);
+    setDevActiveCommandId(command.id);
+    setDevActionError(null);
+    try {
+      await api.terminal.write({ threadId, terminalId, data: "\u0003exit\n" }).catch(() => undefined);
+      await api.terminal.close({ threadId, terminalId, deleteHistory: false }).catch(() => undefined);
+      devTerminalDetachByCommandIdRef.current.get(command.id)?.();
+      devTerminalDetachByCommandIdRef.current.delete(command.id);
+      setDevSessionStateByCommandId((current) => ({
+        ...current,
+        [command.id]: {
+          ...(current[command.id] ?? {
+            terminalId,
+            log: "",
+            exitCode: null,
+            label: null,
+            updatedAt: null,
+            pid: null,
+          }),
+          status: "closed",
+          updatedAt: new Date().toISOString(),
+          pid: null,
+        },
+      }));
+    } catch (error) {
+      setDevActionError(error instanceof Error ? error.message : "Failed to stop dev command.");
+    } finally {
+      setDevActionPending(false);
+      setDevActiveCommandId(null);
+    }
+  };
+  const handleDevCopyLaunchCommand = async (command: GitsDevCommand) => {
+    try {
+      await navigator.clipboard.writeText(command.launchCommand);
+      setDevActionError(null);
+    } catch (error) {
+      setDevActionError(error instanceof Error ? error.message : "Failed to copy launch command.");
+    }
+  };
+  const handleDevOpenPreview = (command: GitsDevCommand) => {
+    if (!command.previewUrl) {
+      return;
+    }
+    window.open(command.previewUrl, "_blank", "noopener,noreferrer");
+  };
   const actionError =
     spawnMutation.error ??
     replyMutation.error ??
@@ -3485,10 +3947,20 @@ export function GitsCockpit() {
     setAutomodeGoalRepo(selectedProjectRoot);
   }, [automodeGoalRepo, selectedProjectRoot]);
 
+  useEffect(() => {
+    return () => {
+      for (const detach of devTerminalDetachByCommandIdRef.current.values()) {
+        detach();
+      }
+      devTerminalDetachByCommandIdRef.current.clear();
+    };
+  }, []);
+
   const tabCounts = useMemo<Record<GitsCockpitTab, string>>(
     () => ({
       overview: "live",
       motoko: formatCount(hermesProposalsQuery.data?.proposals.length ?? 0),
+      dev: formatCount(devCommandsQuery.data?.commands.length ?? 0),
       fleet: formatCount(delamainQuery.data?.peers.length ?? 0),
       automode: formatCount(automodeQuery.data?.goals.length ?? 0),
       gsd: openGsdQuery.data?.available ? "ready" : "check",
@@ -3497,6 +3969,7 @@ export function GitsCockpit() {
     }),
     [
       automodeQuery.data?.goals.length,
+      devCommandsQuery.data?.commands.length,
       delamainQuery.data?.peers.length,
       hermesProposalsQuery.data?.proposals.length,
       openGsdQuery.data?.available,
@@ -3513,6 +3986,7 @@ export function GitsCockpit() {
     hermesSessionsQuery.isFetching ||
     hermesLogQuery.isFetching ||
     hermesProposalsQuery.isFetching ||
+    devCommandsQuery.isFetching ||
     openGsdQuery.isFetching ||
     resourceQuery.isFetching ||
     buildInfoQuery.isFetching ||
@@ -3541,6 +4015,7 @@ export function GitsCockpit() {
               hermesSessionsQuery.refetch(),
               hermesLogQuery.refetch(),
               hermesProposalsQuery.refetch(),
+              ...(selectedProjectRoot ? [devCommandsQuery.refetch()] : []),
               openGsdQuery.refetch(),
               resourceQuery.refetch(),
               buildInfoQuery.refetch(),
@@ -3749,6 +4224,23 @@ export function GitsCockpit() {
                 onWriteContext={() => void hermesContextMutation.mutate()}
                 onDraft={(proposalId) => void hermesDraftMutation.mutate(proposalId)}
                 onRunSchedule={() => void hermesScheduleMutation.mutate()}
+              />
+            ) : null}
+            {activeTab === "dev" ? (
+              <DevCommandPanel
+                list={devCommandsQuery.data}
+                loading={devCommandsQuery.isPending || devCommandsQuery.isFetching}
+                error={devCommandsQuery.error}
+                selectedProjectRoot={selectedProjectRoot}
+                onRefresh={() => void devCommandsQuery.refetch()}
+                sessionStateByCommandId={devSessionStateByCommandId}
+                activeCommandId={devActiveCommandId}
+                actionError={devActionError}
+                actionPending={devActionPending}
+                onStart={(command) => void handleDevStart(command)}
+                onStop={(command) => void handleDevStop(command)}
+                onCopyLaunchCommand={(command) => void handleDevCopyLaunchCommand(command)}
+                onOpenPreview={handleDevOpenPreview}
               />
             ) : null}
             {activeTab === "gsd" ? (

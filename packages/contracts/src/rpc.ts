@@ -38,6 +38,9 @@ import {
   GitsCockpitError,
   GitsCockpitInput,
   GitsCockpitSnapshot,
+  GitsDevCommandError,
+  GitsDevCommandListInput,
+  GitsDevCommandListResult,
   HermesAdapterError,
   HermesChatInput,
   HermesChatResult,
@@ -203,6 +206,7 @@ export const WS_METHODS = {
 
   // GITS cockpit methods
   gitsGetCockpit: "gits.cockpit.get",
+  gitsDevCommandsList: "gits.devCommands.list",
   gitsDelamainListPeers: "gits.delamain.peers.list",
   gitsDelamainGetPeerStatus: "gits.delamain.peers.status",
   gitsDelamainReadPeerLog: "gits.delamain.peers.log",
@@ -484,6 +488,12 @@ export const WsGitsGetCockpitRpc = Rpc.make(WS_METHODS.gitsGetCockpit, {
   payload: GitsCockpitInput,
   success: GitsCockpitSnapshot,
   error: GitsCockpitError,
+});
+
+export const WsGitsDevCommandsListRpc = Rpc.make(WS_METHODS.gitsDevCommandsList, {
+  payload: GitsDevCommandListInput,
+  success: GitsDevCommandListResult,
+  error: GitsDevCommandError,
 });
 
 export const WsGitsDelamainListPeersRpc = Rpc.make(WS_METHODS.gitsDelamainListPeers, {
@@ -841,6 +851,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
   WsGitsGetCockpitRpc,
+  WsGitsDevCommandsListRpc,
   WsGitsDelamainListPeersRpc,
   WsGitsDelamainGetPeerStatusRpc,
   WsGitsDelamainReadPeerLogRpc,

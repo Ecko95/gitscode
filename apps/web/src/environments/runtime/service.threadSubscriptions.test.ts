@@ -133,6 +133,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     },
     gits: {
       getCockpit: vi.fn(),
+      devCommands: {
+        list: vi.fn(),
+      },
       delamain: {
         listPeers: vi.fn(),
         getPeerStatus: vi.fn(),
