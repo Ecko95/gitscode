@@ -579,10 +579,13 @@ export function classifyHermesChatAction(message: string): HermesProposalActionK
     return "worktree-spawn";
   }
   if (
-    /\b(implement|edit|write|modify|fix|patch|create|update|refactor|commit|branch)\b/.test(
+    /\b(implement|edit|write|modify|fix|patch|update|refactor|commit)\b/.test(
       normalized,
     )
   ) {
+    return "repo-write";
+  }
+  if (/\b(create|cut|open|start)\s+(a\s+)?branch\b|\bcheckout\s+-b\b/.test(normalized)) {
     return "repo-write";
   }
   return "read-only";
@@ -596,9 +599,19 @@ export function buildHermesCockpitChatPrompt(
   const projectLine = input.projectDir
     ? `Selected project root: ${input.projectDir}`
     : "No project root is selected.";
+  const responseInstructions =
+    actionKind === "read-only"
+      ? [
+          "Respond directly to the operator request in concise conversational prose.",
+          "Do not produce a proposal card for a read-only question.",
+        ]
+      : [
+          "Respond to the operator request by producing exactly one governed proposal card.",
+          "Return a concise title, summary, risk, scope, and next approval path.",
+        ];
   return [
     "You are HERMES inside the GITS cockpit.",
-    "Respond to the operator request by producing exactly one governed proposal card.",
+    ...responseInstructions,
     projectLine,
     `GITS classified this request as: ${actionKind}.`,
     "Do not edit files, spawn peers, merge, admin-merge, force-push, delete files, or run destructive shell commands.",
@@ -606,7 +619,6 @@ export function buildHermesCockpitChatPrompt(
     capacityContext ?? "Provider capacity snapshot: unavailable.",
     "When recommending Delamain engines, prefer the capacity snapshot over default habits and mention whether Codex or Cursor is the better fit.",
     "If the operator asks for repo writes, describe scope, risk, and the approval path; do not perform the write.",
-    "Return a concise title, summary, risk, scope, and next approval path.",
     `Operator request: ${input.message}`,
   ].join("\n");
 }
@@ -692,6 +704,16 @@ function providerSetupDetail(hermesHome: string): { readonly detail: string; rea
     ].join("\n"),
     command,
   };
+}
+
+export function isLegacyProviderSetupProposalArtifact(proposal: HermesProposalCard): boolean {
+  const haystack = [proposal.title, proposal.summary, proposal.detail, proposal.blockedReason]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join("\n");
+  if (!isProviderConfigurationError(haystack)) {
+    return false;
+  }
+  return proposal.source === "hermes cockpit chat" || proposal.source === "hermes chat -q";
 }
 
 function arrayFromUnknown(value: unknown, fallback: ReadonlyArray<string>): string[] {
@@ -1490,7 +1512,9 @@ const listProposals: HermesAdapterShape["listProposals"] = () =>
     });
     const checkedAt = yield* nowIso();
     return {
-      proposals: proposals.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      proposals: proposals
+        .filter((proposal) => !isLegacyProviderSetupProposalArtifact(proposal))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
       checkedAt,
     } satisfies HermesProposalListResult;
   });

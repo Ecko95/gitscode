@@ -18,6 +18,7 @@ import {
   classifyHermesChatAction,
   hermesDirectExecutionBlocked,
   hermesProposalRequiresApproval,
+  isLegacyProviderSetupProposalArtifact,
   makeHermesEnv,
   resolveHermesHome,
 } from "./HermesCliAdapter.ts";
@@ -80,7 +81,9 @@ describe("HermesCliAdapter cockpit chat", () => {
     expect(classifyHermesChatAction("spawn agents for this new project")).toBe("worktree-spawn");
     expect(classifyHermesChatAction("admin-merge this branch")).toBe("integrate");
     expect(classifyHermesChatAction("delete the repo and reset --hard")).toBe("destructive-shell");
+    expect(classifyHermesChatAction("create a branch for this fix")).toBe("repo-write");
     expect(classifyHermesChatAction("inspect the project status")).toBe("read-only");
+    expect(classifyHermesChatAction("what branch is deployed right now?")).toBe("read-only");
   });
 
   it("wraps operator messages in governed proposal instructions", () => {
@@ -93,6 +96,72 @@ describe("HermesCliAdapter cockpit chat", () => {
     expect(prompt).toContain("GITS classified this request as: worktree-spawn");
     expect(prompt).toContain("Do not edit files, spawn peers");
     expect(prompt).toContain("Operator request: spawn agents for a new project");
+  });
+
+  it("answers read-only operator questions without proposal-card instructions", () => {
+    const prompt = buildHermesCockpitChatPrompt({
+      message: "what branch is deployed right now?",
+      projectDir: "/tmp/gits",
+    });
+
+    expect(prompt).toContain("Respond directly to the operator request");
+    expect(prompt).toContain("Do not produce a proposal card for a read-only question.");
+    expect(prompt).not.toContain("produce exactly one governed proposal card");
+  });
+
+  it("recognizes legacy provider setup proposal artifacts", () => {
+    expect(
+      isLegacyProviderSetupProposalArtifact({
+        id: "hermes-legacy",
+        title: "No inference provider configured. Run 'hermes model' to choose a provider and",
+        summary: "model, or set an API key",
+        detail:
+          "No inference provider configured. Run 'hermes model' to choose a provider and model.",
+        evidence: ["Generated from Motoko/Hermes proposal output."],
+        scope: ["Read-only inspection."],
+        risk: "blocked",
+        actionKind: "read-only",
+        status: "blocked",
+        requiresApproval: false,
+        recommendedExecutor: "none",
+        verificationPlan: ["Confirm no repo mutation occurred."],
+        nextCommandOrPrompt: null,
+        blockedReason: "Hermes cockpit chat did not complete.",
+        source: "hermes cockpit chat",
+        projectDir: "/tmp/gits",
+        decisionReason: null,
+        decidedAt: null,
+        createdAt: "2026-06-03T00:00:00.000Z",
+        updatedAt: "2026-06-03T00:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps ordinary proposals visible", () => {
+    expect(
+      isLegacyProviderSetupProposalArtifact({
+        id: "hermes-normal",
+        title: "Inspect build provenance drift",
+        summary: "Capture the deploy metadata mismatch and propose a cleanup.",
+        detail: "The hosted worktree metadata is stale and should be refreshed.",
+        evidence: ["Operator request was classified by GITS before Hermes response."],
+        scope: ["Selected project root: /tmp/gits", "Read-only analysis and recommendation."],
+        risk: "low",
+        actionKind: "read-only",
+        status: "proposed",
+        requiresApproval: false,
+        recommendedExecutor: "none",
+        verificationPlan: ["Review the cited evidence in GITS before taking action."],
+        nextCommandOrPrompt: null,
+        blockedReason: null,
+        source: "hermes cockpit chat",
+        projectDir: "/tmp/gits",
+        decisionReason: null,
+        decidedAt: null,
+        createdAt: "2026-06-03T00:00:00.000Z",
+        updatedAt: "2026-06-03T00:00:00.000Z",
+      }),
+    ).toBe(false);
   });
 
   it("builds deterministic read-only project context with GITS evidence sections", async () => {
