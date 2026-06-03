@@ -24,7 +24,7 @@ Current deployed GITS build-info reports:
   "branch": "main",
   "commit": "ecdc27a6a971a2e082b7ea48b9e6d33a07c665ae",
   "dirty": false,
-  "sourcePath": "/home/joshua/dev/projects/t3code-gits-hosted"
+  "sourcePath": "/home/joshua/dev/projects/gitscode-hosted"
 }
 ```
 

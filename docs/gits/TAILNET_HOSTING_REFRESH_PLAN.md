@@ -24,7 +24,7 @@ The hosted cockpit uses three explicit layers:
 Windows Tailscale Serve on :8443 (tailnet only)
   -> http://127.0.0.1:13773
   -> WSL user systemd service gits-cockpit.service
-  -> /home/joshua/dev/projects/t3code-gits-hosted
+  -> /home/joshua/dev/projects/gitscode-hosted
 ```
 
 The WSL service binds to loopback only:
@@ -40,13 +40,13 @@ This avoids a LAN-facing WSL listener while still allowing Windows Tailscale Ser
 Interactive source worktree:
 
 ```text
-/home/joshua/dev/projects/t3code-gits
+/home/joshua/dev/projects/gitscode
 ```
 
 Managed deploy worktree:
 
 ```text
-/home/joshua/dev/projects/t3code-gits-hosted
+/home/joshua/dev/projects/gitscode-hosted
 ```
 
 Do not use the interactive checkout as the served worktree. The deploy script hard-resets the managed worktree to the selected remote branch and writes build metadata into the built server bundle.
@@ -62,14 +62,14 @@ origin/gits
 Install or refresh the user service:
 
 ```bash
-cd /home/joshua/dev/projects/t3code-gits
+cd /home/joshua/dev/projects/gitscode
 ./scripts/gits-hosting/install-wsl-user-service.sh
 ```
 
 Refresh the deploy worktree, build, write metadata, restart, and health-check:
 
 ```bash
-cd /home/joshua/dev/projects/t3code-gits
+cd /home/joshua/dev/projects/gitscode
 ./scripts/gits-hosting/deploy-subject28-gits.sh
 ```
 
@@ -82,10 +82,10 @@ The install script writes:
 The unit includes:
 
 ```ini
-WorkingDirectory=/home/joshua/dev/projects/t3code-gits-hosted
+WorkingDirectory=/home/joshua/dev/projects/gitscode-hosted
 Environment=NODE_ENV=production
 Environment=T3CODE_HOME=/home/joshua/.t3
-Environment=GITS_BUILD_INFO_PATH=/home/joshua/dev/projects/t3code-gits-hosted/apps/server/dist/gits-build-metadata.json
+Environment=GITS_BUILD_INFO_PATH=/home/joshua/dev/projects/gitscode-hosted/apps/server/dist/gits-build-metadata.json
 ExecStart=<detected-node-path> apps/server/dist/bin.mjs serve --host 127.0.0.1 --port 13773
 Restart=on-failure
 RestartSec=3
@@ -98,7 +98,7 @@ Use Windows Tailscale Serve as the Tailnet entrypoint. The hardened default does
 Run from Windows PowerShell:
 
 ```powershell
-cd C:\Users\joshua\dev\projects\t3code-gits
+cd C:\Users\joshua\dev\projects\gitscode
 powershell -ExecutionPolicy Bypass -File .\scripts\gits-hosting\Set-GitsTailnetPortProxy.ps1 `
   -LocalPort 13773 `
   -TailnetHttpsPort 8443
@@ -139,7 +139,7 @@ The public root Funnel is the existing n8n route and is separate from the GITS c
 The deploy script writes:
 
 ```text
-/home/joshua/dev/projects/t3code-gits-hosted/apps/server/dist/gits-build-metadata.json
+/home/joshua/dev/projects/gitscode-hosted/apps/server/dist/gits-build-metadata.json
 ```
 
 `GET /api/gits/build-info` exposes the active branch, commit, build time, dirty flag, and source path. The GITS cockpit Overview tab renders the same provenance so stale hosting is visible immediately.

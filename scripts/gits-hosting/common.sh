@@ -7,8 +7,8 @@ readonly GITS_HOSTING_COMMON_SH_LOADED=1
 
 readonly GITS_HOSTING_DEFAULT_REMOTE="origin"
 readonly GITS_HOSTING_DEFAULT_BRANCH="gits"
-readonly GITS_HOSTING_DEFAULT_REPO="${HOME}/dev/projects/t3code-gits"
-readonly GITS_HOSTING_DEFAULT_WORKTREE="${HOME}/dev/projects/t3code-gits-hosted"
+readonly GITS_HOSTING_DEFAULT_REPO="${HOME}/dev/projects/gitscode"
+readonly GITS_HOSTING_DEFAULT_WORKTREE="${HOME}/dev/projects/gitscode-hosted"
 readonly GITS_HOSTING_DEFAULT_SERVICE="gits-cockpit.service"
 readonly GITS_HOSTING_DEFAULT_HOST="127.0.0.1"
 readonly GITS_HOSTING_DEFAULT_PORT="13773"
