@@ -69,7 +69,8 @@ service_unit_path="$(gits_hosting_service_unit_path)"
   gits_hosting_die "Missing user service unit at $service_unit_path. Run install-wsl-user-service.sh first."
 
 gits_hosting_log "Fetching ${gits_hosting_remote}/${gits_hosting_branch} from ${gits_hosting_repo}"
-git -C "$gits_hosting_repo" fetch --prune "$gits_hosting_remote" "$gits_hosting_branch"
+git -C "$gits_hosting_repo" fetch --prune "$gits_hosting_remote" \
+  "+refs/heads/${gits_hosting_branch}:refs/remotes/${gits_hosting_remote}/${gits_hosting_branch}"
 
 if [[ ! -e "$gits_hosting_worktree/.git" ]]; then
   mkdir -p "$(dirname "$gits_hosting_worktree")"
