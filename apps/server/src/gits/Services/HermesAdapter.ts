@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import type {
   HermesAdapterError,
   HermesChatInput,
+  HermesChatResult,
   HermesCommandResult,
   HermesDraftFromProposalInput,
   HermesExecutionDraft,
@@ -42,7 +43,7 @@ export interface HermesAdapterShape {
   readonly inspectGitsAndPropose: (
     input: HermesInspectGitsProposalInput,
   ) => Effect.Effect<HermesProposalCard, HermesAdapterError>;
-  readonly chat: (input: HermesChatInput) => Effect.Effect<HermesProposalCard, HermesAdapterError>;
+  readonly chat: (input: HermesChatInput) => Effect.Effect<HermesChatResult, HermesAdapterError>;
   readonly decideProposal: (
     input: HermesProposalDecisionInput,
   ) => Effect.Effect<HermesProposalCard, HermesAdapterError>;

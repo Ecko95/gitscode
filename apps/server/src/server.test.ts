@@ -11,6 +11,7 @@ import {
   type GitsCapacitySnapshot,
   type GitsSkillInventorySnapshot,
   type HermesCommandResult,
+  type HermesChatResult,
   type HermesExecutionDraft,
   type HermesLogTailResult,
   type HermesProjectContextResult,
@@ -423,6 +424,17 @@ const defaultHermesStatus: HermesStatusResult = {
 const defaultHermesProposalList: HermesProposalListResult = {
   proposals: [defaultHermesProposal],
   checkedAt: "1970-01-01T00:00:00.000Z",
+};
+const defaultHermesChat: HermesChatResult = {
+  status: "answered",
+  actionKind: "read-only",
+  response: "Test Motoko response.",
+  proposal: null,
+  blockedReason: null,
+  setupTitle: null,
+  setupDetail: null,
+  setupCommand: null,
+  createdAt: "1970-01-01T00:00:00.000Z",
 };
 const defaultHermesSessions: HermesSessionListResult = {
   sessions: [],
@@ -958,7 +970,7 @@ const buildAppUnderTest = (options?: {
         tailLog: () => Effect.succeed(defaultHermesLog),
         listProposals: () => Effect.succeed(defaultHermesProposalList),
         inspectGitsAndPropose: () => Effect.succeed(defaultHermesProposal),
-        chat: () => Effect.succeed(defaultHermesProposal),
+        chat: () => Effect.succeed(defaultHermesChat),
         decideProposal: (input) =>
           Effect.succeed({
             ...defaultHermesProposal,
@@ -3943,8 +3955,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.sync(() => {
                 calls.push(`chat:${input.message}`);
                 return {
-                  ...defaultHermesProposal,
-                  title: input.message,
+                  ...defaultHermesChat,
+                  response: input.message,
                 };
               }),
             decideProposal: (input) =>
@@ -4043,7 +4055,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
-      assert.equal(chat.title, "Plan next action");
+      assert.equal(chat.response, "Plan next action");
 
       const decided = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>

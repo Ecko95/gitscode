@@ -892,6 +892,27 @@ export const HermesChatInput = Schema.Struct({
 });
 export type HermesChatInput = typeof HermesChatInput.Type;
 
+export const HermesChatStatus = Schema.Literals([
+  "answered",
+  "proposal-created",
+  "setup-required",
+  "blocked",
+]);
+export type HermesChatStatus = typeof HermesChatStatus.Type;
+
+export const HermesChatResult = Schema.Struct({
+  status: HermesChatStatus,
+  actionKind: HermesProposalActionKind,
+  response: Schema.String,
+  proposal: Schema.NullOr(Schema.suspend((): typeof HermesProposalCard => HermesProposalCard)),
+  blockedReason: Schema.NullOr(SummaryString),
+  setupTitle: Schema.NullOr(SummaryString),
+  setupDetail: Schema.NullOr(Schema.String),
+  setupCommand: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type HermesChatResult = typeof HermesChatResult.Type;
+
 export const HermesCommandAction = Schema.Literals([
   "check",
   "setup-codex-oauth",

@@ -19,6 +19,7 @@ import {
   type HermesApprovalMode,
   type HermesCapability,
   type HermesChatInput,
+  type HermesChatResult,
   type HermesCodexAuthStatus,
   type HermesCommandAction,
   type HermesCommandCheck,
@@ -675,6 +676,22 @@ function recommendedExecutor(actionKind: HermesProposalActionKind): HermesPropos
     return "operator";
   }
   return "none";
+}
+
+function isProviderConfigurationError(detail: string): boolean {
+  return /no inference provider configured/i.test(detail);
+}
+
+function providerSetupDetail(hermesHome: string): { readonly detail: string; readonly command: string } {
+  const command = `HERMES_HOME=${hermesHome} hermes model`;
+  return {
+    detail: [
+      "Hermes is installed, but no inference provider or model is configured for Motoko chat.",
+      `Run \`${command}\` in a local terminal to choose a provider and model.`,
+      "Alternatively, add the required provider key, such as OPENAI_API_KEY or OPENROUTER_API_KEY, to ~/.gits/hermes/.env.",
+    ].join("\n"),
+    command,
+  };
 }
 
 function arrayFromUnknown(value: unknown, fallback: ReadonlyArray<string>): string[] {
@@ -1568,22 +1585,60 @@ const makeChat =
       const now = yield* nowIso();
       const detail =
         nonEmpty(exec.stdout) ?? nonEmpty(exec.stderr) ?? "Hermes returned no response.";
-      const summary = summarizeProposal(detail);
       const commandBlocked = exec.exitCode !== 0;
+      if (isProviderConfigurationError(detail)) {
+        const setup = providerSetupDetail(config.hermesHome);
+        return {
+          status: "setup-required",
+          actionKind,
+          response: "Motoko chat is blocked until Hermes has an inference provider configured.",
+          proposal: null,
+          blockedReason: "No inference provider configured for Hermes.",
+          setupTitle: "Configure Hermes model provider",
+          setupDetail: setup.detail,
+          setupCommand: setup.command,
+          createdAt: now,
+        } satisfies HermesChatResult;
+      }
+      if (commandBlocked) {
+        return {
+          status: "blocked",
+          actionKind,
+          response: detail,
+          proposal: null,
+          blockedReason: "Hermes cockpit chat did not complete.",
+          setupTitle: null,
+          setupDetail: null,
+          setupCommand: null,
+          createdAt: now,
+        } satisfies HermesChatResult;
+      }
+      if (actionKind === "read-only") {
+        return {
+          status: "answered",
+          actionKind,
+          response: detail,
+          proposal: null,
+          blockedReason: null,
+          setupTitle: null,
+          setupDetail: null,
+          setupCommand: null,
+          createdAt: now,
+        } satisfies HermesChatResult;
+      }
+      const summary = summarizeProposal(detail);
       const destructiveBlocked = actionKind === "destructive-shell";
       const proposal = makeProposal({
         title: summary.title,
         summary: summary.summary,
         detail,
         actionKind,
-        status: commandBlocked || destructiveBlocked ? "blocked" : "proposed",
-        blockedReason: commandBlocked
-          ? "Hermes cockpit chat did not complete."
-          : destructiveBlocked
-            ? "Hermes cannot execute destructive shell requests. Use a human-approved Delamain plan instead."
-            : hermesProposalRequiresApproval(actionKind)
-              ? "Requires human approval before Delamain spawn, repo write, integrate, or destructive action."
-              : null,
+        status: destructiveBlocked ? "blocked" : "proposed",
+        blockedReason: destructiveBlocked
+          ? "Hermes cannot execute destructive shell requests. Use a human-approved Delamain plan instead."
+          : hermesProposalRequiresApproval(actionKind)
+            ? "Requires human approval before Delamain spawn, repo write, integrate, or destructive action."
+            : null,
         source: "hermes cockpit chat",
         projectDir: input.projectDir ?? null,
         now,
@@ -1601,7 +1656,17 @@ const makeChat =
         try: () => writeProposals(config, [proposal, ...proposals]),
         catch: (cause) => toHermesError("Failed to persist Hermes chat proposal.", cause),
       });
-      return proposal;
+      return {
+        status: "proposal-created",
+        actionKind,
+        response: detail,
+        proposal,
+        blockedReason: proposal.blockedReason,
+        setupTitle: null,
+        setupDetail: null,
+        setupCommand: null,
+        createdAt: now,
+      } satisfies HermesChatResult;
     });
 
 const decideProposal: HermesAdapterShape["decideProposal"] = (input) =>

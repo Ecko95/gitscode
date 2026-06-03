@@ -5,6 +5,7 @@ import {
   GitsBuildInfo,
   GitsCapacitySnapshot,
   GitsSkillInventorySnapshot,
+  HermesChatResult,
   HermesExecutionDraft,
   HermesProposalCard,
   HermesScheduleRunResult,
@@ -15,6 +16,7 @@ const decodeGitsBuildInfo = Schema.decodeUnknownSync(GitsBuildInfo);
 const decodeGitsSkillInventorySnapshot = Schema.decodeUnknownSync(GitsSkillInventorySnapshot);
 const decodeGitsCapacitySnapshot = Schema.decodeUnknownSync(GitsCapacitySnapshot);
 const decodeHermesStatus = Schema.decodeUnknownSync(HermesStatusResult);
+const decodeHermesChatResult = Schema.decodeUnknownSync(HermesChatResult);
 const decodeHermesProposal = Schema.decodeUnknownSync(HermesProposalCard);
 const decodeHermesDraft = Schema.decodeUnknownSync(HermesExecutionDraft);
 const decodeHermesScheduleRun = Schema.decodeUnknownSync(HermesScheduleRunResult);
@@ -248,6 +250,17 @@ describe("Hermes Motoko contracts", () => {
 
   it("accepts expanded proposal cards, drafts, and scheduled proposal runs", () => {
     const proposal = decodeHermesProposal(baseProposal);
+    const chatResult = decodeHermesChatResult({
+      status: "proposal-created",
+      actionKind: "repo-write",
+      response: "Motoko recommends a guarded implementation handoff.",
+      proposal,
+      blockedReason: null,
+      setupTitle: null,
+      setupDetail: null,
+      setupCommand: null,
+      createdAt: "2026-06-02T10:00:00.000Z",
+    });
     const draft = decodeHermesDraft({
       id: "draft-1",
       proposalId: proposal.id,
@@ -271,6 +284,7 @@ describe("Hermes Motoko contracts", () => {
       blockedReason: null,
     });
 
+    expect(chatResult.proposal?.id).toBe(proposal.id);
     expect(draft.kind).toBe("delamain-peer");
     expect(schedule.proposals).toHaveLength(1);
   });

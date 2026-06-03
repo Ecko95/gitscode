@@ -40,6 +40,7 @@ import {
   GitsCockpitSnapshot,
   HermesAdapterError,
   HermesChatInput,
+  HermesChatResult,
   HermesCheckInput,
   HermesCommandResult,
   HermesConfigInput,
@@ -649,7 +650,7 @@ export const WsGitsHermesInspectGitsRpc = Rpc.make(WS_METHODS.gitsHermesInspectG
 
 export const WsGitsHermesChatRpc = Rpc.make(WS_METHODS.gitsHermesChat, {
   payload: HermesChatInput,
-  success: HermesProposalCard,
+  success: HermesChatResult,
   error: HermesAdapterError,
 });
 

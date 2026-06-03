@@ -11,6 +11,7 @@ import type {
   GitsSkillInventorySnapshot,
   GitsSkillProvider,
   GsdPhase,
+  HermesChatResult,
   HermesCommandResult,
   HermesExecutionDraft,
   HermesLogTailResult,
@@ -34,6 +35,7 @@ import {
   BotIcon,
   CheckCircle2Icon,
   CircleStopIcon,
+  CopyIcon,
   CircleIcon,
   FilePlus2Icon,
   GaugeIcon,
@@ -1423,6 +1425,18 @@ const MOTOKO_SCHEDULE_OPTIONS: ReadonlyArray<{
   { value: "verification-sentinel", label: "Verification sentinel" },
 ];
 
+interface MotokoTranscriptEntry {
+  readonly id: string;
+  readonly role: "operator" | "motoko";
+  readonly message: string;
+  readonly createdAt: string;
+  readonly result?: HermesChatResult;
+}
+
+function makeTranscriptEntryId(role: MotokoTranscriptEntry["role"], createdAt: string): string {
+  return `${role}:${createdAt}:${Math.floor(performance.now() * 1000)}`;
+}
+
 function MotokoPanel({
   status,
   capacity,
@@ -1432,9 +1446,11 @@ function MotokoPanel({
   loading,
   error,
   actionError,
+  chatResult,
   commandResult,
   draft,
   scheduleResult,
+  transcript,
   selectedProjectRoot,
   chatInput,
   scheduleKind,
@@ -1461,9 +1477,11 @@ function MotokoPanel({
   loading: boolean;
   error: unknown;
   actionError: unknown;
+  chatResult: HermesChatResult | undefined;
   commandResult: HermesCommandResult | undefined;
   draft: HermesExecutionDraft | undefined;
   scheduleResult: HermesScheduleRunResult | undefined;
+  transcript: ReadonlyArray<MotokoTranscriptEntry>;
   selectedProjectRoot: string;
   chatInput: string;
   scheduleKind: HermesScheduleKind;
@@ -1490,6 +1508,7 @@ function MotokoPanel({
         ? actionError.message
         : null;
   const pendingCount = cards.filter((proposal) => proposal.status === "proposed").length;
+  const resultCount = [chatResult, commandResult, draft, scheduleResult].filter(Boolean).length;
 
   return (
     <section className="border-b border-border bg-background">
@@ -1732,8 +1751,97 @@ function MotokoPanel({
         </div>
 
         <div className="min-w-0">
-          <SectionHeader title="Result" count={commandResult || draft || scheduleResult ? 1 : 0} />
+          <SectionHeader title="Conversation" count={transcript.length} />
           <div className="grid gap-3 px-4 py-3 text-xs sm:px-5">
+            {transcript.length === 0 ? (
+              <EmptyState label="No Motoko conversation yet." />
+            ) : (
+              <div className="grid gap-2">
+                {transcript.slice(-12).map((entry) => (
+                  <div
+                    key={entry.id}
+                    className={cn(
+                      "grid gap-2 rounded-md border px-3 py-2",
+                      entry.role === "operator"
+                        ? "border-border/70 bg-background"
+                        : "border-border/70 bg-muted/20",
+                    )}
+                  >
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <span className="font-medium text-foreground">
+                        {entry.role === "operator" ? "You" : "Motoko"}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {formatIsoDate(entry.createdAt)}
+                      </span>
+                    </div>
+                    <pre className="whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
+                      {entry.message}
+                    </pre>
+                    {entry.result?.status === "setup-required" ? (
+                      <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                        <div className="font-medium text-amber-700">
+                          {entry.result.setupTitle ?? "Hermes setup required"}
+                        </div>
+                        {entry.result.setupDetail ? (
+                          <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-amber-700">
+                            {entry.result.setupDetail}
+                          </pre>
+                        ) : null}
+                        {entry.result.setupCommand ? (
+                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background px-2 py-2">
+                            <code className="min-w-0 flex-1 overflow-auto text-[11px] text-foreground">
+                              {entry.result.setupCommand}
+                            </code>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void navigator.clipboard.writeText(entry.result!.setupCommand!)}
+                            >
+                              <CopyIcon className="size-3.5" />
+                              Copy
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {entry.result?.proposal ? (
+                      <div className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] text-muted-foreground">
+                        Created proposal card: <span className="font-medium text-foreground">{entry.result.proposal.title}</span>
+                      </div>
+                    ) : null}
+                    {entry.result?.blockedReason &&
+                    entry.result.status !== "setup-required" ? (
+                      <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                        {entry.result.blockedReason}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <SectionHeader title="Result" count={resultCount} />
+            {chatResult ? (
+              <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <StatusPill
+                    label={chatResult.status}
+                    tone={
+                      chatResult.status === "blocked"
+                        ? "danger"
+                        : chatResult.status === "setup-required"
+                          ? "warning"
+                          : "success"
+                    }
+                  />
+                  <StatusPill label={chatResult.actionKind} tone="default" />
+                </div>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
+                  {chatResult.response}
+                </pre>
+              </div>
+            ) : null}
             {commandResult ? (
               <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -2811,6 +2919,7 @@ export function GitsCockpit() {
   const [replyText, setReplyText] = useState("");
   const [selectedProjectRoot, setSelectedProjectRoot] = useState("");
   const [motokoChatInput, setMotokoChatInput] = useState("");
+  const [motokoTranscript, setMotokoTranscript] = useState<ReadonlyArray<MotokoTranscriptEntry>>([]);
   const [motokoScheduleKind, setMotokoScheduleKind] =
     useState<HermesScheduleKind>("daily-briefing");
   const [gsdInitInput, setGsdInitInput] = useState("");
@@ -3053,19 +3162,51 @@ export function GitsCockpit() {
     },
   });
   const hermesChatMutation = useMutation({
-    mutationFn: async () =>
+    mutationFn: async (message: string) =>
       readGitsClient().hermes.chat({
-        message: motokoChatInput.trim(),
+        message,
         ...(selectedProjectRoot.trim().length > 0
           ? { projectDir: selectedProjectRoot.trim() }
           : {}),
       }),
-    onSuccess: async () => {
+    onMutate: async (message) => {
+      setMotokoTranscript((current) => [
+        ...current,
+        {
+          id: makeTranscriptEntryId("operator", new Date().toISOString()),
+          role: "operator",
+          message,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    },
+    onSuccess: async (result) => {
+      setMotokoTranscript((current) => [
+        ...current,
+        {
+          id: makeTranscriptEntryId("motoko", result.createdAt),
+          role: "motoko",
+          message: result.response,
+          createdAt: result.createdAt,
+          result,
+        },
+      ]);
       setMotokoChatInput("");
       await Promise.all([
-        hermesProposalsQuery.refetch(),
         hermesLogQuery.refetch(),
         hermesQuery.refetch(),
+        ...(result.proposal ? [hermesProposalsQuery.refetch()] : []),
+      ]);
+    },
+    onError: (error) => {
+      setMotokoTranscript((current) => [
+        ...current,
+        {
+          id: makeTranscriptEntryId("motoko", new Date().toISOString()),
+          role: "motoko",
+          message: error instanceof Error ? error.message : "Motoko chat failed.",
+          createdAt: new Date().toISOString(),
+        },
       ]);
     },
   });
@@ -3570,9 +3711,11 @@ export function GitsCockpit() {
                   capacityQuery.error
                 }
                 actionError={hermesActionError}
+                chatResult={hermesChatMutation.data}
                 commandResult={hermesCommandResult}
                 draft={hermesDraftMutation.data}
                 scheduleResult={hermesScheduleMutation.data}
+                transcript={motokoTranscript}
                 selectedProjectRoot={selectedProjectRoot}
                 chatInput={motokoChatInput}
                 scheduleKind={motokoScheduleKind}
@@ -3593,7 +3736,13 @@ export function GitsCockpit() {
                 onSetupCodexOAuth={() => void hermesSetupMutation.mutate()}
                 onStartAcp={() => void hermesAcpMutation.mutate()}
                 onInspectGits={() => void hermesInspectMutation.mutate()}
-                onChatSubmit={() => void hermesChatMutation.mutate()}
+                onChatSubmit={() => {
+                  const message = motokoChatInput.trim();
+                  if (message.length === 0) {
+                    return;
+                  }
+                  void hermesChatMutation.mutate(message);
+                }}
                 onDecision={(proposalId, decision) =>
                   void hermesDecisionMutation.mutate({ proposalId, decision })
                 }
