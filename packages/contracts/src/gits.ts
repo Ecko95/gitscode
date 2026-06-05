@@ -1213,3 +1213,50 @@ export class GitsVerificationGateError extends Schema.TaggedErrorClass<GitsVerif
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+// --- Semantic verifier-critic (Rev 2: "green ≠ correct") ----------------------------------
+// AFTER the mechanical gate (GitsVerificationGate) is green, a FRESH read-only codex agent
+// judges the diff against the slice's acceptance criteria + an adversarial "what did it miss"
+// pass, and TRIAGES the PR. It never blocks the chain. The diff is UNTRUSTED data (possible
+// prompt injection); the verifier runs read-only and is instructed to ignore embedded
+// instructions. See docs/gits/ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md §"Revision 2".
+
+export const GitsVerifierVerdict = Schema.Literals(["pass", "fail", "uncertain"]);
+export type GitsVerifierVerdict = typeof GitsVerifierVerdict.Type;
+
+export const GitsVerifierConfidence = Schema.Literals(["low", "medium", "high"]);
+export type GitsVerifierConfidence = typeof GitsVerifierConfidence.Type;
+
+export const GitsVerifierRecommendation = Schema.Literals(["auto-merge", "hold-for-review"]);
+export type GitsVerifierRecommendation = typeof GitsVerifierRecommendation.Type;
+
+export const GitsSemanticVerifyInput = Schema.Struct({
+  worktree: PathString,
+  baseRef: TrimmedNonEmptyString, // diff scope is `<baseRef>..HEAD` (e.g. "origin/main")
+  acceptanceCriteria: Schema.Array(SummaryString), // per-slice; empty → verifier derives provisional + flags
+  sliceTitle: Schema.NullOr(SummaryString),
+  model: Schema.optional(TrimmedNonEmptyString), // default codex tier (gpt-5.4-mini); escalate on uncertain
+  timeoutSeconds: Schema.optional(NonNegativeInt),
+});
+export type GitsSemanticVerifyInput = typeof GitsSemanticVerifyInput.Type;
+
+export const GitsSemanticVerifyResult = Schema.Struct({
+  worktree: PathString,
+  verdict: GitsVerifierVerdict,
+  confidence: GitsVerifierConfidence,
+  recommendation: GitsVerifierRecommendation, // derived: pass + (medium|high) + criteriaProvided → auto-merge; else hold
+  reasons: Schema.Array(SummaryString),
+  missed: Schema.Array(SummaryString), // acceptance criteria not satisfied / gaps found
+  criteriaProvided: Schema.Boolean, // false → verifier derived provisional criteria → confidence capped, always hold
+  model: TrimmedNonEmptyString,
+  checkedAt: IsoDateTime,
+});
+export type GitsSemanticVerifyResult = typeof GitsSemanticVerifyResult.Type;
+
+export class GitsSemanticVerifierError extends Schema.TaggedErrorClass<GitsSemanticVerifierError>()(
+  "GitsSemanticVerifierError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
