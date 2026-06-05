@@ -1440,7 +1440,14 @@ const MOTOKO_SCHEDULE_OPTIONS: ReadonlyArray<{
   { value: "verification-sentinel", label: "Verification sentinel" },
 ];
 
+const MOTOKO_CAPSULE_FRAME_SRC = "/gits/motoko-capsule-frame.png";
 const MOTOKO_CAPSULE_VIDEO_SRC = "/gits/motoko-capsule-avatar.mp4";
+const MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE = {
+  height: "49.8%",
+  left: "25.1%",
+  top: "24.3%",
+  width: "49.8%",
+};
 
 interface MotokoTranscriptEntry {
   readonly id: string;
@@ -1472,37 +1479,40 @@ function MotokoCapsuleAvatar({
   pendingCount: number;
 }) {
   return (
-    <div className="overflow-hidden rounded-md border border-border/70 bg-black">
-      <div className="relative aspect-square min-h-72">
-        <video
-          aria-label="Motoko capsule avatar"
-          autoPlay
-          className="absolute inset-0 size-full object-cover"
-          loop
-          muted
-          playsInline
-          preload="metadata"
-          src={MOTOKO_CAPSULE_VIDEO_SRC}
+    <div className="overflow-hidden rounded-md border border-border/70 bg-black p-2 shadow-[0_18px_44px_rgba(0,0,0,0.34)]">
+      <div className="relative aspect-square overflow-hidden rounded-sm bg-black">
+        <img
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 size-full select-none object-cover"
+          draggable={false}
+          src={MOTOKO_CAPSULE_FRAME_SRC}
         />
-        <div className="pointer-events-none absolute inset-0 border border-fuchsia-400/35 shadow-[inset_0_0_28px_rgba(236,72,153,0.22)]" />
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/70 to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/75 to-transparent" />
-        <div className="absolute left-3 top-3 flex items-center gap-2">
+        <div
+          className="absolute z-20 overflow-hidden bg-black shadow-[0_0_28px_rgba(236,72,153,0.2)]"
+          style={MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE}
+        >
+          <video
+            aria-label="Motoko capsule avatar"
+            autoPlay
+            className="size-full object-cover"
+            loop
+            muted
+            playsInline
+            preload="metadata"
+            src={MOTOKO_CAPSULE_VIDEO_SRC}
+          />
+          <div className="pointer-events-none absolute inset-0 border border-fuchsia-300/20 shadow-[inset_0_0_30px_rgba(236,72,153,0.18)]" />
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="min-w-0">
+          <div className="truncate font-medium text-fuchsia-100/90">Cyberbrain pod</div>
+          <div className="truncate text-muted-foreground">{formatCount(pendingCount)} pending</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
           <StatusPill label="Motoko" tone={available ? "success" : "warning"} />
           <StatusPill label={available ? "online" : "setup"} tone={available ? "success" : "warning"} />
-        </div>
-        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate font-mono text-[11px] uppercase tracking-[0.14em] text-fuchsia-100/90">
-              Section 9 Interface
-            </div>
-            <div className="mt-1 truncate text-xs text-fuchsia-100/75">
-              Cyberbrain assistant pod
-            </div>
-          </div>
-          <div className="shrink-0 rounded-sm border border-fuchsia-300/30 bg-black/55 px-2 py-1 text-right font-mono text-[11px] text-fuchsia-100 shadow-[0_0_18px_rgba(236,72,153,0.18)]">
-            {formatCount(pendingCount)} pending
-          </div>
         </div>
       </div>
     </div>
