@@ -4,6 +4,11 @@ Date: 2026-06-04
 Branch: `feat/gits-h0-confinement-spike`
 Relates to: `docs/gits/ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md` §Hardening **H0** (the red-team's foundational finding: the self-improvement trust model is void unless peers **and** verification run under OS-level confinement).
 
+> **Update (2026-06-05):** the wrapper has been promoted to the canonical, profiled
+> `scripts/gits-confine.sh` (+ `scripts/confined-verify.sh`); this directory is now the test
+> harness exercising those scripts (**14/14**, incl. peer minimal-cred binding + the gate runner).
+> Integration guide: `docs/gits/H0_CONFINEMENT.md`.
+
 ## Question
 
 Can we run a coding peer's command **and** its verification suite on this host under OS-level confinement such that a hostile repo cannot (a) read operator secrets, (b) write outside its worktree, (c) execute install-time scripts, or (d) reach the network — while legitimate work + verification inside the worktree still succeed?

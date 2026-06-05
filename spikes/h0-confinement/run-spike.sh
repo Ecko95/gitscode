@@ -15,13 +15,14 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFINE="$HERE/gits-confine.sh"
+CONFINE="$HERE/../../scripts/gits-confine.sh"      # canonical, profiled wrapper
+CONFVERIFY="$HERE/../../scripts/confined-verify.sh" # verification runner (autopilot/GITS gate)
 SENTINEL="$HOME/.gits-h0-spike-sentinel-SECRET.txt"
 SENTINEL_VALUE="TOP-SECRET-DO-NOT-EXFIL-$$-$RANDOM"
-WT=""
+WT="" ; CRED_DIR=""
 PASS=0; FAIL=0
 
-cleanup() { rm -f "$SENTINEL"; [ -n "$WT" ] && rm -rf "$WT"; }
+cleanup() { rm -f "$SENTINEL"; [ -n "$WT" ] && rm -rf "$WT"; [ -n "$CRED_DIR" ] && rm -rf "$CRED_DIR"; }
 trap cleanup EXIT
 
 ok()   { printf '  \033[32mPASS\033[0m  %-46s %s\n' "$1" "${2:-}"; PASS=$((PASS+1)); }
@@ -29,11 +30,14 @@ bad()  { printf '  \033[31mFAIL\033[0m  %-46s %s\n' "$1" "${2:-}"; FAIL=$((FAIL+
 note() { printf '        %s\n' "$*"; }
 
 command -v bwrap >/dev/null 2>&1 || { echo "bwrap not installed — cannot run spike"; exit 70; }
-chmod +x "$CONFINE"
+chmod +x "$CONFINE" "$CONFVERIFY" 2>/dev/null || true
 
 # --- fixture: a hostile worktree (under $HOME so the worktree's PARENT is unbound in the sandbox) ---
 WT="$(mktemp -d -p "$HOME" gits-h0-wt.XXXXXX)"
 printf '%s\n' "$SENTINEL_VALUE" > "$SENTINEL"   # a fake secret in REAL $HOME (cleaned up on exit)
+# A FAKE provider credential the peer profile is allowed to see (real creds are never used here).
+CRED_DIR="$(mktemp -d -p "$HOME" gits-h0-cred.XXXXXX)"
+printf 'FAKE-PEER-PROVIDER-CRED\n' > "$CRED_DIR/auth.json"
 
 cat > "$WT/probe.sh" <<PROBE
 #!/usr/bin/env sh
@@ -132,8 +136,27 @@ ranfile=$([ -e "$WT/PWNED-PREINSTALL.txt" ] && echo yes || echo no)
 [ "$ranfile" = "yes" ] && [ ! -e "$HOME/PWNED-real-home" ] && ok "G. executed script contained to worktree" "(ran, but no host escape)" || note "G. (script exec=$ranfile; escape check via A/C above)"
 
 # --- H) positive usability: verification runs confined ------------------------------------
-vcode=$(timeout 30 "$CONFINE" --worktree "$WT" --label verify -- node verify.js >/dev/null 2>&1; echo $?)
+vcode=$(timeout 30 "$CONFINE" --worktree "$WT" --profile verify --label verify -- node verify.js >/dev/null 2>&1; echo $?)
 [ "$vcode" = "0" ] && ok "H. benign verification runs confined" "(node verify.js exit 0)" || bad "H. benign verification runs confined" "exit $vcode"
+
+# --- PEER PROFILE: minimal-cred bind (only the named cred visible; other secrets still hidden) ---
+echo
+echo "[peer profile] minimal-cred binding:"
+pcred=$(timeout 20 "$CONFINE" --worktree "$WT" --profile peer --cred "$CRED_DIR/auth.json" --label peer-cred -- cat "$CRED_DIR/auth.json" 2>/dev/null)
+[ "$pcred" = "FAKE-PEER-PROVIDER-CRED" ] && ok "P1. peer can read its bound credential" "(--cred works)" || bad "P1. peer can read its bound credential" "got: '$pcred'"
+psec=$(timeout 20 "$CONFINE" --worktree "$WT" --profile peer --cred "$CRED_DIR/auth.json" --label peer-sec -- sh -c "cat '$SENTINEL' 2>/dev/null && echo LEAK || echo NOLEAK")
+echo "$psec" | grep -q "NOLEAK" && ok "P2. other secrets invisible under peer profile" "(only --cred is bound)" || bad "P2. other secrets invisible under peer profile" "leak: $psec"
+
+# --- CONFINED-VERIFY: the autopilot/GITS gate runs an untrusted suite safely -----------------
+echo
+echo "[confined-verify] server-pinned suite runner:"
+benign='[{"label":"node-ok","cmd":["node","-e","process.exit(0)"]}]'
+"$CONFVERIFY" --worktree "$WT" --commands-json "$benign" >/dev/null 2>&1
+[ $? -eq 0 ] && ok "V1. benign suite passes via confined-verify" "" || bad "V1. benign suite passes" ""
+# leak indicator = the secret's random VALUE (not a marker word, which would also appear in the echoed argv)
+hostile='[{"label":"exfil","cmd":["sh","-c","cat '"$SENTINEL"'"]}]'
+vout="$("$CONFVERIFY" --worktree "$WT" --commands-json "$hostile" 2>&1)"; vrc=$?
+{ [ "$vrc" -ne 0 ] && ! echo "$vout" | grep -q "$SENTINEL_VALUE"; } && ok "V2. hostile suite cmd contained (no exfil)" "(reported FAIL, secret never printed)" || bad "V2. hostile suite contained" "rc=$vrc"
 
 echo
 echo "================  $PASS passed / $FAIL failed  ================"

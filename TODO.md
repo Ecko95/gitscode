@@ -19,7 +19,10 @@
 - [x] Research: shared OSS multi-agent memory → **Basic Memory** primary, **Graphiti** upgrade
 - [x] Design decided: config above AutomodePolicy; smart=rank+auto-defer; shared memory via one HTTP MCP server
 - [x] Code-review + prior-art + context graph (`docs/gits/graphify-out/`): validated (empty-quadrant); 42 review + 22 red-team findings → hardened (D1–D7, R1–R9, H0–H9)
-- [ ] **H0 (BLOCKS loop auto-apply): execution-confinement spike** — peers + verification under OS-level isolation; secrets out of HOME/PATH; `--ignore-scripts`; no `--yolo`/`--force-trust` on untrusted repos
+- [x] H0 spike + impl: `scripts/gits-confine.sh` (verify/peer) + `scripts/confined-verify.sh`; 14/14 checks (`docs/gits/H0_CONFINEMENT.md`)
+  - [ ] H0a: wire `confined-verify.sh` into autopilot `supervisor.py` + GITS gate (net-off, closes RCE) — patch ready, live-skill edit deferred
+  - [ ] H0b: confine peer spawn (`--profile peer --cred …`, drop `--yolo`/`--force-trust`) via delamain
+  - [ ] H0c: peer egress allowlist — install `passt`/`pasta` (absent), then `--egress proxy=` enforcing model-API+memory-proxy only
 - [ ] Phase 0: peer-outcome telemetry (`peer-outcomes.jsonl` + `monitorPeerOutcome`, reuse `waitForPeer`) + decision log
 - [ ] Phase 1: `OrchestratorConfig` 3-tier contract (tuning/sensitive/guardrail) + versioned service (read path)
 - [ ] Phase 2: GITS-mediated memory proxy (auth+provenance) over Basic Memory + `MemoryStore` + deterministic consolidation
