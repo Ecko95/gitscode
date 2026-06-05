@@ -4,6 +4,28 @@ Date: 2026-06-03
 Status: DESIGN (research-backed; grounded in real `gitscode` code paths)
 Research: `gits-orchestration-research` workflow (9 agents — Augment Code, mem0, self-improving multi-agent patterns, Claude SDK accelerators, + 2 codebase maps + adversarial verification). Citations in the Research Appendix.
 
+---
+
+## ⚠️ Revision 2 — operator grilling (2026-06-06) — supersedes parts of the original below
+
+A `/grill-me` session (`docs/brainstorms/self-improving-orchestration.md`) re-pointed this design to the operator's *actual* pain. The original (below) stays as the research-backed rationale, but where they conflict **Rev 2 wins**:
+
+- **Real pain = green-but-wrong PRs (quality) + cost/babysitting** — *not* "re-deciding/not-learning." So the **#1 deliverable is a semantic verifier-critic**, not the editable config.
+- **Verifier-critic:** a *fresh* **codex** agent (read-only, after the H0 confined gate) judges each green PR against **per-slice acceptance criteria** + an adversarial "what did it miss" pass → `pass`/`fail`/`uncertain`. **Triage, never block:** confident-pass auto-merges; flagged PRs are *held from auto-merge* for review while the chain advances on independent slices. Model: `gpt-5.4-mini`/high → `gpt-5.5` when uncertain.
+- **Acceptance-criteria-per-slice** authored at planning (`/grill-me`, GSD `.planning`); embedded in the peer prompt AND read by the verifier; derive-and-flag fallback. *(Net-new autopilot slice-format field.)*
+- **Runtime: avoid the Claude Agent SDK.** So §Build Accelerators' "Claude Agent SDK supervisor" and §C/E's "native Claude memory tool" are **OUT**; the brain is OpenAI/codex-aligned.
+- **Peers are always codex**; cursor is operator-manual-only (never auto-routed; learning loop must not select it). Auto-routing = **codex model-tiers**, not engine selection.
+- **Motoko = persona + active conductor** (spawn/verify/auto-answer/triage/advance), *not* observe/propose-only. Hybrid (deterministic + agentic escalation) default + **fully-agentic toggle** (= `AutomodePolicy.mode` autonomous). Consequential gates (config self-edits, merging flagged PRs, destructive, over-budget) **never relax**, in either mode.
+- **#2 deliverable = peer-question auto-answerer** (derivable-from-context + non-scope-changing + reversible → auto-answer; else escalate one-tap; notified-passive; logged).
+- **Memory DESCOPED:** the shared multi-agent memory + Basic Memory + MCP-proxy/auth/egress (§C′, §Shared-Memory Appendix) is replaced by a **server-owned SQLite episode ledger + reflections + one-way prompt injection** (peers read curated context, never write). DB = existing **`@effect/sql-sqlite-bun`**, indexed + WAL; `sqlite-vec` for semantic recall later. This deletes the poisoning attack surface (D1/D2 largely moot for this build).
+- **Cost = codex rate-limit-aware** (5h + weekly), **reserve 20% weekly** (pause auto-spawn at 80%); reuse `GitsCapacityMonitor`; supersedes `AutomodePolicy.maxBudgetUsd`. Surface codex usage in the cockpit (delamain-dashboard parity).
+- **Surface:** Telegram now; **target = GITS as an installable Android PWA with web push.** Solo operator.
+- **Build order:** (1) verifier-critic + criteria plumbing → (2) episode ledger (SQLite) + codex usage visibility/throttle → (3) auto-answerer → (4) reflection→routing/prompt tuning (gated cards) → (5) fully-agentic toggle.
+
+The H0 confinement work (`H0_CONFINEMENT.md`, `scripts/gits-confine.sh`, `GitsVerificationGate`) stands — it's the *mechanical* gate the verifier-critic runs the *semantic* layer on top of.
+
+---
+
 ## Goal
 
 A **Delamain-editable orchestrator** with explicit options and self-improvement, where **Motoko (Hermes)** can (1) read and propose edits to the orchestration configuration, (2) learn from its interactions with Delamain (peer outcomes), and (3) draw on persistent memory of how the operator works — so peer coordination gets measurably better over time, while the existing safety posture is unchanged:

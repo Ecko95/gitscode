@@ -138,8 +138,13 @@ over shared host net). Therefore, until userspace-net lands:
   setuid `bwrap` or rootless podman/nsjail. Detect and fail closed.
 - `jq` for `confined-verify.sh`.
 
+## Build on this: the semantic verifier-critic
+
+This mechanical gate (lint/tsc/test/build, confined) is the floor the **semantic verifier-critic** runs on top of — see `ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md` §"Revision 2" and `docs/brainstorms/self-improving-orchestration.md`. After this gate is green, a *fresh read-only codex* run judges the diff against the slice's **acceptance criteria** ("green ≠ correct") and **triages** the PR (auto-merge vs hold-for-review). The verifier itself runs **confined** (this wrapper, verify profile) and its codex spend counts toward the **20%-weekly reserve** (`GitsCapacityMonitor`).
+
 ## Recommended next implementation slices
 
-1. **Wire `confined-verify.sh` into the autopilot + GITS gate** (closes the RCE; net-off, no host changes). Highest value.
-2. **Confine peer spawn with `--profile peer` + minimal creds** (cred-minimization works today; drop bypass flags).
-3. **Install `passt` and enable the egress allowlist** (`--egress proxy=`), turning peer net into model-API-+-memory-proxy-only.
+1. **Wire `confined-verify.sh` into the autopilot + GITS gate** — ✅ done (see §Integration 1).
+2. **Semantic verifier-critic** on top of this gate — the operator's #1 pain (green-but-wrong PRs). *Now the highest-value next slice.*
+3. **Confine peer spawn with `--profile peer` + minimal creds** (cred-minimization works today; drop bypass flags).
+4. **Install `passt` and enable the egress allowlist** (`--egress proxy=`), turning peer net into model-API-+-memory-proxy-only.
