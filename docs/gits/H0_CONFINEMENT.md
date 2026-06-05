@@ -13,10 +13,11 @@ Implements §Hardening **H0** of `ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md` — 
 | **Verification-under-confinement** (RCE-closer) | ✅ done (artifact ready) | `scripts/confined-verify.sh` |
 | Peer **minimal-credential** binding | ✅ done | `gits-confine.sh --profile peer --cred …` |
 | Peer **egress allowlist** | ⛔ blocked on host | needs `passt`/`pasta` or root nftables (absent here) |
-| Wire into autopilot `supervisor.py` | ◻ pending (snippet below; live-skill edit deferred) | external skill |
+| **Wire into autopilot `supervisor.py`** | ✅ applied (backward-compatible) | external skill (`run_gate`/`confine_script`); validated end-to-end |
+| **GITS-side gate** (typed adapter) | ✅ added + server-wired + tested | `GitsVerificationGate` + `GitsConfinedVerifyAdapter` (4/4 tests) |
 | Wire into delamain peer spawn | ◻ pending (needs delamain support) | external binary |
 
-All harness checks pass: `./spikes/h0-confinement/run-spike.sh` → **14/14**, deterministic, self-cleaning.
+All harness checks pass: `./spikes/h0-confinement/run-spike.sh` → **14/14**, deterministic, self-cleaning. The GITS gate adapter passes `4/4` unit tests; its contracts typecheck clean.
 
 ## Artifacts
 
@@ -25,13 +26,35 @@ All harness checks pass: `./spikes/h0-confinement/run-spike.sh` → **14/14**, d
   - `--profile peer`: binds **only** the named `--cred <abs-path>` read-only (everything else in `$HOME` stays invisible); `--egress off|host|proxy=<addr>`; lifecycle scripts allowed (contained by the sandbox).
 - **`scripts/confined-verify.sh`** — runs a **server-pinned** verification suite (explicit argv arrays, never the repo's `npm run <label>` indirection) against a worktree under the verify profile; structured pass/fail; exit = failure count.
 
-## Integration 1 — verification-under-confinement (do this first; closes the RCE)
+## Integration 1 — verification-under-confinement (✅ APPLIED)
 
-Today the autopilot runs the repo's verification commands directly on the host
-(`run(cmd, cwd=wt)` in `delamain-autopilot/scripts/supervisor.py`), and the auto-review policy
-shells `npm run lint/test/build` resolved against the **repo's own** `package.json` — i.e. a hostile
-repo's scripts execute on the host with the operator's secrets on `PATH`/`HOME`. Replace that with a
-confined, server-pinned call:
+> **Status:** applied to the live autopilot and validated end-to-end (a hostile `cat <secret>`
+> verification command runs confined → rc≠0, **no leak**; benign commands still pass).
+
+### 1a — autopilot `supervisor.py` (applied, backward-compatible)
+
+`auto_review_and_merge`'s per-command `run(cmd, cwd=wt)` (the RCE surface — it executed the repo's
+own scripts on the host with operator secrets on `PATH`/`HOME`) now calls a new `run_gate(cmd, wt,
+config, …)` that wraps each command through `scripts/gits-confine.sh --profile verify` when a
+`confine_script` is locatable **and** `bwrap` is present, and **falls back to the legacy `run`
+otherwise** so running chains never break. Helpers added: `confine_script(config)` (resolves the
+wrapper via `config.confine_script` / `config.gitscode_path` / `GITS_CONFINE_SCRIPT` /
+`GITSCODE_PATH`, gated on `confine_verification` default-true + `bwrap` present) and
+`run_gate(...)`. The supervisor logs `verification gate mode: confined|DIRECT` each review.
+The original file is backed up at `supervisor.py.bak-h0-*`. (The autopilot is a skill, external to
+this repo; the edit is recorded here.)
+
+**Activate per chain** by adding to that chain's `config.json`:
+```json
+{ "confine_verification": true, "gitscode_path": "/abs/path/to/a/gitscode/checkout-with-scripts" }
+```
+(or set `GITS_CONFINE_SCRIPT=/abs/.../scripts/gits-confine.sh`). Without it, the chain keeps the
+legacy behavior — no surprise breakage. **Caveat:** point `gitscode_path` at a checkout/branch that
+actually contains `scripts/gits-confine.sh` (this branch), or install the script to a fixed path.
+
+### Reference: the equivalent server-pinned call (CLI form)
+
+The autopilot could also shell the convenience runner directly:
 
 ```python
 # supervisor.py — instead of run(["npm","run",label], cwd=wt) per verification command:
@@ -51,8 +74,21 @@ rc = subprocess.call([
 
 Notes:
 - Prefer **direct tool argv** (`npx eslint .`, `npx tsc --noEmit`, `npx vitest run`) over `npm run <label>` for untrusted repos, so the repo can't redefine the gate via its scripts (server-pinned).
-- The GITS-side gate (when GITS runs verification itself) calls the same script.
 - This is **net-off, secret-free**, so it is safe today with no further host changes.
+
+### 1b — GITS-side gate: typed `GitsVerificationGate` adapter (✅ added + server-wired + tested)
+
+GITS had no command-executing verification gate (the planning scanner only *reads* `.planning`
+evidence). Added one, mirroring the existing CLI adapters:
+- **Contracts** (`packages/contracts/src/gits.ts`): `GitsVerifyCommand` (label + **server-pinned argv** + optional timeout), `GitsVerifyInput` (worktree, commands, `requireConfinement` default true), `GitsVerifyCommandResult`, `GitsVerifyResult` (worktree, `confined`, `passed`, results, checkedAt), `GitsVerificationGateError`.
+- **Service** `apps/server/src/gits/Services/GitsVerificationGate.ts`.
+- **Layer** `apps/server/src/gits/Layers/GitsConfinedVerifyAdapter.ts`: probes `bwrap`; **fails closed** (`GitsVerificationGateError`) when confinement is unavailable and `requireConfinement` is set; otherwise runs each command through `gits-confine.sh --profile verify` (resolved via `GITS_CONFINE_BIN`) via the shared `ProcessRunner`, aggregating structured per-command results.
+- **Wired** into `server.ts` `GitsLayerLive` (`GitsConfinedVerifyAdapterLive`).
+- **Tests** `GitsConfinedVerifyAdapter.test.ts` (4/4): confined aggregation, failing-command reporting, fail-closed when `bwrap` absent, unconfined only when `requireConfinement:false`.
+
+This is the gate the future canary / `OrchestratorConfigExecutor` (design §D) consumes. Operators set
+`GITS_CONFINE_BIN` to an absolute `scripts/gits-confine.sh` (or put it on `PATH`). RPC exposure +
+canary consumption are the follow-up; the capability is constructed and tested now.
 
 > The live `supervisor.py` is a shared skill that drives the operator's running autopilot chains;
 > this guide gives the exact patch but does **not** edit it automatically — apply it when ready.

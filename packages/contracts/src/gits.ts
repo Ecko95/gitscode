@@ -1164,3 +1164,52 @@ export class HermesAdapterError extends Schema.TaggedErrorClass<HermesAdapterErr
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+// --- GITS verification gate (H0: confined, server-pinned verification) --------------------
+// The GITS-side counterpart to the autopilot's confined verification: runs an UNTRUSTED
+// worktree's verification suite under OS-level confinement (scripts/gits-confine.sh, verify
+// profile). Commands are SERVER-PINNED argv arrays — never the repo's own `npm run` indirection.
+// See docs/gits/H0_CONFINEMENT.md.
+
+export const GitsVerifyCommand = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  cmd: Schema.Array(TrimmedNonEmptyString), // explicit argv (argv[0] is the program), not a shell string
+  timeoutSeconds: Schema.optional(NonNegativeInt),
+});
+export type GitsVerifyCommand = typeof GitsVerifyCommand.Type;
+
+export const GitsVerifyInput = Schema.Struct({
+  worktree: PathString,
+  commands: Schema.Array(GitsVerifyCommand),
+  // When true (default), the gate FAILS CLOSED if confinement is unavailable rather than
+  // running the untrusted suite on the host.
+  requireConfinement: Schema.optional(Schema.Boolean),
+});
+export type GitsVerifyInput = typeof GitsVerifyInput.Type;
+
+export const GitsVerifyCommandResult = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  passed: Schema.Boolean,
+  exitCode: Schema.NullOr(Schema.Number),
+  timedOut: Schema.Boolean,
+  durationMs: NonNegativeInt,
+  outputTail: SummaryString,
+});
+export type GitsVerifyCommandResult = typeof GitsVerifyCommandResult.Type;
+
+export const GitsVerifyResult = Schema.Struct({
+  worktree: PathString,
+  confined: Schema.Boolean, // true if commands ran under gits-confine.sh; false only when requireConfinement=false and bwrap is absent
+  passed: Schema.Boolean, // all commands exited 0
+  results: Schema.Array(GitsVerifyCommandResult),
+  checkedAt: IsoDateTime,
+});
+export type GitsVerifyResult = typeof GitsVerifyResult.Type;
+
+export class GitsVerificationGateError extends Schema.TaggedErrorClass<GitsVerificationGateError>()(
+  "GitsVerificationGateError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}

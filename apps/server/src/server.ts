@@ -52,6 +52,7 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { DelamainCliAdapterLive } from "./gits/Layers/DelamainCliAdapter.ts";
 import { GitsBuildInfoResolverLive } from "./gits/Layers/GitsBuildInfo.ts";
 import { GitsCapacityMonitorLive } from "./gits/Layers/GitsCapacityMonitor.ts";
+import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
 import { GitsSkillInventoryResolverLive } from "./gits/Layers/GitsSkillInventory.ts";
 import { GitsPlanningScannerLive } from "./gits/Layers/GitsPlanningScanner.ts";
@@ -235,6 +236,7 @@ const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
 const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsBuildInfoResolverLive),
   Layer.provideMerge(GitsCapacityMonitorLive),
+  Layer.provideMerge(GitsConfinedVerifyAdapterLive),
   Layer.provideMerge(GitsDevCommandsLive),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
   Layer.provideMerge(DelamainCliAdapterLive),
