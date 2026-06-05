@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
+import DevCommandsControl from "../DevCommandsControl";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { DiffIcon, TerminalSquareIcon } from "lucide-react";
@@ -123,6 +124,9 @@ export const ChatHeader = memo(function ChatHeader({
             onUpdateScript={onUpdateProjectScript}
             onDeleteScript={onDeleteProjectScript}
           />
+        )}
+        {activeProjectName && isGitRepo && (
+          <DevCommandsControl environmentId={activeThreadEnvironmentId} projectDir={gitCwd} />
         )}
         {showOpenInPicker && (
           <OpenInPicker
