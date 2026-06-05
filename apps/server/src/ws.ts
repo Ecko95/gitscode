@@ -1193,6 +1193,21 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "gits" },
           ),
+        [WS_METHODS.gitsDevCommandsInit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDevCommandsInit,
+            gitsDevCommands.initCommands(input).pipe(
+              Effect.mapError((cause) =>
+                isGitsDevCommandError(cause)
+                  ? cause
+                  : new GitsDevCommandError({
+                      message: "Failed to initialize GITS dev commands.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsDelamainListPeers]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsDelamainListPeers,

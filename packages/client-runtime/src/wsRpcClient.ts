@@ -127,6 +127,7 @@ export interface WsRpcClient {
     readonly getCockpit: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsGetCockpit>;
     readonly devCommands: {
       readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsList>;
+      readonly init: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsInit>;
     };
     readonly delamain: {
       readonly listPeers: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsDelamainListPeers>;
@@ -330,6 +331,7 @@ export function createWsRpcClient(
       getCockpit: () => transport.request((client) => client[WS_METHODS.gitsGetCockpit]({})),
       devCommands: {
         list: (input) => transport.request((client) => client[WS_METHODS.gitsDevCommandsList](input)),
+        init: (input) => transport.request((client) => client[WS_METHODS.gitsDevCommandsInit](input)),
       },
       delamain: {
         listPeers: () =>

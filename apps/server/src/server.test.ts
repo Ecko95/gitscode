@@ -904,6 +904,7 @@ const buildAppUnderTest = (options?: {
       }),
       Layer.mock(GitsDevCommands)({
         listCommands: () => Effect.succeed(defaultGitsDevCommands),
+        initCommands: () => Effect.succeed(defaultGitsDevCommands),
         ...options?.layers?.gitsDevCommands,
       }),
       Layer.mock(GitsPlanningScanner)({
@@ -3937,6 +3938,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   projectDir: input.projectDir,
                 };
               }),
+            initCommands: (input) =>
+              Effect.sync(() => {
+                calls.push(`devCommandsInit:${input.projectDir}`);
+                return {
+                  ...defaultGitsDevCommands,
+                  projectDir: input.projectDir,
+                };
+              }),
           },
           hermesAdapter: {
             getStatus: () =>
@@ -4087,6 +4096,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(devCommands.commands[0]?.id, defaultGitsDevCommands.commands[0]?.id);
 
+      const initializedDevCommands = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDevCommandsInit]({ projectDir: "/tmp/default-project" }),
+        ),
+      );
+      assert.equal(
+        initializedDevCommands.commands[0]?.id,
+        defaultGitsDevCommands.commands[0]?.id,
+      );
+
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.gitsHermesInspectGits]({ projectDir: "/tmp/default-project" }),
@@ -4148,6 +4167,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "log:5",
         "proposals",
         "devCommands:/tmp/default-project",
+        "devCommandsInit:/tmp/default-project",
         "inspect:/tmp/default-project",
         "chat:Plan next action",
         "decide:proposal-test:approve",

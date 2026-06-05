@@ -87,7 +87,9 @@ export default function DevCommandsControl({ environmentId, projectDir }: DevCom
   });
 
   const commands = commandsQuery.data?.commands ?? [];
-  const shouldRender = Boolean(projectDir) && (commandsQuery.isPending || commands.length > 0);
+  const warnings = commandsQuery.data?.warnings ?? [];
+  const shouldRender =
+    Boolean(projectDir) && (commandsQuery.isPending || commands.length > 0 || warnings.length > 0);
 
   if (!shouldRender) {
     return null;
@@ -106,6 +108,16 @@ export default function DevCommandsControl({ environmentId, projectDir }: DevCom
     }
   };
 
+  const handleInit = () => {
+    if (!projectDir || !gitsClient) {
+      return;
+    }
+    void runAction("Initialize dev presets", async () => {
+      await gitsClient.devCommands.init({ projectDir });
+      await commandsQuery.refetch();
+    });
+  };
+
   return (
     <Menu>
       <MenuTrigger
@@ -114,7 +126,7 @@ export default function DevCommandsControl({ environmentId, projectDir }: DevCom
             size="xs"
             variant="outline"
             aria-label="Dev commands"
-            disabled={commandsQuery.isPending || commands.length === 0}
+            disabled={commandsQuery.isPending || (commands.length === 0 && warnings.length === 0)}
             title={actionError ?? (actionLabel ? `${actionLabel}${actionPending ? "..." : ""}` : "Dev commands")}
           />
         }
@@ -144,6 +156,21 @@ export default function DevCommandsControl({ environmentId, projectDir }: DevCom
             </MenuItem>
           </>
         ) : null}
+        {!commandsQuery.error && commandsQuery.data?.configPath === null ? (
+          <>
+            <MenuSeparator />
+            <MenuItem onClick={handleInit}>
+              <SquareTerminalIcon className="size-4" />
+              Initialize presets
+            </MenuItem>
+          </>
+        ) : null}
+        {warnings.map((warning) => (
+          <MenuItem key={warning} disabled>
+            <SquareTerminalIcon className="size-4" />
+            {warning}
+          </MenuItem>
+        ))}
         {actionError ? (
           <>
             <MenuSeparator />
