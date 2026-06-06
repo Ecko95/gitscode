@@ -34,6 +34,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Option from "effect/Option";
 import {
   AlertTriangleIcon,
+  ArrowUpIcon,
   BookOpenCheckIcon,
   BotIcon,
   CheckCircle2Icon,
@@ -1471,6 +1472,87 @@ function makeTranscriptEntryId(role: MotokoTranscriptEntry["role"], createdAt: s
   return `${role}:${createdAt}:${Math.floor(performance.now() * 1000)}`;
 }
 
+function MotokoChatComposer({
+  selectedProjectRoot,
+  chatInput,
+  actionPending,
+  onProjectRootChange,
+  onChatInputChange,
+  onChatSubmit,
+}: {
+  selectedProjectRoot: string;
+  chatInput: string;
+  actionPending: boolean;
+  onProjectRootChange: (value: string) => void;
+  onChatInputChange: (value: string) => void;
+  onChatSubmit: () => void;
+}) {
+  const canSend = !actionPending && chatInput.trim().length > 0;
+
+  const submit = () => {
+    if (canSend) {
+      onChatSubmit();
+    }
+  };
+
+  return (
+    <form
+      className="mx-auto w-full max-w-208"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <div className="rounded-[22px] border border-border/70 bg-card p-px shadow-[0_18px_44px_rgba(0,0,0,0.24)] transition-colors has-focus-within:border-ring/45">
+        <div className="overflow-hidden rounded-[20px] border border-border/60 bg-background/96">
+          <div className="px-3 pt-3.5 sm:px-4 sm:pt-4">
+            <textarea
+              value={chatInput}
+              placeholder="Ask Motoko"
+              className="min-h-24 w-full resize-none bg-transparent text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/45 sm:min-h-28"
+              rows={3}
+              onChange={(event) => onChatInputChange(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          </div>
+          <div className="flex min-w-0 flex-col gap-2 border-t border-border/55 px-2.5 py-2.5 sm:flex-row sm:items-center sm:px-3">
+            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-border/70 bg-muted/24 px-3 py-1.5 text-xs transition-colors focus-within:border-ring/45 focus-within:bg-background">
+              <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+              <span className="sr-only">Selected project root</span>
+              <input
+                value={selectedProjectRoot}
+                placeholder="Project root"
+                className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50"
+                onChange={(event) => onProjectRootChange(event.currentTarget.value)}
+              />
+            </label>
+            <div className="flex min-w-0 items-center justify-between gap-2 sm:justify-end">
+              <div className="hidden min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground sm:flex">
+                <ShieldCheckIcon className="size-3.5 shrink-0" />
+                <span className="truncate">GITS governed chat</span>
+              </div>
+              <Button
+                type="submit"
+                size="icon"
+                className="size-9 rounded-full before:rounded-full sm:size-8"
+                disabled={!canSend}
+                aria-label="Send message to Motoko"
+              >
+                <ArrowUpIcon className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </form>
+  );
+}
+
 function MotokoCapsuleAvatar({
   available,
   pendingCount,
@@ -1755,109 +1837,127 @@ function MotokoPanel({
 
       <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.85fr)]">
         <div className="min-w-0 border-b border-border/60 xl:border-b-0 xl:border-r">
-          <div className="flex min-h-[46rem] flex-col">
+          <div className="flex min-h-[46rem] flex-col bg-background">
             <SectionHeader title="Conversation" count={transcript.length} />
-            <div className="flex-1 overflow-auto px-4 py-3 text-xs sm:px-5">
+            <div className="flex-1 overflow-auto bg-[radial-gradient(circle_at_50%_0%,--theme(--color-muted/32%),transparent_36%)] px-4 py-5 text-xs sm:px-5 sm:py-6">
               {transcript.length === 0 ? (
-                <EmptyState label="No Motoko conversation yet." />
+                <div className="flex min-h-96 items-center justify-center">
+                  <div className="grid justify-items-center gap-3 text-center">
+                    <div className="flex size-12 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-xs">
+                      <BotIcon className="size-5" />
+                    </div>
+                    <EmptyState label="Motoko is standing by." />
+                  </div>
+                </div>
               ) : (
-                <div className="grid gap-3">
-                  {transcript.slice(-20).map((entry) => (
+                <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+                  {transcript.slice(-80).map((entry) => (
                     <div
                       key={entry.id}
                       className={cn(
-                        "grid gap-2 rounded-md border px-3 py-2",
-                        entry.role === "operator"
-                          ? "ml-auto max-w-[90%] border-border/70 bg-background"
-                          : "mr-auto max-w-[92%] border-border/70 bg-muted/20",
+                        "flex w-full",
+                        entry.role === "operator" ? "justify-end" : "justify-start",
                       )}
                     >
-                      <div className="flex min-w-0 items-center justify-between gap-2">
-                        <span className="font-medium text-foreground">
-                          {entry.role === "operator" ? "You" : "Motoko"}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {formatIsoDate(entry.createdAt)}
-                        </span>
-                      </div>
-                      <pre className="whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-foreground">
-                        {entry.message}
-                      </pre>
-                      {entry.result?.status === "setup-required" ? (
-                        <div className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                          <div className="font-medium text-amber-700">
-                            {entry.result.setupTitle ?? "Hermes setup required"}
-                          </div>
-                          {entry.result.setupDetail ? (
-                            <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-amber-700">
-                              {entry.result.setupDetail}
-                            </pre>
-                          ) : null}
-                          {entry.result.setupCommand ? (
-                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background px-2 py-2">
-                              <code className="min-w-0 flex-1 overflow-auto text-[11px] text-foreground">
-                                {entry.result.setupCommand}
-                              </code>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() =>
-                                  void navigator.clipboard.writeText(entry.result!.setupCommand!)
-                                }
-                              >
-                                <CopyIcon className="size-3.5" />
-                                Copy
-                              </Button>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {entry.result?.proposal ? (
-                        <div className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] text-muted-foreground">
-                          Created proposal card:{" "}
-                          <span className="font-medium text-foreground">
-                            {entry.result.proposal.title}
+                      <div
+                        className={cn(
+                          "grid max-w-[92%] gap-2 rounded-2xl border px-4 py-3 shadow-xs",
+                          entry.role === "operator"
+                            ? "rounded-br-md border-primary/30 bg-primary text-primary-foreground"
+                            : "rounded-bl-md border-border/70 bg-card/88 text-foreground",
+                        )}
+                      >
+                        <div className="flex min-w-0 items-center justify-between gap-2">
+                          <span
+                            className={cn(
+                              "font-medium",
+                              entry.role === "operator"
+                                ? "text-primary-foreground"
+                                : "text-foreground",
+                            )}
+                          >
+                            {entry.role === "operator" ? "You" : "Motoko"}
+                          </span>
+                          <span
+                            className={cn(
+                              "text-[11px]",
+                              entry.role === "operator"
+                                ? "text-primary-foreground/70"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            {formatIsoDate(entry.createdAt)}
                           </span>
                         </div>
-                      ) : null}
-                      {entry.result?.blockedReason &&
-                      entry.result.status !== "setup-required" ? (
-                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-                          {entry.result.blockedReason}
-                        </div>
-                      ) : null}
+                        <pre
+                          className={cn(
+                            "whitespace-pre-wrap font-sans text-[13px] leading-relaxed",
+                            entry.role === "operator"
+                              ? "text-primary-foreground/95"
+                              : "text-foreground",
+                          )}
+                        >
+                          {entry.message}
+                        </pre>
+                        {entry.result?.status === "setup-required" ? (
+                          <div className="grid gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                            <div className="font-medium text-amber-700">
+                              {entry.result.setupTitle ?? "Hermes setup required"}
+                            </div>
+                            {entry.result.setupDetail ? (
+                              <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-amber-700">
+                                {entry.result.setupDetail}
+                              </pre>
+                            ) : null}
+                            {entry.result.setupCommand ? (
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background px-2 py-2">
+                                <code className="min-w-0 flex-1 overflow-auto text-[11px] text-foreground">
+                                  {entry.result.setupCommand}
+                                </code>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    void navigator.clipboard.writeText(entry.result!.setupCommand!)
+                                  }
+                                >
+                                  <CopyIcon className="size-3.5" />
+                                  Copy
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {entry.result?.proposal ? (
+                          <div className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] text-muted-foreground">
+                            Created proposal card:{" "}
+                            <span className="font-medium text-foreground">
+                              {entry.result.proposal.title}
+                            </span>
+                          </div>
+                        ) : null}
+                        {entry.result?.blockedReason &&
+                        entry.result.status !== "setup-required" ? (
+                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                            {entry.result.blockedReason}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            <div className="border-t border-border/60 bg-background px-4 py-4 sm:px-5">
-              <div className="grid gap-2">
-                <Input
-                  nativeInput
-                  size="sm"
-                  value={selectedProjectRoot}
-                  placeholder="Selected project root"
-                  onChange={(event) => onProjectRootChange(event.currentTarget.value)}
-                />
-                <Textarea
-                  value={chatInput}
-                  placeholder="Ask Motoko"
-                  className="min-h-24 text-xs"
-                  onChange={(event) => onChatInputChange(event.currentTarget.value)}
-                />
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    size="sm"
-                    onClick={onChatSubmit}
-                    disabled={actionPending || chatInput.trim().length === 0}
-                  >
-                    <SendIcon className="size-3.5" />
-                    Send
-                  </Button>
-                </div>
-              </div>
+            <div className="border-t border-border/60 bg-background/96 px-4 py-4 backdrop-blur sm:px-5">
+              <MotokoChatComposer
+                selectedProjectRoot={selectedProjectRoot}
+                chatInput={chatInput}
+                actionPending={actionPending}
+                onProjectRootChange={onProjectRootChange}
+                onChatInputChange={onChatInputChange}
+                onChatSubmit={onChatSubmit}
+              />
             </div>
           </div>
         </div>
