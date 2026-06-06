@@ -249,8 +249,17 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsPlanningScannerLive),
   Layer.provideMerge(HermesAdapterLayerLive),
   Layer.provideMerge(AutomodeSupervisorLayerLive),
-  // Must come after the gate/verifier/criteria layers it composes.
-  Layer.provideMerge(GitsReviewPipelineLive),
+  // GitsReviewPipeline composes the gate/verifier/criteria services. Provide them
+  // directly to it so its own requirements are satisfied here rather than leaking
+  // into the server launch layer (which must only require ServerConfig). The dep
+  // layers are also merged above; Effect memoizes by reference, so each is built once.
+  Layer.provideMerge(
+    GitsReviewPipelineLive.pipe(
+      Layer.provide(GitsCodexVerifierAdapterLive),
+      Layer.provide(GitsSliceCriteriaStoreLive),
+      Layer.provide(GitsConfinedVerifyAdapterLive),
+    ),
+  ),
 );
 
 const VcsLayerLive = Layer.empty.pipe(
