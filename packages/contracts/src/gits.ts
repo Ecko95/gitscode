@@ -1300,3 +1300,34 @@ export class GitsSliceCriteriaError extends Schema.TaggedErrorClass<GitsSliceCri
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+// --- Review pipeline (Rev 2): mechanical gate → semantic verifier → combined triage ---------
+// Runs the confined mechanical gate (GitsVerificationGate); only if it's GREEN does it run the
+// semantic verifier-critic (GitsSemanticVerifier) against the slice's acceptance criteria. The
+// semantic step is skipped on a red gate (already a hold) to save codex spend. Triage, never block.
+
+export const GitsReviewInput = Schema.Struct({
+  worktree: PathString,
+  baseRef: TrimmedNonEmptyString,
+  sliceId: TrimmedNonEmptyString, // criteria are loaded for this slice
+  verificationCommands: Schema.Array(GitsVerifyCommand), // server-pinned mechanical suite
+  model: Schema.optional(TrimmedNonEmptyString), // verifier model override
+});
+export type GitsReviewInput = typeof GitsReviewInput.Type;
+
+export const GitsReviewResult = Schema.Struct({
+  sliceId: TrimmedNonEmptyString,
+  recommendation: GitsVerifierRecommendation, // auto-merge | hold-for-review
+  mechanicalPassed: Schema.Boolean,
+  mechanical: GitsVerifyResult,
+  semantic: Schema.NullOr(GitsSemanticVerifyResult), // null when the gate failed (semantic skipped)
+  criteriaSource: GitsSliceCriteriaSource,
+  summary: SummaryString,
+  checkedAt: IsoDateTime,
+});
+export type GitsReviewResult = typeof GitsReviewResult.Type;
+
+export class GitsReviewError extends Schema.TaggedErrorClass<GitsReviewError>()("GitsReviewError", {
+  message: TrimmedNonEmptyString,
+  cause: Schema.optional(Schema.Defect),
+}) {}
