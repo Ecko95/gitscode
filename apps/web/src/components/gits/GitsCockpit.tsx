@@ -70,6 +70,15 @@ import { useStore } from "../../store";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { SidebarInset, SidebarTrigger } from "../ui/sidebar";
 import { Textarea } from "../ui/textarea";
 
@@ -1460,6 +1469,7 @@ const MOTOKO_CAPSULE_FRAME_SRC = "/gits/motoko-capsule-frame.png";
 const MOTOKO_CAPSULE_VIDEO_SRC = "/gits/motoko-capsule-avatar.mp4";
 const MOTOKO_CHAT_LOGO_SRC = "/gits/motoko-chat-logo.png";
 const MOTOKO_ROOT_ROUTE_VALUE = "";
+const MOTOKO_ROOT_ROUTE_SELECT_VALUE = "__root_gits__";
 const MOTOKO_ROOT_ROUTE_LABEL = "root/gits";
 const MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE = {
   height: "49.8%",
@@ -1516,6 +1526,20 @@ function MotokoChatComposer({
   onChatSubmit: () => void;
 }) {
   const canSend = !actionPending && chatInput.trim().length > 0;
+  const routeItems = useMemo(
+    () => [
+      { value: MOTOKO_ROOT_ROUTE_SELECT_VALUE, label: MOTOKO_ROOT_ROUTE_LABEL },
+      ...projects.map((project) => ({
+        value: project.project.rootPath,
+        label: motokoProjectRouteLabel(project),
+      })),
+    ],
+    [projects],
+  );
+  const selectedRouteValue =
+    selectedProjectRoot.trim().length === 0
+      ? MOTOKO_ROOT_ROUTE_SELECT_VALUE
+      : selectedProjectRoot;
 
   const submit = () => {
     if (canSend) {
@@ -1549,23 +1573,57 @@ function MotokoChatComposer({
             />
           </div>
           <div className="flex min-w-0 flex-col gap-2 border-t border-border/55 px-2.5 py-2.5 sm:flex-row sm:items-center sm:px-3">
-            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-border/70 bg-muted/24 px-3 py-1.5 text-xs transition-colors focus-within:border-ring/45 focus-within:bg-background">
-              <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-              <span className="sr-only">Motoko route</span>
-              <select
-                value={selectedProjectRoot}
+            <Select
+              modal={false}
+              value={selectedRouteValue}
+              items={routeItems}
+              onValueChange={(value) => {
+                if (typeof value !== "string") {
+                  return;
+                }
+                onProjectRootChange(
+                  value === MOTOKO_ROOT_ROUTE_SELECT_VALUE ? MOTOKO_ROOT_ROUTE_VALUE : value,
+                );
+              }}
+            >
+              <SelectTrigger
                 aria-label="Motoko route"
-                className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none"
-                onChange={(event) => onProjectRootChange(event.currentTarget.value)}
+                variant="ghost"
+                size="sm"
+                className="min-h-8 w-full min-w-0 flex-1 rounded-full border border-border/70 bg-muted/24 px-3 py-1.5 text-foreground shadow-none transition-colors hover:bg-accent focus-visible:border-ring/45 focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring/24 sm:min-h-8"
               >
-                <option value={MOTOKO_ROOT_ROUTE_VALUE}>{MOTOKO_ROOT_ROUTE_LABEL}</option>
-                {projects.map((project) => (
-                  <option key={project.project.id} value={project.project.rootPath}>
-                    {motokoProjectRouteLabel(project)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+                <SelectValue className="min-w-0 font-mono text-[11px]" />
+              </SelectTrigger>
+              <SelectPopup
+                className="max-h-72"
+                popupClassName="max-w-[min(34rem,calc(100vw-2rem))]"
+              >
+                <SelectGroup>
+                  <SelectGroupLabel>Motoko route</SelectGroupLabel>
+                  <SelectItem value={MOTOKO_ROOT_ROUTE_SELECT_VALUE}>
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+                      <span className="min-w-0 truncate font-mono text-[11px]">
+                        {MOTOKO_ROOT_ROUTE_LABEL}
+                      </span>
+                    </span>
+                  </SelectItem>
+                  {projects.map((project) => (
+                    <SelectItem key={project.project.id} value={project.project.rootPath}>
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className="truncate text-sm text-foreground">
+                          {project.project.title}
+                        </span>
+                        <span className="truncate font-mono text-[11px] text-muted-foreground">
+                          {project.project.rootPath}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectPopup>
+            </Select>
             <div className="flex min-w-0 items-center justify-between gap-2 sm:justify-end">
               <div className="hidden min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground sm:flex">
                 <ShieldCheckIcon className="size-3.5 shrink-0" />
