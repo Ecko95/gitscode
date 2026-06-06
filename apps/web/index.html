@@ -61,26 +61,252 @@
         color: #f5f5f5;
       }
 
-      #boot-shell {
+      .gits-boot {
+        position: relative;
         display: flex;
         min-height: 100%;
         align-items: center;
         justify-content: center;
-        background: inherit;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 38%, rgba(31, 226, 196, 0.18), transparent 28rem),
+          radial-gradient(circle at 18% 78%, rgba(255, 61, 168, 0.14), transparent 22rem),
+          linear-gradient(180deg, #030506 0%, #071113 46%, #020303 100%);
+        color: #d9fff7;
+        isolation: isolate;
       }
 
-      #boot-shell-card {
+      .gits-boot::before {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        content: "";
+        background:
+          repeating-linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.045) 0,
+            rgba(255, 255, 255, 0.045) 1px,
+            transparent 1px,
+            transparent 5px
+          ),
+          linear-gradient(90deg, transparent, rgba(31, 226, 196, 0.08), transparent);
+        mix-blend-mode: screen;
+        opacity: 0.54;
+      }
+
+      .gits-boot::after {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+        content: "";
+        background: linear-gradient(
+          180deg,
+          transparent 0%,
+          rgba(31, 226, 196, 0.1) 48%,
+          transparent 52%
+        );
+        animation: gitsBootScan 2.8s ease-in-out infinite;
+      }
+
+      .gits-boot-rain {
+        position: absolute;
+        inset: -18% 0;
+        z-index: 0;
+        overflow: hidden;
+        font-family: "SFMono-Regular", "Cascadia Mono", "Yu Gothic", monospace;
+        font-size: clamp(13px, 1.9vw, 22px);
+        line-height: 1;
+        color: rgba(74, 255, 213, 0.58);
+        text-shadow: 0 0 12px rgba(31, 226, 196, 0.48);
+      }
+
+      .gits-boot-rain span {
+        position: absolute;
+        left: var(--x);
+        top: 0;
+        display: block;
+        width: 1em;
+        writing-mode: vertical-rl;
+        transform: translateY(-120%);
+        animation: gitsBootRain var(--d) linear infinite;
+        animation-delay: var(--delay);
+        opacity: var(--o);
+      }
+
+      .gits-boot-core {
+        position: relative;
+        z-index: 3;
+        display: grid;
+        width: min(28rem, calc(100vw - 2rem));
+        gap: 1rem;
+        justify-items: center;
+        padding: 1.25rem;
+      }
+
+      .gits-boot-logo-frame {
+        position: relative;
+        display: grid;
+        width: clamp(6.5rem, 20vw, 9rem);
+        aspect-ratio: 1;
+        place-items: center;
+        border: 1px solid rgba(31, 226, 196, 0.36);
+        border-radius: 22px;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.04)),
+          rgba(3, 8, 9, 0.76);
+        box-shadow:
+          0 0 0 1px rgba(255, 61, 168, 0.18),
+          0 0 34px rgba(31, 226, 196, 0.22),
+          inset 0 0 30px rgba(31, 226, 196, 0.08);
+      }
+
+      .gits-boot-logo-frame::before,
+      .gits-boot-logo-frame::after {
+        position: absolute;
+        width: 42%;
+        height: 42%;
+        pointer-events: none;
+        content: "";
+      }
+
+      .gits-boot-logo-frame::before {
+        top: -1px;
+        left: -1px;
+        border-top: 2px solid #ff4fb6;
+        border-left: 2px solid #ff4fb6;
+        border-top-left-radius: 22px;
+      }
+
+      .gits-boot-logo-frame::after {
+        right: -1px;
+        bottom: -1px;
+        border-right: 2px solid #50ffe2;
+        border-bottom: 2px solid #50ffe2;
+        border-bottom-right-radius: 22px;
+      }
+
+      .gits-boot-logo {
+        width: 72%;
+        height: 72%;
+        border-radius: 16px;
+        object-fit: cover;
+        filter: contrast(1.08) drop-shadow(0 0 18px rgba(31, 226, 196, 0.22));
+      }
+
+      .gits-boot-terminal {
+        width: 100%;
+        border: 1px solid rgba(31, 226, 196, 0.26);
+        border-radius: 12px;
+        background: rgba(2, 7, 8, 0.78);
+        box-shadow:
+          0 18px 60px rgba(0, 0, 0, 0.48),
+          inset 0 0 32px rgba(31, 226, 196, 0.06);
+        backdrop-filter: blur(10px);
+      }
+
+      .gits-boot-terminal-header,
+      .gits-boot-terminal-row {
         display: flex;
+        min-width: 0;
         align-items: center;
-        justify-content: center;
-        width: 96px;
-        height: 96px;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding-inline: 0.9rem;
       }
 
-      #boot-shell-logo {
-        width: 64px;
-        height: 64px;
-        object-fit: contain;
+      .gits-boot-terminal-header {
+        border-bottom: 1px solid rgba(31, 226, 196, 0.2);
+        padding-block: 0.75rem;
+      }
+
+      .gits-boot-kicker,
+      .gits-boot-terminal-row {
+        font-family: "SFMono-Regular", "Cascadia Mono", "Yu Gothic", monospace;
+        font-size: 0.72rem;
+      }
+
+      .gits-boot-kicker {
+        color: rgba(217, 255, 247, 0.68);
+      }
+
+      .gits-boot-title {
+        color: #ffffff;
+        font-size: 1.35rem;
+        font-weight: 800;
+      }
+
+      .gits-boot-terminal-body {
+        display: grid;
+        gap: 0.55rem;
+        padding-block: 0.8rem 0.95rem;
+      }
+
+      .gits-boot-terminal-row {
+        color: rgba(217, 255, 247, 0.78);
+      }
+
+      .gits-boot-terminal-row b {
+        color: #50ffe2;
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(31, 226, 196, 0.55);
+      }
+
+      .gits-boot-progress {
+        height: 2px;
+        margin: 0.2rem 0.9rem 0;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(217, 255, 247, 0.1);
+      }
+
+      .gits-boot-progress span {
+        display: block;
+        width: 64%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #50ffe2, #ff4fb6, #50ffe2);
+        box-shadow: 0 0 14px rgba(31, 226, 196, 0.7);
+        animation: gitsBootProgress 2.4s ease-in-out infinite;
+      }
+
+      @keyframes gitsBootRain {
+        to {
+          transform: translateY(135%);
+        }
+      }
+
+      @keyframes gitsBootScan {
+        0% {
+          transform: translateY(-120%);
+          opacity: 0;
+        }
+        42%,
+        58% {
+          opacity: 0.9;
+        }
+        100% {
+          transform: translateY(120%);
+        }
+      }
+
+      @keyframes gitsBootProgress {
+        0% {
+          transform: translateX(-85%);
+        }
+        58%,
+        100% {
+          transform: translateX(155%);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .gits-boot::after,
+        .gits-boot-rain span,
+        .gits-boot-progress span {
+          animation: none;
+        }
       }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -93,9 +319,41 @@
   </head>
   <body>
     <div id="root">
-      <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="GITS splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="GITS" />
+      <div id="boot-shell" class="gits-boot">
+        <div class="gits-boot-rain" aria-hidden="true">
+          <span style="--x: 3%; --d: 12s; --delay: -4s; --o: 0.46"
+            >公安九係義体化電子脳接続GITS</span
+          >
+          <span style="--x: 9%; --d: 15s; --delay: -10s; --o: 0.3">自律脚機夢見る殻信号同期</span>
+          <span style="--x: 15%; --d: 11s; --delay: -7s; --o: 0.5">殻機動隊零壱認証開始</span>
+          <span style="--x: 22%; --d: 18s; --delay: -12s; --o: 0.34">神経網接続記憶防壁解除</span>
+          <span style="--x: 29%; --d: 13s; --delay: -2s; --o: 0.48">義体公安殻夢接続端末</span>
+          <span style="--x: 36%; --d: 16s; --delay: -9s; --o: 0.28">零壱零壱九係回線起動</span>
+          <span style="--x: 43%; --d: 10s; --delay: -5s; --o: 0.52">電子脳殻認証同期確認</span>
+          <span style="--x: 50%; --d: 14s; --delay: -11s; --o: 0.4">GITS自律提案監査承認</span>
+          <span style="--x: 58%; --d: 17s; --delay: -3s; --o: 0.32">公安夢殻端末接続中</span>
+          <span style="--x: 66%; --d: 12s; --delay: -8s; --o: 0.5">記憶領域照合義体制御</span>
+          <span style="--x: 74%; --d: 19s; --delay: -13s; --o: 0.3">義殻起動深層回線開放</span>
+          <span style="--x: 82%; --d: 13s; --delay: -6s; --o: 0.45">九係認証殻殻殻同期</span>
+          <span style="--x: 90%; --d: 16s; --delay: -1s; --o: 0.35">端末起動義体通信確認</span>
+          <span style="--x: 97%; --d: 11s; --delay: -9s; --o: 0.5">夢見る殻公安GITS零壱</span>
+        </div>
+        <div id="boot-shell-card" class="gits-boot-core" aria-label="GITS boot sequence">
+          <div class="gits-boot-logo-frame">
+            <img class="gits-boot-logo" src="/apple-touch-icon.png" alt="GITS" />
+          </div>
+          <div class="gits-boot-terminal" aria-hidden="true">
+            <div class="gits-boot-terminal-header">
+              <span class="gits-boot-kicker">公安九係 // SHELL LINK</span>
+              <span class="gits-boot-title">GITS</span>
+            </div>
+            <div class="gits-boot-terminal-body">
+              <div class="gits-boot-terminal-row"><span>identity handshake</span><b>OK</b></div>
+              <div class="gits-boot-terminal-row"><span>motoko channel</span><b>READY</b></div>
+              <div class="gits-boot-terminal-row"><span>tailnet surface</span><b>ONLINE</b></div>
+              <div class="gits-boot-progress"><span></span></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

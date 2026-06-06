@@ -6,10 +6,10 @@
     {
       "layers": [
         {
-          "image-name": "T3.svg",
-          "name": "T3",
+          "image-name": "GITS.png",
+          "name": "GITS",
           "position": {
-            "scale": 10,
+            "scale": 1,
             "translation-in-points": [0, 0]
           }
         }
