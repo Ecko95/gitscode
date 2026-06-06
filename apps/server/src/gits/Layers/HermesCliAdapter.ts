@@ -27,6 +27,7 @@ import {
   type HermesCommandStatus,
   type HermesHealthStatus,
   type HermesLogTailResult,
+  type HermesModelStatus,
   type HermesProposalExecutor,
   type HermesProposalRisk,
   type HermesPolicySnapshot,
@@ -414,6 +415,94 @@ function parseApprovalMode(configText: string | null): HermesApprovalMode {
     return mode;
   }
   return "unknown";
+}
+
+function stripYamlScalar(value: string): string | null {
+  const withoutComment = value.replace(/\s+#.*$/, "").trim();
+  if (!withoutComment || withoutComment === "''" || withoutComment === '""') {
+    return null;
+  }
+  if (
+    (withoutComment.startsWith("'") && withoutComment.endsWith("'")) ||
+    (withoutComment.startsWith('"') && withoutComment.endsWith('"'))
+  ) {
+    return withoutComment.slice(1, -1).trim() || null;
+  }
+  return withoutComment;
+}
+
+function readYamlSectionScalar(
+  configText: string | null,
+  section: string,
+  key: string,
+): string | null {
+  if (!configText) {
+    return null;
+  }
+  const lines = configText.split(/\r?\n/);
+  let inSection = false;
+  for (const line of lines) {
+    if (/^\S/.test(line)) {
+      inSection = line.trim() === `${section}:`;
+      continue;
+    }
+    if (!inSection) {
+      continue;
+    }
+    const match = new RegExp(`^\\s{2}${key}:\\s*(.*)$`).exec(line);
+    if (match) {
+      return stripYamlScalar(match[1] ?? "");
+    }
+  }
+  return null;
+}
+
+function readContextWindowFromCache(
+  cacheText: string | null,
+  model: string | null,
+  baseUrl: string | null,
+): number | null {
+  if (!cacheText || !model) {
+    return null;
+  }
+  const candidates = new Set([model, baseUrl ? `${model}@${baseUrl}` : null].filter(Boolean));
+  for (const line of cacheText.split(/\r?\n/)) {
+    const match = /^\s{2}(.+?):\s*(\d+)\s*$/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const key = stripYamlScalar(match[1] ?? "");
+    const value = Number.parseInt(match[2] ?? "", 10);
+    if (key && candidates.has(key) && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+export function parseHermesModelStatus(
+  configText: string | null,
+  contextLengthCacheText: string | null,
+): HermesModelStatus {
+  const provider = readYamlSectionScalar(configText, "model", "provider");
+  const model = readYamlSectionScalar(configText, "model", "default");
+  const baseUrl = readYamlSectionScalar(configText, "model", "base_url");
+  const contextWindowTokens = readContextWindowFromCache(contextLengthCacheText, model, baseUrl);
+  return {
+    provider,
+    model,
+    baseUrl,
+    contextWindowTokens,
+    contextWindowSource: contextWindowTokens === null ? "unknown" : "cache",
+  };
+}
+
+async function readHermesModelStatus(config: HermesSafeConfig): Promise<HermesModelStatus> {
+  const [configText, contextLengthCacheText] = await Promise.all([
+    readFileIfExists(config.configPath),
+    readFileIfExists(Path.join(config.hermesHome, "context_length_cache.yaml")),
+  ]);
+  return parseHermesModelStatus(configText, contextLengthCacheText);
 }
 
 async function readSafeConfig(): Promise<HermesSafeConfig> {
@@ -1267,6 +1356,10 @@ const getStatus: HermesAdapterShape["getStatus"] = () =>
       try: () => readMotokoProfileStatus(),
       catch: (cause) => toHermesError("Failed to inspect Motoko profile distribution.", cause),
     });
+    const model = yield* Effect.tryPromise({
+      try: () => readHermesModelStatus(config),
+      catch: (cause) => toHermesError("Failed to inspect Hermes model configuration.", cause),
+    });
     const proposals = yield* Effect.tryPromise({
       try: () => readProposals(config),
       catch: (cause) => toHermesError("Failed to inspect Hermes proposals.", cause),
@@ -1303,6 +1396,7 @@ const getStatus: HermesAdapterShape["getStatus"] = () =>
       capabilities: [...capabilities],
       unsupported: ALL_CAPABILITIES.filter((capability) => !capabilities.includes(capability)),
       config,
+      model,
       codexAuth,
       soul,
       acp: {

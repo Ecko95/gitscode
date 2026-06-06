@@ -181,6 +181,21 @@ function formatCount(value: number): string {
   return NUMBER_FORMAT.format(value);
 }
 
+function formatTokenLimit(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "unknown";
+  }
+  if (value >= 1_000_000) {
+    const millions = value / 1_000_000;
+    return `${Number.isInteger(millions) ? millions.toFixed(0) : millions.toFixed(1)}m`;
+  }
+  if (value >= 1_000) {
+    const thousands = value / 1_000;
+    return `${Number.isInteger(thousands) ? thousands.toFixed(0) : thousands.toFixed(1)}k`;
+  }
+  return formatCount(value);
+}
+
 function formatUsd(value: number): string {
   return USD_FORMAT.format(value);
 }
@@ -1443,6 +1458,9 @@ const MOTOKO_SCHEDULE_OPTIONS: ReadonlyArray<{
 
 const MOTOKO_CAPSULE_FRAME_SRC = "/gits/motoko-capsule-frame.png";
 const MOTOKO_CAPSULE_VIDEO_SRC = "/gits/motoko-capsule-avatar.mp4";
+const MOTOKO_CHAT_LOGO_SRC = "/gits/motoko-chat-logo.png";
+const MOTOKO_ROOT_ROUTE_VALUE = "";
+const MOTOKO_ROOT_ROUTE_LABEL = "root/gits";
 const MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE = {
   height: "49.8%",
   left: "25.1%",
@@ -1472,7 +1490,16 @@ function makeTranscriptEntryId(role: MotokoTranscriptEntry["role"], createdAt: s
   return `${role}:${createdAt}:${Math.floor(performance.now() * 1000)}`;
 }
 
+function motokoProjectRouteLabel(project: GitsCockpitProject): string {
+  return `${project.project.title} | ${project.project.rootPath}`;
+}
+
+function motokoSelectedRouteLabel(selectedProjectRoot: string): string {
+  return selectedProjectRoot.trim().length === 0 ? MOTOKO_ROOT_ROUTE_LABEL : selectedProjectRoot;
+}
+
 function MotokoChatComposer({
+  projects,
   selectedProjectRoot,
   chatInput,
   actionPending,
@@ -1480,6 +1507,7 @@ function MotokoChatComposer({
   onChatInputChange,
   onChatSubmit,
 }: {
+  projects: ReadonlyArray<GitsCockpitProject>;
   selectedProjectRoot: string;
   chatInput: string;
   actionPending: boolean;
@@ -1523,13 +1551,20 @@ function MotokoChatComposer({
           <div className="flex min-w-0 flex-col gap-2 border-t border-border/55 px-2.5 py-2.5 sm:flex-row sm:items-center sm:px-3">
             <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-border/70 bg-muted/24 px-3 py-1.5 text-xs transition-colors focus-within:border-ring/45 focus-within:bg-background">
               <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-              <span className="sr-only">Selected project root</span>
-              <input
+              <span className="sr-only">Motoko route</span>
+              <select
                 value={selectedProjectRoot}
-                placeholder="Project root"
-                className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50"
+                aria-label="Motoko route"
+                className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none"
                 onChange={(event) => onProjectRootChange(event.currentTarget.value)}
-              />
+              >
+                <option value={MOTOKO_ROOT_ROUTE_VALUE}>{MOTOKO_ROOT_ROUTE_LABEL}</option>
+                {projects.map((project) => (
+                  <option key={project.project.id} value={project.project.rootPath}>
+                    {motokoProjectRouteLabel(project)}
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="flex min-w-0 items-center justify-between gap-2 sm:justify-end">
               <div className="hidden min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground sm:flex">
@@ -1703,6 +1738,7 @@ function MotokoPanel({
   status,
   capacity,
   sessions,
+  projects,
   log,
   proposals,
   loading,
@@ -1734,6 +1770,7 @@ function MotokoPanel({
   status: HermesStatusResult | undefined;
   capacity: GitsCapacitySnapshot | undefined;
   sessions: HermesSessionListResult | undefined;
+  projects: ReadonlyArray<GitsCockpitProject>;
   log: HermesLogTailResult | undefined;
   proposals: HermesProposalListResult | undefined;
   loading: boolean;
@@ -1771,6 +1808,9 @@ function MotokoPanel({
         : null;
   const pendingCount = cards.filter((proposal) => proposal.status === "proposed").length;
   const resultCount = [chatResult, commandResult, draft, scheduleResult].filter(Boolean).length;
+  const routeLabel = motokoSelectedRouteLabel(selectedProjectRoot);
+  const modelLabel = status?.model.model ?? "unknown";
+  const contextWindowLabel = formatTokenLimit(status?.model.contextWindowTokens);
 
   return (
     <section className="border-b border-border bg-background">
@@ -1804,7 +1844,7 @@ function MotokoPanel({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 border-b border-border/60 sm:grid-cols-4 xl:grid-cols-6">
+      <div className="grid grid-cols-2 border-b border-border/60 sm:grid-cols-4 xl:grid-cols-8">
         <StatBlock label="Proposals" value={formatCount(cards.length)} icon={SparklesIcon} />
         <StatBlock label="Pending" value={formatCount(pendingCount)} icon={AlertTriangleIcon} />
         <StatBlock
@@ -1818,6 +1858,8 @@ function MotokoPanel({
           value={capacity?.recommendation.recommendedEngine ?? "check"}
           icon={BotIcon}
         />
+        <StatBlock label="Model" value={modelLabel} icon={SparklesIcon} />
+        <StatBlock label="Context" value={contextWindowLabel} icon={GaugeIcon} />
         <StatBlock
           label="Sessions"
           value={formatCount(sessions?.sessions.length ?? 0)}
@@ -1843,10 +1885,20 @@ function MotokoPanel({
               {transcript.length === 0 ? (
                 <div className="flex min-h-96 items-center justify-center">
                   <div className="grid justify-items-center gap-3 text-center">
-                    <div className="flex size-12 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-xs">
-                      <BotIcon className="size-5" />
+                    <div className="overflow-hidden rounded-xl border border-border/70 bg-white p-2 shadow-[0_18px_44px_rgba(0,0,0,0.18)]">
+                      <img
+                        alt=""
+                        aria-hidden="true"
+                        className="size-24 rounded-lg object-cover"
+                        draggable={false}
+                        src={MOTOKO_CHAT_LOGO_SRC}
+                      />
                     </div>
                     <EmptyState label="Motoko is standing by." />
+                    <div className="max-w-80 px-4 text-xs text-muted-foreground">
+                      Route {routeLabel} | Hermes {status?.model.provider ?? "provider unknown"} /{" "}
+                      {modelLabel} | context {contextWindowLabel}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -1951,6 +2003,7 @@ function MotokoPanel({
 
             <div className="border-t border-border/60 bg-background/96 px-4 py-4 backdrop-blur sm:px-5">
               <MotokoChatComposer
+                projects={projects}
                 selectedProjectRoot={selectedProjectRoot}
                 chatInput={chatInput}
                 actionPending={actionPending}
@@ -2276,7 +2329,7 @@ function DevCommandPanel({
           </Button>
         </div>
         <div className="grid gap-1 text-xs text-muted-foreground">
-          <div>Project: {selectedProjectRoot || "No project selected"}</div>
+          <div>Route: {motokoSelectedRouteLabel(selectedProjectRoot)}</div>
           <div>Config: {list?.configPath ?? "Missing"}</div>
           {list?.magicDnsName ? <div>Tailnet: {list.magicDnsName}</div> : null}
         </div>
@@ -4075,10 +4128,13 @@ export function GitsCockpit() {
 
   useEffect(() => {
     const projectRoots = query.data?.projects.map((project) => project.project.rootPath) ?? [];
-    if (selectedProjectRoot && projectRoots.includes(selectedProjectRoot)) {
+    if (
+      selectedProjectRoot === MOTOKO_ROOT_ROUTE_VALUE ||
+      projectRoots.includes(selectedProjectRoot)
+    ) {
       return;
     }
-    setSelectedProjectRoot(projectRoots[0] ?? "");
+    setSelectedProjectRoot(MOTOKO_ROOT_ROUTE_VALUE);
   }, [query.data?.projects, selectedProjectRoot]);
 
   useEffect(() => {
@@ -4329,6 +4385,7 @@ export function GitsCockpit() {
                 status={hermesQuery.data}
                 capacity={capacityQuery.data}
                 sessions={hermesSessionsQuery.data}
+                projects={query.data?.projects ?? []}
                 log={hermesLogQuery.data}
                 proposals={hermesProposalsQuery.data}
                 loading={

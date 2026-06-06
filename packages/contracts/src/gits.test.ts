@@ -191,6 +191,13 @@ describe("Hermes Motoko contracts", () => {
         yoloModeDetected: false,
         codexCliAuthPath: "/home/test/.codex/auth.json",
       },
+      model: {
+        provider: "openai-codex",
+        model: "gpt-5.4",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        contextWindowTokens: 272000,
+        contextWindowSource: "cache",
+      },
       codexAuth: {
         state: "detected",
         source: "codex-cli",

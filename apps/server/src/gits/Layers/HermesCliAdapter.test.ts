@@ -20,6 +20,7 @@ import {
   hermesProposalRequiresApproval,
   isLegacyProviderSetupProposalArtifact,
   makeHermesEnv,
+  parseHermesModelStatus,
   resolveHermesHome,
 } from "./HermesCliAdapter.ts";
 
@@ -73,6 +74,26 @@ describe("HermesCliAdapter command construction", () => {
 
     expect(env.HERMES_HOME).toBe("/tmp/gits-hermes");
     expect(env.HERMES_YOLO_MODE).toBeUndefined();
+  });
+
+  it("reads non-secret model metadata from Hermes config and cache", () => {
+    expect(
+      parseHermesModelStatus(
+        [
+          "model:",
+          "  provider: openai-codex",
+          "  base_url: https://chatgpt.com/backend-api/codex",
+          "  default: gpt-5.4",
+        ].join("\n"),
+        "context_lengths:\n  gpt-5.4@https://chatgpt.com/backend-api/codex: 272000\n",
+      ),
+    ).toEqual({
+      provider: "openai-codex",
+      model: "gpt-5.4",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      contextWindowTokens: 272000,
+      contextWindowSource: "cache",
+    });
   });
 });
 

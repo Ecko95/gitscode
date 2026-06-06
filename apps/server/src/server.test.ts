@@ -393,6 +393,13 @@ const defaultHermesStatus: HermesStatusResult = {
   capabilities: ["status", "proposals", "profile", "project-context", "drafts", "schedules"],
   unsupported: ["doctor", "acp", "codex-oauth", "chat", "sessions", "logs"],
   config: defaultHermesConfig,
+  model: {
+    provider: "openai-codex",
+    model: "gpt-5.4",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    contextWindowTokens: 272000,
+    contextWindowSource: "cache",
+  },
   codexAuth: {
     state: "missing",
     source: "missing",

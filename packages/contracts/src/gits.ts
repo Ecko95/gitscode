@@ -843,6 +843,15 @@ export const HermesSafeConfig = Schema.Struct({
 });
 export type HermesSafeConfig = typeof HermesSafeConfig.Type;
 
+export const HermesModelStatus = Schema.Struct({
+  provider: Schema.NullOr(TrimmedNonEmptyString),
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  baseUrl: Schema.NullOr(TrimmedNonEmptyString),
+  contextWindowTokens: Schema.NullOr(NonNegativeInt),
+  contextWindowSource: Schema.Literals(["cache", "unknown"]),
+});
+export type HermesModelStatus = typeof HermesModelStatus.Type;
+
 export const HermesCommandCheck = Schema.Struct({
   status: HermesHealthStatus,
   exitCode: Schema.NullOr(Schema.Number),
@@ -888,6 +897,7 @@ export const HermesStatusResult = Schema.Struct({
   capabilities: Schema.Array(HermesCapability),
   unsupported: Schema.Array(HermesCapability),
   config: HermesSafeConfig,
+  model: HermesModelStatus,
   codexAuth: HermesCodexAuthStatus,
   soul: HermesSoulStatus,
   acp: HermesAcpStatus,
