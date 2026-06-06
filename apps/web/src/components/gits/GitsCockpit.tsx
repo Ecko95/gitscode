@@ -45,6 +45,9 @@ import {
   GaugeIcon,
   GitBranchIcon,
   ListChecksIcon,
+  LockIcon,
+  LockOpenIcon,
+  PenLineIcon,
   PlayIcon,
   PowerIcon,
   RefreshCwIcon,
@@ -55,6 +58,7 @@ import {
   StarIcon,
   ExternalLinkIcon,
   SquareTerminalIcon,
+  type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -70,6 +74,7 @@ import { useStore } from "../../store";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
+import { Separator } from "../ui/separator";
 import {
   Select,
   SelectGroup,
@@ -1471,12 +1476,46 @@ const MOTOKO_CHAT_LOGO_SRC = "/gits/motoko-chat-logo.png";
 const MOTOKO_ROOT_ROUTE_VALUE = "";
 const MOTOKO_ROOT_ROUTE_SELECT_VALUE = "__root_gits__";
 const MOTOKO_ROOT_ROUTE_LABEL = "root/gits";
+const MOTOKO_RUNTIME_MODE = "approval-required";
 const MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE = {
   height: "49.8%",
   left: "25.1%",
   top: "24.3%",
   width: "49.8%",
 };
+
+type MotokoInteractionMode = "default" | "plan";
+type MotokoRuntimeMode = "approval-required" | "auto-accept-edits" | "full-access";
+
+const MOTOKO_RUNTIME_MODE_CONFIG: Record<
+  MotokoRuntimeMode,
+  {
+    readonly label: string;
+    readonly description: string;
+    readonly icon: LucideIcon;
+    readonly available: boolean;
+  }
+> = {
+  "approval-required": {
+    label: "Supervised",
+    description: "Ask before commands and file changes.",
+    icon: LockIcon,
+    available: true,
+  },
+  "auto-accept-edits": {
+    label: "Auto-accept edits",
+    description: "Auto-approve edits, ask before other actions. Unavailable for Motoko.",
+    icon: PenLineIcon,
+    available: false,
+  },
+  "full-access": {
+    label: "Full access",
+    description: "Allow commands and edits without prompts. Unavailable for Motoko.",
+    icon: LockOpenIcon,
+    available: false,
+  },
+};
+const MOTOKO_RUNTIME_MODE_OPTIONS = Object.keys(MOTOKO_RUNTIME_MODE_CONFIG) as MotokoRuntimeMode[];
 
 interface MotokoTranscriptEntry {
   readonly id: string;
@@ -1508,19 +1547,155 @@ function motokoSelectedRouteLabel(selectedProjectRoot: string): string {
   return selectedProjectRoot.trim().length === 0 ? MOTOKO_ROOT_ROUTE_LABEL : selectedProjectRoot;
 }
 
+function motokoModelControlValue(status: HermesStatusResult | undefined): string {
+  const provider = status?.model.provider ?? "unknown";
+  const model = status?.model.model ?? "unknown";
+  return `${provider}:${model}`;
+}
+
+function MotokoFooterModelControl({ status }: { status: HermesStatusResult | undefined }) {
+  const provider = status?.model.provider ?? "Hermes";
+  const model = status?.model.model ?? "model setup";
+  const contextWindowLabel = formatTokenLimit(status?.model.contextWindowTokens);
+  const value = motokoModelControlValue(status);
+
+  return (
+    <Select
+      modal={false}
+      value={value}
+      items={[{ value, label: model }]}
+      onValueChange={() => undefined}
+    >
+      <SelectTrigger
+        aria-label="Motoko model"
+        className="shrink-0 font-medium text-muted-foreground/70 hover:text-foreground/80"
+        size="sm"
+        title={`${provider} | context ${contextWindowLabel}`}
+        variant="ghost"
+      >
+        <SparklesIcon className="size-4" />
+        <SelectValue>{model}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup alignItemWithTrigger={false} popupClassName="w-72">
+        <SelectGroup>
+          <SelectGroupLabel>Hermes model</SelectGroupLabel>
+          <SelectItem value={value} className="py-2">
+            <div className="grid min-w-0 gap-0.5">
+              <span className="truncate font-medium text-foreground">{model}</span>
+              <span className="truncate text-xs leading-4 text-muted-foreground">
+                {provider} | context {contextWindowLabel}
+              </span>
+            </div>
+          </SelectItem>
+        </SelectGroup>
+      </SelectPopup>
+    </Select>
+  );
+}
+
+function MotokoFooterModeControls({
+  interactionMode,
+  onToggleInteractionMode,
+}: {
+  interactionMode: MotokoInteractionMode;
+  onToggleInteractionMode: () => void;
+}) {
+  const runtimeModeOption = MOTOKO_RUNTIME_MODE_CONFIG[MOTOKO_RUNTIME_MODE];
+  const RuntimeModeIcon = runtimeModeOption.icon;
+
+  return (
+    <>
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      <Button
+        variant="ghost"
+        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+        size="sm"
+        type="button"
+        onClick={onToggleInteractionMode}
+        title={
+          interactionMode === "plan"
+            ? "Plan mode - click to return to build mode"
+            : "Build mode - click to enter plan mode"
+        }
+      >
+        <BotIcon />
+        <span className="sr-only sm:not-sr-only">
+          {interactionMode === "plan" ? "Plan" : "Build"}
+        </span>
+      </Button>
+
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      <Select
+        modal={false}
+        value={MOTOKO_RUNTIME_MODE}
+        items={MOTOKO_RUNTIME_MODE_OPTIONS.map((mode) => ({
+          value: mode,
+          label: MOTOKO_RUNTIME_MODE_CONFIG[mode].label,
+        }))}
+        onValueChange={() => undefined}
+      >
+        <SelectTrigger
+          aria-label="Motoko runtime mode"
+          className="shrink-0 font-medium"
+          size="sm"
+          title={runtimeModeOption.description}
+          variant="ghost"
+        >
+          <RuntimeModeIcon className="size-4" />
+          <SelectValue>{runtimeModeOption.label}</SelectValue>
+        </SelectTrigger>
+        <SelectPopup alignItemWithTrigger={false} popupClassName="w-72">
+          {MOTOKO_RUNTIME_MODE_OPTIONS.map((mode) => {
+            const option = MOTOKO_RUNTIME_MODE_CONFIG[mode];
+            const OptionIcon = option.icon;
+            return (
+              <SelectItem key={mode} value={mode} className="py-2" disabled={!option.available}>
+                <div className="grid min-w-0 gap-0.5">
+                  <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground">
+                    <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{option.label}</span>
+                  </span>
+                  <span className="text-xs leading-4 text-muted-foreground">
+                    {option.description}
+                  </span>
+                </div>
+              </SelectItem>
+            );
+          })}
+        </SelectPopup>
+      </Select>
+    </>
+  );
+}
+
+function MotokoContextWindowChip({ status }: { status: HermesStatusResult | undefined }) {
+  return (
+    <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/24 px-2.5 text-[11px] font-medium text-muted-foreground">
+      <GaugeIcon className="size-3.5" />
+      <span className="tabular-nums">{formatTokenLimit(status?.model.contextWindowTokens)}</span>
+    </span>
+  );
+}
+
 function MotokoChatComposer({
+  status,
   projects,
   selectedProjectRoot,
   chatInput,
+  interactionMode,
   actionPending,
+  onToggleInteractionMode,
   onProjectRootChange,
   onChatInputChange,
   onChatSubmit,
 }: {
+  status: HermesStatusResult | undefined;
   projects: ReadonlyArray<GitsCockpitProject>;
   selectedProjectRoot: string;
   chatInput: string;
+  interactionMode: MotokoInteractionMode;
   actionPending: boolean;
+  onToggleInteractionMode: () => void;
   onProjectRootChange: (value: string) => void;
   onChatInputChange: (value: string) => void;
   onChatSubmit: () => void;
@@ -1537,9 +1712,7 @@ function MotokoChatComposer({
     [projects],
   );
   const selectedRouteValue =
-    selectedProjectRoot.trim().length === 0
-      ? MOTOKO_ROOT_ROUTE_SELECT_VALUE
-      : selectedProjectRoot;
+    selectedProjectRoot.trim().length === 0 ? MOTOKO_ROOT_ROUTE_SELECT_VALUE : selectedProjectRoot;
 
   const submit = () => {
     if (canSend) {
@@ -1572,63 +1745,76 @@ function MotokoChatComposer({
               }}
             />
           </div>
-          <div className="flex min-w-0 flex-col gap-2 border-t border-border/55 px-2.5 py-2.5 sm:flex-row sm:items-center sm:px-3">
-            <Select
-              modal={false}
-              value={selectedRouteValue}
-              items={routeItems}
-              onValueChange={(value) => {
-                if (typeof value !== "string") {
-                  return;
-                }
-                onProjectRootChange(
-                  value === MOTOKO_ROOT_ROUTE_SELECT_VALUE ? MOTOKO_ROOT_ROUTE_VALUE : value,
-                );
-              }}
-            >
-              <SelectTrigger
-                aria-label="Motoko route"
-                variant="ghost"
-                size="sm"
-                className="min-h-8 w-full min-w-0 flex-1 rounded-full border border-border/70 bg-muted/24 px-3 py-1.5 text-foreground shadow-none transition-colors hover:bg-accent focus-visible:border-ring/45 focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring/24 sm:min-h-8"
-              >
-                <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-                <SelectValue className="min-w-0 font-mono text-[11px]" />
-              </SelectTrigger>
-              <SelectPopup
-                className="max-h-72"
-                popupClassName="max-w-[min(34rem,calc(100vw-2rem))]"
-              >
-                <SelectGroup>
-                  <SelectGroupLabel>Motoko route</SelectGroupLabel>
-                  <SelectItem value={MOTOKO_ROOT_ROUTE_SELECT_VALUE}>
-                    <span className="inline-flex min-w-0 items-center gap-2">
-                      <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-                      <span className="min-w-0 truncate font-mono text-[11px]">
-                        {MOTOKO_ROOT_ROUTE_LABEL}
-                      </span>
-                    </span>
-                  </SelectItem>
-                  {projects.map((project) => (
-                    <SelectItem key={project.project.id} value={project.project.rootPath}>
-                      <span className="grid min-w-0 gap-0.5">
-                        <span className="truncate text-sm text-foreground">
-                          {project.project.title}
+          <div
+            data-chat-composer-footer="true"
+            className="flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible border-t border-border/55 px-2.5 pb-2.5 pt-2.5 sm:px-3"
+          >
+            <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="min-w-48 max-w-72 shrink-0">
+                <Select
+                  modal={false}
+                  value={selectedRouteValue}
+                  items={routeItems}
+                  onValueChange={(value) => {
+                    if (typeof value !== "string") {
+                      return;
+                    }
+                    onProjectRootChange(
+                      value === MOTOKO_ROOT_ROUTE_SELECT_VALUE ? MOTOKO_ROOT_ROUTE_VALUE : value,
+                    );
+                  }}
+                >
+                  <SelectTrigger
+                    aria-label="Motoko route"
+                    variant="ghost"
+                    size="sm"
+                    className="min-h-8 w-full min-w-0 rounded-full border border-border/70 bg-muted/24 px-3 py-1.5 text-foreground shadow-none transition-colors hover:bg-accent focus-visible:border-ring/45 focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring/24 sm:min-h-8"
+                  >
+                    <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+                    <SelectValue className="min-w-0 font-mono text-[11px]" />
+                  </SelectTrigger>
+                  <SelectPopup
+                    className="max-h-72"
+                    popupClassName="max-w-[min(34rem,calc(100vw-2rem))]"
+                  >
+                    <SelectGroup>
+                      <SelectGroupLabel>Motoko route</SelectGroupLabel>
+                      <SelectItem value={MOTOKO_ROOT_ROUTE_SELECT_VALUE}>
+                        <span className="inline-flex min-w-0 items-center gap-2">
+                          <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+                          <span className="min-w-0 truncate font-mono text-[11px]">
+                            {MOTOKO_ROOT_ROUTE_LABEL}
+                          </span>
                         </span>
-                        <span className="truncate font-mono text-[11px] text-muted-foreground">
-                          {project.project.rootPath}
-                        </span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectPopup>
-            </Select>
-            <div className="flex min-w-0 items-center justify-between gap-2 sm:justify-end">
-              <div className="hidden min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground sm:flex">
-                <ShieldCheckIcon className="size-3.5 shrink-0" />
-                <span className="truncate">GITS governed chat</span>
+                      </SelectItem>
+                      {projects.map((project) => (
+                        <SelectItem key={project.project.id} value={project.project.rootPath}>
+                          <span className="grid min-w-0 gap-0.5">
+                            <span className="truncate text-sm text-foreground">
+                              {project.project.title}
+                            </span>
+                            <span className="truncate font-mono text-[11px] text-muted-foreground">
+                              {project.project.rootPath}
+                            </span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectPopup>
+                </Select>
               </div>
+
+              <MotokoFooterModelControl status={status} />
+              <MotokoFooterModeControls
+                interactionMode={interactionMode}
+                onToggleInteractionMode={onToggleInteractionMode}
+              />
+            </div>
+            <div
+              data-chat-composer-actions="right"
+              className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+            >
+              <MotokoContextWindowChip status={status} />
               <Button
                 type="submit"
                 size="icon"
@@ -1687,7 +1873,10 @@ function MotokoCapsuleAvatar({
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <StatusPill label="Motoko" tone={available ? "success" : "warning"} />
-          <StatusPill label={available ? "online" : "setup"} tone={available ? "success" : "warning"} />
+          <StatusPill
+            label={available ? "online" : "setup"}
+            tone={available ? "success" : "warning"}
+          />
         </div>
       </div>
     </div>
@@ -1809,9 +1998,11 @@ function MotokoPanel({
   transcript,
   selectedProjectRoot,
   chatInput,
+  interactionMode,
   scheduleKind,
   actionPending,
   onRefresh,
+  onToggleInteractionMode,
   onProjectRootChange,
   onChatInputChange,
   onScheduleKindChange,
@@ -1841,9 +2032,11 @@ function MotokoPanel({
   transcript: ReadonlyArray<MotokoTranscriptEntry>;
   selectedProjectRoot: string;
   chatInput: string;
+  interactionMode: MotokoInteractionMode;
   scheduleKind: HermesScheduleKind;
   actionPending: boolean;
   onRefresh: () => void;
+  onToggleInteractionMode: () => void;
   onProjectRootChange: (value: string) => void;
   onChatInputChange: (value: string) => void;
   onScheduleKindChange: (value: HermesScheduleKind) => void;
@@ -2046,8 +2239,7 @@ function MotokoPanel({
                             </span>
                           </div>
                         ) : null}
-                        {entry.result?.blockedReason &&
-                        entry.result.status !== "setup-required" ? (
+                        {entry.result?.blockedReason && entry.result.status !== "setup-required" ? (
                           <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
                             {entry.result.blockedReason}
                           </div>
@@ -2061,10 +2253,13 @@ function MotokoPanel({
 
             <div className="border-t border-border/60 bg-background/96 px-4 py-4 backdrop-blur sm:px-5">
               <MotokoChatComposer
+                status={status}
                 projects={projects}
                 selectedProjectRoot={selectedProjectRoot}
                 chatInput={chatInput}
+                interactionMode={interactionMode}
                 actionPending={actionPending}
+                onToggleInteractionMode={onToggleInteractionMode}
                 onProjectRootChange={onProjectRootChange}
                 onChatInputChange={onChatInputChange}
                 onChatSubmit={onChatSubmit}
@@ -2082,7 +2277,10 @@ function MotokoPanel({
             <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="font-medium text-muted-foreground">Motoko actions</div>
-                <StatusPill label={status?.available ? "ready" : "setup"} tone={status?.available ? "success" : "warning"} />
+                <StatusPill
+                  label={status?.available ? "ready" : "setup"}
+                  tone={status?.available ? "success" : "warning"}
+                />
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={onCheck} disabled={actionPending}>
@@ -2404,7 +2602,9 @@ function DevCommandPanel({
       </div>
 
       {loading ? (
-        <div className="px-4 py-6 text-sm text-muted-foreground sm:px-5">Loading dev commands...</div>
+        <div className="px-4 py-6 text-sm text-muted-foreground sm:px-5">
+          Loading dev commands...
+        </div>
       ) : error ? (
         <div className="px-4 py-6 text-sm text-destructive sm:px-5">
           {error instanceof Error ? error.message : "Failed to load dev commands."}
@@ -3498,7 +3698,11 @@ export function GitsCockpit() {
   const [replyText, setReplyText] = useState("");
   const [selectedProjectRoot, setSelectedProjectRoot] = useState("");
   const [motokoChatInput, setMotokoChatInput] = useState("");
-  const [motokoTranscript, setMotokoTranscript] = useState<ReadonlyArray<MotokoTranscriptEntry>>([]);
+  const [motokoTranscript, setMotokoTranscript] = useState<ReadonlyArray<MotokoTranscriptEntry>>(
+    [],
+  );
+  const [motokoInteractionMode, setMotokoInteractionMode] =
+    useState<MotokoInteractionMode>("default");
   const [motokoScheduleKind, setMotokoScheduleKind] =
     useState<HermesScheduleKind>("daily-briefing");
   const [gsdInitInput, setGsdInitInput] = useState("");
@@ -3761,13 +3965,24 @@ export function GitsCockpit() {
     },
   });
   const hermesChatMutation = useMutation({
-    mutationFn: async (message: string) =>
-      readGitsClient().hermes.chat({
-        message,
+    mutationFn: async (message: string) => {
+      const effectiveMessage =
+        motokoInteractionMode === "plan"
+          ? [
+              "Motoko interaction mode: plan.",
+              "Respond with analysis, options, and a proposed approval path. Do not recommend direct execution.",
+              "",
+              message,
+            ].join("\n")
+          : message;
+
+      return readGitsClient().hermes.chat({
+        message: effectiveMessage,
         ...(selectedProjectRoot.trim().length > 0
           ? { projectDir: selectedProjectRoot.trim() }
           : {}),
-      }),
+      });
+    },
     onMutate: async (message) => {
       setMotokoTranscript((current) => [
         ...current,
@@ -4007,7 +4222,9 @@ export function GitsCockpit() {
       },
     }));
     try {
-      await api.terminal.close({ threadId, terminalId, deleteHistory: true }).catch(() => undefined);
+      await api.terminal
+        .close({ threadId, terminalId, deleteHistory: true })
+        .catch(() => undefined);
       await api.terminal.open({ threadId, terminalId, cwd: command.cwd });
       const detach = api.terminal.attach(
         { threadId, terminalId, cwd: command.cwd, restartIfNotRunning: false },
@@ -4071,8 +4288,12 @@ export function GitsCockpit() {
     setDevActiveCommandId(command.id);
     setDevActionError(null);
     try {
-      await api.terminal.write({ threadId, terminalId, data: "\u0003exit\n" }).catch(() => undefined);
-      await api.terminal.close({ threadId, terminalId, deleteHistory: false }).catch(() => undefined);
+      await api.terminal
+        .write({ threadId, terminalId, data: "\u0003exit\n" })
+        .catch(() => undefined);
+      await api.terminal
+        .close({ threadId, terminalId, deleteHistory: false })
+        .catch(() => undefined);
       devTerminalDetachByCommandIdRef.current.get(command.id)?.();
       devTerminalDetachByCommandIdRef.current.delete(command.id);
       setDevSessionStateByCommandId((current) => ({
@@ -4469,6 +4690,7 @@ export function GitsCockpit() {
                 transcript={motokoTranscript}
                 selectedProjectRoot={selectedProjectRoot}
                 chatInput={motokoChatInput}
+                interactionMode={motokoInteractionMode}
                 scheduleKind={motokoScheduleKind}
                 actionPending={hermesActionPending}
                 onRefresh={() => {
@@ -4480,6 +4702,9 @@ export function GitsCockpit() {
                     capacityQuery.refetch(),
                   ]);
                 }}
+                onToggleInteractionMode={() =>
+                  setMotokoInteractionMode((mode) => (mode === "plan" ? "default" : "plan"))
+                }
                 onProjectRootChange={setSelectedProjectRoot}
                 onChatInputChange={setMotokoChatInput}
                 onScheduleKindChange={setMotokoScheduleKind}
