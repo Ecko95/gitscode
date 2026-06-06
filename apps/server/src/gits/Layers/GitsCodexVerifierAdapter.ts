@@ -36,10 +36,13 @@ function codexBin() {
   return process.env.GITS_CODEX_BIN?.trim() || "codex";
 }
 function codexHome() {
+  // The verifier is a TRUSTED server-side reviewer (not an untrusted peer), so it uses the
+  // operator's primary ~/.codex auth by default — the isolated peer-codex-home's token goes
+  // stale once the primary refreshes (live smoke hit a 401 "refresh token already used").
   return (
     process.env.GITS_VERIFIER_CODEX_HOME?.trim() ||
     process.env.CODEX_HOME?.trim() ||
-    `${process.env.HOME ?? ""}/.delamain/peer-codex-home`
+    `${process.env.HOME ?? ""}/.codex`
   );
 }
 function escalationModel() {
@@ -117,6 +120,7 @@ function execProcess(
   cwd: string,
   timeoutMs: number,
   env?: NodeJS.ProcessEnv,
+  stdin?: string,
 ) {
   return processRunner
     .run({
@@ -130,6 +134,7 @@ function execProcess(
       timeoutBehavior: "timedOutResult",
       shell: false,
       ...(env ? { env } : {}),
+      ...(stdin !== undefined ? { stdin } : {}),
     })
     .pipe(Effect.mapError((cause) => toError(`Verifier failed to run \`${command}\`.`, cause)));
 }
@@ -172,13 +177,16 @@ function runCodexOnce(
 ) {
   return Effect.gen(function* () {
     const prompt = buildPrompt(input, diff, criteriaProvided);
+    // codex exec reads instructions from STDIN (a positional prompt with an open stdin hangs
+    // "Reading additional input from stdin..."); --skip-git-repo-check tolerates non-repo cwds.
     const exec = yield* execProcess(
       processRunner,
       codexBin(),
-      ["exec", "--sandbox", "read-only", "-m", model, prompt],
+      ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-m", model],
       input.worktree,
       timeoutMs,
       { ...process.env, CODEX_HOME: codexHome() },
+      prompt,
     );
     const jsonStr = extractVerdictJson(exec.stdout);
     if (jsonStr === null) {

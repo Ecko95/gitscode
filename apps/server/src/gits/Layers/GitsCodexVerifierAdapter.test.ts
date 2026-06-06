@@ -49,14 +49,16 @@ describe("GitsCodexVerifierAdapter", () => {
         });
         runMock.mockImplementationOnce((input) => {
           expect(input.command).toBe("codex");
-          expect(input.args.slice(0, 5)).toEqual([
+          expect(input.args).toEqual([
             "exec",
             "--sandbox",
             "read-only",
+            "--skip-git-repo-check",
             "-m",
             "gpt-5.4-mini",
           ]);
-          const prompt = input.args[4 + 1] ?? "";
+          // codex reads the prompt from stdin, not a positional arg
+          const prompt = input.stdin ?? "";
           expect(prompt).toContain("UNTRUSTED DIFF");
           expect(prompt).toContain("must validate input");
           expect(input.env?.CODEX_HOME).toBeTruthy();
@@ -131,14 +133,14 @@ describe("GitsCodexVerifierAdapter", () => {
       vi.stubEnv("GITS_VERIFIER_ESCALATION_MODEL", "gpt-5.5");
       runMock.mockImplementationOnce(() => execOk(0, DIFF)); // diff
       runMock.mockImplementationOnce((input) => {
-        expect(input.args[4]).toBe("gpt-5.4-mini");
+        expect(input.args[5]).toBe("gpt-5.4-mini");
         return execOk(
           0,
           '{"verdict":"uncertain","confidence":"low","reasons":["not sure"],"missed":[]}',
         );
       });
       runMock.mockImplementationOnce((input) => {
-        expect(input.args[4]).toBe("gpt-5.5"); // escalated
+        expect(input.args[5]).toBe("gpt-5.5"); // escalated
         return execOk(
           0,
           '{"verdict":"pass","confidence":"high","reasons":["clear on review"],"missed":[]}',
