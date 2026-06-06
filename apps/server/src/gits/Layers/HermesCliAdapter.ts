@@ -667,11 +667,7 @@ export function classifyHermesChatAction(message: string): HermesProposalActionK
   if (/\b(spawn|delegate|agent|agents|peer|peers|delamain|worktree|parallel)\b/.test(normalized)) {
     return "worktree-spawn";
   }
-  if (
-    /\b(implement|edit|write|modify|fix|patch|update|refactor|commit)\b/.test(
-      normalized,
-    )
-  ) {
+  if (/\b(implement|edit|write|modify|fix|patch|update|refactor|commit)\b/.test(normalized)) {
     return "repo-write";
   }
   if (/\b(create|cut|open|start)\s+(a\s+)?branch\b|\bcheckout\s+-b\b/.test(normalized)) {
@@ -783,7 +779,10 @@ function isProviderConfigurationError(detail: string): boolean {
   return /no inference provider configured/i.test(detail);
 }
 
-function providerSetupDetail(hermesHome: string): { readonly detail: string; readonly command: string } {
+function providerSetupDetail(hermesHome: string): {
+  readonly detail: string;
+  readonly command: string;
+} {
   const command = `HERMES_HOME=${hermesHome} hermes model`;
   return {
     detail: [
@@ -1993,17 +1992,20 @@ const runSchedule: HermesAdapterShape["runSchedule"] = (input) =>
         blockedReason,
       } satisfies HermesScheduleRunResult;
     }
-    const proposal = yield* makeChat({
+    const chatResult = yield* makeChat({
       getSnapshot: () => Effect.die(new Error("Capacity snapshot unavailable for scheduled run.")),
     })({
       message: schedulePrompt(input.kind, input.projectDir ?? null),
       ...(input.projectDir ? { projectDir: input.projectDir } : {}),
     });
+    // makeChat yields a HermesChatResult; a scheduled run surfaces only the proposal
+    // card it produced (none when the turn was a question), keeping questions out of
+    // the proposals list, and propagates any block reason from the chat turn.
     return {
       kind: input.kind,
       ranAt,
-      proposals: [proposal],
-      blockedReason: null,
+      proposals: chatResult.proposal === null ? [] : [chatResult.proposal],
+      blockedReason: chatResult.blockedReason,
     } satisfies HermesScheduleRunResult;
   });
 
