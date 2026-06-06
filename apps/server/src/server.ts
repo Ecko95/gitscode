@@ -53,6 +53,7 @@ import { DelamainCliAdapterLive } from "./gits/Layers/DelamainCliAdapter.ts";
 import { GitsBuildInfoResolverLive } from "./gits/Layers/GitsBuildInfo.ts";
 import { GitsCapacityMonitorLive } from "./gits/Layers/GitsCapacityMonitor.ts";
 import { GitsCodexVerifierAdapterLive } from "./gits/Layers/GitsCodexVerifierAdapter.ts";
+import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
 import { GitsSkillInventoryResolverLive } from "./gits/Layers/GitsSkillInventory.ts";
@@ -238,6 +239,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsBuildInfoResolverLive),
   Layer.provideMerge(GitsCapacityMonitorLive),
   Layer.provideMerge(GitsCodexVerifierAdapterLive),
+  Layer.provideMerge(GitsSliceCriteriaStoreLive),
   Layer.provideMerge(GitsConfinedVerifyAdapterLive),
   Layer.provideMerge(GitsDevCommandsLive),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
