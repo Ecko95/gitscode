@@ -256,6 +256,11 @@ export const GitsDevCommandListInput = Schema.Struct({
 });
 export type GitsDevCommandListInput = typeof GitsDevCommandListInput.Type;
 
+export const GitsDevCommandInitInput = Schema.Struct({
+  projectDir: PathString,
+});
+export type GitsDevCommandInitInput = typeof GitsDevCommandInitInput.Type;
+
 export const GitsDevCommandListResult = Schema.Struct({
   projectDir: PathString,
   configPath: Schema.NullOr(PathString),

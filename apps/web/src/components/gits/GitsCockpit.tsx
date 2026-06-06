@@ -1440,6 +1440,15 @@ const MOTOKO_SCHEDULE_OPTIONS: ReadonlyArray<{
   { value: "verification-sentinel", label: "Verification sentinel" },
 ];
 
+const MOTOKO_CAPSULE_FRAME_SRC = "/gits/motoko-capsule-frame.png";
+const MOTOKO_CAPSULE_VIDEO_SRC = "/gits/motoko-capsule-avatar.mp4";
+const MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE = {
+  height: "49.8%",
+  left: "25.1%",
+  top: "24.3%",
+  width: "49.8%",
+};
+
 interface MotokoTranscriptEntry {
   readonly id: string;
   readonly role: "operator" | "motoko";
@@ -1460,6 +1469,54 @@ type DevCommandSessionState = {
 
 function makeTranscriptEntryId(role: MotokoTranscriptEntry["role"], createdAt: string): string {
   return `${role}:${createdAt}:${Math.floor(performance.now() * 1000)}`;
+}
+
+function MotokoCapsuleAvatar({
+  available,
+  pendingCount,
+}: {
+  available: boolean;
+  pendingCount: number;
+}) {
+  return (
+    <div className="overflow-hidden rounded-md border border-border/70 bg-black p-2 shadow-[0_18px_44px_rgba(0,0,0,0.34)]">
+      <div className="relative aspect-square overflow-hidden rounded-sm bg-black">
+        <img
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 size-full select-none object-cover"
+          draggable={false}
+          src={MOTOKO_CAPSULE_FRAME_SRC}
+        />
+        <div
+          className="absolute z-20 overflow-hidden bg-black shadow-[0_0_28px_rgba(236,72,153,0.2)]"
+          style={MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE}
+        >
+          <video
+            aria-label="Motoko capsule avatar"
+            autoPlay
+            className="size-full object-cover"
+            loop
+            muted
+            playsInline
+            preload="metadata"
+            src={MOTOKO_CAPSULE_VIDEO_SRC}
+          />
+          <div className="pointer-events-none absolute inset-0 border border-fuchsia-300/20 shadow-[inset_0_0_30px_rgba(236,72,153,0.18)]" />
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="min-w-0">
+          <div className="truncate font-medium text-fuchsia-100/90">Cyberbrain pod</div>
+          <div className="truncate text-muted-foreground">{formatCount(pendingCount)} pending</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <StatusPill label="Motoko" tone={available ? "success" : "warning"} />
+          <StatusPill label={available ? "online" : "setup"} tone={available ? "success" : "warning"} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function makeDevTerminalId(commandId: string): string {
@@ -1807,6 +1864,10 @@ function MotokoPanel({
 
         <div className="min-w-0">
           <div className="grid gap-4 px-4 py-4 text-xs sm:px-5">
+            <MotokoCapsuleAvatar
+              available={status?.available === true}
+              pendingCount={pendingCount}
+            />
             <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="font-medium text-muted-foreground">Motoko actions</div>

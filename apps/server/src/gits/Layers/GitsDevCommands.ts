@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import {
   GitsDevCommandError,
   type GitsDevCommand,
+  type GitsDevCommandInitInput,
   type GitsDevCommandListInput,
   type GitsDevCommandListResult,
 } from "@t3tools/contracts";
@@ -33,7 +34,11 @@ const ConfigFileSchema = Schema.Struct({
 
 type ConfigCommand = typeof ConfigCommandSchema.Type;
 
+type DiscoveryCommand = ConfigCommand;
+
 const CONFIG_CANDIDATES = [".gits/dev-commands.json", "gits.dev-commands.json"] as const;
+const ROOT_PACKAGE_JSON = "package.json";
+const APPS_DIRECTORY = "apps";
 
 function toDevCommandError(message: string, cause?: unknown) {
   return new GitsDevCommandError({
@@ -74,6 +79,178 @@ function normalizeText(value: string | null | undefined): string | null {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function sanitizeId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function titleCaseSegment(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment[0]!.toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function inferPortHint(value: string): number | null {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("marketing")) {
+    return 4321;
+  }
+  if (normalized.includes("storybook")) {
+    return 6006;
+  }
+  if (
+    normalized.includes("web") ||
+    normalized.includes("vite") ||
+    normalized.includes("ui") ||
+    normalized.includes("frontend")
+  ) {
+    return 3000;
+  }
+  return null;
+}
+
+function inferDiscoveryMetadata(input: {
+  readonly key: string;
+  readonly packageName: string | null;
+}): Pick<DiscoveryCommand, "id" | "name" | "description" | "port" | "host" | "publishOnTailnet" | "servePort"> {
+  const normalizedKey = input.key.toLowerCase();
+  const packageStem = (
+    input.packageName?.split("/").at(-1)?.replace(/^t3tools-/, "") ??
+    normalizedKey.replace(/^dev:?/, "") ??
+    "workspace"
+  );
+  const resourceLabel =
+    normalizedKey === "dev"
+      ? "Workspace dev"
+      : `${titleCaseSegment(packageStem)} dev`;
+  const port = inferPortHint(`${normalizedKey} ${input.packageName ?? ""}`);
+  const publishOnTailnet = port !== null;
+  return {
+    id: sanitizeId(
+      normalizedKey === "dev"
+        ? "workspace-dev"
+        : `${packageStem}-dev`,
+    ),
+    name: resourceLabel,
+    description:
+      normalizedKey === "dev"
+        ? "Inferred from root workspace dev script."
+        : input.packageName
+          ? `Inferred from ${input.packageName} dev script.`
+          : `Inferred from ${input.key} package script.`,
+    port,
+    host: port === null ? null : "127.0.0.1",
+    publishOnTailnet,
+    servePort: port,
+  };
+}
+
+async function readJsonRecord(absolutePath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await Fs.readFile(absolutePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readScriptsFromPackageJson(json: Record<string, unknown> | null): Record<string, string> {
+  const scripts = json?.scripts;
+  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(scripts).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[0] === "string" && typeof entry[1] === "string",
+    ),
+  );
+}
+
+async function discoverRootPackageCommands(projectDir: string): Promise<ReadonlyArray<DiscoveryCommand>> {
+  const packageJson = await readJsonRecord(Path.join(projectDir, ROOT_PACKAGE_JSON));
+  const scripts = readScriptsFromPackageJson(packageJson);
+  const devScriptNames = Object.keys(scripts).filter((key) => key === "dev" || key.startsWith("dev:"));
+  return devScriptNames.map((scriptName) => {
+    const metadata = inferDiscoveryMetadata({ key: scriptName, packageName: null });
+    return {
+      id: metadata.id,
+      name: metadata.name,
+      description: metadata.description,
+      cwd: ".",
+      command: `bun run ${scriptName}`,
+      port: metadata.port,
+      host: metadata.host,
+      publishOnTailnet: metadata.publishOnTailnet,
+      servePort: metadata.servePort,
+    } satisfies DiscoveryCommand;
+  });
+}
+
+async function discoverAppPackageCommands(projectDir: string): Promise<ReadonlyArray<DiscoveryCommand>> {
+  const appsDirectory = Path.join(projectDir, APPS_DIRECTORY);
+  let entries: Awaited<ReturnType<typeof Fs.readdir>>;
+  try {
+    entries = await Fs.readdir(appsDirectory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const commands: DiscoveryCommand[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const relativeCwd = Path.join(APPS_DIRECTORY, entry.name);
+    const packageJson = await readJsonRecord(Path.join(projectDir, relativeCwd, ROOT_PACKAGE_JSON));
+    const scripts = readScriptsFromPackageJson(packageJson);
+    if (typeof scripts.dev !== "string") {
+      continue;
+    }
+    const packageName =
+      typeof packageJson?.name === "string" ? packageJson.name : null;
+    const metadata = inferDiscoveryMetadata({ key: "dev", packageName });
+    commands.push({
+      id: metadata.id,
+      name: metadata.name,
+      description: metadata.description,
+      cwd: relativeCwd,
+      command: packageName ? `bun run --filter=${packageName} dev` : "bun run dev",
+      port: metadata.port,
+      host: metadata.host,
+      publishOnTailnet: metadata.publishOnTailnet,
+      servePort: metadata.servePort,
+    });
+  }
+  return commands;
+}
+
+async function discoverCommands(projectDir: string): Promise<ReadonlyArray<DiscoveryCommand>> {
+  const rootCommands = await discoverRootPackageCommands(projectDir);
+  if (rootCommands.length > 0) {
+    return rootCommands;
+  }
+  return discoverAppPackageCommands(projectDir);
+}
+
+function uniqueCommands(commands: ReadonlyArray<DiscoveryCommand>): ReadonlyArray<DiscoveryCommand> {
+  const seen = new Set<string>();
+  return commands.filter((command) => {
+    if (seen.has(command.id)) {
+      return false;
+    }
+    seen.add(command.id);
+    return true;
+  });
 }
 
 export function buildDevCommandLaunchCommand(input: {
@@ -125,7 +302,8 @@ function toPublicCommand(input: {
     ? Path.resolve(input.projectDir, input.configCommand.cwd!.trim())
     : input.projectDir;
   const localPort = normalizeInteger(input.configCommand.port ?? null);
-  const localHost = normalizeText(input.configCommand.host) ?? (localPort === null ? null : "127.0.0.1");
+  const localHost =
+    normalizeText(input.configCommand.host) ?? (localPort === null ? null : "127.0.0.1");
   const publishOnTailnet = input.configCommand.publishOnTailnet === true;
   const servePort = publishOnTailnet
     ? normalizeInteger(input.configCommand.servePort ?? localPort)
@@ -155,67 +333,152 @@ function toPublicCommand(input: {
   };
 }
 
-const makeListCommands: GitsDevCommandsShape["listCommands"] = (input: GitsDevCommandListInput) =>
-  Effect.gen(function* () {
-    const config = yield* Effect.tryPromise({
-      try: () => readFirstExistingConfig(input.projectDir),
-      catch: (cause) => toDevCommandError(`Failed to inspect dev command config in ${input.projectDir}.`, cause),
-    });
+function toConfigCommandForWrite(input: {
+  readonly command: DiscoveryCommand;
+  readonly projectDir: string;
+}): ConfigCommand {
+  const cwd =
+    input.command.cwd && input.command.cwd !== "."
+      ? input.command.cwd
+      : undefined;
+  return {
+    id: input.command.id,
+    name: input.command.name,
+    ...(input.command.description ? { description: input.command.description } : {}),
+    ...(cwd ? { cwd } : {}),
+    command: input.command.command,
+    ...(input.command.port === null || input.command.port === undefined
+      ? {}
+      : { port: input.command.port }),
+    ...(input.command.host ? { host: input.command.host } : {}),
+    ...(input.command.publishOnTailnet ? { publishOnTailnet: true } : {}),
+    ...(input.command.servePort === null || input.command.servePort === undefined
+      ? {}
+      : { servePort: input.command.servePort }),
+  };
+}
 
-    const tailscaleBaseUrl = yield* resolveTailscaleHttpsBaseUrl().pipe(
-      Effect.map((url) => url),
-      Effect.catchTag("TailscaleCommandError", () => Effect.succeed<string | null>(null)),
-      Effect.catchTag("TailscaleStatusParseError", () => Effect.succeed<string | null>(null)),
-    );
-    const magicDnsName = tailscaleBaseUrl ? new URL(tailscaleBaseUrl).hostname : null;
+async function resolveRuntimeContext() {
+  const tailscaleBaseUrl = await resolveTailscaleHttpsBaseUrl().pipe(
+    Effect.map((url) => url),
+    Effect.catchTag("TailscaleCommandError", () => Effect.succeed<string | null>(null)),
+    Effect.catchTag("TailscaleStatusParseError", () => Effect.succeed<string | null>(null)),
+    Effect.runPromise,
+  );
+  const magicDnsName = tailscaleBaseUrl ? new URL(tailscaleBaseUrl).hostname : null;
+  return {
+    magicDnsName,
+    tailscaleAvailable: magicDnsName !== null,
+  };
+}
 
-    if (config === null) {
-      return {
-        projectDir: input.projectDir,
-        configPath: null,
-        tailscaleAvailable: magicDnsName !== null,
-        magicDnsName,
-        commands: [],
-        warnings: [
-          `No dev command config found. Add ${CONFIG_CANDIDATES[0]} to this repo to enable launcher presets.`,
-        ],
-      } satisfies GitsDevCommandListResult;
-    }
+async function buildListResult(projectDir: string): Promise<GitsDevCommandListResult> {
+  const config = await readFirstExistingConfig(projectDir);
+  const runtime = await resolveRuntimeContext();
+  const wrapperPath = Path.join(projectDir, "scripts", "dev", "run-dev-command.sh");
 
-    const parsedJson = yield* Effect.try({
-      try: () => JSON.parse(config.raw) as unknown,
-      catch: (cause) =>
-        toDevCommandError(`Failed to parse dev command config JSON at ${config.configPath}.`, cause),
-    });
-
-    const parsed = yield* Schema.decodeUnknown(ConfigFileSchema)(parsedJson).pipe(
-      Effect.mapError((cause) =>
-        toDevCommandError(`Failed to parse dev command config at ${config.configPath}.`, cause),
+  if (config !== null) {
+    const parsedJson = JSON.parse(config.raw) as unknown;
+    const parsed = await Schema.decodeUnknown(ConfigFileSchema)(parsedJson).pipe(Effect.runPromise);
+    return {
+      projectDir,
+      configPath: config.configPath,
+      tailscaleAvailable: runtime.tailscaleAvailable,
+      magicDnsName: runtime.magicDnsName,
+      commands: parsed.commands.map((command) =>
+        toPublicCommand({
+          configCommand: command,
+          projectDir,
+          wrapperPath,
+          magicDnsName: runtime.magicDnsName,
+        }),
       ),
-    );
+      warnings: [],
+    };
+  }
 
-    const wrapperPath = Path.join(input.projectDir, "scripts", "dev", "run-dev-command.sh");
-    const commands = parsed.commands.map((command) =>
+  const discovered = uniqueCommands(await discoverCommands(projectDir));
+  return {
+    projectDir,
+    configPath: null,
+    tailscaleAvailable: runtime.tailscaleAvailable,
+    magicDnsName: runtime.magicDnsName,
+    commands: discovered.map((command) =>
       toPublicCommand({
         configCommand: command,
-        projectDir: input.projectDir,
+        projectDir,
         wrapperPath,
-        magicDnsName,
+        magicDnsName: runtime.magicDnsName,
       }),
-    );
+    ),
+    warnings:
+      discovered.length > 0
+        ? [
+            `No dev command config found. Using inferred presets from package.json scripts. Initialize ${CONFIG_CANDIDATES[0]} to save them for this repo.`,
+          ]
+        : [
+            `No dev command config found and no dev scripts were discovered. Add ${CONFIG_CANDIDATES[0]} or define package.json dev scripts.`,
+          ],
+  };
+}
 
-    return {
-      projectDir: input.projectDir,
-      configPath: config.configPath,
-      tailscaleAvailable: magicDnsName !== null,
-      magicDnsName,
-      commands,
-      warnings: [],
-    } satisfies GitsDevCommandListResult;
-  });
+const makeListCommands: GitsDevCommandsShape["listCommands"] = (input: GitsDevCommandListInput) =>
+  Effect.tryPromise({
+    try: () => buildListResult(input.projectDir),
+    catch: (cause) =>
+      toDevCommandError(`Failed to inspect dev command config in ${input.projectDir}.`, cause),
+  }).pipe(
+    Effect.catchTag("ParseError", (cause) =>
+      Effect.fail(
+        toDevCommandError(`Failed to parse dev command config in ${input.projectDir}.`, cause),
+      ),
+    ),
+  );
+
+const makeInitCommands: GitsDevCommandsShape["initCommands"] = (input: GitsDevCommandInitInput) =>
+  Effect.tryPromise({
+    try: async () => {
+      const existing = await readFirstExistingConfig(input.projectDir);
+      if (existing !== null) {
+        return buildListResult(input.projectDir);
+      }
+      const discovered = uniqueCommands(await discoverCommands(input.projectDir));
+      if (discovered.length === 0) {
+        throw toDevCommandError(
+          `No dev scripts were discovered in ${input.projectDir}. Add package.json dev scripts or create ${CONFIG_CANDIDATES[0]} manually.`,
+        );
+      }
+      const configPath = Path.join(input.projectDir, CONFIG_CANDIDATES[0]);
+      await Fs.mkdir(Path.dirname(configPath), { recursive: true });
+      const file = {
+        commands: discovered.map((command) =>
+          toConfigCommandForWrite({
+            command,
+            projectDir: input.projectDir,
+          }),
+        ),
+      } satisfies typeof ConfigFileSchema.Type;
+      await Fs.writeFile(configPath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+      return buildListResult(input.projectDir);
+    },
+    catch: (cause) =>
+      cause instanceof GitsDevCommandError
+        ? cause
+        : toDevCommandError(
+            `Failed to initialize dev command config in ${input.projectDir}.`,
+            cause,
+          ),
+  }).pipe(
+    Effect.catchTag("ParseError", (cause) =>
+      Effect.fail(
+        toDevCommandError(`Failed to write or parse initialized dev commands in ${input.projectDir}.`, cause),
+      ),
+    ),
+  );
 
 export const makeGitsDevCommands = Effect.succeed({
   listCommands: makeListCommands,
+  initCommands: makeInitCommands,
 } satisfies GitsDevCommandsShape);
 
 export const GitsDevCommandsLive = Layer.effect(GitsDevCommands, makeGitsDevCommands);
