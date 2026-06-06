@@ -1,0 +1,5 @@
+# graphify tooling state — keep only the navigable outputs (GRAPH_REPORT.md, graph.html, graph.json)
+.graphify_*
+cache/
+cost.json
+manifest.json
