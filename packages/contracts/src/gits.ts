@@ -1265,3 +1265,38 @@ export class GitsSemanticVerifierError extends Schema.TaggedErrorClass<GitsSeman
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+// --- Per-slice acceptance criteria (Rev 2: the verifier's source of truth) -----------------
+// Authored at planning time (/grill-me, GSD .planning) and stored per slice; the peer prompt
+// builds to them and the verifier judges against them (same bar). `source: "derived"` flags a
+// slice with no authored criteria (verifier derives provisional ones → lower-confidence verdict).
+// See docs/gits/ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md §"Revision 2".
+
+export const GitsSliceCriteriaSource = Schema.Literals(["authored", "derived"]);
+export type GitsSliceCriteriaSource = typeof GitsSliceCriteriaSource.Type;
+
+export const GitsSliceCriteria = Schema.Struct({
+  sliceId: TrimmedNonEmptyString,
+  title: Schema.NullOr(SummaryString),
+  acceptanceCriteria: Schema.Array(SummaryString),
+  source: GitsSliceCriteriaSource,
+});
+export type GitsSliceCriteria = typeof GitsSliceCriteria.Type;
+
+export const GitsSliceCriteriaLoadInput = Schema.Struct({ sliceId: TrimmedNonEmptyString });
+export type GitsSliceCriteriaLoadInput = typeof GitsSliceCriteriaLoadInput.Type;
+
+export const GitsSliceCriteriaSaveInput = Schema.Struct({
+  sliceId: TrimmedNonEmptyString,
+  title: Schema.optional(SummaryString),
+  acceptanceCriteria: Schema.Array(SummaryString),
+});
+export type GitsSliceCriteriaSaveInput = typeof GitsSliceCriteriaSaveInput.Type;
+
+export class GitsSliceCriteriaError extends Schema.TaggedErrorClass<GitsSliceCriteriaError>()(
+  "GitsSliceCriteriaError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
