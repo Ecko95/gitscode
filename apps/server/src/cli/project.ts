@@ -1,14 +1,7 @@
-import {
-  CommandId,
-  OrchestrationReadModel,
-  ProjectId,
-  type ClientOrchestrationCommand,
-} from "@t3tools/contracts";
+import { CommandId, OrchestrationReadModel, ProjectId } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -16,32 +9,29 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
-import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts";
 import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
-import type { AuthControlPlaneShape } from "../auth/Services/AuthControlPlane.ts";
-import { ServerConfig, type ServerConfigShape } from "../config.ts";
+import { ServerConfig } from "../config.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
 import { RepositoryIdentityResolverLive } from "../project/Layers/RepositoryIdentityResolver.ts";
 import { getAutoBootstrapDefaultModelSelection } from "../serverRuntimeStartup.ts";
-import {
-  clearPersistedServerRuntimeState,
-  readPersistedServerRuntimeState,
-} from "../serverRuntimeState.ts";
 import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
 import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import {
+  dispatchLiveOrchestrationCommand,
+  fetchLiveOrchestrationSnapshot,
+  ProjectCommandError,
+  tryResolveLiveProjectExecutionMode,
+  withProjectCliSessionToken,
+  type ProjectCliDispatchCommand,
+} from "./liveServer.ts";
 
 type ProjectMutationTarget = {
   readonly id: ProjectId;
@@ -50,14 +40,6 @@ type ProjectMutationTarget = {
 };
 
 type ProjectCommandExecutionMode = "live" | "offline";
-type ProjectCliDispatchCommand = Extract<
-  ClientOrchestrationCommand,
-  { type: "project.create" | "project.meta.update" | "project.delete" }
->;
-
-class ProjectCommandError extends Data.TaggedError("ProjectCommandError")<{
-  readonly message: string;
-}> {}
 
 const projectCommandUuid = Crypto.Crypto.pipe(
   Effect.flatMap((crypto) => crypto.randomUUIDv4),
@@ -76,52 +58,6 @@ const ProjectCliRuntimeLive = Layer.mergeAll(
     Layer.provideMerge(SqlitePersistenceLayerLive),
   ),
 );
-
-const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
-const OrchestrationHttpErrorResponse = Schema.Struct({
-  error: Schema.String,
-});
-
-const withProjectCliSessionToken = <A, E, R>(
-  authControlPlane: AuthControlPlaneShape,
-  run: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.acquireUseRelease(
-    authControlPlane.issueSession({
-      role: "owner",
-      label: "t3 project cli",
-    }),
-    (issued) => run(issued.token),
-    (issued) => authControlPlane.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-  );
-
-const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.timeout(PROJECT_CLI_LIVE_SERVER_TIMEOUT));
-
-const runLiveServerRequest = <A, E extends Error, R>(
-  request: HttpClientRequest.HttpClientRequest,
-  handle: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const response = yield* httpClient.execute(request);
-    return yield* handle(response);
-  }).pipe(withProjectCliLiveServerTimeout);
-
-const decodeOrchestrationReadModelResponse = (response: HttpClientResponse.HttpClientResponse) =>
-  HttpClientResponse.schemaBodyJson(OrchestrationReadModel)(response);
-
-const readErrorMessageFromResponse = (response: HttpClientResponse.HttpClientResponse) =>
-  HttpClientResponse.schemaBodyJson(OrchestrationHttpErrorResponse)(response).pipe(
-    Effect.map((body) => body.error),
-    Effect.catch(() => Effect.succeed(null)),
-    Effect.map((body) => {
-      if (typeof body === "string" && body.trim().length > 0) {
-        return body;
-      }
-      return `Server request failed with status ${response.status}.`;
-    }),
-  );
 
 const normalizeWorkspaceRootForProjectCommand = Effect.fn(
   "normalizeWorkspaceRootForProjectCommand",
@@ -192,73 +128,10 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   } satisfies ProjectMutationTarget;
 });
 
-const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
-  runLiveServerRequest(
-    HttpClientRequest.get(`${origin}/api/orchestration/snapshot`).pipe(
-      HttpClientRequest.acceptJson,
-      HttpClientRequest.bearerToken(bearerToken),
-    ),
-    HttpClientResponse.matchStatus({
-      "2xx": decodeOrchestrationReadModelResponse,
-      orElse: (response) =>
-        readErrorMessageFromResponse(response).pipe(
-          Effect.flatMap((message) => Effect.fail(new ProjectCommandError({ message }))),
-        ),
-    }),
-  );
-
-const dispatchLiveOrchestrationCommand = (
-  origin: string,
-  bearerToken: string,
-  command: ProjectCliDispatchCommand,
-) =>
-  HttpClientRequest.post(`${origin}/api/orchestration/dispatch`).pipe(
-    HttpClientRequest.acceptJson,
-    HttpClientRequest.bearerToken(bearerToken),
-    HttpClientRequest.bodyJson(command),
-    Effect.flatMap((request) =>
-      runLiveServerRequest(
-        request,
-        HttpClientResponse.matchStatus({
-          "2xx": () => Effect.void,
-          orElse: (response) =>
-            readErrorMessageFromResponse(response).pipe(
-              Effect.flatMap((message) => Effect.fail(new ProjectCommandError({ message }))),
-            ),
-        }),
-      ),
-    ),
-  );
-
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   return yield* projectionSnapshotQuery.getSnapshot();
 });
-
-const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
-  function* (authControlPlane: AuthControlPlaneShape, config: ServerConfigShape) {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return Option.none<{ readonly origin: string }>();
-    }
-
-    const attempt = withProjectCliSessionToken(authControlPlane, (token) =>
-      fetchLiveOrchestrationSnapshot(runtimeState.value.origin, token).pipe(
-        Effect.as({
-          origin: runtimeState.value.origin,
-        }),
-      ),
-    );
-
-    const attempted = yield* Effect.exit(attempt);
-    if (Exit.isSuccess(attempted)) {
-      return Option.some(attempted.value);
-    }
-
-    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    return Option.none<{ readonly origin: string }>();
-  },
-);
 
 const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   flags: CliAuthLocationFlags,
