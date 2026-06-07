@@ -55,6 +55,11 @@ gits_hosting_require_command systemctl
 gits_hosting_require_command node
 
 node_path="$(command -v node)"
+node_bin_dir="$(dirname "$node_path")"
+# systemd user units inherit a minimal PATH that omits the Node/nvm bin dir where `codex`
+# (@openai/codex, a `#!/usr/bin/env node` script) and `node` itself live. Without it the hosted
+# server cannot spawn provider CLIs ("Codex CLI (`codex`) is not installed or not on PATH").
+service_path="${node_bin_dir}:${HOME}/.bun/bin:${HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 unit_path="$(gits_hosting_service_unit_path)"
 metadata_path="$(gits_hosting_metadata_path)"
 mkdir -p "$(dirname "$unit_path")"
@@ -71,6 +76,7 @@ WorkingDirectory=${gits_hosting_worktree}
 Environment=NODE_ENV=production
 Environment=T3CODE_HOME=${gits_hosting_t3code_home}
 Environment=GITS_BUILD_INFO_PATH=${metadata_path}
+Environment=PATH=${service_path}
 ExecStart=${node_path} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}
 Restart=on-failure
 RestartSec=3
