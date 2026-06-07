@@ -311,6 +311,7 @@ interface SidebarThreadRowProps {
     originalTitle: string,
   ) => Promise<void>;
   cancelRename: () => void;
+  beginRename: (threadKey: string, currentTitle: string) => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
 }
@@ -336,6 +337,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     clearSelection,
     commitRename,
     cancelRename,
+    beginRename,
     attemptArchiveThread,
     openPrLink,
     thread,
@@ -494,6 +496,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const handleRenameInputClick = useCallback((event: React.MouseEvent<HTMLInputElement>) => {
     event.stopPropagation();
   }, []);
+  const handleTitleDoubleClick = useCallback(
+    (event: React.MouseEvent<HTMLSpanElement>) => {
+      event.stopPropagation();
+      beginRename(threadKey, thread.title);
+    },
+    [beginRename, threadKey, thread.title],
+  );
   const handleConfirmArchiveRef = useCallback(
     (element: HTMLButtonElement | null) => {
       if (element) {
@@ -596,6 +605,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   <span
                     className="min-w-0 flex-1 truncate text-xs"
                     data-testid={`thread-title-${thread.id}`}
+                    onDoubleClick={handleTitleDoubleClick}
                   >
                     {thread.title}
                   </span>
@@ -761,6 +771,7 @@ interface SidebarProjectThreadListProps {
     originalTitle: string,
   ) => Promise<void>;
   cancelRename: () => void;
+  beginRename: (threadKey: string, currentTitle: string) => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
   expandThreadListForProject: (projectKey: string) => void;
@@ -800,6 +811,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     clearSelection,
     commitRename,
     cancelRename,
+    beginRename,
     attemptArchiveThread,
     openPrLink,
     expandThreadListForProject,
@@ -850,6 +862,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               clearSelection={clearSelection}
               commitRename={commitRename}
               cancelRename={cancelRename}
+              beginRename={beginRename}
               attemptArchiveThread={attemptArchiveThread}
               openPrLink={openPrLink}
             />
@@ -1761,6 +1774,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [archiveThread],
   );
 
+  const beginRename = useCallback((threadKey: string, currentTitle: string) => {
+    setRenamingThreadKey(threadKey);
+    setRenamingTitle(currentTitle);
+    renamingCommittedRef.current = false;
+  }, []);
+
   const cancelRename = useCallback(() => {
     setRenamingThreadKey(null);
     renamingInputRef.current = null;
@@ -1925,9 +1944,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
 
       if (clicked === "rename") {
-        setRenamingThreadKey(threadKey);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        beginRename(threadKey, thread.title);
         return;
       }
 
@@ -1969,6 +1986,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
     [
       appSettingsConfirmThreadDelete,
+      beginRename,
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
@@ -2104,6 +2122,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         clearSelection={clearSelection}
         commitRename={commitRename}
         cancelRename={cancelRename}
+        beginRename={beginRename}
         attemptArchiveThread={attemptArchiveThread}
         openPrLink={openPrLink}
         expandThreadListForProject={expandThreadListForProject}

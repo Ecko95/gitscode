@@ -12,6 +12,7 @@ import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
+import { useSidebar } from "~/components/ui/sidebar";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
 
@@ -27,6 +28,7 @@ function ChatRouteGlobalShortcuts() {
       : false,
   );
   const appSettings = useSettings();
+  const { toggleSidebar } = useSidebar();
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -45,6 +47,13 @@ function ChatRouteGlobalShortcuts() {
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
+        return;
+      }
+
+      if (command === "sidebar.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSidebar();
         return;
       }
 
@@ -91,6 +100,7 @@ function ChatRouteGlobalShortcuts() {
     defaultProjectRef,
     selectedThreadKeysSize,
     terminalOpen,
+    toggleSidebar,
     appSettings.defaultThreadEnvMode,
   ]);
 
