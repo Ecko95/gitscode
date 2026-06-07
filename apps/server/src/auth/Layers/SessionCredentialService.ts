@@ -40,7 +40,7 @@ const SessionClaims = Schema.Struct({
   kind: Schema.Literal("session"),
   sid: AuthSessionId,
   sub: Schema.String,
-  role: Schema.Literals(["owner", "client"]),
+  role: Schema.Literals(["owner", "client", "thread-scoped"]),
   method: Schema.Literals(["browser-session-cookie", "bearer-session-token"]),
   iat: Schema.Number,
   exp: Schema.Number,

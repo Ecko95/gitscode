@@ -69,7 +69,7 @@ export const ServerAuthSessionMethod = Schema.Literals([
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
-export const AuthSessionRole = Schema.Literals(["owner", "client"]);
+export const AuthSessionRole = Schema.Literals(["owner", "client", "thread-scoped"]);
 export type AuthSessionRole = typeof AuthSessionRole.Type;
 
 /**

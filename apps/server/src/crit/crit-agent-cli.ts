@@ -2,8 +2,6 @@
 // Standalone child-process CLI spawned by crit as its agent_cmd. It is deliberately
 // dependency-light (global fetch, node timers, plain Date) and is NOT an Effect program,
 // so the Effect runtime diagnostics that apply to the rest of apps/server are disabled here.
-import { randomUUID } from "node:crypto";
-
 import { build_review_comment_block } from "@t3tools/shared/crit/review-comment-block";
 
 // ---------------------------------------------------------------------------
@@ -28,37 +26,14 @@ interface CritStdinPayload {
   readonly endLine?: number;
 }
 
-export interface ThreadTurnStartCommandBody {
-  readonly type: "thread.turn.start";
-  readonly commandId: string;
-  readonly threadId: string;
-  readonly message: {
-    readonly messageId: string;
-    readonly role: "user";
-    readonly text: string;
-    readonly attachments: readonly never[];
-  };
-  readonly runtimeMode: "full-access";
-  readonly interactionMode: "default";
-  readonly createdAt: string;
+interface CritTurnResponse {
+  readonly priorTurnId: string | null;
 }
 
-interface SnapshotThread {
-  readonly id: string;
-  readonly latestTurn: {
-    readonly turnId: string;
-    readonly state: string;
-    readonly assistantMessageId: string | null;
-  } | null;
-  readonly messages: ReadonlyArray<{
-    readonly id: string;
-    readonly role: string;
-    readonly text: string;
-  }>;
-}
-
-interface Snapshot {
-  readonly threads: ReadonlyArray<SnapshotThread>;
+interface CritTurnStatusResponse {
+  readonly state: "pending" | "completed" | "error" | "interrupted";
+  readonly assistantMessageId: string | null;
+  readonly reply: string | null;
 }
 
 export interface RunCritAgentOptions {
@@ -96,14 +71,11 @@ export function parse_crit_payload(raw: string): NormalizedComment {
 }
 
 // ---------------------------------------------------------------------------
-// build_turn_start_command
+// build_review_text
 // ---------------------------------------------------------------------------
 
-export function build_turn_start_command(
-  threadId: string,
-  comment: NormalizedComment,
-): ThreadTurnStartCommandBody {
-  const text = build_review_comment_block({
+export function build_review_text(comment: NormalizedComment): string {
+  return build_review_comment_block({
     filePath: comment.filePath,
     sectionId: `crit:${comment.filePath}:${comment.startIndex}-${comment.endIndex}`,
     sectionTitle: "Crit review",
@@ -113,100 +85,79 @@ export function build_turn_start_command(
     text: comment.text,
     diff: comment.diff,
   });
-
-  return {
-    type: "thread.turn.start",
-    commandId: randomUUID(),
-    threadId,
-    message: { messageId: randomUUID(), role: "user", text, attachments: [] },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    createdAt: new Date().toISOString(),
-  };
 }
 
 // ---------------------------------------------------------------------------
 // run_crit_agent
 // ---------------------------------------------------------------------------
 
+const ERROR_ACK = "GITS reported an error completing this turn — see the GITS conversation.";
+const STILL_WORKING_ACK =
+  "Sent to GITS — the agent is still working; see the GITS conversation for the reply.";
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function dispatch_command(
-  options: RunCritAgentOptions,
-  command: ThreadTurnStartCommandBody,
-): Promise<void> {
-  const response = await fetch(`${options.origin}/api/orchestration/dispatch`, {
+async function start_turn(options: RunCritAgentOptions, text: string): Promise<string | null> {
+  const response = await fetch(`${options.origin}/api/crit/turn`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       accept: "application/json",
       authorization: `Bearer ${options.token}`,
     },
-    body: JSON.stringify(command),
+    body: JSON.stringify({ threadId: options.threadId, text }),
   });
   if (!response.ok) {
-    throw new Error(`GITS dispatch failed (${response.status}): ${await response.text()}`);
+    throw new Error(`GITS turn failed (${response.status}): ${await response.text()}`);
   }
+  const payload = (await response.json()) as CritTurnResponse;
+  return payload.priorTurnId ?? null;
 }
 
-async function read_snapshot(options: RunCritAgentOptions): Promise<Snapshot> {
-  const response = await fetch(`${options.origin}/api/orchestration/snapshot`, {
+async function read_turn_status(
+  options: RunCritAgentOptions,
+  priorTurnId: string | null,
+): Promise<CritTurnStatusResponse> {
+  const params = new URLSearchParams({ threadId: options.threadId });
+  if (priorTurnId !== null && priorTurnId.length > 0) {
+    params.set("priorTurnId", priorTurnId);
+  }
+  const response = await fetch(`${options.origin}/api/crit/turn-status?${params.toString()}`, {
     headers: { accept: "application/json", authorization: `Bearer ${options.token}` },
   });
   if (!response.ok) {
-    throw new Error(`GITS snapshot failed (${response.status})`);
+    throw new Error(`GITS turn-status failed (${response.status})`);
   }
-  return (await response.json()) as Snapshot;
-}
-
-function find_thread(snapshot: Snapshot, threadId: string): SnapshotThread | undefined {
-  return snapshot.threads.find((candidate) => candidate.id === threadId);
+  return (await response.json()) as CritTurnStatusResponse;
 }
 
 export async function run_crit_agent(options: RunCritAgentOptions): Promise<string> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const pollMs = options.pollMs ?? 500;
   const comment = parse_crit_payload(options.stdin);
-  const command = build_turn_start_command(options.threadId, comment);
+  const text = build_review_text(comment);
 
-  // Capture the thread's current turn BEFORE dispatching. The orchestration
-  // projector only flips latestTurn to "running" asynchronously (well after the
-  // dispatch POST returns), so without a baseline a fast first poll can observe
-  // the PREVIOUS (already-completed) turn and return its reply as if it answered
-  // this comment. We only accept a turn whose id differs from this baseline.
-  const baseline = await read_snapshot(options);
-  const baselineTurnId = find_thread(baseline, options.threadId)?.latestTurn?.turnId ?? null;
-
-  await dispatch_command(options, command);
+  // The server captures the baseline prior turn and correlates the started turn
+  // for us; we only forward the opaque priorTurnId it returns on each poll.
+  const priorTurnId = await start_turn(options, text);
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await sleep(pollMs);
-    const snapshot = await read_snapshot(options);
-    const thread = find_thread(snapshot, options.threadId);
-    const turn = thread?.latestTurn;
-    // Ignore the baseline (prior) turn and any still-running turn — keep polling
-    // until the turn we started surfaces a terminal state.
-    if (!turn || turn.turnId === baselineTurnId || turn.state === "running") {
+    const status = await read_turn_status(options, priorTurnId);
+    if (status.state === "pending") {
       continue;
     }
-    if (turn.state === "error") {
-      return "GITS reported an error completing this turn — see the GITS conversation.";
+    if (status.state === "completed") {
+      return status.reply ?? STILL_WORKING_ACK;
     }
-    if (turn.state === "completed") {
-      const message = turn.assistantMessageId
-        ? thread?.messages.find((candidate) => candidate.id === turn.assistantMessageId)
-        : undefined;
-      if (message) {
-        return message.text;
-      }
-      // Turn completed but the assistant message has not projected yet — keep polling.
-      continue;
+    if (status.state === "error") {
+      return ERROR_ACK;
     }
-    // New turn reached some other terminal state (e.g. interrupted) — stop and ack.
+    // "interrupted" or any other terminal state — stop and ack.
     break;
   }
-  return "Sent to GITS — the agent is still working; see the GITS conversation for the reply.";
+  return STILL_WORKING_ACK;
 }
 
 // ---------------------------------------------------------------------------

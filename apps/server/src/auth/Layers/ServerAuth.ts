@@ -21,6 +21,7 @@ import {
   ServerAuth,
   type AuthenticatedSession,
   AuthError,
+  denyThreadScopedRealtime,
   type ServerAuthShape,
 } from "../Services/ServerAuth.ts";
 import {
@@ -327,24 +328,31 @@ export const makeServerAuth = Effect.gen(function* () {
     );
 
   const issueWebSocketToken: ServerAuthShape["issueWebSocketToken"] = (session) =>
-    sessions.issueWebSocketToken(session.sessionId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AuthError({
-            message: "Failed to issue websocket token.",
-            cause,
-          }),
-      ),
-      Effect.map(
-        (issued) =>
-          ({
-            token: issued.token,
-            expiresAt: DateTime.toUtc(issued.expiresAt),
-          }) satisfies AuthWebSocketTokenResult,
-      ),
-    );
+    Effect.gen(function* () {
+      // Centralized deny: thread-scoped sidecar sessions may not open /ws.
+      const denial = denyThreadScopedRealtime(session);
+      if (denial) {
+        return yield* denial;
+      }
+      return yield* sessions.issueWebSocketToken(session.sessionId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AuthError({
+              message: "Failed to issue websocket token.",
+              cause,
+            }),
+        ),
+        Effect.map(
+          (issued) =>
+            ({
+              token: issued.token,
+              expiresAt: DateTime.toUtc(issued.expiresAt),
+            }) satisfies AuthWebSocketTokenResult,
+        ),
+      );
+    });
 
-  const authenticateWebSocketUpgrade: ServerAuthShape["authenticateWebSocketUpgrade"] = (request) =>
+  const resolveWebSocketUpgradeSession = (request: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
@@ -371,6 +379,18 @@ export const makeServerAuth = Effect.gen(function* () {
       }
 
       return yield* authenticateRequest(request);
+    });
+
+  const authenticateWebSocketUpgrade: ServerAuthShape["authenticateWebSocketUpgrade"] = (request) =>
+    Effect.gen(function* () {
+      const session = yield* resolveWebSocketUpgradeSession(request);
+      // Defense-in-depth: even a pre-minted ws-token for a thread-scoped session
+      // must not open /ws. Centralized deny mirrors issueWebSocketToken.
+      const denial = denyThreadScopedRealtime(session);
+      if (denial) {
+        return yield* denial;
+      }
+      return session;
     });
 
   return {

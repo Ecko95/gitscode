@@ -33,6 +33,27 @@ export class AuthError extends Data.TaggedError("AuthError")<{
   readonly cause?: unknown;
 }> {}
 
+/**
+ * Centralized policy: a `thread-scoped` session (minted only for the crit
+ * sidecar, subject-bound to a single threadId) is denied at the broad realtime
+ * surfaces — minting a ws-token, opening the `/ws` upgrade, and reading
+ * arbitrary attachments. Owner and ordinary client sessions are unaffected.
+ *
+ * Returns an `AuthError({ status: 403 })` to reject, or `null` to allow. Kept
+ * as a pure predicate so every surface enforces the same rule from one place.
+ */
+export function denyThreadScopedRealtime(session: {
+  readonly role: SessionRole;
+}): AuthError | null {
+  if (session.role === "thread-scoped") {
+    return new AuthError({
+      message: "Thread-scoped sessions cannot open a realtime connection.",
+      status: 403,
+    });
+  }
+  return null;
+}
+
 export interface ServerAuthShape {
   readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
   readonly getSessionState: (
