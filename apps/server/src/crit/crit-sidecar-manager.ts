@@ -231,12 +231,22 @@ const makeCritSidecarManager = Effect.gen(function* () {
       // revoked when `scope` closes — wiring it here means every teardown path
       // that closes the scope also revokes the token.
       // NOTE: the token is role:"client" bound to subject:threadId — a thread-scoped
-      // least-privilege capability. It is authorized only by the dedicated
-      // /api/crit/{turn,turn-status} endpoints, which require session.subject ===
-      // threadId, so a leaked token can act on nothing but its own thread. The
-      // owner-gated /api/orchestration/* endpoints reject this client-role token, so
-      // they remain unreachable by the sidecar. The bounded TTL + revoke-on-teardown
-      // wired here further limit the blast radius.
+      // capability for the dedicated /api/crit/{turn,turn-status} endpoints, which
+      // require session.subject === threadId. The owner-gated /api/orchestration/*
+      // HTTP endpoints reject this client-role token (role !== "owner"), and the
+      // bounded TTL + revoke-on-teardown wired here further limit the blast radius.
+      //
+      // CAVEAT (known residual, tracked): this is NOT a full least-privilege
+      // confinement. The WebSocket RPC surface (POST /api/auth/ws-token + GET /ws,
+      // see apps/server/src/auth/http.ts + apps/server/src/ws.ts) authenticates ANY
+      // session with no role/subject gate, and the RPC handlers reached after the
+      // upgrade call orchestrationEngine.dispatch() with no subject filtering. So a
+      // *leaked* sidecar token can still mint a ws-token and dispatch arbitrary
+      // orchestration commands over /ws against any thread — the same broad reach an
+      // owner token had. This is a pre-existing gap, not introduced by this change;
+      // subject-scoping the WS/RPC surface is tracked as follow-up. The dedicated
+      // /api/crit/* HTTP endpoints here are correctly subject-scoped; the WS path is
+      // not yet. See critHttp.test.ts for the asserted-limitation coverage.
       const issued = yield* authControlPlane
         .issueSession({
           role: "client",

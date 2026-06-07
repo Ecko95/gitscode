@@ -23,6 +23,7 @@ import {
 import { type OrchestrationThread, ProjectId, ThreadId } from "@t3tools/contracts";
 
 import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
+import { authWebSocketTokenRouteLayer } from "../auth/http.ts";
 import { ServerAuthLive } from "../auth/Layers/ServerAuth.ts";
 import { ServerSecretStoreLive } from "../auth/Layers/ServerSecretStore.ts";
 import { ServerConfig, deriveServerPaths, type ServerConfigShape } from "../config.ts";
@@ -260,6 +261,7 @@ const make_app_layer = (config: ServerConfigShape, options: StubOptions) => {
     critTurnRouteLayer,
     critTurnStatusRouteLayer,
     orchestrationDispatchRouteLayer,
+    authWebSocketTokenRouteLayer,
   );
 
   return HttpRouter.serve(routesLayer, {
@@ -353,6 +355,15 @@ const post_orchestration_dispatch = (baseUrl: string, token: string) =>
         authorization: `Bearer ${token}`,
       }),
       HttpClientRequest.bodyJsonUnsafe({ type: "project.list" }),
+    );
+    return yield* client.execute(request);
+  });
+
+const post_ws_token = (baseUrl: string, token: string) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const request = HttpClientRequest.post(`${baseUrl}/api/auth/ws-token`).pipe(
+      HttpClientRequest.setHeaders({ authorization: `Bearer ${token}` }),
     );
     return yield* client.execute(request);
   });
@@ -485,5 +496,65 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
         }),
       );
     }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("GET /api/crit/turn-status returns 400 (not 500) for a whitespace-only threadId", () =>
+    // Regression: `ThreadId.make(" ")` trims to "" and throws a schema defect that
+    // `Effect.catchTags` does NOT catch, which previously fell through to a 500 —
+    // and did so *before* authorize ran. The query threadId must be decoded in the
+    // Effect error channel and mapped to a clean 400.
+    Effect.gen(function* () {
+      yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token(THREAD_A);
+          const response = yield* get_turn_status(baseUrl, " ", null, bearer);
+          assert.equal(response.status, 400);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("GET /api/crit/turn-status returns 400 when threadId is missing", () =>
+    Effect.gen(function* () {
+      yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token(THREAD_A);
+          const client = yield* HttpClient.HttpClient;
+          const request = HttpClientRequest.get(`${baseUrl}/api/crit/turn-status`).pipe(
+            HttpClientRequest.setHeaders({ authorization: `Bearer ${bearer}` }),
+          );
+          const response = yield* client.execute(request);
+          assert.equal(response.status, 400);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  // KNOWN-LIMITATION (tracked follow-up): the subject-bound client-role sidecar
+  // token does NOT confine the WebSocket RPC surface. `POST /api/auth/ws-token`
+  // has no role/subject gate, so the token can mint a ws-token (and then open
+  // `/ws`, where the RPC handlers reach orchestrationEngine.dispatch with no
+  // subject filtering). This test asserts that residual reachability EXPLICITLY
+  // so the gap is documented-and-tested rather than silently overclaimed. When
+  // the WS/RPC surface is subject-scoped, flip this assertion to expect a refusal.
+  it.effect(
+    "KNOWN LIMITATION: a subject-bound crit token can still mint a ws-token (WS path is not yet subject-gated)",
+    () =>
+      Effect.gen(function* () {
+        yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+          Effect.gen(function* () {
+            const bearer = yield* token(THREAD_A);
+            const response = yield* post_ws_token(baseUrl, bearer);
+            // The WS-token endpoint authenticates any valid session regardless of
+            // role/subject, so the sidecar token is accepted (200) — proving the
+            // WS path is the residual escalation route, not a 403.
+            assert.equal(
+              response.status,
+              200,
+              `expected the WS-token endpoint to accept the subject-bound client token (documenting the known WS gap), got ${response.status}`,
+            );
+          }),
+        );
+      }).pipe(Effect.provide(FetchHttpClient.layer)),
   );
 });

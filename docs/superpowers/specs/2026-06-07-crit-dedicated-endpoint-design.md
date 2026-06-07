@@ -19,6 +19,16 @@ is only `"owner" | "client"`, so a role swap alone gives no real scoping — **t
 broad capability**. The fix is to add narrow, thread-scoped endpoints the wrapper uses instead, and
 mint the token with the least privilege those endpoints require.
 
+> **Residual gap (known, tracked):** this change scopes the **HTTP orchestration** surface only.
+> The WebSocket RPC surface (`POST /api/auth/ws-token` + `GET /ws`) authenticates any session with
+> no role/subject gate, and the RPC handlers reached after upgrade call
+> `orchestrationEngine.dispatch(...)` with no subject filtering. So a *leaked* client-role +
+> subject-bound sidecar token can still mint a ws-token and dispatch arbitrary orchestration
+> commands over `/ws` against any thread — the same broad reach the old owner token had. This is a
+> pre-existing gap (reachable under the old owner token too), not introduced here. Subject-scoping
+> the WS/RPC surface is **deferred follow-up**; until then the sidecar token is *not* a full
+> least-privilege confinement. The limitation is encoded as an asserted test in `critHttp.test.ts`.
+
 ## Key constraint discovered during design
 
 The handoff's recommended design assumed `POST /api/crit/turn` could synchronously return the new
@@ -48,9 +58,12 @@ The chosen design (Option A) keeps that baseline server-side and exposes it as a
 - We deliberately do **not** gate on role — the subject binding *is* the capability. threadIds are
   unguessable UUIDs and ordinary client sessions carry `subject = "cli-issued-session"` (or a
   pairing subject), never a threadId, so `subject === threadId` is a strong, narrow capability.
-- The client-role token automatically fails the existing `role !== "owner"` gate on
-  `/api/orchestration/*`, so the broad endpoints remain unreachable by the sidecar token. This is
-  asserted by a test.
+- The client-role token automatically fails the existing `role !== "owner"` gate on the
+  `/api/orchestration/*` **HTTP** endpoints, so those broad HTTP endpoints remain unreachable by the
+  sidecar token. This is asserted by a test. **Caveat:** as noted under Problem, this gate does
+  **not** cover the WebSocket RPC path (`/api/auth/ws-token` + `/ws`), which has no role/subject gate
+  and still reaches full `orchestrationEngine.dispatch`. That residual WS reachability is a tracked
+  follow-up and is encoded as an asserted-limitation test rather than left as a false guarantee.
 
 `AuthControlPlane.issueSession` already honors `subject` and `role`
 (`apps/server/src/auth/Layers/AuthControlPlane.ts:109`), and `authenticateHttpRequest` populates

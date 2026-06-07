@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
@@ -106,6 +107,15 @@ export const compute_turn_status = (
   // "interrupted" or any other terminal state.
   return { state: "interrupted", assistantMessageId: null, reply: null };
 };
+
+/**
+ * Decode a raw `threadId` query parameter into a branded `ThreadId` without
+ * throwing. `ThreadId.make(...)` runs the schema check synchronously and throws
+ * a defect for empty/whitespace-only input — which `Effect.catchTags` would NOT
+ * catch, surfacing as a 500 *before* `authorize` runs. Decoding through the
+ * Effect error channel keeps the failure as a clean 400 instead.
+ */
+const decodeThreadIdParam = Schema.decodeUnknownEffect(ThreadId);
 
 const buildTurnStartCommand = (threadId: ThreadId, text: string) =>
   Effect.gen(function* () {
@@ -215,13 +225,22 @@ export const critTurnStatusRouteLayer = HttpRouter.add(
       });
     }
     const threadIdParam = url.value.searchParams.get("threadId");
-    if (threadIdParam === null || threadIdParam.length === 0) {
+    if (threadIdParam === null) {
       return yield* new CritHttpError({
         message: "threadId query parameter is required.",
         status: 400,
       });
     }
-    const threadId = ThreadId.make(threadIdParam);
+    const threadId = yield* decodeThreadIdParam(threadIdParam).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CritHttpError({
+            message: "Invalid threadId query parameter.",
+            status: 400,
+            cause,
+          }),
+      ),
+    );
     const priorTurnId = url.value.searchParams.get("priorTurnId");
 
     yield* authorize(threadId);
