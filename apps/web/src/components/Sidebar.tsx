@@ -3,6 +3,7 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  EllipsisIcon,
   FolderPlusIcon,
   RadarIcon,
   SearchIcon,
@@ -452,6 +453,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [clearSelection, handleMultiSelectContextMenu, handleThreadContextMenu, isSelected, threadRef],
   );
+  const handleActionsButtonClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = event.currentTarget.getBoundingClientRect();
+      const position = { x: rect.left, y: rect.bottom };
+      const hasSelection = useThreadSelectionStore.getState().hasSelection();
+      if (hasSelection && isSelected) {
+        void handleMultiSelectContextMenu(position);
+        return;
+      }
+
+      if (hasSelection) {
+        clearSelection();
+      }
+      void handleThreadContextMenu(threadRef, position);
+    },
+    [clearSelection, handleMultiSelectContextMenu, handleThreadContextMenu, isSelected, threadRef],
+  );
   const handlePrClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       if (!prStatus) return;
@@ -631,6 +651,28 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </TooltipPopup>
             </Tooltip>
           )}
+        </div>
+        {/* Touch-accessible "more actions" trigger.  Absolutely positioned to
+            the left of the archive/timestamp slot so it never disturbs row
+            layout, using the same hover-reveal + always-on-touch pattern as the
+            archive button. */}
+        <div
+          className={`pointer-events-none absolute top-1/2 right-12 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100 ${
+            isRemoteThread ? "max-sm:right-[6.25rem]" : "max-sm:right-[5.25rem]"
+          }`}
+        >
+          <button
+            type="button"
+            data-thread-selection-safe
+            data-testid={`thread-actions-${thread.id}`}
+            aria-label="Thread actions"
+            title="Thread actions"
+            className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+            onPointerDown={stopPropagationOnPointerDown}
+            onClick={handleActionsButtonClick}
+          >
+            <EllipsisIcon className="size-3.5" />
+          </button>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {terminalStatus && (
@@ -1456,10 +1498,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [memberThreadCountByPhysicalKey, removeProject],
   );
 
-  const handleProjectButtonContextMenu = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      suppressProjectClickForContextMenuRef.current = true;
+  const openProjectActionsMenu = useCallback(
+    (position: { x: number; y: number }) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
@@ -1541,10 +1581,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               destructive: true,
             }),
           ],
-          {
-            x: event.clientX,
-            y: event.clientY,
-          },
+          position,
         );
 
         if (!clicked) {
@@ -1561,8 +1598,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
-      suppressProjectClickForContextMenuRef,
     ],
+  );
+
+  const handleProjectButtonContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      suppressProjectClickForContextMenuRef.current = true;
+      openProjectActionsMenu({ x: event.clientX, y: event.clientY });
+    },
+    [openProjectActionsMenu, suppressProjectClickForContextMenuRef],
+  );
+
+  const handleProjectActionsButtonClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = event.currentTarget.getBoundingClientRect();
+      openProjectActionsMenu({ x: rect.left, y: rect.bottom });
+    },
+    [openProjectActionsMenu],
   );
 
   const navigateToThread = useCallback(
@@ -2024,13 +2079,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     ],
   );
 
+  // On touch (max-sm) the remote badge stays pinned at right-7, so when it is
+  // present the actions button slides one slot further left to avoid overlap.
+  // Desktop hover-reveals fade the badge out, so right-7 is always clear there.
+  const hasRemoteBadge = project.environmentPresence === "remote-only";
+  const projectHeaderPaddingClassName = hasRemoteBadge
+    ? "pr-8 max-sm:pr-[4.75rem]"
+    : "pr-8 max-sm:pr-14";
+  const projectActionsButtonPositionClassName = hasRemoteBadge
+    ? "right-7 max-sm:right-[3.25rem]"
+    : "right-7";
+
   return (
     <>
       <div className="group/project-header relative">
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           size="sm"
-          className={`gap-2 px-2 py-1.5 pr-8 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14 ${
+          className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${projectHeaderPaddingClassName} ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
           }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -2098,6 +2164,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div
+                className={`pointer-events-none absolute top-1 ${projectActionsButtonPositionClassName} opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100`}
+              >
+                <button
+                  type="button"
+                  aria-label="Project actions"
+                  data-testid="project-actions-button"
+                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                  onClick={handleProjectActionsButtonClick}
+                >
+                  <EllipsisIcon className="size-3.5" />
+                </button>
+              </div>
+            }
+          />
+          <TooltipPopup side="top">Project actions</TooltipPopup>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
