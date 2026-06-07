@@ -1,6 +1,6 @@
-import { CheckIcon, MicIcon } from "lucide-react";
-import { useState } from "react";
-import type { VoiceTranscriptionProvider } from "@t3tools/contracts";
+import { CheckIcon, EyeIcon, EyeOffIcon, MicIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { UnifiedSettings, VoiceTranscriptionProvider } from "@t3tools/contracts";
 
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { Badge } from "../ui/badge";
@@ -26,34 +26,76 @@ const PROVIDER_OPTIONS: ReadonlyArray<{
   },
 ];
 
+interface VoiceTranscriptionKeyPatch {
+  readonly provider: VoiceTranscriptionProvider;
+  readonly groqApiKey?: string;
+  readonly groqApiKeyRedacted?: boolean;
+  readonly openaiApiKey?: string;
+  readonly openaiApiKeyRedacted?: boolean;
+}
+
+/**
+ * Build a voiceTranscription patch carrying only the selected provider's key
+ * fields. The server patch schema accepts these as optional keys, so the other
+ * provider's stored secret is left untouched.
+ */
+function voicePatchFor(
+  provider: VoiceTranscriptionProvider,
+  apiKey: string,
+  apiKeyRedacted: boolean,
+): VoiceTranscriptionKeyPatch {
+  return provider === "groq"
+    ? { provider, groqApiKey: apiKey, groqApiKeyRedacted: apiKeyRedacted }
+    : { provider, openaiApiKey: apiKey, openaiApiKeyRedacted: apiKeyRedacted };
+}
+
 export function VoiceSettingsPanel() {
   const provider = useSettings((settings) => settings.voiceTranscription.provider);
-  const apiKeyRedacted = useSettings((settings) => settings.voiceTranscription.apiKeyRedacted);
+  const groqApiKeyRedacted = useSettings(
+    (settings) => settings.voiceTranscription.groqApiKeyRedacted,
+  );
+  const openaiApiKeyRedacted = useSettings(
+    (settings) => settings.voiceTranscription.openaiApiKeyRedacted,
+  );
   const { updateSettings } = useUpdateSettings();
   const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+
+  // The API key input is bound to the selected provider; reset the draft and
+  // hide the value whenever the provider changes so a key typed for one
+  // provider never bleeds into another.
+  useEffect(() => {
+    setApiKeyDraft("");
+    setShowApiKey(false);
+  }, [provider]);
+
+  const apiKeyRedacted = provider === "groq" ? groqApiKeyRedacted : openaiApiKeyRedacted;
+
+  // `updateSettings` is typed against the full settings object, but the
+  // underlying server contract accepts a partial voiceTranscription patch.
+  const submitVoicePatch = (voiceTranscription: VoiceTranscriptionKeyPatch) => {
+    updateSettings({ voiceTranscription } as unknown as Partial<UnifiedSettings>);
+  };
 
   const handleProviderChange = (value: VoiceTranscriptionProvider) => {
-    // Echo the redacted indicator so the stored key is preserved across a
-    // provider-only change.
-    updateSettings({
-      voiceTranscription: { provider: value, apiKey: "", apiKeyRedacted },
-    });
+    // Echo the target provider's redacted indicator so its stored key is
+    // preserved across a provider-only change.
+    const redacted = value === "groq" ? groqApiKeyRedacted : openaiApiKeyRedacted;
+    submitVoicePatch(voicePatchFor(value, "", redacted));
   };
 
   const handleSaveKey = () => {
     const apiKey = apiKeyDraft.trim();
     if (apiKey.length === 0) return;
-    updateSettings({
-      voiceTranscription: { provider, apiKey, apiKeyRedacted: false },
-    });
+    submitVoicePatch(voicePatchFor(provider, apiKey, false));
     setApiKeyDraft("");
+    setShowApiKey(false);
   };
 
   const handleClearKey = () => {
-    updateSettings({
-      voiceTranscription: { provider, apiKey: "", apiKeyRedacted: false },
-    });
+    submitVoicePatch(voicePatchFor(provider, "", false));
     setApiKeyDraft("");
+    setShowApiKey(false);
   };
 
   return (
@@ -95,7 +137,7 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           title="API key"
-          description="Stored server-side in the secret store. It is never written to disk in plain text or sent back to the browser."
+          description="Stored server-side in the secret store, per provider. It is never written to disk in plain text or sent back to the browser."
           status={
             apiKeyRedacted ? (
               <Badge variant="success" size="sm">
@@ -110,23 +152,37 @@ export function VoiceSettingsPanel() {
           }
         >
           <div className="flex flex-col gap-2 pt-3 pb-3.5 sm:flex-row sm:items-center">
-            <Input
-              type="password"
-              autoComplete="off"
-              value={apiKeyDraft}
-              placeholder={
-                apiKeyRedacted ? "Enter a new key to replace the stored one" : "Paste your API key"
-              }
-              className="sm:max-w-md"
-              spellCheck={false}
-              onChange={(event) => setApiKeyDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  handleSaveKey();
+            <div className="relative sm:max-w-md sm:flex-1">
+              <Input
+                type={showApiKey ? "text" : "password"}
+                autoComplete="off"
+                value={apiKeyDraft}
+                placeholder={
+                  apiKeyRedacted
+                    ? "Enter a new key to replace the stored one"
+                    : "Paste your API key"
                 }
-              }}
-            />
+                className="pr-9"
+                spellCheck={false}
+                onChange={(event) => setApiKeyDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleSaveKey();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="absolute inset-y-0 right-1 my-auto text-muted-foreground hover:text-foreground"
+                aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                onClick={() => setShowApiKey((value) => !value)}
+              >
+                {showApiKey ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
+              </Button>
+            </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button
                 size="sm"

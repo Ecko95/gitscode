@@ -84,7 +84,13 @@ export function useVoiceTranscription(options: {
   const onTranscriptRef = useRef(options.onTranscript);
   onTranscriptRef.current = options.onTranscript;
 
-  const apiKeyRedacted = useSettings((settings) => settings.voiceTranscription.apiKeyRedacted);
+  // The active provider owns its own key; reflect that provider's redacted flag
+  // so switching providers re-evaluates whether a key is configured.
+  const apiKeyRedacted = useSettings((settings) =>
+    settings.voiceTranscription.provider === "groq"
+      ? settings.voiceTranscription.groqApiKeyRedacted
+      : settings.voiceTranscription.openaiApiKeyRedacted,
+  );
   const missingApiKey = !apiKeyRedacted;
 
   const [state, setState] = useState<VoiceTranscriptionState>("idle");
