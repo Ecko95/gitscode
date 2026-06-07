@@ -19,6 +19,11 @@ import type {
   VcsStatusResult,
 } from "./git.ts";
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
+import type {
+  CritEnsureSidecarRequest,
+  CritSidecarStatusRequest,
+  CritSidecarStatusResponse,
+} from "./crit.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
   ProjectSearchEntriesInput,
@@ -561,6 +566,10 @@ export interface EnvironmentApi {
   };
   review: {
     getDiffPreview: (input: ReviewDiffPreviewInput) => Promise<ReviewDiffPreviewResult>;
+  };
+  crit: {
+    ensureSidecar: (input: CritEnsureSidecarRequest) => Promise<CritSidecarStatusResponse>;
+    sidecarStatus: (input: CritSidecarStatusRequest) => Promise<CritSidecarStatusResponse>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

@@ -131,6 +131,10 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     review: {
       getDiffPreview: vi.fn(),
     },
+    crit: {
+      ensureSidecar: vi.fn(),
+      sidecarStatus: vi.fn(),
+    },
     gits: {
       getCockpit: vi.fn(),
       devCommands: {

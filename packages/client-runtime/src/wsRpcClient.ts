@@ -123,6 +123,10 @@ export interface WsRpcClient {
   readonly review: {
     readonly getDiffPreview: RpcUnaryMethod<typeof WS_METHODS.reviewGetDiffPreview>;
   };
+  readonly crit: {
+    readonly ensureSidecar: RpcUnaryMethod<typeof WS_METHODS.critEnsureSidecar>;
+    readonly sidecarStatus: RpcUnaryMethod<typeof WS_METHODS.critSidecarStatus>;
+  };
   readonly gits: {
     readonly getCockpit: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsGetCockpit>;
     readonly devCommands: {
@@ -327,11 +331,19 @@ export function createWsRpcClient(
       getDiffPreview: (input) =>
         transport.request((client) => client[WS_METHODS.reviewGetDiffPreview](input)),
     },
+    crit: {
+      ensureSidecar: (input) =>
+        transport.request((client) => client[WS_METHODS.critEnsureSidecar](input)),
+      sidecarStatus: (input) =>
+        transport.request((client) => client[WS_METHODS.critSidecarStatus](input)),
+    },
     gits: {
       getCockpit: () => transport.request((client) => client[WS_METHODS.gitsGetCockpit]({})),
       devCommands: {
-        list: (input) => transport.request((client) => client[WS_METHODS.gitsDevCommandsList](input)),
-        init: (input) => transport.request((client) => client[WS_METHODS.gitsDevCommandsInit](input)),
+        list: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDevCommandsList](input)),
+        init: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDevCommandsInit](input)),
       },
       delamain: {
         listPeers: () =>
