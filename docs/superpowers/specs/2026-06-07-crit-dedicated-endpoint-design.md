@@ -14,20 +14,19 @@ wrapper CLI calls the broad, owner-gated orchestration endpoints:
   `authenticateOwnerSession` (`apps/server/src/orchestration/http.ts`).
 - `GET /api/orchestration/snapshot` — the full read model, same owner gate.
 
-A leaked sidecar token therefore grants full owner control over the loopback API. The role model
-is only `"owner" | "client"`, so a role swap alone gives no real scoping — **the endpoint is the
-broad capability**. The fix is to add narrow, thread-scoped endpoints the wrapper uses instead, and
-mint the token with the least privilege those endpoints require.
+A leaked sidecar token therefore grants full owner control over the loopback API. **The endpoint is
+the broad capability**, so the fix is two-fold: add narrow, thread-scoped endpoints the wrapper uses
+instead, and mint the token with a dedicated least-privilege role (`thread-scoped`) that is accepted
+only by those endpoints and denied at every broad surface.
 
-> **Residual gap (known, tracked):** this change scopes the **HTTP orchestration** surface only.
-> The WebSocket RPC surface (`POST /api/auth/ws-token` + `GET /ws`) authenticates any session with
-> no role/subject gate, and the RPC handlers reached after upgrade call
-> `orchestrationEngine.dispatch(...)` with no subject filtering. So a *leaked* client-role +
-> subject-bound sidecar token can still mint a ws-token and dispatch arbitrary orchestration
-> commands over `/ws` against any thread — the same broad reach the old owner token had. This is a
-> pre-existing gap (reachable under the old owner token too), not introduced here. Subject-scoping
-> the WS/RPC surface is **deferred follow-up**; until then the sidecar token is *not* a full
-> least-privilege confinement. The limitation is encoded as an asserted test in `critHttp.test.ts`.
+> **WS gap CLOSED:** the sidecar token is minted with a dedicated `role:"thread-scoped"` (see
+> Authorization model below). That role is **denied** at the broad realtime/file surfaces —
+> `POST /api/auth/ws-token`, the `GET /ws` upgrade, and `GET /api/attachments/*` all reject a
+> thread-scoped session with **403**. A leaked sidecar token therefore cannot mint a ws-token, open
+> `/ws`, dispatch arbitrary orchestration over RPC, or read other threads' attachments. Owner and
+> ordinary client sessions are unaffected (paired "Shared Devices" run as `role:"client"` and still
+> use `/ws` normally). The token is accepted only by `/api/crit/turn{,-status}` under
+> `subject === threadId`. This is asserted by tests in `critHttp.test.ts`.
 
 ## Key constraint discovered during design
 
@@ -49,21 +48,28 @@ The chosen design (Option A) keeps that baseline server-side and exposes it as a
 
 - **Token minting** (`crit-sidecar-manager.ts`): change
   `issueSession({ role: "owner", … })` →
-  `issueSession({ role: "client", subject: input.threadId, … })`.
+  `issueSession({ role: "thread-scoped", subject: input.threadId, … })`.
   Keep the existing 2h TTL and the revoke-on-teardown scope finalizer unchanged. Replace the stale
-  "still owner for v1" NOTE comment with one describing the subject-bound least-privilege token.
+  "still owner for v1" NOTE comment with one describing the thread-scoped least-privilege token.
 - **Authorization rule** on the new endpoints: authenticate via
   `ServerAuth.authenticateHttpRequest`, then require `session.subject === threadId` (threadId taken
-  from the request body for POST, query string for GET). Mismatch → **403**.
-- We deliberately do **not** gate on role — the subject binding *is* the capability. threadIds are
-  unguessable UUIDs and ordinary client sessions carry `subject = "cli-issued-session"` (or a
+  from the request body for POST, query string for GET). Mismatch → **403**. The crit endpoints
+  deliberately do **not** gate on role — the subject binding _is_ the capability there. threadIds are
+  unguessable UUIDs and ordinary client/owner sessions carry `subject = "cli-issued-session"` (or a
   pairing subject), never a threadId, so `subject === threadId` is a strong, narrow capability.
-- The client-role token automatically fails the existing `role !== "owner"` gate on the
-  `/api/orchestration/*` **HTTP** endpoints, so those broad HTTP endpoints remain unreachable by the
-  sidecar token. This is asserted by a test. **Caveat:** as noted under Problem, this gate does
-  **not** cover the WebSocket RPC path (`/api/auth/ws-token` + `/ws`), which has no role/subject gate
-  and still reaches full `orchestrationEngine.dispatch`. That residual WS reachability is a tracked
-  follow-up and is encoded as an asserted-limitation test rather than left as a false guarantee.
+- **The sidecar token is accepted ONLY by `/api/crit/turn{,-status}`** (under `subject === threadId`)
+  and is explicitly **DENIED** everywhere else:
+  - `/api/orchestration/*` HTTP endpoints — the thread-scoped role fails the existing
+    `role !== "owner"` owner gate, so the broad dispatch/snapshot capability is unreachable.
+  - `POST /api/auth/ws-token`, the `GET /ws` upgrade, and `GET /api/attachments/*` — the
+    thread-scoped role is rejected with **403** at each, so a leaked sidecar token can neither mint a
+    ws-token / open `/ws` / dispatch arbitrary orchestration over RPC, nor read other threads'
+    attachments.
+- **Owner and ordinary client sessions are unaffected.** Owner endpoints remain reachable only by
+  owner sessions; paired "Shared Devices" run as `role:"client"` and continue to mint ws-tokens and
+  use `/ws` normally (the deny is scoped to the dedicated `thread-scoped` role, not all clients).
+  All of the above — cross-thread 403, owner-endpoint refusal, thread-scoped→403 at ws-token and
+  attachments, and the owner/client regression paths — are asserted by tests in `critHttp.test.ts`.
 
 `AuthControlPlane.issueSession` already honors `subject` and `role`
 (`apps/server/src/auth/Layers/AuthControlPlane.ts:109`), and `authenticateHttpRequest` populates
@@ -129,7 +135,7 @@ Add schemas for server-side `HttpServerRequest.schemaBodyJson` validation and ty
 - `CritTurnRequest` — `{ threadId, text }`
 - `CritTurnResponse` — `{ priorTurnId: string | null }`
 - `CritTurnStatusResponse` — `{ state: "pending" | "completed" | "error" | "interrupted",
-  assistantMessageId: string | null, reply: string | null }`
+assistantMessageId: string | null, reply: string | null }`
 
 The wrapper is standalone fetch-based and does not import contracts; these are for the server and
 its tests.
@@ -151,8 +157,11 @@ its tests.
   - **a token for thread A is rejected (403) for thread B** — the core security property, made
     load-bearing;
   - missing/invalid token → 401;
-  - **a client-role token is rejected (403) on `/api/orchestration/dispatch`** — owner endpoints
-    stay unreachable.
+  - **the thread-scoped sidecar token is refused on `/api/orchestration/dispatch`** — owner
+    endpoints stay unreachable;
+  - **the thread-scoped sidecar token is rejected (403) at `POST /api/auth/ws-token` and
+    `GET /api/attachments/*`** — the broad realtime/file surfaces stay unreachable, while owner and
+    ordinary client sessions still mint ws-tokens (200) and are not 403'd at attachments.
 - **Wrapper (`crit-agent-cli.test.ts`):** mock the two new endpoints; assert POST-then-poll returns
   the completed reply; a `pending → completed` transition is handled; the timeout path returns the
   ack.

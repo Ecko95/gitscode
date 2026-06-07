@@ -443,9 +443,12 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
 
   it.effect("POST /api/crit/turn rejects a token minted for a different thread (403)", () =>
     Effect.gen(function* () {
+      // The sidecar token is role:"thread-scoped" + subject:threadId. A token
+      // bound to thread A must not reach thread B — the subject binding is the
+      // capability.
       yield* with_app({ thread: Option.some(make_thread({ id: THREAD_B })) }, (baseUrl, token) =>
         Effect.gen(function* () {
-          const bearerForA = yield* token(THREAD_A);
+          const bearerForA = yield* token(THREAD_A, "thread-scoped");
           const response = yield* post_turn(baseUrl, THREAD_B, bearerForA);
           assert.equal(response.status, 403);
         }),
@@ -457,7 +460,7 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
     Effect.gen(function* () {
       yield* with_app({ thread: Option.some(make_thread({ id: THREAD_B })) }, (baseUrl, token) =>
         Effect.gen(function* () {
-          const bearerForA = yield* token(THREAD_A);
+          const bearerForA = yield* token(THREAD_A, "thread-scoped");
           const response = yield* get_turn_status(baseUrl, THREAD_B, null, bearerForA);
           assert.equal(response.status, 403);
         }),
@@ -487,9 +490,9 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   );
 
-  it.effect("the client-role crit token is rejected by /api/orchestration/dispatch", () =>
+  it.effect("the thread-scoped crit token is rejected by /api/orchestration/dispatch", () =>
     Effect.gen(function* () {
-      // The crit sidecar token is minted with role:"client" + subject:threadId.
+      // The crit sidecar token is minted with role:"thread-scoped" + subject:threadId.
       // The owner-gated orchestration endpoints reject it (its `role !== "owner"`
       // trips `authenticateOwnerSession`), so the broad capability stays
       // unreachable by the sidecar token. The owner gate surfaces this as a 400
@@ -497,7 +500,7 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
       // property is that the dispatch is refused, not the exact status code.
       yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
         Effect.gen(function* () {
-          const bearer = yield* token(THREAD_A);
+          const bearer = yield* token(THREAD_A, "thread-scoped");
           const response = yield* post_orchestration_dispatch(baseUrl, bearer);
           assert.isTrue(
             response.status >= 400,
@@ -542,37 +545,15 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   );
 
-  // KNOWN-LIMITATION (tracked follow-up): the subject-bound client-role sidecar
-  // token does NOT confine the WebSocket RPC surface. `POST /api/auth/ws-token`
-  // has no role/subject gate, so the token can mint a ws-token (and then open
-  // `/ws`, where the RPC handlers reach orchestrationEngine.dispatch with no
-  // subject filtering). This test asserts that residual reachability EXPLICITLY
-  // so the gap is documented-and-tested rather than silently overclaimed. When
-  // the WS/RPC surface is subject-scoped, flip this assertion to expect a refusal.
-  it.effect(
-    "KNOWN LIMITATION: a subject-bound crit token can still mint a ws-token (WS path is not yet subject-gated)",
-    () =>
-      Effect.gen(function* () {
-        yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
-          Effect.gen(function* () {
-            const bearer = yield* token(THREAD_A);
-            const response = yield* post_ws_token(baseUrl, bearer);
-            // The WS-token endpoint authenticates any valid session regardless of
-            // role/subject, so the sidecar token is accepted (200) — proving the
-            // WS path is the residual escalation route, not a 403.
-            assert.equal(
-              response.status,
-              200,
-              `expected the WS-token endpoint to accept the subject-bound client token (documenting the known WS gap), got ${response.status}`,
-            );
-          }),
-        );
-      }).pipe(Effect.provide(FetchHttpClient.layer)),
-  );
-
   // ---------------------------------------------------------------------------
   // thread-scoped realtime deny — the dedicated crit role is rejected at the
   // broad surfaces (ws-token + attachments) while owner/client keep working.
+  //
+  // WS gap CLOSED: the sidecar token is role:"thread-scoped", which the ws-token
+  // endpoint now DENIES (403). The test immediately below is the positive security
+  // assertion of that property (formerly tracked here as a KNOWN LIMITATION that
+  // expected a 200). It supersedes the old assertion — the thread-scoped→403
+  // ws-token property is now asserted directly rather than documented as a gap.
   // ---------------------------------------------------------------------------
 
   it.effect("POST /api/auth/ws-token rejects a thread-scoped session with 403", () =>
