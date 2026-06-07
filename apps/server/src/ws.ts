@@ -109,7 +109,6 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
-import { AuthControlPlane } from "./auth/Services/AuthControlPlane.ts";
 import { CritSidecarManager } from "./crit/crit-sidecar-manager.ts";
 import { resolve_crit_binary_path } from "./crit/crit-binary-resolver.ts";
 import { build_ensure_sidecar_input } from "./crit/crit-sidecar-request.ts";
@@ -224,7 +223,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const automodeSupervisor = yield* AutomodeSupervisor;
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
-      const authControlPlane = yield* AuthControlPlane;
       const critSidecarManager = yield* CritSidecarManager;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
@@ -1214,22 +1212,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             Effect.gen(function* () {
               const origin = yield* resolveCritSelfOrigin;
               const wrapperCommand = yield* resolveCritWrapperCommand;
-              // v1: mint a per-call owner-scoped bearer token the wrapper uses to
-              // call back into the GITS server. TODO: revoke this session on
-              // sidecar teardown (CritSidecarManager.release_sidecar) instead of
-              // leaking it; for now it lives until its TTL expires.
-              const issued = yield* authControlPlane
-                .issueSession({ role: "owner", label: "crit sidecar" })
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toCritError(cause, "Failed to mint a crit sidecar session token."),
-                  ),
-                );
+              // The wrapper's bearer token is minted (with a bounded TTL) and
+              // revoked-on-teardown inside CritSidecarManager.ensure_sidecar, so
+              // the reuse path no longer leaks a fresh owner session per call.
               const handle = yield* critSidecarManager.ensure_sidecar(
                 build_ensure_sidecar_input({
                   request: input,
                   origin,
-                  token: issued.token,
                   wrapperCommand,
                   binaryPath: resolve_crit_binary_path(),
                 }),
@@ -1248,6 +1237,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             critSidecarManager
               .sidecar_status(input.workspaceRoot)
               .pipe(Effect.map((handle) => ({ status: handle.status, url: handle.url }))),
+            { "rpc.aggregate": "crit" },
+          ),
+        [WS_METHODS.critReleaseSidecar]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.critReleaseSidecar,
+            critSidecarManager
+              .release_sidecar(input.workspaceRoot)
+              .pipe(Effect.as({ released: true })),
             { "rpc.aggregate": "crit" },
           ),
         [WS_METHODS.gitsGetCockpit]: (_input) =>

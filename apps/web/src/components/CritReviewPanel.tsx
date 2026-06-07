@@ -59,6 +59,12 @@ export function CritReviewPanel(props: CritReviewPanelProps) {
 
     return () => {
       cancelled = true;
+      // Release the refCount this effect's ensureSidecar took. Fire-and-forget:
+      // unmount / input-change must not await teardown, and a failed release is
+      // non-fatal (the manager tears down at refCount 0 regardless). Capture the
+      // same workspaceRoot the effect ensured so a changed-input cleanup releases
+      // the prior workspace, not the next one.
+      void api.crit.releaseSidecar({ workspaceRoot }).catch(() => {});
     };
   }, [environmentId, workspaceRoot, branch, threadId, onUnavailable]);
 

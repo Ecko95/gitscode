@@ -7,10 +7,19 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { describe, expect, it as vitestIt } from "vitest";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
+
+import type { AuthSessionId } from "@t3tools/contracts";
+
+import {
+  AuthControlPlane,
+  type AuthControlPlaneShape,
+  type IssuedBearerSession,
+} from "../auth/Services/AuthControlPlane.ts";
 
 import {
   build_crit_spawn_spec,
@@ -18,6 +27,52 @@ import {
   CritSidecarManager,
   layer,
 } from "./crit-sidecar-manager.ts";
+
+// A minimal AuthControlPlane stub used to make session lifecycle load-bearing in
+// the lifecycle tests: it mints a deterministic IssuedBearerSession on every
+// `issueSession` and records each revoked sessionId into a shared array so the
+// tests can assert the sidecar manager revokes its token on teardown.
+function makeStubAuthControlPlane() {
+  let issueCount = 0;
+  const issuedSessionIds: AuthSessionId[] = [];
+  const revokedSessionIds: AuthSessionId[] = [];
+
+  const stub: AuthControlPlaneShape = {
+    createPairingLink: () => Effect.die("createPairingLink not implemented in stub"),
+    listPairingLinks: () => Effect.succeed([]),
+    revokePairingLink: () => Effect.succeed(true),
+    issueSession: () =>
+      Effect.gen(function* () {
+        issueCount += 1;
+        const sessionId = `crit-stub-session-${issueCount}` as AuthSessionId;
+        issuedSessionIds.push(sessionId);
+        const now = yield* DateTime.now;
+        const issued: IssuedBearerSession = {
+          sessionId,
+          token: `tkn-${issueCount}`,
+          method: "bearer-session-token",
+          role: "owner",
+          subject: "crit-stub",
+          client: { deviceType: "unknown" },
+          expiresAt: now,
+        };
+        return issued;
+      }),
+    listSessions: () => Effect.succeed([]),
+    revokeSession: (sessionId) =>
+      Effect.sync(() => {
+        revokedSessionIds.push(sessionId);
+        return true;
+      }),
+    revokeOtherSessionsExcept: () => Effect.succeed(0),
+  };
+
+  return {
+    layer: Layer.succeed(AuthControlPlane, stub),
+    issuedSessionIds,
+    revokedSessionIds,
+  };
+}
 
 describe("build_crit_spawn_spec", () => {
   vitestIt("binds to loopback and wires agent_cmd env for the wrapper", () => {
@@ -100,11 +155,20 @@ function writeNonListeningCritBinary(): string {
   return script;
 }
 
-// The manager layer requires ChildProcessSpawner (from NodeServices) and
-// HttpClient (FetchHttpClient). NetService is provided inside `layer` itself.
+// One shared stub for the whole lifecycle suite: `it.layer` builds the manager
+// once and the manager yields AuthControlPlane at construction, so a single stub
+// instance backs every test. The recorded `issuedSessionIds`/`revokedSessionIds`
+// accumulate across the suite, so each test reads the arrays' length up-front and
+// asserts on the newly appended entries.
+const stubAuth = makeStubAuthControlPlane();
+
+// The manager layer requires ChildProcessSpawner (from NodeServices), HttpClient
+// (FetchHttpClient), and now AuthControlPlane (the stub above). NetService is
+// provided inside `layer` itself.
 const CritSidecarTestLayer = layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(stubAuth.layer),
 );
 
 // `excludeTestServices` swaps the default TestClock for the real clock so the
@@ -119,12 +183,14 @@ it.layer(CritSidecarTestLayer, { excludeTestServices: true })(
         const fakeBinary = writeFakeCritBinary();
         const workspaceRoot = mkdtempSync(join(tmpdir(), "crit-sidecar-ws-"));
 
+        const issuedBefore = stubAuth.issuedSessionIds.length;
+        const revokedBefore = stubAuth.revokedSessionIds.length;
+
         const ensureInput = {
           workspaceRoot,
           branch: "main",
           threadId: "th",
           origin: "http://127.0.0.1:1",
-          token: "t",
           wrapperCommand: "node /x",
           binaryPath: fakeBinary,
           readinessTimeoutMs: 3000,
@@ -135,20 +201,32 @@ it.layer(CritSidecarTestLayer, { excludeTestServices: true })(
         expect(first.url).not.toBeNull();
         expect(first.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
-        // Second ensure for the same workspace reuses the running sidecar.
+        // The spawn path mints exactly one owner-scoped session token.
+        expect(stubAuth.issuedSessionIds.length).toBe(issuedBefore + 1);
+        const sessionId = stubAuth.issuedSessionIds[issuedBefore];
+
+        // Second ensure for the same workspace reuses the running sidecar — and,
+        // crucially, the reuse path must NOT mint another token (no leak).
         const second = yield* manager.ensure_sidecar(ensureInput);
         expect(second.status).toBe("ready");
         expect(second.url).toBe(first.url);
+        expect(stubAuth.issuedSessionIds.length).toBe(issuedBefore + 1);
 
         // Two ensures => refCount 2; release twice to fully tear down.
         yield* manager.release_sidecar(workspaceRoot);
         const afterFirstRelease = yield* manager.sidecar_status(workspaceRoot);
         expect(afterFirstRelease.status).toBe("ready");
+        // Still alive at refCount 1 → token not yet revoked.
+        expect(stubAuth.revokedSessionIds.length).toBe(revokedBefore);
 
         yield* manager.release_sidecar(workspaceRoot);
         const afterSecondRelease = yield* manager.sidecar_status(workspaceRoot);
         expect(afterSecondRelease.status).toBe("stopped");
         expect(afterSecondRelease.url).toBeNull();
+
+        // Teardown at refCount 0 closes the per-sidecar scope, which revokes the
+        // minted session token (load-bearing: this asserts no leaked owner token).
+        expect(stubAuth.revokedSessionIds.slice(revokedBefore)).toContain(sessionId);
       }),
     );
 
@@ -158,13 +236,15 @@ it.layer(CritSidecarTestLayer, { excludeTestServices: true })(
         const crashingBinary = writeCrashingCritBinary();
         const workspaceRoot = mkdtempSync(join(tmpdir(), "crit-sidecar-crash-ws-"));
 
+        const issuedBefore = stubAuth.issuedSessionIds.length;
+        const revokedBefore = stubAuth.revokedSessionIds.length;
+
         const exit = yield* Effect.exit(
           manager.ensure_sidecar({
             workspaceRoot,
             branch: "main",
             threadId: "th",
             origin: "http://127.0.0.1:1",
-            token: "t",
             wrapperCommand: "node /x",
             binaryPath: crashingBinary,
             readinessTimeoutMs: 3000,
@@ -184,6 +264,12 @@ it.layer(CritSidecarTestLayer, { excludeTestServices: true })(
         expect(status.status).not.toBe("ready");
         expect(status.status).toBe("stopped");
         expect(status.url).toBeNull();
+
+        // The crash teardown closes the scope, which revokes the token minted for
+        // this spawn — the token must not survive a failed start-up.
+        const issuedHere = stubAuth.issuedSessionIds.slice(issuedBefore);
+        expect(issuedHere.length).toBe(1);
+        expect(stubAuth.revokedSessionIds.slice(revokedBefore)).toContain(issuedHere[0]);
       }),
     );
 
@@ -195,13 +281,15 @@ it.layer(CritSidecarTestLayer, { excludeTestServices: true })(
           const noportBinary = writeNonListeningCritBinary();
           const workspaceRoot = mkdtempSync(join(tmpdir(), "crit-sidecar-noport-ws-"));
 
+          const issuedBefore = stubAuth.issuedSessionIds.length;
+          const revokedBefore = stubAuth.revokedSessionIds.length;
+
           const exit = yield* Effect.exit(
             manager.ensure_sidecar({
               workspaceRoot,
               branch: "main",
               threadId: "th",
               origin: "http://127.0.0.1:1",
-              token: "t",
               wrapperCommand: "node /x",
               binaryPath: noportBinary,
               readinessTimeoutMs: 800,
@@ -218,6 +306,12 @@ it.layer(CritSidecarTestLayer, { excludeTestServices: true })(
           expect(status.status).not.toBe("ready");
           expect(status.status).toBe("stopped");
           expect(status.url).toBeNull();
+
+          // The readiness-timeout teardown closes the scope, which revokes the
+          // token minted for this spawn.
+          const issuedHere = stubAuth.issuedSessionIds.slice(issuedBefore);
+          expect(issuedHere.length).toBe(1);
+          expect(stubAuth.revokedSessionIds.slice(revokedBefore)).toContain(issuedHere[0]);
         }),
     );
   },

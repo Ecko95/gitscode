@@ -4,6 +4,7 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,8 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NetService from "@t3tools/shared/Net";
+
+import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 
 export interface CritSpawnInput {
   readonly binaryPath: string;
@@ -82,7 +85,6 @@ export interface EnsureCritSidecarInput {
   readonly branch: string;
   readonly threadId: string;
   readonly origin: string; // GITS server origin the wrapper will call
-  readonly token: string; // scoped bearer token for the wrapper
   readonly wrapperCommand: string; // the agent_cmd crit runs (e.g. "node /path/crit-agent-cli.js")
   readonly binaryPath: string; // resolved crit binary (caller uses resolve_crit_binary_path)
   readonly host?: string; // default "127.0.0.1"
@@ -113,11 +115,16 @@ const DEFAULT_CRIT_BASE_PORT = 4400;
 const DEFAULT_CRIT_READINESS_TIMEOUT_MS = 10_000;
 // Interval between readiness probe attempts while the sidecar boots.
 const CRIT_READINESS_PROBE_INTERVAL_MS = 100;
+// Bounded lifetime for the owner-scoped session minted for a sidecar. The token
+// is also revoked on every teardown path (see the scope finalizer below); the
+// TTL is a backstop in case the process/server dies without running finalizers.
+const CRIT_SIDECAR_SESSION_TTL = Duration.hours(2);
 
 const makeCritSidecarManager = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
   const httpClient = yield* HttpClient.HttpClient;
+  const authControlPlane = yield* AuthControlPlane;
 
   const entries = yield* Ref.make(new Map<string, CritSidecarEntry>());
 
@@ -205,6 +212,50 @@ const makeCritSidecarManager = Effect.gen(function* () {
       const host = input.host ?? DEFAULT_CRIT_HOST;
       const readinessTimeoutMs = input.readinessTimeoutMs ?? DEFAULT_CRIT_READINESS_TIMEOUT_MS;
 
+      // Per-sidecar scope: closing it runs the kill + session-revoke finalizers
+      // registered below. Created up-front so the SPAWN path owns a single scope
+      // whose closure (on EVERY teardown path: release-at-0, readiness timeout,
+      // crash, spawn failure) revokes the minted session token.
+      const scope = yield* Scope.make();
+
+      // Tear down the scope and drop the reservation when start-up bails out before
+      // the entry is healthy, so a later ensure_sidecar can retry from scratch.
+      // Closing the scope also runs the session-revoke finalizer registered below.
+      const abortStartup = Effect.gen(function* () {
+        yield* Scope.close(scope, Exit.void);
+        yield* removeReservation;
+      });
+
+      // Mint the wrapper's bearer token ONLY on the spawn path (reuse increments
+      // refCount above and never reaches here), with a bounded TTL. The session is
+      // revoked when `scope` closes — wiring it here means every teardown path
+      // that closes the scope also revokes the token.
+      // NOTE: the token is still role:"owner" for v1 because
+      // /api/orchestration/{dispatch,snapshot} are owner-gated; least-privilege
+      // scoping via a dedicated crit endpoint is a tracked follow-up. The bounded
+      // TTL + revoke-on-teardown wired here are the v1 mitigation.
+      const issued = yield* authControlPlane
+        .issueSession({
+          role: "owner",
+          label: `crit sidecar ${input.workspaceRoot}`,
+          ttl: CRIT_SIDECAR_SESSION_TTL,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new CritSidecarError({
+                operation: "ensure_sidecar",
+                detail: `Failed to mint a crit sidecar session token: ${String(cause)}`,
+                cause,
+              }),
+          ),
+          Effect.tapError(() => abortStartup),
+        );
+      yield* Scope.addFinalizer(
+        scope,
+        authControlPlane.revokeSession(issued.sessionId).pipe(Effect.ignore),
+      );
+
       const port = yield* netService.findAvailablePort(DEFAULT_CRIT_BASE_PORT).pipe(
         Effect.mapError(
           (cause) =>
@@ -214,7 +265,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
               cause,
             }),
         ),
-        Effect.tapError(() => removeReservation),
+        Effect.tapError(() => abortStartup),
       );
 
       const spec = build_crit_spawn_spec({
@@ -224,13 +275,10 @@ const makeCritSidecarManager = Effect.gen(function* () {
         host,
         port,
         origin: input.origin,
-        token: input.token,
+        token: issued.token,
         threadId: input.threadId,
         wrapperCommand: input.wrapperCommand,
       });
-
-      // Per-sidecar scope: closing it runs the kill finalizer registered below.
-      const scope = yield* Scope.make();
 
       const child = yield* spawner
         .spawn(
@@ -249,9 +297,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
                 cause,
               }),
           ),
-          Effect.tapError(() =>
-            Scope.close(scope, Exit.void).pipe(Effect.zipRight(removeReservation)),
-          ),
+          Effect.tapError(() => abortStartup),
         );
 
       const terminateChild = child

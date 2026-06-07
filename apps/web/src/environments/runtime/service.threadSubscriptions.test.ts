@@ -134,6 +134,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     crit: {
       ensureSidecar: vi.fn(),
       sidecarStatus: vi.fn(),
+      releaseSidecar: vi.fn(),
     },
     gits: {
       getCockpit: vi.fn(),

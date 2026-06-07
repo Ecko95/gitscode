@@ -34,6 +34,16 @@ export const CritSidecarStatusResponse = Schema.Struct({
 });
 export type CritSidecarStatusResponse = typeof CritSidecarStatusResponse.Type;
 
+/**
+ * Ack returned by releaseSidecar: the manager decrements the caller's refCount
+ * (tearing the sidecar down at zero). `release_sidecar` never fails, so this is
+ * always `{ released: true }`.
+ */
+export const CritReleaseSidecarResponse = Schema.Struct({
+  released: Schema.Boolean,
+});
+export type CritReleaseSidecarResponse = typeof CritReleaseSidecarResponse.Type;
+
 export class CritError extends Schema.TaggedErrorClass<CritError>()("CritError", {
   message: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect),

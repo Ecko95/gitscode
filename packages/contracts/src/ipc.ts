@@ -21,6 +21,7 @@ import type {
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
 import type {
   CritEnsureSidecarRequest,
+  CritReleaseSidecarResponse,
   CritSidecarStatusRequest,
   CritSidecarStatusResponse,
 } from "./crit.ts";
@@ -570,6 +571,7 @@ export interface EnvironmentApi {
   crit: {
     ensureSidecar: (input: CritEnsureSidecarRequest) => Promise<CritSidecarStatusResponse>;
     sidecarStatus: (input: CritSidecarStatusRequest) => Promise<CritSidecarStatusResponse>;
+    releaseSidecar: (input: CritSidecarStatusRequest) => Promise<CritReleaseSidecarResponse>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

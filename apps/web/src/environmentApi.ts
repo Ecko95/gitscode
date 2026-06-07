@@ -51,6 +51,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     crit: {
       ensureSidecar: rpcClient.crit.ensureSidecar,
       sidecarStatus: rpcClient.crit.sidecarStatus,
+      releaseSidecar: rpcClient.crit.releaseSidecar,
     },
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,
