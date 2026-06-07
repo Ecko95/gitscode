@@ -3235,7 +3235,7 @@ function SkillsPanel({
                         {formatCount(provider.totalCount)}
                       </span>
                       <span className="font-mono text-muted-foreground">
-                        {formatCount(provider.missingPortCount)} ports
+                        {formatCount(provider.missingPortCount)} missing ports
                       </span>
                     </div>
                   ))}
