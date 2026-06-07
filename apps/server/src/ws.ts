@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -30,6 +31,7 @@ import {
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   AutomodeSupervisorError,
+  CritError,
   DelamainAdapterError,
   GitsCapacityError,
   GitsCockpitError,
@@ -107,7 +109,13 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { AuthControlPlane } from "./auth/Services/AuthControlPlane.ts";
+import { CritSidecarManager } from "./crit/crit-sidecar-manager.ts";
+import { resolve_crit_binary_path } from "./crit/crit-binary-resolver.ts";
+import { build_ensure_sidecar_input } from "./crit/crit-sidecar-request.ts";
+import { readPersistedServerRuntimeState } from "./serverRuntimeState.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isCritError = Schema.is(CritError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isGitsCockpitError = Schema.is(GitsCockpitError);
 const isGitsDevCommandError = Schema.is(GitsDevCommandError);
@@ -216,6 +224,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const automodeSupervisor = yield* AutomodeSupervisor;
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
+      const authControlPlane = yield* AuthControlPlane;
+      const critSidecarManager = yield* CritSidecarManager;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
@@ -654,6 +664,48 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
+      // Resolve the loopback origin the crit wrapper CLI will call back into.
+      // Prefer the persisted runtime-state origin (written once the HTTP server
+      // binds its real port), then a `GITS_SELF_ORIGIN` env override, then a
+      // best-effort default derived from the configured port. ASSUMPTION: the
+      // wrapper runs on the same host, so loopback (127.0.0.1) is reachable.
+      const resolveCritSelfOrigin = Effect.gen(function* () {
+        const persisted = yield* readPersistedServerRuntimeState(
+          config.serverRuntimeStatePath,
+        ).pipe(Effect.catchCause(() => Effect.succeed(Option.none())));
+        if (Option.isSome(persisted)) {
+          return persisted.value.origin;
+        }
+        const override = yield* Config.string("GITS_SELF_ORIGIN").pipe(
+          Config.option,
+          Config.map(Option.getOrUndefined),
+          Effect.catchCause(() => Effect.succeed(undefined)),
+        );
+        if (override && override.trim().length > 0) {
+          return override.trim();
+        }
+        return `http://127.0.0.1:${config.port}`;
+      });
+
+      // The production build path of the crit wrapper CLI is not yet established
+      // (deferred Phase 7). Until then the `agent_cmd` is supplied via the
+      // `GITS_CRIT_AGENT_CMD` env override. PENDING: replace the fallback with
+      // the resolved built wrapper path once Phase 7 lands; the current dev
+      // fallback runs the TypeScript source directly under bun.
+      const resolveCritWrapperCommand = Config.string("GITS_CRIT_AGENT_CMD").pipe(
+        Config.option,
+        Config.map(Option.getOrUndefined),
+        Effect.catchCause(() => Effect.succeed(undefined)),
+        Effect.map((override) =>
+          override && override.trim().length > 0
+            ? override.trim()
+            : "bun ./apps/server/src/crit/crit-agent-cli.ts",
+        ),
+      );
+
+      const toCritError = (cause: unknown, message: string) =>
+        isCritError(cause) ? cause : new CritError({ message, cause });
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
@@ -1156,6 +1208,48 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
             "rpc.aggregate": "review",
           }),
+        [WS_METHODS.critEnsureSidecar]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.critEnsureSidecar,
+            Effect.gen(function* () {
+              const origin = yield* resolveCritSelfOrigin;
+              const wrapperCommand = yield* resolveCritWrapperCommand;
+              // v1: mint a per-call owner-scoped bearer token the wrapper uses to
+              // call back into the GITS server. TODO: revoke this session on
+              // sidecar teardown (CritSidecarManager.release_sidecar) instead of
+              // leaking it; for now it lives until its TTL expires.
+              const issued = yield* authControlPlane
+                .issueSession({ role: "owner", label: "crit sidecar" })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toCritError(cause, "Failed to mint a crit sidecar session token."),
+                  ),
+                );
+              const handle = yield* critSidecarManager.ensure_sidecar(
+                build_ensure_sidecar_input({
+                  request: input,
+                  origin,
+                  token: issued.token,
+                  wrapperCommand,
+                  binaryPath: resolve_crit_binary_path(),
+                }),
+              );
+              return { status: handle.status, url: handle.url };
+            }).pipe(
+              Effect.mapError((cause) =>
+                toCritError(cause, "Failed to ensure the crit review sidecar."),
+              ),
+            ),
+            { "rpc.aggregate": "crit" },
+          ),
+        [WS_METHODS.critSidecarStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.critSidecarStatus,
+            critSidecarManager
+              .sidecar_status(input.workspaceRoot)
+              .pipe(Effect.map((handle) => ({ status: handle.status, url: handle.url }))),
+            { "rpc.aggregate": "crit" },
+          ),
         [WS_METHODS.gitsGetCockpit]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsGetCockpit,
