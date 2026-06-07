@@ -23,6 +23,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
+  type VoiceTranscriptionProvider,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Deferred from "effect/Deferred";
@@ -79,8 +80,11 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
-export function voiceTranscriptionSecretName(): string {
-  return "voice-transcription-api-key";
+/** Legacy single shared secret, migrated into the active provider on load. */
+const LEGACY_VOICE_TRANSCRIPTION_SECRET_NAME = "voice-transcription-api-key";
+
+export function voiceTranscriptionSecretName(provider: VoiceTranscriptionProvider): string {
+  return `voice-transcription-api-key-${provider}`;
 }
 
 function redactProviderEnvironmentVariable(
@@ -100,11 +104,16 @@ function redactProviderEnvironmentVariable(
 function redactVoiceTranscriptionSettings(
   voiceTranscription: ServerSettings["voiceTranscription"],
 ): ServerSettings["voiceTranscription"] {
-  const hasKey = voiceTranscription.apiKey.length > 0 || voiceTranscription.apiKeyRedacted;
+  const hasGroqKey =
+    voiceTranscription.groqApiKey.length > 0 || voiceTranscription.groqApiKeyRedacted;
+  const hasOpenaiKey =
+    voiceTranscription.openaiApiKey.length > 0 || voiceTranscription.openaiApiKeyRedacted;
   return {
     ...voiceTranscription,
-    apiKey: "",
-    apiKeyRedacted: hasKey,
+    groqApiKey: "",
+    groqApiKeyRedacted: hasGroqKey,
+    openaiApiKey: "",
+    openaiApiKeyRedacted: hasOpenaiKey,
   };
 }
 
@@ -377,17 +386,37 @@ const makeServerSettings = Effect.gen(function* () {
         } satisfies ProviderInstanceConfig;
       }
 
-      const voiceSecret = yield* secretStore
-        .get(voiceTranscriptionSecretName())
-        .pipe(
-          Effect.mapError((cause) =>
-            toSettingsError("failed to read voice transcription API key", cause),
-          ),
-        );
+      const readVoiceSecret = (name: string) =>
+        secretStore
+          .get(name)
+          .pipe(
+            Effect.mapError((cause) =>
+              toSettingsError("failed to read voice transcription API key", cause),
+            ),
+          );
+
+      const activeProvider = settings.voiceTranscription.provider;
+      const legacySecret = yield* readVoiceSecret(LEGACY_VOICE_TRANSCRIPTION_SECRET_NAME);
+      const groqSecret = yield* readVoiceSecret(voiceTranscriptionSecretName("groq"));
+      const openaiSecret = yield* readVoiceSecret(voiceTranscriptionSecretName("openai"));
+
+      // Migrate the legacy single secret into the active provider's slot when
+      // that provider has no per-provider secret yet. The cleartext value is
+      // surfaced here; the next persist re-homes it under the new secret name.
+      const resolveProviderSecret = (
+        provider: VoiceTranscriptionProvider,
+        secret: Uint8Array | null,
+      ): Uint8Array | null => secret ?? (provider === activeProvider ? legacySecret : null);
+
+      const resolvedGroq = resolveProviderSecret("groq", groqSecret);
+      const resolvedOpenai = resolveProviderSecret("openai", openaiSecret);
+
       const voiceTranscription: ServerSettings["voiceTranscription"] = {
         ...settings.voiceTranscription,
-        apiKey: voiceSecret ? textDecoder.decode(voiceSecret) : "",
-        apiKeyRedacted: false,
+        groqApiKey: resolvedGroq ? textDecoder.decode(resolvedGroq) : "",
+        groqApiKeyRedacted: false,
+        openaiApiKey: resolvedOpenai ? textDecoder.decode(resolvedOpenai) : "",
+        openaiApiKeyRedacted: false,
       };
 
       return {
@@ -490,48 +519,101 @@ const makeServerSettings = Effect.gen(function* () {
   ): Effect.Effect<ServerSettings["voiceTranscription"], ServerSettingsError> =>
     Effect.gen(function* () {
       const voicePatch = patch.voiceTranscription;
-      const storeBlanked = (apiKeyRedacted: boolean): ServerSettings["voiceTranscription"] => ({
-        ...next.voiceTranscription,
-        apiKey: "",
-        apiKeyRedacted,
-      });
 
-      const readExisting = secretStore
-        .get(voiceTranscriptionSecretName())
-        .pipe(
-          Effect.mapError((cause) =>
-            toSettingsError("failed to read voice transcription API key", cause),
-          ),
-        );
-
-      // No key field in the patch (e.g. provider-only change), or the client is
-      // echoing back the redacted indicator — preserve whatever is stored.
-      if (voicePatch?.apiKey === undefined || voicePatch.apiKeyRedacted === true) {
-        const existing = yield* readExisting;
-        return storeBlanked(existing !== null && existing.byteLength > 0);
-      }
-
-      // Explicit clear.
-      if (voicePatch.apiKey.length === 0) {
-        yield* secretStore
-          .remove(voiceTranscriptionSecretName())
+      const readSecret = (name: string) =>
+        secretStore
+          .get(name)
+          .pipe(
+            Effect.mapError((cause) =>
+              toSettingsError("failed to read voice transcription API key", cause),
+            ),
+          );
+      const setSecret = (name: string, value: string) =>
+        secretStore
+          .set(name, textEncoder.encode(value))
+          .pipe(
+            Effect.mapError((cause) =>
+              toSettingsError("failed to persist voice transcription API key", cause),
+            ),
+          );
+      const removeSecret = (name: string) =>
+        secretStore
+          .remove(name)
           .pipe(
             Effect.mapError((cause) =>
               toSettingsError("failed to remove voice transcription API key", cause),
             ),
           );
-        return storeBlanked(false);
-      }
 
-      // New key supplied.
-      yield* secretStore
-        .set(voiceTranscriptionSecretName(), textEncoder.encode(voicePatch.apiKey))
-        .pipe(
-          Effect.mapError((cause) =>
-            toSettingsError("failed to persist voice transcription API key", cause),
-          ),
-        );
-      return storeBlanked(true);
+      // The active provider may still own a legacy single secret that has never
+      // been re-homed. Carry it forward so a "preserve" persist re-homes it
+      // into the per-provider slot instead of dropping it.
+      const activeProvider = next.voiceTranscription.provider;
+      const legacySecret = yield* readSecret(LEGACY_VOICE_TRANSCRIPTION_SECRET_NAME);
+
+      // Resolve the redacted indicator for one provider, applying the patch
+      // intent (set / clear / echo-stored / omit) and routing the cleartext key
+      // through the secret store so it never lands in settings.json.
+      const persistForProvider = (
+        provider: VoiceTranscriptionProvider,
+        apiKey: string | undefined,
+        apiKeyRedacted: boolean | undefined,
+      ): Effect.Effect<boolean, ServerSettingsError> =>
+        Effect.gen(function* () {
+          const secretName = voiceTranscriptionSecretName(provider);
+
+          // No key in the patch, or the client echoed the redacted indicator —
+          // preserve whatever is stored.
+          if (apiKey === undefined || apiKeyRedacted === true) {
+            const existing = yield* readSecret(secretName);
+            if (existing !== null && existing.byteLength > 0) {
+              return true;
+            }
+            // Re-home the legacy secret into the active provider's slot.
+            if (
+              provider === activeProvider &&
+              legacySecret !== null &&
+              legacySecret.byteLength > 0
+            ) {
+              yield* setSecret(secretName, textDecoder.decode(legacySecret));
+              return true;
+            }
+            return false;
+          }
+
+          // Explicit clear.
+          if (apiKey.length === 0) {
+            yield* removeSecret(secretName);
+            return false;
+          }
+
+          // New key supplied.
+          yield* setSecret(secretName, apiKey);
+          return true;
+        });
+
+      const groqRedacted = yield* persistForProvider(
+        "groq",
+        voicePatch?.groqApiKey,
+        voicePatch?.groqApiKeyRedacted,
+      );
+      const openaiRedacted = yield* persistForProvider(
+        "openai",
+        voicePatch?.openaiApiKey,
+        voicePatch?.openaiApiKeyRedacted,
+      );
+
+      // The legacy single secret has now been migrated into the per-provider
+      // slots; drop it so it cannot shadow future reads.
+      yield* removeSecret(LEGACY_VOICE_TRANSCRIPTION_SECRET_NAME);
+
+      return {
+        ...next.voiceTranscription,
+        groqApiKey: "",
+        groqApiKeyRedacted: groqRedacted,
+        openaiApiKey: "",
+        openaiApiKeyRedacted: openaiRedacted,
+      };
     });
 
   const writeSettingsAtomically = Effect.fnUntraced(

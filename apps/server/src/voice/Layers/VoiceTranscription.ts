@@ -1,10 +1,11 @@
 /**
  * VoiceTranscriptionLive - Server-side proxy to a hosted Whisper API.
  *
- * Resolves the selected provider from `ServerSettings.voiceTranscription`, reads
- * the API key from `ServerSecretStore` (never the cleartext key off the wire),
- * decodes the recorded audio, and POSTs it as multipart `file`+`model` to the
- * provider's OpenAI-compatible `/audio/transcriptions` endpoint.
+ * Resolves the selected provider from `ServerSettings.voiceTranscription` and
+ * reads that provider's API key from the materialized settings (sourced from
+ * `ServerSecretStore`, never the cleartext key off the wire), decodes the
+ * recorded audio, and POSTs it as multipart `file`+`model` to the provider's
+ * OpenAI-compatible `/audio/transcriptions` endpoint.
  *
  * @module VoiceTranscriptionLive
  */
@@ -14,8 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
-import { ServerSecretStore } from "../../auth/Services/ServerSecretStore.ts";
-import { ServerSettingsService, voiceTranscriptionSecretName } from "../../serverSettings.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   VoiceTranscriptionService,
   type VoiceTranscriptionServiceShape,
@@ -42,8 +42,6 @@ const TranscriptionResponse = Schema.Struct({
 });
 const decodeTranscriptionResponse = HttpClientResponse.schemaBodyJson(TranscriptionResponse);
 
-const textDecoder = new TextDecoder();
-
 function decodeBase64ToBytes(audioBase64: string): Uint8Array {
   const buffer = Buffer.from(audioBase64, "base64");
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
@@ -52,7 +50,6 @@ function decodeBase64ToBytes(audioBase64: string): Uint8Array {
 export const makeVoiceTranscriptionService = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const serverSettings = yield* ServerSettingsService;
-  const secretStore = yield* ServerSecretStore;
 
   const transcribe: VoiceTranscriptionServiceShape["transcribe"] = (input) =>
     Effect.gen(function* () {
@@ -78,17 +75,14 @@ export const makeVoiceTranscriptionService = Effect.gen(function* () {
       const provider = settings.voiceTranscription.provider;
       const endpoint = PROVIDER_ENDPOINTS[provider];
 
-      const secret = yield* secretStore.get(voiceTranscriptionSecretName()).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VoiceTranscriptionError({
-              reason: "provider_error",
-              detail: "Failed to read the stored Whisper API key.",
-              cause,
-            }),
-        ),
-      );
-      const apiKey = secret ? textDecoder.decode(secret).trim() : "";
+      // `getSettings` materializes the per-provider key from ServerSecretStore
+      // (migrating any legacy single secret into the active provider), so the
+      // cleartext key for the selected provider is already on the settings.
+      const apiKey = (
+        provider === "groq"
+          ? settings.voiceTranscription.groqApiKey
+          : settings.voiceTranscription.openaiApiKey
+      ).trim();
       if (apiKey.length === 0) {
         return yield* new VoiceTranscriptionError({
           reason: "missing_api_key",
