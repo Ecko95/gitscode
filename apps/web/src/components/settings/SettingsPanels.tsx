@@ -426,6 +426,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.critReviewEnabled !== DEFAULT_UNIFIED_SETTINGS.critReviewEnabled
+        ? ["Crit PR review"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
     ],
     [
@@ -433,6 +436,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.critReviewEnabled,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffIgnoreWhitespace,
@@ -468,6 +472,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      critReviewEnabled: DEFAULT_UNIFIED_SETTINGS.critReviewEnabled,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
@@ -614,6 +619,30 @@ export function GeneralSettingsPanel() {
               checked={settings.diffWordWrap}
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Crit PR review"
+          description="Use the crit review sidecar instead of the native diff panel when reviewing a pull request thread. Experimental."
+          resetAction={
+            settings.critReviewEnabled !== DEFAULT_UNIFIED_SETTINGS.critReviewEnabled ? (
+              <SettingResetButton
+                label="crit PR review"
+                onClick={() =>
+                  updateSettings({
+                    critReviewEnabled: DEFAULT_UNIFIED_SETTINGS.critReviewEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.critReviewEnabled}
+              onCheckedChange={(checked) => updateSettings({ critReviewEnabled: Boolean(checked) })}
+              aria-label="Enable crit PR review"
             />
           }
         />
