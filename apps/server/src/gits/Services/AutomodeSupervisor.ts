@@ -3,9 +3,11 @@ import * as Context from "effect/Context";
 
 import type {
   AutomodeDispatchResult,
+  AutomodeDriverHaltInput,
   AutomodeEnqueueGoalInput,
   AutomodeGoal,
   AutomodeGoalInput,
+  AutomodeGoalOutcomeInput,
   AutomodePolicyUpdateInput,
   AutomodeRejectGoalInput,
   AutomodeSnapshot,
@@ -29,6 +31,16 @@ export interface AutomodeSupervisorShape {
   readonly dispatchGoal: (
     input: AutomodeGoalInput,
   ) => Effect.Effect<AutomodeDispatchResult, AutomodeSupervisorError>;
+  readonly completeGoal: (
+    input: AutomodeGoalInput,
+  ) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
+  readonly failGoal: (
+    input: AutomodeGoalOutcomeInput,
+  ) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
+  readonly haltDriver: (
+    input: AutomodeDriverHaltInput,
+  ) => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
+  readonly resumeDriver: () => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
 }
 
 export class AutomodeSupervisor extends Context.Service<
