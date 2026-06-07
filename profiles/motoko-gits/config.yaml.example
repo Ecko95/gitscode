@@ -8,3 +8,13 @@ gits:
   execution: observe-propose-only
   delamain_execution: approval_required
   open_gsd_phase_truth: true
+  # Autonomous mode (operator-armed via the cockpit). When enabled, the policy
+  # grants Motoko STANDING routing approval inside the held-PR envelope: it may
+  # dispatch confined Delamain peers without a per-task human tap, but never
+  # merges or lands. Disabled by default; arm it explicitly.
+  autonomous_mode:
+    enabled: false                      # operator-armed via cockpit; off by default
+    allowed_repos: []                   # scope: repos Motoko may dispatch into (e.g. [gitscode])
+    confined_peer: true                 # require gits-confine.sh --profile peer (yolo + OS jail)
+    auto_merge_on_verifier_pass: false  # held PR -> deploy branch; the operator merges
+    notify_channel: telegram            # existing GITS/Motoko/Hermes bot channel

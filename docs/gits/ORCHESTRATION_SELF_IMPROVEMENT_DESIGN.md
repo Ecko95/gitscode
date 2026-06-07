@@ -26,6 +26,87 @@ The H0 confinement work (`H0_CONFINEMENT.md`, `scripts/gits-confine.sh`, `GitsVe
 
 ---
 
+## Autonomous Toggle v1 — Motoko Autonomous Mode
+
+> Ratified `/grill-me` design (2026-06-07). Source brainstorm: `docs/brainstorms/autonomous-toggle.md` (item **#5** — "fully-agentic toggle" — of the Rev 2 build order above). This is the design-of-record for that toggle. Where it touches H0b, it **reframes** the written confinement plan (see "Confined-yolo envelope").
+
+The "fully-agentic toggle" is **not** a standalone mechanical loop bolted beside Motoko — it is **Motoko (Hermes) given a dispatch arm**. v1 ships the full Motoko loop against **one** project (`gitscode` self-hosting, scoped by `AutomodePolicy.allowedRepos`), **sequential**, with the architecture keyed per-project/session from day one so the 2nd–4th project is additive instances, not a rewrite.
+
+### The flow — Motoko as the conducting brain
+
+The operator states an **intent**; Motoko judges whether it understands the work well enough to build it, then either dispatches or grills first:
+
+```
+intent → Motoko: enough context to build?
+              ├── YES → plan slices → dispatch confined Delamain peers → held PR → gits
+              └── NO  → grill-me Q&A → write context (brainstorm/spec + per-slice criteria) → dispatch
+```
+
+The **sufficiency bar is operational, not a separate heuristic**: _"can Motoko draft a complete slice plan + per-slice acceptance criteria from available context (intent + repo + existing brainstorm/spec docs)?"_ Understanding == "I could write the whole plan." The gaps Motoko **cannot** fill become the grill questions — so planning, context-judgment, and grilling are **one unified activity**, and the criteria the plan produces are exactly the verifier's input (this is what closes the verifier author-side gap, parent #1). Grill **modality is both**: interactive in the cockpit chat when the operator is present, with an **async-Telegram fallback** when away — a gap discovered unattended **parks that project** and pings the bot channel; the operator replies whenever, one question at a time, every answer checkpointed to the project's brainstorm doc (this very `/grill-me` workflow, now run by Motoko). The mechanical substrate below (`AutomodeDriver`, confined-yolo peers, held PR → `gits`, poll-observe, halt/kill/resume) is **Motoko's execution arm**, not an independent clock.
+
+### Dispatch authority via standing-approval — proposal→goal merge, SOUL preserved
+
+Today the SOUL is `observe-propose-only` and `HermesAdapter` exposes **no** spawn/integrate/merge method (`delamainAdapter` is read-only `listPeers()`), so v1's central net-new work is **granting Motoko dispatch** without breaking the contract. The resolution keeps the SOUL intact via the **envelope**, not a rewrite:
+
+- Motoko still **proposes**. In `mode:"autonomous"` the **policy auto-approves** Motoko's proposals **within the envelope** — confined peer + held PR to `gits`, never a merge-to-`gits`/`main`. The standing-approval clause replaces the per-item human tap; consequential gates (the `integration→gits` merge, destructive actions, scope-changing answers) **stay human**, in either mode.
+- The auto-approved **proposal becomes an `AutomodeSupervisor` goal** the `AutomodeDriver` dispatches. This **merges the two parallel "pending work" representations** — the Hermes/Motoko proposal cards and the AutomodeSupervisor goals — into one pipeline: `Motoko proposal → (autonomous-mode auto-approve) → goal → driver → confined peer`.
+- **"Motoko never lands" is preserved end-to-end:** peers do every write **in a jail**, the output is a **held PR** the operator merges, Motoko only routes.
+
+Implementation surface: a small **standing-approval clause** added to `SOUL.md` (+ `config.yaml.example` `execution`/`delamain_execution` keys) for autonomous mode — additive, no rewrite. **Hard prerequisite:** the Hermes managed home (`~/.gits/hermes`: `.env`/`config.yaml`, Codex OAuth) must be **configured** — Motoko is the brain now, not an optional strategist.
+
+### Confined-yolo envelope — this REFRAMES H0b
+
+The safety model for unattended live use is **`--yolo` (full in-repo autonomy, no prompts) kept, made safe by a bubblewrap jail** — _not_ "drop yolo."
+
+- **What `H0_CONFINEMENT.md` actually says:** drop `--yolo`/`danger-full-access` **for untrusted repos**. v1's target is a **trusted** repo (the operator's own, the assigned one). The threat model there is "agent goes off-rails _outside_ the repo," which the jail already contains — **not** "a hostile repo exfiltrates secrets." So **keep `--yolo`; the jail is the safety boundary.**
+- **The jail already exists:** `scripts/gits-confine.sh --profile peer` (bubblewrap) — worktree-only writes, binds **only** the single peer model-API credential read-only (every other secret — `~/.codex`, `~/.gits/hermes`, telegram, cursor token — invisible). Verified by the H0 spike (14/14).
+- **Repo-scoping** = bubblewrap `--worktree` (filesystem) + `AutomodePolicy.allowedRepos` (which repo may be assigned at all).
+- **The v1 prerequisite (H0b):** modify the **`delamain` binary** so `delamain spawn` launches its codex/cursor child **through `gits-confine.sh --profile peer`** (keeping `--yolo`). This preserves every reuse decision — delamain stays the peer manager (worktree/branch/PR/status), GITS keeps calling `delamainAdapter.spawnPeer`, and the `listPeers`-based poll-tick observation keeps working. (GITS-direct confined spawn was rejected — it would rebuild delamain's lifecycle inside GITS.)
+- **Accepted v1 residual risk:** egress is **unfiltered** (`passt`/`pasta` absent → `--egress proxy=` advisory only). Acceptable for a trusted repo where the jail already hides every secret but the one model-API cred. The full H0c egress allowlist is fast-follow.
+
+### Execution substrate — server-side `AutomodeDriver`
+
+The toggle is genuinely `AutomodePolicy.mode = "autonomous"` driving a **server-native loop fiber** (Effect `Schedule`/`forkDaemon`) — a **new `AutomodeDriver` layer**, separate from `AutomodeSupervisor` but reusing its queue + gates + kill-switch + persistence, and porting the autopilot's hard-won mechanics (forbidden-path diff, verifier-critic, patch-id merge detection) rather than re-deriving them. It is **not** a Claude-Code-session-bound autopilot skill (that's the manual equivalent / prior art).
+
+- **Sequential within a repo:** slice N+1 starts only after slice N merges or holds — no dependency graph in v1 (defer `dependsOn`). A net-new slice `order` field on the goal model gives the queue its spine.
+- **Concurrency is ACROSS repos, not peers-per-repo:** "simultaneous" means Motoko runs **multiple projects at once** (2–4 max, typically focused on one), each a **session scoped to its own repo** running its own internally-sequential loop — so there are **no intra-repo merge races/deadlocks**. v1 runs **one** project, but state is keyed **per-repo/session from day one** (today `automode-state.json` is a single global file at `<stateDir>/gits/` — re-key per-session) so adding projects 2–4 is additive.
+- **Poll-tick observation** (Effect `Schedule.fixed`) over `listPeers`: find the peer by goal `peerId`, map `PeerStatus`→goal transition — `pending`/`running`→wait; `waiting`→auto-answer ladder (below) or pause+notify; `done`/`completed`+pushed→review/merge gate; `failed`/`frozen`/`killed`/`halted`/`integrationStatus:failed`→`failed`+halt. Net-new: the `running→completed/failed` transitions (the enum has them; nothing sets them today — goals dead-end at `running`).
+- **Branch topology — held PR → `gits`, autoMerge OFF:** each run owns a working branch `auto/<roadmap-id>` off `origin/gits`; on verifier-pass the driver lands the slice branch onto that integration branch (the **chain-advance** mechanism) and spawns the next slice from the integration tip. At roadmap end it opens **one held PR `auto/<roadmap-id> → gits`** + Telegram "done." `autoMergeOnVerifierPass` is **OFF for v1** — every verifier-pass slice is held, never auto-merged; the toggle does autonomous **implementation into held PRs**, never autonomous merge. `main` is never touched.
+- **Halt-on-hold/fail:** a flagged hold (uncertain/fail) or a terminal peer failure **halts the chain** (pause + Telegram + manual resume) — the autopilot's halt-on-failure, chosen over "triage-never-block" because v1 is sequential and can't route around a dependent slice. This requires distinguishing **pass-but-unmerged (advance)** from **flagged-hold/fail (halt)**.
+- **Operator control:** **arm** = a cockpit "Autonomous" control on the existing Automode tab → one `updatePolicy` (`mode:"autonomous"`, `killSwitchEnabled:false`, `requireApprovalForPeerSpawn:false`), with server-side **fail-closed preconditions** (repo ∈ `allowedRepos`, queued goals exist, integration branch resolvable, confined-delamain path present). **Hard-stop kill** = stop scheduling + SIGTERM the in-flight peer (`killPeer`). **Resume** = after a hold/fail/`waiting` pause, the operator resolves, a "Resume" action clears the pause, the driver continues next tick. Flip safety rides existing GITS WS auth (pairing token / tailnet); blast radius is bounded by kill switch + held-PR-only + sequential + confinement.
+- **Cost bounds in v1 = mechanical, no auto-throttle:** `maxActivePeers = 1` (sequential), per-slice runtime SIGTERM (`scheduleRuntimeLimit`), halt-on-hold/fail, and the manual kill switch. The codex-weekly 80% reserve is **deferred** (see below); the operator watches usage by hand for v1.
+
+### Verifier-critic = per-peer summary → per-project episode ledger
+
+The verifier-critic is **both** the merge gate **and** Motoko's per-peer summary — no separate summarizer agent in v1. The verifier already runs **read-only** over the green diff against the slice's acceptance criteria and emits `pass`/`fail`/`uncertain` + reasoning + an adversarial "what it missed" — that **is** "what was done + what issues arose." Augmented with the peer's one-line done-note + `prUrl`, Motoko's per-peer footprint is `{slice id/title, verdict + reasons, key misses, PR link}`, written to a **per-project SQLite episode ledger** (`@effect/sql-sqlite-bun`, indexed + WAL).
+
+Motoko **reads the ledger, never the transcripts** — this is what protects its context window and lets it orchestrate multiple peers; on context reset it **rehydrates from the ledger**. Because the verifier runs read-only (like a critic over a diff), it is immune to prompt-injection laundered into the diff. A dedicated summarizer is a later add only if verifier output proves thin.
+
+### Tiered peer-question auto-answer
+
+When a confined peer reports `WAITING`, Motoko resolves it autonomously by a **type-gate + difficulty-ladder**, with the operator as the **terminal backstop**:
+
+- **Type-gate first:** answer autonomously **only** when the question is **derivable from context AND non-scope-changing AND reversible**. A **scope / preference / judgment / irreversible** question skips the models entirely → straight to the operator (Telegram, one-tap, park the peer). This is what prevents a model guessing operator intent and producing green-but-wrong work.
+- **Difficulty-ladder (for derivable questions):** a cheap **mini model** answers if it has enough context → if low-confidence, escalate to a **`gpt-5.5`** agent → if still unresolved, escalate to the **operator**. The answerer runs **read-only** over a bundle of `{peer's question + slice acceptance criteria + project plan/brainstorm doc + read-only repo/diff peek}` (immune to diff injection); "has enough context" = the model self-reports it can answer from that bundle.
+- Every auto-answer is **logged to the ledger** so operator overrides are learnable.
+
+Notification surface = the **existing GITS/Motoko/Hermes Telegram bot channel** (reuse the operator's bot token + chat_id), not a separate autopilot setup. ⚠️ Net-new server plumbing: there is currently **zero Telegram code in the server**; v1 needs a small `TelegramNotifier` adapter reading bot creds from config and posting event/escalation messages.
+
+### Deferred from v1 (north-star / fast-follow)
+
+Drawn explicitly so v1 stays "the full loop, one project, sequential":
+
+- **2–4 concurrent projects** (the architecture is multi-session-_ready_ in v1, but only one runs).
+- **Codex-weekly 80% cost throttle** (`GitsCapacityMonitor` → pause auto-spawn at 80%) — v1 has no automatic cost guardrail.
+- **Full H0c egress allowlist** (install `passt`/`pasta`) — v1 egress is unfiltered (accepted residual).
+- **`autoMergeOnVerifierPass` = ON** — v1 only ever produces held PRs; the flag flips on later once the verifier earns trust.
+- **L3 autonomous decomposition** — v1 is L2 (advance a Motoko-conducted slice plan); no unsupervised slice generation.
+- **Reflection→routing / prompt tuning** (gated cards) — the learning loop of §D above.
+- **Dedicated summarizer agent** — only if the verifier-critic output proves thin.
+- **PWA + web push** — the eventual replacement for Telegram; a separate workstream.
+
+---
+
 ## Goal
 
 A **Delamain-editable orchestrator** with explicit options and self-improvement, where **Motoko (Hermes)** can (1) read and propose edits to the orchestration configuration, (2) learn from its interactions with Delamain (peer outcomes), and (3) draw on persistent memory of how the operator works — so peer coordination gets measurably better over time, while the existing safety posture is unchanged:
