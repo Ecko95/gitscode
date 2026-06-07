@@ -58,12 +58,14 @@ interface ScanTarget {
 }
 
 function isNotFoundError(cause: unknown): boolean {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    (cause as { readonly code?: unknown }).code === "ENOENT"
-  );
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
+    return false;
+  }
+  const code = (cause as { readonly code?: unknown }).code;
+  // ENOENT: the path does not exist. ENOTDIR: an intermediate path segment is a file rather
+  // than a directory (e.g. a linked git worktree where `.git` is a file, so `.git/config`
+  // resolves through a non-directory). Both mean the optional target is effectively absent.
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 function toCockpitError(message: string, cause?: unknown) {
