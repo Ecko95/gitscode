@@ -106,6 +106,7 @@ import {
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
+import { layer as CritSidecarManagerLive } from "./crit/crit-sidecar-manager.ts";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import {
   gitsBuildInfoRouteLayer,
@@ -365,6 +366,11 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(ServerLifecycleEventsLive),
+  // CritSidecarManager exposes the crit PR-review sidecar over the WS NativeApi.
+  // It still requires ChildProcessSpawner (PlatformServicesLive) + HttpClient
+  // (FetchHttpClient.layer) from the outer runtime; NetService it provides for
+  // itself. Merged here so `yield* CritSidecarManager` resolves in ws.ts.
+  Layer.provideMerge(CritSidecarManagerLive),
   Layer.provide(NetService.layer),
 );
 

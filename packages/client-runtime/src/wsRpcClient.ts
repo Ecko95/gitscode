@@ -129,6 +129,11 @@ export interface WsRpcClient {
   readonly review: {
     readonly getDiffPreview: RpcUnaryMethod<typeof WS_METHODS.reviewGetDiffPreview>;
   };
+  readonly crit: {
+    readonly ensureSidecar: RpcUnaryMethod<typeof WS_METHODS.critEnsureSidecar>;
+    readonly sidecarStatus: RpcUnaryMethod<typeof WS_METHODS.critSidecarStatus>;
+    readonly releaseSidecar: RpcUnaryMethod<typeof WS_METHODS.critReleaseSidecar>;
+  };
   readonly gits: {
     readonly getCockpit: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsGetCockpit>;
     readonly devCommands: {
@@ -338,6 +343,14 @@ export function createWsRpcClient(
     review: {
       getDiffPreview: (input) =>
         transport.request((client) => client[WS_METHODS.reviewGetDiffPreview](input)),
+    },
+    crit: {
+      ensureSidecar: (input) =>
+        transport.request((client) => client[WS_METHODS.critEnsureSidecar](input)),
+      sidecarStatus: (input) =>
+        transport.request((client) => client[WS_METHODS.critSidecarStatus](input)),
+      releaseSidecar: (input) =>
+        transport.request((client) => client[WS_METHODS.critReleaseSidecar](input)),
     },
     gits: {
       getCockpit: () => transport.request((client) => client[WS_METHODS.gitsGetCockpit]({})),

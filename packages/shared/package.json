@@ -106,6 +106,10 @@
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"
+    },
+    "./crit/review-comment-block": {
+      "types": "./src/crit/review-comment-block.ts",
+      "import": "./src/crit/review-comment-block.ts"
     }
   },
   "scripts": {

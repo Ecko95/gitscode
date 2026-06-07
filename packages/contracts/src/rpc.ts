@@ -101,6 +101,13 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
+  CritEnsureSidecarRequest,
+  CritError,
+  CritReleaseSidecarResponse,
+  CritSidecarStatusRequest,
+  CritSidecarStatusResponse,
+} from "./crit.ts";
+import {
   ReviewDiffPreviewError,
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
@@ -205,6 +212,11 @@ export const WS_METHODS = {
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
+
+  // Crit PR review sidecar methods
+  critEnsureSidecar: "crit.ensureSidecar",
+  critSidecarStatus: "crit.sidecarStatus",
+  critReleaseSidecar: "crit.releaseSidecar",
 
   // GITS cockpit methods
   gitsGetCockpit: "gits.cockpit.get",
@@ -533,6 +545,24 @@ export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPrevie
   payload: ReviewDiffPreviewInput,
   success: ReviewDiffPreviewResult,
   error: ReviewDiffPreviewError,
+});
+
+export const WsCritEnsureSidecarRpc = Rpc.make(WS_METHODS.critEnsureSidecar, {
+  payload: CritEnsureSidecarRequest,
+  success: CritSidecarStatusResponse,
+  error: CritError,
+});
+
+export const WsCritSidecarStatusRpc = Rpc.make(WS_METHODS.critSidecarStatus, {
+  payload: CritSidecarStatusRequest,
+  success: CritSidecarStatusResponse,
+  error: CritError,
+});
+
+export const WsCritReleaseSidecarRpc = Rpc.make(WS_METHODS.critReleaseSidecar, {
+  payload: CritSidecarStatusRequest,
+  success: CritReleaseSidecarResponse,
+  error: CritError,
 });
 
 export const WsGitsGetCockpitRpc = Rpc.make(WS_METHODS.gitsGetCockpit, {
@@ -909,6 +939,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
+  WsCritEnsureSidecarRpc,
+  WsCritSidecarStatusRpc,
+  WsCritReleaseSidecarRpc,
   WsGitsGetCockpitRpc,
   WsGitsDevCommandsListRpc,
   WsGitsDevCommandsInitRpc,

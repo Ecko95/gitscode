@@ -3,6 +3,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
+import { CritReviewPanel } from "../components/CritReviewPanel";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
   DiffPanelHeaderSkeleton,
@@ -17,8 +18,15 @@ import {
   stripDiffSearchParams,
 } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useSettings } from "../hooks/useSettings";
+import { useVcsStatus } from "~/lib/vcsStatusState";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
-import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
+import {
+  selectEnvironmentState,
+  selectProjectByRef,
+  selectThreadExistsByRef,
+  useStore,
+} from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
@@ -54,8 +62,9 @@ const DiffPanelInlineSidebar = (props: {
   onCloseDiff: () => void;
   onOpenDiff: () => void;
   renderDiffContent: boolean;
+  critPanel: React.ReactNode;
 }) => {
-  const { diffOpen, onCloseDiff, onOpenDiff, renderDiffContent } = props;
+  const { diffOpen, onCloseDiff, onOpenDiff, renderDiffContent, critPanel } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -131,7 +140,7 @@ const DiffPanelInlineSidebar = (props: {
           storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
+        {renderDiffContent ? (critPanel ?? <LazyDiffPanel mode="sidebar" />) : null}
         <SidebarRail />
       </Sidebar>
     </SidebarProvider>
@@ -168,6 +177,54 @@ function ChatThreadRouteView() {
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = search.diff === "1";
+
+  // Crit PR review (off by default behind a client setting). When the active
+  // thread's branch has an associated open pull request, prefer the crit review
+  // sidecar over the native diff panel — unless the sidecar has crashed for this
+  // session (tracked by `critReviewDisabled`).
+  const critReviewEnabled = useSettings((settings) => settings.critReviewEnabled);
+  const [critReviewDisabled, setCritReviewDisabled] = useState(true);
+  const disableCritReview = useCallback(() => {
+    setCritReviewDisabled(true);
+  }, []);
+  useEffect(() => {
+    // Re-arm crit for a freshly viewed thread; a crash only disables it for the
+    // current thread session.
+    setCritReviewDisabled(false);
+  }, [threadRef?.environmentId, threadRef?.threadId]);
+  const activeProjectId = serverThread?.projectId ?? null;
+  const activeProject = useStore((store) =>
+    threadRef && activeProjectId
+      ? selectProjectByRef(store, {
+          environmentId: threadRef.environmentId,
+          projectId: activeProjectId,
+        })
+      : undefined,
+  );
+  const activeWorkspaceRoot = serverThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const gitStatus = useVcsStatus({
+    environmentId: threadRef?.environmentId ?? null,
+    cwd: activeWorkspaceRoot,
+  }).data;
+  const activeBranch = gitStatus?.refName ?? null;
+  const activePullRequest = gitStatus?.pr ?? null;
+  const shouldUseCritReview =
+    critReviewEnabled &&
+    !critReviewDisabled &&
+    activePullRequest !== null &&
+    activeWorkspaceRoot !== null &&
+    activeBranch !== null &&
+    threadRef !== null;
+  const critPanel =
+    shouldUseCritReview && threadRef && activeWorkspaceRoot && activeBranch ? (
+      <CritReviewPanel
+        environmentId={threadRef.environmentId}
+        workspaceRoot={activeWorkspaceRoot}
+        branch={activeBranch}
+        threadId={threadRef.threadId}
+        onUnavailable={disableCritReview}
+      />
+    ) : null;
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
@@ -254,6 +311,7 @@ function ChatThreadRouteView() {
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}
           renderDiffContent={shouldRenderDiffContent}
+          critPanel={critPanel}
         />
       </>
     );
@@ -270,7 +328,7 @@ function ChatThreadRouteView() {
         />
       </SidebarInset>
       <RightPanelSheet open={diffOpen} onClose={closeDiff}>
-        {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
+        {shouldRenderDiffContent ? (critPanel ?? <LazyDiffPanel mode="sheet" />) : null}
       </RightPanelSheet>
     </>
   );
