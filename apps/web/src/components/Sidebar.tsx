@@ -397,7 +397,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
     : !isThreadRunning
-      ? "pointer-events-none transition-opacity duration-150 max-sm:pr-6 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
+      ? "pointer-events-none transition-opacity duration-150 pr-6 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
       : "pointer-events-none";
   const clearConfirmingArchive = useCallback(() => {
     setConfirmingArchiveThreadKey((current) => (current === threadKey ? null : current));
@@ -657,8 +657,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             layout, using the same hover-reveal + always-on-touch pattern as the
             archive button. */}
         <div
-          className={`pointer-events-none absolute top-1/2 right-12 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100 ${
-            isRemoteThread ? "max-sm:right-[6.25rem]" : "max-sm:right-[5.25rem]"
+          className={`pointer-events-auto absolute top-1/2 -translate-y-1/2 opacity-100 transition-opacity duration-150 ${
+            isRemoteThread ? "right-[6.25rem]" : "right-[5.25rem]"
           }`}
         >
           <button
@@ -2168,7 +2168,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           <TooltipTrigger
             render={
               <div
-                className={`pointer-events-none absolute top-1 ${projectActionsButtonPositionClassName} opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100`}
+                className={`pointer-events-auto absolute top-1 ${projectActionsButtonPositionClassName} opacity-100 transition-opacity duration-150`}
               >
                 <button
                   type="button"
