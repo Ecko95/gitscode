@@ -31,7 +31,8 @@ import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 import { authWebSocketTokenRouteLayer } from "../auth/http.ts";
 import { ServerAuthLive } from "../auth/Layers/ServerAuth.ts";
 import { ServerSecretStoreLive } from "../auth/Layers/ServerSecretStore.ts";
-import { attachmentsRouteLayer } from "../http.ts";
+import { attachmentsRouteLayer, projectFaviconRouteLayer } from "../http.ts";
+import { ProjectFaviconResolver } from "../project/Services/ProjectFaviconResolver.ts";
 import { ServerConfig, deriveServerPaths, type ServerConfigShape } from "../config.ts";
 import type { SessionRole } from "../auth/Services/SessionCredentialService.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
@@ -273,6 +274,7 @@ const make_app_layer = (config: ServerConfigShape, options: StubOptions) => {
     orchestrationDispatchRouteLayer,
     authWebSocketTokenRouteLayer,
     attachmentsRouteLayer,
+    projectFaviconRouteLayer,
   );
 
   return HttpRouter.serve(routesLayer, {
@@ -282,6 +284,9 @@ const make_app_layer = (config: ServerConfigShape, options: StubOptions) => {
     Layer.provideMerge(authLayer),
     Layer.provideMerge(make_projection_layer(options.thread ?? Option.none())),
     Layer.provideMerge(make_engine_layer(options.onDispatch)),
+    Layer.provideMerge(
+      Layer.succeed(ProjectFaviconResolver, { resolvePath: () => Effect.succeed(null) }),
+    ),
     Layer.provideMerge(WorkspacePathsLive),
     Layer.provideMerge(NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 })),
     Layer.provideMerge(FetchHttpClient.layer),
@@ -383,6 +388,15 @@ const get_attachment = (baseUrl: string, attachmentId: string, token: string) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const request = HttpClientRequest.get(`${baseUrl}/attachments/${attachmentId}`).pipe(
+      HttpClientRequest.setHeaders({ authorization: `Bearer ${token}` }),
+    );
+    return yield* client.execute(request);
+  });
+
+const get_favicon = (baseUrl: string, token: string) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const request = HttpClientRequest.get(`${baseUrl}/api/project-favicon?cwd=/tmp/x`).pipe(
       HttpClientRequest.setHeaders({ authorization: `Bearer ${token}` }),
     );
     return yield* client.execute(request);
@@ -583,6 +597,34 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
           const bearer = yield* token(THREAD_A, "thread-scoped");
           const response = yield* get_attachment(baseUrl, "some-attachment-id", bearer);
           assert.equal(response.status, 403);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  // The other authenticated surfaces guarded by `requireAuthenticatedRequest`
+  // (project-favicon, OTLP trace proxy) must also reject the thread-scoped role,
+  // so a leaked sidecar token cannot probe arbitrary filesystem paths.
+  it.effect("GET /api/project-favicon rejects a thread-scoped session with 403", () =>
+    Effect.gen(function* () {
+      yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token(THREAD_A, "thread-scoped");
+          const response = yield* get_favicon(baseUrl, bearer);
+          assert.equal(response.status, 403);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("REGRESSION: an ordinary client session is not 403'd at project-favicon", () =>
+    Effect.gen(function* () {
+      yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token(THREAD_A, "client");
+          const response = yield* get_favicon(baseUrl, bearer);
+          assert.notEqual(response.status, 403);
+          assert.equal(response.status, 200);
         }),
       );
     }).pipe(Effect.provide(FetchHttpClient.layer)),

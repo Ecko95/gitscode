@@ -179,7 +179,16 @@ export const critTurnRouteLayer = HttpRouter.add(
     const thread = threadOption.value;
     const priorTurnId = thread.latestTurn?.turnId ?? null;
 
-    const command = yield* buildTurnStartCommand(body.threadId, body.text);
+    const command = yield* buildTurnStartCommand(body.threadId, body.text).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CritHttpError({
+            message: "Failed to build crit turn command.",
+            status: 500,
+            cause,
+          }),
+      ),
+    );
     const normalizedCommand = yield* normalizeDispatchCommand(command).pipe(
       Effect.mapError(
         (cause) =>
