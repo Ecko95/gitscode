@@ -89,6 +89,9 @@ export interface WsRpcClient {
     readonly cloneRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlCloneRepository>;
     readonly publishRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlPublishRepository>;
   };
+  readonly audio: {
+    readonly transcribe: RpcUnaryMethod<typeof WS_METHODS.audioTranscribe>;
+  };
   readonly shell: {
     readonly openInEditor: (input: {
       readonly cwd: Parameters<LocalApi["shell"]["openInEditor"]>[0];
@@ -272,6 +275,10 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.sourceControlCloneRepository](input)),
       publishRepository: (input) =>
         transport.request((client) => client[WS_METHODS.sourceControlPublishRepository](input)),
+    },
+    audio: {
+      transcribe: (input) =>
+        transport.request((client) => client[WS_METHODS.audioTranscribe](input)),
     },
     shell: {
       openInEditor: (input) =>

@@ -61,6 +61,8 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import { ComposerVoiceButton } from "./ComposerVoiceButton";
+import { useVoiceTranscription } from "../../hooks/useVoiceTranscription";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -293,9 +295,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             size="sm"
             type="button"
             onClick={props.onToggleDelamainSidebar}
-            title={
-              props.delamainSidebarOpen ? "Hide delamain sidebar" : "Show delamain sidebar"
-            }
+            title={props.delamainSidebarOpen ? "Hide delamain sidebar" : "Show delamain sidebar"}
           >
             <BotIcon />
             <span className="sr-only sm:not-sr-only">Delamain</span>
@@ -1088,6 +1088,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [composerDraftTarget, setComposerDraftPrompt],
   );
+
+  const appendVoiceTranscript = useCallback(
+    (text: string) => {
+      const current = promptRef.current;
+      const nextPrompt = current.trim().length > 0 ? `${current} ${text}` : text;
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+      composerEditorRef.current?.focusAtEnd();
+    },
+    [promptRef, setPrompt],
+  );
+  const voiceTranscription = useVoiceTranscription({ onTranscript: appendVoiceTranscript });
 
   const addComposerImage = useCallback(
     (image: ComposerImageAttachment) => {
@@ -2414,6 +2426,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                <ComposerVoiceButton
+                  state={voiceTranscription.state}
+                  missingApiKey={voiceTranscription.missingApiKey}
+                  onStart={() => void voiceTranscription.start()}
+                  onStop={voiceTranscription.stop}
+                />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}

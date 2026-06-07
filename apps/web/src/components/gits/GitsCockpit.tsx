@@ -86,6 +86,8 @@ import {
 } from "../ui/select";
 import { SidebarInset, SidebarTrigger } from "../ui/sidebar";
 import { Textarea } from "../ui/textarea";
+import { ComposerVoiceButton } from "../chat/ComposerVoiceButton";
+import { useVoiceTranscription } from "../../hooks/useVoiceTranscription";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 const USD_FORMAT = new Intl.NumberFormat(undefined, {
@@ -1701,6 +1703,14 @@ function MotokoChatComposer({
   onChatSubmit: () => void;
 }) {
   const canSend = !actionPending && chatInput.trim().length > 0;
+  const chatInputRef = useRef(chatInput);
+  chatInputRef.current = chatInput;
+  const voiceTranscription = useVoiceTranscription({
+    onTranscript: (text) => {
+      const current = chatInputRef.current;
+      onChatInputChange(current.trim().length > 0 ? `${current} ${text}` : text);
+    },
+  });
   const routeItems = useMemo(
     () => [
       { value: MOTOKO_ROOT_ROUTE_SELECT_VALUE, label: MOTOKO_ROOT_ROUTE_LABEL },
@@ -1815,6 +1825,14 @@ function MotokoChatComposer({
               className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
             >
               <MotokoContextWindowChip status={status} />
+              <ComposerVoiceButton
+                size="icon"
+                className="size-9 rounded-full before:rounded-full sm:size-8"
+                state={voiceTranscription.state}
+                missingApiKey={voiceTranscription.missingApiKey}
+                onStart={() => void voiceTranscription.start()}
+                onStop={voiceTranscription.stop}
+              />
               <Button
                 type="submit"
                 size="icon"

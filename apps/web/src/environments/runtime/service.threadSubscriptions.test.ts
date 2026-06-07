@@ -109,6 +109,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       cloneRepository: vi.fn(),
       publishRepository: vi.fn(),
     },
+    audio: {
+      transcribe: vi.fn(),
+    },
     shell: {
       openInEditor: vi.fn(),
       openInTerminal: vi.fn(),
