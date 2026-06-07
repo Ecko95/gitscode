@@ -2,7 +2,7 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { build_turn_start_command, parse_crit_payload, run_crit_agent } from "./crit-agent-cli.ts";
+import { build_review_text, parse_crit_payload, run_crit_agent } from "./crit-agent-cli.ts";
 
 describe("parse_crit_payload", () => {
   it("normalizes crit's JSON stdin into a comment record", () => {
@@ -28,25 +28,19 @@ describe("parse_crit_payload", () => {
   });
 });
 
-describe("build_turn_start_command", () => {
-  it("builds a valid thread.turn.start command with a review-comment body", () => {
-    const cmd = build_turn_start_command("thread-123", {
+describe("build_review_text", () => {
+  it("builds a review-comment block from a normalized comment", () => {
+    const text = build_review_text({
       text: "fix this",
       filePath: "a.ts",
       startIndex: 1,
       endIndex: 2,
       diff: "-a\n+b",
     });
-    expect(cmd.type).toBe("thread.turn.start");
-    expect(cmd.threadId).toBe("thread-123");
-    expect(cmd.message.role).toBe("user");
-    expect(cmd.message.text).toContain("<review_comment");
-    expect(cmd.message.text).toContain("fix this");
-    expect(cmd.runtimeMode).toBe("full-access");
-    expect(cmd.interactionMode).toBe("default");
-    expect(typeof cmd.commandId).toBe("string");
-    expect(typeof cmd.message.messageId).toBe("string");
-    expect(cmd.message.attachments).toEqual([]);
+    expect(text).toContain("<review_comment");
+    expect(text).toContain('filePath="a.ts"');
+    expect(text).toContain("fix this");
+    expect(text).toContain("```diff");
   });
 });
 
@@ -71,29 +65,19 @@ describe("run_crit_agent", () => {
   let mock: { origin: string; server: Server };
   afterEach(() => mock?.server.close());
 
-  it("dispatches the turn and returns the new turn's assistant reply", async () => {
-    let dispatched = false;
+  it("starts the turn and returns the completed turn's reply", async () => {
+    let started = false;
     mock = await start_mock_gits((url, method) => {
-      if (url.endsWith("/api/orchestration/dispatch") && method === "POST") {
-        dispatched = true;
-        return {};
-      }
-      if (url.endsWith("/api/orchestration/snapshot")) {
-        // Fresh thread: no prior turn at baseline; a completed turn appears post-dispatch.
+      if (url.startsWith("/api/crit/turn-status")) {
         return {
-          projects: [],
-          threads: [
-            {
-              id: "thread-123",
-              latestTurn: dispatched
-                ? { turnId: "turn-2", state: "completed", assistantMessageId: "msg-9" }
-                : null,
-              messages: dispatched
-                ? [{ id: "msg-9", role: "assistant", text: "Done — applied the guard clause." }]
-                : [],
-            },
-          ],
+          state: "completed",
+          assistantMessageId: "msg-9",
+          reply: "Done — applied the guard clause.",
         };
+      }
+      if (url.endsWith("/api/crit/turn") && method === "POST") {
+        started = true;
+        return { priorTurnId: null };
       }
       return {};
     });
@@ -105,49 +89,22 @@ describe("run_crit_agent", () => {
       pollMs: 50,
       stdin: JSON.stringify({ comment: "fix", filePath: "a.ts", startLine: 1, endLine: 1 }),
     });
-    expect(dispatched).toBe(true);
+    expect(started).toBe(true);
     expect(reply).toBe("Done — applied the guard clause.");
   });
 
-  it("ignores a stale prior completed turn and returns the NEW turn's reply", async () => {
-    // Reproduces the block-and-return race: at dispatch time the thread's
-    // latestTurn is a previous, already-completed turn (turn-1). The projector
-    // flips to the new turn asynchronously, so the first post-dispatch poll can
-    // still observe turn-1. The wrapper must NOT return turn-1's old reply.
-    let dispatched = false;
-    let pollsAfterDispatch = 0;
-    const prior_turn = {
-      id: "thread-123",
-      latestTurn: { turnId: "turn-1", state: "completed", assistantMessageId: "msg-old" },
-      messages: [{ id: "msg-old", role: "assistant", text: "OLD REPLY" }],
-    };
+  it("handles a pending → completed transition", async () => {
+    let statusPolls = 0;
     mock = await start_mock_gits((url, method) => {
-      if (url.endsWith("/api/orchestration/dispatch") && method === "POST") {
-        dispatched = true;
-        return {};
+      if (url.startsWith("/api/crit/turn-status")) {
+        statusPolls += 1;
+        if (statusPolls <= 1) {
+          return { state: "pending", assistantMessageId: null, reply: null };
+        }
+        return { state: "completed", assistantMessageId: "msg-9", reply: "NEW REPLY" };
       }
-      if (url.endsWith("/api/orchestration/snapshot")) {
-        if (!dispatched) {
-          return { projects: [], threads: [prior_turn] };
-        }
-        pollsAfterDispatch += 1;
-        if (pollsAfterDispatch <= 1) {
-          // Stale window: the prior turn is still the latest one observed.
-          return { projects: [], threads: [prior_turn] };
-        }
-        return {
-          projects: [],
-          threads: [
-            {
-              id: "thread-123",
-              latestTurn: { turnId: "turn-2", state: "completed", assistantMessageId: "msg-9" },
-              messages: [
-                { id: "msg-old", role: "assistant", text: "OLD REPLY" },
-                { id: "msg-9", role: "assistant", text: "NEW REPLY" },
-              ],
-            },
-          ],
-        };
+      if (url.endsWith("/api/crit/turn") && method === "POST") {
+        return { priorTurnId: "turn-1" };
       }
       return {};
     });
@@ -159,29 +116,18 @@ describe("run_crit_agent", () => {
       pollMs: 50,
       stdin: JSON.stringify({ comment: "fix", filePath: "a.ts", startLine: 1, endLine: 1 }),
     });
+    expect(statusPolls).toBeGreaterThan(1);
     expect(reply).toBe("NEW REPLY");
   });
 
   it("returns an ack when the turn does not complete before timeout", async () => {
-    let dispatched = false;
     mock = await start_mock_gits((url, method) => {
-      if (url.endsWith("/api/orchestration/dispatch") && method === "POST") {
-        dispatched = true;
-        return {};
+      if (url.startsWith("/api/crit/turn-status")) {
+        return { state: "pending", assistantMessageId: null, reply: null };
       }
-      if (url.endsWith("/api/orchestration/snapshot"))
-        return {
-          projects: [],
-          threads: [
-            {
-              id: "thread-123",
-              latestTurn: dispatched
-                ? { turnId: "turn-2", state: "running", assistantMessageId: null }
-                : null,
-              messages: [],
-            },
-          ],
-        };
+      if (url.endsWith("/api/crit/turn") && method === "POST") {
+        return { priorTurnId: null };
+      }
       return {};
     });
     const reply = await run_crit_agent({
