@@ -11,7 +11,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
-export type SessionRole = "owner" | "client";
+export type SessionRole = "owner" | "client" | "thread-scoped";
 
 export interface IssuedSession {
   readonly sessionId: AuthSessionId;
