@@ -105,8 +105,10 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import DelamainSidebar from "./DelamainSidebar";
-import PlanSidebar from "./PlanSidebar";
+// Lazy-loaded: both sidebars only render when the user opens them, so they
+// don't need to sit in the eager ChatView chunk.
+const DelamainSidebar = lazy(() => import("./DelamainSidebar"));
+const PlanSidebar = lazy(() => import("./PlanSidebar"));
 // Lazy-loaded: pulls xterm.js (+addons) and the terminal CSS into a separate
 // chunk that only downloads when a user actually opens a terminal drawer.
 const ThreadTerminalDrawer = lazy(() => import("./ThreadTerminalDrawer"));
@@ -3986,27 +3988,29 @@ export default function ChatView(props: ChatViewProps) {
         {/* end chat column */}
 
         {/* Plan sidebar */}
-        {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
-          <PlanSidebar
-            activePlan={activePlan}
-            activeProposedPlan={sidebarProposedPlan}
-            label={planSidebarLabel}
-            environmentId={environmentId}
-            markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeWorkspaceRoot}
-            timestampFormat={timestampFormat}
-            mode="sidebar"
-            onClose={closePlanSidebar}
-          />
-        ) : null}
-        {delamainSidebarOpen && !shouldUsePlanSidebarSheet ? (
-          <DelamainSidebar
-            environmentId={environmentId}
-            projectRepoRoot={activeProjectCwd ?? undefined}
-            mode="sidebar"
-            onClose={closeDelamainSidebar}
-          />
-        ) : null}
+        <Suspense fallback={null}>
+          {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
+            <PlanSidebar
+              activePlan={activePlan}
+              activeProposedPlan={sidebarProposedPlan}
+              label={planSidebarLabel}
+              environmentId={environmentId}
+              markdownCwd={gitCwd ?? undefined}
+              workspaceRoot={activeWorkspaceRoot}
+              timestampFormat={timestampFormat}
+              mode="sidebar"
+              onClose={closePlanSidebar}
+            />
+          ) : null}
+          {delamainSidebarOpen && !shouldUsePlanSidebarSheet ? (
+            <DelamainSidebar
+              environmentId={environmentId}
+              projectRepoRoot={activeProjectCwd ?? undefined}
+              mode="sidebar"
+              onClose={closeDelamainSidebar}
+            />
+          ) : null}
+        </Suspense>
       </div>
       {/* end horizontal flex container */}
 
@@ -4029,27 +4033,31 @@ export default function ChatView(props: ChatViewProps) {
       ))}
       {shouldUsePlanSidebarSheet && planSidebarOpen ? (
         <RightPanelSheet open={planSidebarOpen} onClose={closePlanSidebar}>
-          <PlanSidebar
-            activePlan={activePlan}
-            activeProposedPlan={sidebarProposedPlan}
-            label={planSidebarLabel}
-            environmentId={environmentId}
-            markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeWorkspaceRoot}
-            timestampFormat={timestampFormat}
-            mode="sheet"
-            onClose={closePlanSidebar}
-          />
+          <Suspense fallback={null}>
+            <PlanSidebar
+              activePlan={activePlan}
+              activeProposedPlan={sidebarProposedPlan}
+              label={planSidebarLabel}
+              environmentId={environmentId}
+              markdownCwd={gitCwd ?? undefined}
+              workspaceRoot={activeWorkspaceRoot}
+              timestampFormat={timestampFormat}
+              mode="sheet"
+              onClose={closePlanSidebar}
+            />
+          </Suspense>
         </RightPanelSheet>
       ) : null}
       {shouldUsePlanSidebarSheet && delamainSidebarOpen ? (
         <RightPanelSheet open={delamainSidebarOpen} onClose={closeDelamainSidebar}>
-          <DelamainSidebar
-            environmentId={environmentId}
-            projectRepoRoot={activeProjectCwd ?? undefined}
-            mode="sheet"
-            onClose={closeDelamainSidebar}
-          />
+          <Suspense fallback={null}>
+            <DelamainSidebar
+              environmentId={environmentId}
+              projectRepoRoot={activeProjectCwd ?? undefined}
+              mode="sheet"
+              onClose={closeDelamainSidebar}
+            />
+          </Suspense>
         </RightPanelSheet>
       ) : null}
 

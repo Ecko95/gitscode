@@ -1,6 +1,7 @@
 import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
 import type { WsRpcClient } from "@t3tools/client-runtime";
 
+import { __resetClientSettingsPersistenceForTests } from "./hooks/useSettings";
 import { resetVcsStatusStateForTests } from "./lib/vcsStatusState";
 import { resetSourceControlDiscoveryStateForTests } from "./lib/sourceControlDiscoveryState";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
@@ -197,7 +198,6 @@ export function ensureLocalApi(): LocalApi {
 
 export async function __resetLocalApiForTests() {
   cachedApi = undefined;
-  const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
   __resetClientSettingsPersistenceForTests();
   await resetEnvironmentServiceForTests();
   resetVcsStatusStateForTests();

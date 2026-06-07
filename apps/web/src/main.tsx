@@ -3,6 +3,10 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+// Self-hosted DM Sans (variable, opsz + wght axes) — bundled into the build so
+// there are no render-blocking round-trips to Google Fonts on first load.
+import "@fontsource-variable/dm-sans/opsz.css";
+import "@fontsource-variable/dm-sans/opsz-italic.css";
 import "./index.css";
 
 import { isElectron } from "./env";
