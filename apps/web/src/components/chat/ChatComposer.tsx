@@ -1104,11 +1104,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const appendVoiceTranscript = useCallback(
     (text: string) => {
+      // Write the transcript straight into the editor document so it actually
+      // appears in the input and is included on submit. `insertText` emits an
+      // editor change that flows back through `onPromptChange`, keeping
+      // `promptRef`/`setPrompt` in sync. Fall back to the controlled setter if
+      // the editor handle is not mounted yet.
+      const editor = composerEditorRef.current;
+      if (editor) {
+        editor.insertText(text);
+        return;
+      }
       const current = promptRef.current;
       const nextPrompt = current.trim().length > 0 ? `${current} ${text}` : text;
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
-      composerEditorRef.current?.focusAtEnd();
     },
     [promptRef, setPrompt],
   );
