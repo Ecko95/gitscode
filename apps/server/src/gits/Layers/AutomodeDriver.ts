@@ -53,7 +53,14 @@ export const AutomodeDriverLive = Layer.effect(
 					);
 					const peer = peers.find((candidate) => candidate.id === running.peerId);
 					if (peer === undefined) {
-						return; // peer not yet visible; wait for the next tick
+						// The in-flight peer vanished from delamain (reaped or crashed after
+						// finishing). A silent return would leave this goal stuck "running"
+						// forever and deadlock the whole queue invisibly, so halt loudly and
+						// let an operator resume if it was transient.
+						yield* supervisor.haltDriver({
+							reason: `Halted: peer ${running.peerId} for "${running.title}" not found in delamain (vanished or reaped) — manual check needed.`,
+						});
+						return;
 					}
 
 					if (peer.integrationStatus === "failed" || TERMINAL_FAIL_STATUSES.has(peer.status)) {
@@ -107,10 +114,14 @@ export const AutomodeDriverLive = Layer.effect(
 		yield* Effect.forever(
 			Effect.sleep(Duration.millis(TICK_INTERVAL_MS)).pipe(
 				Effect.andThen(tickOnce()),
+				// Mirror ProviderSessionReaper: recover ONLY from typed failures and
+				// defects, never from interruption. catch/catchDefect both leave
+				// interruption untouched, so a scope-close/shutdown interrupt tears the
+				// loop down cleanly instead of being swallowed and restarting forever.
 				Effect.catch((error) =>
 					Effect.logWarning("gits.automode.driver.tick-failed", { error: error.message }),
 				),
-				Effect.catchCause((defect) =>
+				Effect.catchDefect((defect) =>
 					Effect.logWarning("gits.automode.driver.tick-defect", { defect }),
 				),
 			),

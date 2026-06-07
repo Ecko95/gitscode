@@ -197,6 +197,26 @@ describe("AutomodeDriver", () => {
 		}).pipe(Effect.provide(makeLayer(peerStatus)));
 	});
 
+	it.effect("halts (does not silently advance) when the in-flight peer vanishes", () => {
+		const peerStatus = { current: "absent" as PeerStatus | "absent" };
+		return Effect.gen(function* () {
+			const supervisor = yield* AutomodeSupervisor;
+			const driver = yield* AutomodeDriver;
+			yield* armAutonomous(supervisor);
+			yield* supervisor.enqueueGoal({ title: "Gone", repo: "/tmp/source-repo", prompt: "x" });
+
+			yield* driver.tickOnce(); // dispatch → running, peer "peer-driver"
+			peerStatus.current = "running"; // it's in flight
+			yield* driver.tickOnce(); // still running, peer visible
+			peerStatus.current = "absent"; // peer vanished / reaped
+			yield* driver.tickOnce(); // reconcile → must halt, not advance
+
+			const snapshot = yield* supervisor.getSnapshot();
+			assert.equal(snapshot.goals.find((g) => g.title === "Gone")?.status, "running");
+			assert.equal(snapshot.driverHalted, true);
+		}).pipe(Effect.provide(makeLayer(peerStatus)));
+	});
+
 	it.effect("does nothing when not autonomous", () => {
 		const peerStatus = { current: "absent" as PeerStatus | "absent" };
 		return Effect.gen(function* () {
