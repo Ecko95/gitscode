@@ -7,7 +7,6 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -100,11 +99,13 @@ export interface CritSidecarManagerShape {
 }
 
 interface CritSidecarEntry {
-  readonly url: string;
-  readonly port: number;
+  // Mutable so a "starting" reservation can be inserted synchronously (before any
+  // suspending operation) and then filled in once port allocation + spawn complete.
+  url: string | null;
+  port: number | null;
   status: CritSidecarStatus;
   refCount: number;
-  readonly scope: Scope.Scope.Closeable;
+  scope: Scope.Closeable | null;
 }
 
 const DEFAULT_CRIT_HOST = "127.0.0.1";
@@ -144,7 +145,9 @@ const makeCritSidecarManager = Effect.gen(function* () {
       // v1: immediate teardown once the last consumer releases. A future
       // refinement could keep the sidecar warm behind an idle timeout instead.
       entry.status = "stopped";
-      yield* Scope.close(entry.scope, Exit.void);
+      if (entry.scope !== null) {
+        yield* Scope.close(entry.scope, Exit.void);
+      }
       yield* Ref.update(entries, (current) => {
         const next = new Map(current);
         next.delete(workspaceRoot);
@@ -159,11 +162,45 @@ const makeCritSidecarManager = Effect.gen(function* () {
 
   const ensure_sidecar: CritSidecarManagerShape["ensure_sidecar"] = (input) =>
     Effect.gen(function* () {
-      const existing = (yield* Ref.get(entries)).get(input.workspaceRoot);
-      if (existing && existing.status === "ready") {
+      // Close the double-spawn race SYNCHRONOUSLY: read the map and, in the same
+      // tick (no `yield*` between get and set), either reuse a live/starting entry
+      // or insert a "starting" reservation. Effect fibers are cooperative, so a
+      // re-entrant ensure_sidecar for the same workspaceRoot cannot interleave
+      // between the get and the reservation insert below.
+      const map = yield* Ref.get(entries);
+      const existing = map.get(input.workspaceRoot);
+      if (existing && (existing.status === "ready" || existing.status === "starting")) {
         existing.refCount += 1;
-        return { status: "ready", url: existing.url } satisfies CritSidecarHandle;
+        return { status: existing.status, url: existing.url } satisfies CritSidecarHandle;
       }
+
+      // No usable entry — insert the "starting" reservation immediately so a
+      // concurrent/re-entrant call sees it and reuses it instead of spawning.
+      const entry: CritSidecarEntry = {
+        url: null,
+        port: null,
+        status: "starting",
+        refCount: 1,
+        scope: null,
+      };
+      const reserved = new Map(map);
+      if (existing) {
+        // Stale "crashed"/"stopped" entry — drop it before reserving anew.
+        reserved.delete(input.workspaceRoot);
+      }
+      reserved.set(input.workspaceRoot, entry);
+      yield* Ref.set(entries, reserved);
+
+      // Drop the reservation (and close its scope, if one was opened) when start-up
+      // bails out before the entry is healthy, so a later ensure_sidecar can retry.
+      const removeReservation = Ref.update(entries, (current) => {
+        if (current.get(input.workspaceRoot) !== entry) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(input.workspaceRoot);
+        return next;
+      });
 
       const host = input.host ?? DEFAULT_CRIT_HOST;
       const readinessTimeoutMs = input.readinessTimeoutMs ?? DEFAULT_CRIT_READINESS_TIMEOUT_MS;
@@ -177,6 +214,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
               cause,
             }),
         ),
+        Effect.tapError(() => removeReservation),
       );
 
       const spec = build_crit_spawn_spec({
@@ -211,6 +249,9 @@ const makeCritSidecarManager = Effect.gen(function* () {
                 cause,
               }),
           ),
+          Effect.tapError(() =>
+            Scope.close(scope, Exit.void).pipe(Effect.zipRight(removeReservation)),
+          ),
         );
 
       const terminateChild = child
@@ -218,18 +259,11 @@ const makeCritSidecarManager = Effect.gen(function* () {
         .pipe(Effect.ignore);
       yield* Scope.addFinalizer(scope, terminateChild);
 
-      const entry: CritSidecarEntry = {
-        url: spec.url,
-        port,
-        status: "starting",
-        refCount: 1,
-        scope,
-      };
-      yield* Ref.update(entries, (current) => {
-        const next = new Map(current);
-        next.set(input.workspaceRoot, entry);
-        return next;
-      });
+      // Fill the "starting" reservation in place — preserve refCount/identity so a
+      // concurrent reuser's increment is not lost.
+      entry.url = spec.url;
+      entry.port = port;
+      entry.scope = scope;
 
       // Poll the sidecar until it answers an HTTP request, capped by the timeout.
       const readinessProbe = Effect.retry(probeReadiness(spec.url), {
@@ -256,6 +290,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
       );
 
       if (Exit.isSuccess(readyExit)) {
+        // Transition the existing reservation in place — keep its refCount/scope.
         entry.status = "ready";
         return { status: "ready", url: spec.url } satisfies CritSidecarHandle;
       }
@@ -264,21 +299,21 @@ const makeCritSidecarManager = Effect.gen(function* () {
       // later ensure_sidecar can retry from scratch.
       entry.status = "crashed";
       yield* Scope.close(scope, Exit.void);
-      yield* Ref.update(entries, (current) => {
-        const next = new Map(current);
-        next.delete(input.workspaceRoot);
-        return next;
-      });
+      yield* removeReservation;
 
-      const failure = Cause.failureOption(readyExit.cause);
-      if (Option.isSome(failure) && failure.value instanceof CritSidecarError) {
-        return yield* failure.value;
+      // Mirror opencodeRuntime's readiness-failure idiom: squash the cause to a
+      // single value. If it already IS a CritSidecarError (the crash watcher's
+      // failure), surface it as-is; otherwise wrap it (e.g. the timeout case,
+      // where `Effect.timeout` injects a `Cause.TimeoutError`).
+      const squashed = Cause.squash(readyExit.cause);
+      if (squashed instanceof CritSidecarError) {
+        return yield* squashed;
       }
 
       return yield* new CritSidecarError({
         operation: "ensure_sidecar",
-        detail: `Timed out waiting for the crit sidecar to become ready after ${readinessTimeoutMs}ms.`,
-        cause: readyExit.cause,
+        detail: `Timed out waiting for the crit sidecar to become ready after ${readinessTimeoutMs}ms: ${String(squashed)}`,
+        cause: squashed,
       });
     });
 
@@ -292,7 +327,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
 export class CritSidecarManager extends Context.Service<
   CritSidecarManager,
   CritSidecarManagerShape
->()("t3/crit/CritSidecarManager") {}
+>()("t3/crit/crit-sidecar-manager/CritSidecarManager") {}
 
 export const layer = Layer.effect(CritSidecarManager, makeCritSidecarManager).pipe(
   Layer.provide(NetService.layer),
