@@ -64,7 +64,17 @@ export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
 const requireAuthenticatedRequest = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const serverAuth = yield* ServerAuth;
-  yield* serverAuth.authenticateHttpRequest(request);
+  const session = yield* serverAuth.authenticateHttpRequest(request);
+  // Thread-scoped sidecar sessions are confined to /api/crit/* on their own
+  // thread (subject === threadId); deny them at every other authenticated
+  // surface guarded by this helper (project-favicon, OTLP trace proxy) so a
+  // leaked sidecar token cannot probe arbitrary paths or proxy traffic.
+  if (session.role === "thread-scoped") {
+    return yield* new AuthError({
+      message: "Thread-scoped sessions are not permitted on this endpoint.",
+      status: 403,
+    });
+  }
 });
 
 export const serverEnvironmentRouteLayer = HttpRouter.add(
