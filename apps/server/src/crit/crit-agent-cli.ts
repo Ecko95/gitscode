@@ -46,6 +46,7 @@ export interface ThreadTurnStartCommandBody {
 interface SnapshotThread {
   readonly id: string;
   readonly latestTurn: {
+    readonly turnId: string;
     readonly state: string;
     readonly assistantMessageId: string | null;
   } | null;
@@ -158,11 +159,23 @@ async function read_snapshot(options: RunCritAgentOptions): Promise<Snapshot> {
   return (await response.json()) as Snapshot;
 }
 
+function find_thread(snapshot: Snapshot, threadId: string): SnapshotThread | undefined {
+  return snapshot.threads.find((candidate) => candidate.id === threadId);
+}
+
 export async function run_crit_agent(options: RunCritAgentOptions): Promise<string> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const pollMs = options.pollMs ?? 500;
   const comment = parse_crit_payload(options.stdin);
   const command = build_turn_start_command(options.threadId, comment);
+
+  // Capture the thread's current turn BEFORE dispatching. The orchestration
+  // projector only flips latestTurn to "running" asynchronously (well after the
+  // dispatch POST returns), so without a baseline a fast first poll can observe
+  // the PREVIOUS (already-completed) turn and return its reply as if it answered
+  // this comment. We only accept a turn whose id differs from this baseline.
+  const baseline = await read_snapshot(options);
+  const baselineTurnId = find_thread(baseline, options.threadId)?.latestTurn?.turnId ?? null;
 
   await dispatch_command(options, command);
 
@@ -170,22 +183,28 @@ export async function run_crit_agent(options: RunCritAgentOptions): Promise<stri
   while (Date.now() < deadline) {
     await sleep(pollMs);
     const snapshot = await read_snapshot(options);
-    const thread = snapshot.threads.find((candidate) => candidate.id === options.threadId);
+    const thread = find_thread(snapshot, options.threadId);
     const turn = thread?.latestTurn;
-    if (turn && turn.state !== "running") {
-      if (turn.state === "completed" && turn.assistantMessageId) {
-        const message = thread?.messages.find(
-          (candidate) => candidate.id === turn.assistantMessageId,
-        );
-        if (message) {
-          return message.text;
-        }
-      }
-      if (turn.state === "error") {
-        return "GITS reported an error completing this turn — see the GITS conversation.";
-      }
-      break;
+    // Ignore the baseline (prior) turn and any still-running turn — keep polling
+    // until the turn we started surfaces a terminal state.
+    if (!turn || turn.turnId === baselineTurnId || turn.state === "running") {
+      continue;
     }
+    if (turn.state === "error") {
+      return "GITS reported an error completing this turn — see the GITS conversation.";
+    }
+    if (turn.state === "completed") {
+      const message = turn.assistantMessageId
+        ? thread?.messages.find((candidate) => candidate.id === turn.assistantMessageId)
+        : undefined;
+      if (message) {
+        return message.text;
+      }
+      // Turn completed but the assistant message has not projected yet — keep polling.
+      continue;
+    }
+    // New turn reached some other terminal state (e.g. interrupted) — stop and ack.
+    break;
   }
   return "Sent to GITS — the agent is still working; see the GITS conversation for the reply.";
 }

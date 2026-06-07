@@ -71,7 +71,7 @@ describe("run_crit_agent", () => {
   let mock: { origin: string; server: Server };
   afterEach(() => mock?.server.close());
 
-  it("dispatches the turn and returns the assistant reply text", async () => {
+  it("dispatches the turn and returns the new turn's assistant reply", async () => {
     let dispatched = false;
     mock = await start_mock_gits((url, method) => {
       if (url.endsWith("/api/orchestration/dispatch") && method === "POST") {
@@ -79,15 +79,18 @@ describe("run_crit_agent", () => {
         return {};
       }
       if (url.endsWith("/api/orchestration/snapshot")) {
+        // Fresh thread: no prior turn at baseline; a completed turn appears post-dispatch.
         return {
           projects: [],
           threads: [
             {
               id: "thread-123",
-              latestTurn: { state: "completed", assistantMessageId: "msg-9" },
-              messages: [
-                { id: "msg-9", role: "assistant", text: "Done — applied the guard clause." },
-              ],
+              latestTurn: dispatched
+                ? { turnId: "turn-2", state: "completed", assistantMessageId: "msg-9" }
+                : null,
+              messages: dispatched
+                ? [{ id: "msg-9", role: "assistant", text: "Done — applied the guard clause." }]
+                : [],
             },
           ],
         };
@@ -106,15 +109,75 @@ describe("run_crit_agent", () => {
     expect(reply).toBe("Done — applied the guard clause.");
   });
 
+  it("ignores a stale prior completed turn and returns the NEW turn's reply", async () => {
+    // Reproduces the block-and-return race: at dispatch time the thread's
+    // latestTurn is a previous, already-completed turn (turn-1). The projector
+    // flips to the new turn asynchronously, so the first post-dispatch poll can
+    // still observe turn-1. The wrapper must NOT return turn-1's old reply.
+    let dispatched = false;
+    let pollsAfterDispatch = 0;
+    const prior_turn = {
+      id: "thread-123",
+      latestTurn: { turnId: "turn-1", state: "completed", assistantMessageId: "msg-old" },
+      messages: [{ id: "msg-old", role: "assistant", text: "OLD REPLY" }],
+    };
+    mock = await start_mock_gits((url, method) => {
+      if (url.endsWith("/api/orchestration/dispatch") && method === "POST") {
+        dispatched = true;
+        return {};
+      }
+      if (url.endsWith("/api/orchestration/snapshot")) {
+        if (!dispatched) {
+          return { projects: [], threads: [prior_turn] };
+        }
+        pollsAfterDispatch += 1;
+        if (pollsAfterDispatch <= 1) {
+          // Stale window: the prior turn is still the latest one observed.
+          return { projects: [], threads: [prior_turn] };
+        }
+        return {
+          projects: [],
+          threads: [
+            {
+              id: "thread-123",
+              latestTurn: { turnId: "turn-2", state: "completed", assistantMessageId: "msg-9" },
+              messages: [
+                { id: "msg-old", role: "assistant", text: "OLD REPLY" },
+                { id: "msg-9", role: "assistant", text: "NEW REPLY" },
+              ],
+            },
+          ],
+        };
+      }
+      return {};
+    });
+    const reply = await run_crit_agent({
+      origin: mock.origin,
+      token: "t",
+      threadId: "thread-123",
+      timeoutMs: 2000,
+      pollMs: 50,
+      stdin: JSON.stringify({ comment: "fix", filePath: "a.ts", startLine: 1, endLine: 1 }),
+    });
+    expect(reply).toBe("NEW REPLY");
+  });
+
   it("returns an ack when the turn does not complete before timeout", async () => {
-    mock = await start_mock_gits((url) => {
+    let dispatched = false;
+    mock = await start_mock_gits((url, method) => {
+      if (url.endsWith("/api/orchestration/dispatch") && method === "POST") {
+        dispatched = true;
+        return {};
+      }
       if (url.endsWith("/api/orchestration/snapshot"))
         return {
           projects: [],
           threads: [
             {
               id: "thread-123",
-              latestTurn: { state: "running", assistantMessageId: null },
+              latestTurn: dispatched
+                ? { turnId: "turn-2", state: "running", assistantMessageId: null }
+                : null,
               messages: [],
             },
           ],
