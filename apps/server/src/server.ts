@@ -103,6 +103,7 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
+import { critTurnRouteLayer, critTurnStatusRouteLayer } from "./crit/critHttp.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { layer as CritSidecarManagerLive } from "./crit/crit-sidecar-manager.ts";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -376,6 +377,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   attachmentsRouteLayer,
+  critTurnRouteLayer,
+  critTurnStatusRouteLayer,
   gitsBuildInfoRouteLayer,
   gitsSkillInventoryRouteLayer,
   orchestrationDispatchRouteLayer,
