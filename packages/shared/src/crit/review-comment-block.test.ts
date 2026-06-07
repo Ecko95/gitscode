@@ -21,7 +21,8 @@ describe("build_review_comment_block", () => {
     // Attributes must be HTML-escaped so the parser can read them.
     expect(block).toContain("&amp;");
     expect(block).toContain("&quot;");
-    expect(block).toContain("&lt;");
+    // '<' must NOT be escaped — &lt; contains '>' which truncates the parser's [^>]* regex.
+    expect(block).toContain("<y>");
 
     // Body must be raw — the web parser extracts it without unescaping.
     expect(block).toContain('Avoid the "any" cast here');
@@ -78,5 +79,30 @@ describe("build_review_comment_block", () => {
     expect(attributes.startIndex).toBe("10");
     expect(attributes.endIndex).toBe("12");
     expect(attributes.sectionId).toBe("sec-1");
+  });
+
+  it("keeps required attributes parseable when an attribute value contains '<'", () => {
+    const block = build_review_comment_block({
+      filePath: "src/app.ts",
+      sectionId: "sec-1",
+      sectionTitle: "A <tag> here",
+      rangeLabel: "lines",
+      startIndex: 3,
+      endIndex: 5,
+      text: "body",
+      diff: "",
+    });
+    const BLOCK = /<review_comment\b([^>]*)>\s*([\s\S]*?)<\/review_comment>/g;
+    const ATTR = /([a-zA-Z][a-zA-Z0-9_-]*)="([^"]*)"/g;
+    const match = [...block.matchAll(BLOCK)][0];
+    expect(match).toBeDefined();
+    const attrs: Record<string, string> = {};
+    for (const a of (match![1] ?? "").matchAll(ATTR)) {
+      attrs[a[1]!] = a[2]!;
+    }
+    expect(attrs.filePath).toBe("src/app.ts");
+    expect(attrs.sectionId).toBe("sec-1");
+    expect(attrs.startIndex).toBe("3");
+    expect(attrs.endIndex).toBe("5");
   });
 });

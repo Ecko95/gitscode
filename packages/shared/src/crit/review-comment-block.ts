@@ -10,7 +10,7 @@ export interface ReviewCommentBlockInput {
 }
 
 function escape_attribute(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
 }
 
 export function build_review_comment_block(input: ReviewCommentBlockInput): string {
