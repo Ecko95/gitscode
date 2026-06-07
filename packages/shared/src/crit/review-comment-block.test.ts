@@ -10,7 +10,7 @@ describe("build_review_comment_block", () => {
     const block = build_review_comment_block({
       filePath: "src/app.ts",
       sectionId: "sec-1",
-      sectionTitle: "Review",
+      sectionTitle: 'A & B "x" <y>',
       rangeLabel: "lines",
       startIndex: 10,
       endIndex: 12,
@@ -18,12 +18,19 @@ describe("build_review_comment_block", () => {
       diff: "@@ -10,3 +10,3 @@\n-old\n+new",
     });
 
+    // Attributes must be HTML-escaped so the parser can read them.
+    expect(block).toContain("&amp;");
+    expect(block).toContain("&quot;");
+    expect(block).toContain("&lt;");
+
+    // Body must be raw — the web parser extracts it without unescaping.
+    expect(block).toContain('Avoid the "any" cast here');
+
     expect(block).toContain('startIndex="10"');
     expect(block).toContain('endIndex="12"');
     expect(block).toContain('filePath="src/app.ts"');
     expect(block).toContain('sectionId="sec-1"');
     expect(block).toContain("```diff");
-    expect(block).toContain("&quot;any&quot;");
     expect(block.startsWith("<review_comment")).toBe(true);
     expect(block.trimEnd().endsWith("</review_comment>")).toBe(true);
   });

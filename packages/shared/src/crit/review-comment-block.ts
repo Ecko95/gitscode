@@ -25,7 +25,7 @@ export function build_review_comment_block(input: ReviewCommentBlockInput): stri
     `rangeLabel="${escape_attribute(input.rangeLabel)}"`,
   ].join(" ");
 
-  const body_parts = [escape_attribute(input.text.trim())];
+  const body_parts = [input.text.trim()];
   const diff = input.diff.trim();
   if (diff.length > 0) {
     body_parts.push(["```diff", diff, "```"].join("\n"));
