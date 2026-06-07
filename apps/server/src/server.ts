@@ -58,6 +58,7 @@ import { GitsReviewPipelineLive } from "./gits/Layers/GitsReviewPipeline.ts";
 import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
+import { GitsMcpInventoryResolverLive } from "./gits/Layers/GitsMcpInventory.ts";
 import { GitsSkillInventoryResolverLive } from "./gits/Layers/GitsSkillInventory.ts";
 import { GitsPlanningScannerLive } from "./gits/Layers/GitsPlanningScanner.ts";
 import { HermesCliAdapterLive } from "./gits/Layers/HermesCliAdapter.ts";
@@ -106,7 +107,11 @@ import {
 } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
-import { gitsBuildInfoRouteLayer, gitsSkillInventoryRouteLayer } from "./gits/http.ts";
+import {
+  gitsBuildInfoRouteLayer,
+  gitsMcpInventoryRouteLayer,
+  gitsSkillInventoryRouteLayer,
+} from "./gits/http.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -245,6 +250,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsConfinedVerifyAdapterLive),
   Layer.provideMerge(GitsDevCommandsLive),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
+  Layer.provideMerge(GitsMcpInventoryResolverLive),
   Layer.provideMerge(DelamainCliAdapterLive),
   Layer.provideMerge(OpenGsdCliAdapterLive),
   Layer.provideMerge(GitsPlanningScannerLive),
@@ -380,6 +386,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   attachmentsRouteLayer,
   gitsBuildInfoRouteLayer,
   gitsSkillInventoryRouteLayer,
+  gitsMcpInventoryRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
   otlpTracesProxyRouteLayer,
