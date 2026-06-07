@@ -36,7 +36,7 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
@@ -107,7 +107,9 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import DelamainSidebar from "./DelamainSidebar";
 import PlanSidebar from "./PlanSidebar";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+// Lazy-loaded: pulls xterm.js (+addons) and the terminal CSS into a separate
+// chunk that only downloads when a user actually opens a terminal drawer.
+const ThreadTerminalDrawer = lazy(() => import("./ThreadTerminalDrawer"));
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -738,7 +740,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
   return (
     <div className={visible ? undefined : "hidden"}>
-      <ThreadTerminalDrawer
+      <Suspense fallback={null}>
+        <ThreadTerminalDrawer
         threadRef={threadRef}
         threadId={threadId}
         cwd={cwd}
@@ -764,7 +767,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         onAddTerminalContext={handleAddTerminalContext}
         terminalLabelsById={terminalLabelsById}
         terminalLaunchLocationsById={terminalLaunchLocationsById}
-      />
+        />
+      </Suspense>
     </div>
   );
 });

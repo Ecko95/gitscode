@@ -57,7 +57,9 @@ const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
 export default defineConfig({
   plugins: [
-    tanstackRouter(),
+    // autoCodeSplitting moves each route's component/loader into its own lazy
+    // chunk instead of bundling every route into the eager entry chunk.
+    tanstackRouter({ autoCodeSplitting: true }),
     react(),
     babel({
       // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
