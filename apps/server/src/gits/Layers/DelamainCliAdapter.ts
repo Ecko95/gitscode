@@ -297,6 +297,8 @@ function spawnArgs(input: Parameters<DelamainAdapterShape["spawnPeer"]>[0]): str
   if (input.model) args.push("--model", input.model);
   if (input.sandbox) args.push("--sandbox", input.sandbox);
   if (input.yolo) args.push("--yolo");
+  if (input.confine) args.push("--confine");
+  if (input.egress) args.push("--egress", input.egress);
   return args;
 }
 
