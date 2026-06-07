@@ -50,6 +50,11 @@ export const LaunchEditorInput = Schema.Struct({
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 
+export const OpenInTerminalInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type OpenInTerminalInput = typeof OpenInTerminalInput.Type;
+
 export class ExternalLauncherError extends Schema.TaggedErrorClass<ExternalLauncherError>()(
   "ExternalLauncherError",
   {

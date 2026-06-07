@@ -83,6 +83,7 @@ function createTestClient(config?: { readonly emitInitialSnapshot?: boolean }) {
     },
     shell: {
       openInEditor: vi.fn(async () => undefined),
+      openInTerminal: vi.fn(async () => undefined),
     },
     git: {
       runStackedAction: vi.fn(async () => ({}) as any),

@@ -20,6 +20,19 @@ npx t3
 
 The CLI/package names are still inherited from upstream T3 Code while the GITS fork is being productized.
 
+### Open a directory in the app
+
+```bash
+t3 open .            # open the current directory
+t3 open ~/code/myapp # open a specific directory
+```
+
+`t3 open <path>` opens a directory in the app, equivalent to pasting a path into
+the in-app Open dialog. If a server is already running it adds (or reuses) a
+project for that directory and surfaces the app (printing and opening the
+origin URL); if nothing is running it starts the server rooted at the directory
+and the project auto-bootstraps.
+
 ### Desktop app
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/joshuaduffill/t3code/releases), or build it from source.

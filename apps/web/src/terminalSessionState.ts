@@ -8,8 +8,10 @@ import {
   getKnownTerminalSessionListFilter,
   knownTerminalSessionsAtom,
   runningTerminalIdsAtom,
+  runningTerminalSessionsAtom,
   terminalSessionStateAtom,
   type KnownTerminalSession,
+  type RunningTerminalSession,
   type TerminalSessionTarget,
   type TerminalSessionState,
 } from "@t3tools/client-runtime";
@@ -74,4 +76,8 @@ export function useThreadRunningTerminalIds(input: {
   return useAtomValue(
     filter !== null ? runningTerminalIdsAtom(filter) : EMPTY_TERMINAL_ID_LIST_ATOM,
   );
+}
+
+export function useRunningTerminalSessions(): ReadonlyArray<RunningTerminalSession> {
+  return useAtomValue(runningTerminalSessionsAtom);
 }

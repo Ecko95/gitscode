@@ -40,6 +40,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
   type DesktopUpdateState,
+  type EnvironmentId,
   ProjectId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
@@ -71,11 +72,12 @@ import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
   selectSidebarThreadsAcrossEnvironments,
+  selectSidebarThreadSummaryByRef,
   selectThreadByRef,
   useStore,
 } from "../store";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useThreadRunningTerminalIds } from "../terminalSessionState";
+import { useRunningTerminalSessions, useThreadRunningTerminalIds } from "../terminalSessionState";
 import { useUiStateStore } from "../uiStateStore";
 import {
   resolveShortcutCommand,
@@ -457,6 +459,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [openPrLink, prStatus],
   );
+  const handleTerminalIndicatorClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const runningTerminalId = runningTerminalIds[0];
+      if (!runningTerminalId) return;
+      navigateToThread(threadRef);
+      useTerminalUiStateStore
+        .getState()
+        .ensureTerminal(threadRef, runningTerminalId, { open: true, active: true });
+    },
+    [navigateToThread, runningTerminalIds, threadRef],
+  );
   const handleRenameInputRef = useCallback(
     (element: HTMLInputElement | null) => {
       if (element && renamingInputRef.current !== element) {
@@ -619,14 +634,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {terminalStatus && (
-            <span
-              role="img"
+            <button
+              type="button"
+              data-thread-selection-safe
               aria-label={terminalStatus.label}
               title={terminalStatus.label}
-              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              className={`pointer-events-auto inline-flex cursor-pointer items-center justify-center transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${terminalStatus.colorClass}`}
+              onPointerDown={stopPropagationOnPointerDown}
+              onClick={handleTerminalIndicatorClick}
             >
               <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
-            </span>
+            </button>
           )}
           <div
             className={`flex min-w-12 justify-end ${
@@ -1448,7 +1466,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "open-terminal" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1464,6 +1482,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               case "grouping":
                 openProjectGroupingDialog(member);
                 return;
+              case "open-terminal":
+                return readLocalApi()?.shell.openInTerminal(member.cwd);
               case "copy-path":
                 copyPathToClipboard(member.cwd, { path: member.cwd });
                 return;
@@ -1481,7 +1501,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "open-terminal" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1515,6 +1535,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           [
             buildTargetedItem("rename", "Rename project"),
             buildTargetedItem("grouping", "Project grouping…"),
+            buildTargetedItem("open-terminal", "Open in terminal"),
             buildTargetedItem("copy-path", "Copy Project Path"),
             buildTargetedItem("delete", "Remove project", {
               destructive: true,
@@ -1936,6 +1957,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "open-terminal", label: "Open in terminal", disabled: !threadWorkspacePath },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
@@ -1950,6 +1972,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        return;
+      }
+      if (clicked === "open-terminal") {
+        if (threadWorkspacePath) {
+          await api.shell.openInTerminal(threadWorkspacePath);
+        }
         return;
       }
       if (clicked === "copy-path") {
@@ -2579,6 +2607,97 @@ interface SidebarProjectsContentProps {
   projectsLength: number;
 }
 
+const RunningTerminalRow = memo(function RunningTerminalRow({
+  environmentId,
+  threadId,
+  terminalId,
+  label,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  terminalId: string;
+  label: string;
+}) {
+  const router = useRouter();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const threadRef = scopeThreadRef(environmentId, threadId);
+  const threadSummary = useStore(
+    useMemo(
+      () => (state: import("../store").AppState) =>
+        selectSidebarThreadSummaryByRef(state, threadRef),
+      [threadRef],
+    ),
+  );
+  const threadTitle = threadSummary?.title ?? "Untitled thread";
+
+  const handleClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void router.navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+    });
+    useTerminalUiStateStore
+      .getState()
+      .ensureTerminal(threadRef, terminalId, { open: true, active: true });
+  }, [isMobile, router, setOpenMobile, terminalId, threadRef]);
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        size="sm"
+        className="gap-2 px-2 py-1.5 text-left hover:bg-accent"
+        onClick={handleClick}
+      >
+        <TerminalIcon className="size-3.5 shrink-0 animate-pulse text-teal-600 dark:text-teal-300/90" />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-xs">{threadTitle}</span>
+          <span className="truncate text-[10px] text-muted-foreground/70">{label}</span>
+        </span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+});
+
+/**
+ * Aggregate view of every terminal session running a subprocess across all
+ * threads. Surfaces backgrounded processes (e.g. a dev server on :3000) that
+ * are otherwise invisible unless the owning thread is selected. Clicking a row
+ * navigates to that thread and opens its terminal drawer on the running session.
+ */
+const RunningTerminalsSection = memo(function RunningTerminalsSection() {
+  const runningTerminalSessions = useRunningTerminalSessions();
+
+  if (runningTerminalSessions.length === 0) {
+    return null;
+  }
+
+  return (
+    <SidebarGroup className="px-2 pt-2 pb-0">
+      <div className="mb-1 flex items-center gap-1.5 pl-2 pr-1.5">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+          Running terminals
+        </span>
+        <span className="text-[10px] font-medium text-muted-foreground/40">
+          {runningTerminalSessions.length}
+        </span>
+      </div>
+      <SidebarMenu>
+        {runningTerminalSessions.map((session) => (
+          <RunningTerminalRow
+            key={`${session.target.environmentId}:${session.target.threadId}:${session.target.terminalId}`}
+            environmentId={session.target.environmentId}
+            threadId={session.target.threadId}
+            terminalId={session.target.terminalId}
+            label={session.label}
+          />
+        ))}
+      </SidebarMenu>
+    </SidebarGroup>
+  );
+});
+
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
   props: SidebarProjectsContentProps,
 ) {
@@ -2670,6 +2789,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroup>
+      <RunningTerminalsSection />
       {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
         <SidebarGroup className="px-2 pt-2 pb-0">
           <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">

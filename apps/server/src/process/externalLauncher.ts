@@ -11,6 +11,7 @@ import {
   ExternalLauncherError,
   type EditorId,
   type LaunchEditorInput,
+  type OpenInTerminalInput,
 } from "@t3tools/contracts";
 import { isCommandAvailable, type CommandAvailabilityOptions } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
@@ -25,7 +26,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 // ==============================
 
 export { ExternalLauncherError };
-export type { LaunchEditorInput };
+export type { LaunchEditorInput, OpenInTerminalInput };
 export { isCommandAvailable } from "@t3tools/shared/shell";
 
 interface EditorLaunch {
@@ -212,6 +213,85 @@ export function resolveBrowserLaunch(
   };
 }
 
+interface LinuxTerminalEmulator {
+  readonly command: string;
+  readonly resolveArgs: (cwd: string) => ReadonlyArray<string>;
+}
+
+const LINUX_TERMINAL_EMULATORS = [
+  { command: "x-terminal-emulator", resolveArgs: () => [] },
+  { command: "gnome-terminal", resolveArgs: (cwd) => [`--working-directory=${cwd}`] },
+  { command: "konsole", resolveArgs: (cwd) => ["--workdir", cwd] },
+  { command: "xfce4-terminal", resolveArgs: (cwd) => [`--working-directory=${cwd}`] },
+  { command: "alacritty", resolveArgs: (cwd) => ["--working-directory", cwd] },
+  { command: "kitty", resolveArgs: (cwd) => ["--directory", cwd] },
+  { command: "wezterm", resolveArgs: (cwd) => ["start", "--cwd", cwd] },
+  {
+    command: "xterm",
+    resolveArgs: (cwd) => ["-e", `cd ${escapePosixShellPath(cwd)} && exec "$SHELL"`],
+  },
+] as const satisfies ReadonlyArray<LinuxTerminalEmulator>;
+
+function escapePosixShellPath(input: string): string {
+  return `'${input.replaceAll("'", `'\\''`)}'`;
+}
+
+function resolveWindowsTerminalLaunch(cwd: string, env: NodeJS.ProcessEnv): ProcessLaunch {
+  if (isCommandAvailable("wt", { platform: "win32", env })) {
+    return {
+      command: "wt",
+      args: ["-d", cwd],
+      options: { detached: true, shell: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    };
+  }
+
+  return {
+    command: "cmd",
+    args: ["/c", "start", "cmd", "/K", "cd", "/d", cwd],
+    options: { detached: true, shell: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+  };
+}
+
+/**
+ * Resolve a detached process launch that opens a directory in the user's system terminal.
+ *
+ * Mirrors {@link resolveBrowserLaunch} per-platform handling, returning `Option.none()` on
+ * Linux/WSL when no usable terminal emulator is found so the RPC can degrade gracefully.
+ */
+export function resolveTerminalLaunch(
+  cwd: string,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): Option.Option<ProcessLaunch> {
+  if (platform === "darwin") {
+    return Option.some({
+      command: "open",
+      args: ["-a", "Terminal", cwd],
+      options: DETACHED_IGNORE_STDIO_OPTIONS,
+    });
+  }
+
+  if (platform === "win32") {
+    return Option.some(resolveWindowsTerminalLaunch(cwd, env));
+  }
+
+  if (shouldUseWindowsBrowserFromWsl(platform, env)) {
+    return Option.some(resolveWindowsTerminalLaunch(cwd, env));
+  }
+
+  for (const emulator of LINUX_TERMINAL_EMULATORS) {
+    if (isCommandAvailable(emulator.command, { platform, env })) {
+      return Option.some({
+        command: emulator.command,
+        args: emulator.resolveArgs(cwd),
+        options: DETACHED_IGNORE_STDIO_OPTIONS,
+      });
+    }
+  }
+
+  return Option.none();
+}
+
 export function resolveAvailableEditors(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
@@ -251,6 +331,14 @@ export interface ExternalLauncherShape {
    * Launches the editor as a detached process so server startup is not blocked.
    */
   readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+
+  /**
+   * Launch a workspace directory in the user's system terminal.
+   *
+   * Launches the terminal emulator as a detached process. Degrades gracefully
+   * (logged warning, no failure) when no terminal emulator is available.
+   */
+  readonly launchTerminal: (cwd: string) => Effect.Effect<void, ExternalLauncherError>;
 }
 
 /**
@@ -318,6 +406,20 @@ export const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(functio
   return yield* launchAndUnref(resolveBrowserLaunch(target), "Browser auto-open failed");
 });
 
+export const launchTerminal = Effect.fn("externalLauncher.launchTerminal")(function* (
+  cwd: string,
+): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
+  const launch = resolveTerminalLaunch(cwd);
+  if (Option.isNone(launch)) {
+    yield* Effect.logWarning("terminal open unavailable", {
+      hint: `No terminal emulator was found to open ${cwd}.`,
+    });
+    return;
+  }
+
+  return yield* launchAndUnref(launch.value, "Terminal open failed");
+});
+
 export const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
   launch: EditorLaunch,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
@@ -357,6 +459,10 @@ const make = Effect.gen(function* () {
         launchEditorProcess(launch).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         ),
+      ),
+    launchTerminal: (cwd) =>
+      launchTerminal(cwd).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
   } satisfies ExternalLauncherShape;
 });

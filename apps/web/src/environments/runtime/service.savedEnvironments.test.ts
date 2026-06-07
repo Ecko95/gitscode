@@ -196,6 +196,7 @@ function createClient() {
     },
     shell: {
       openInEditor: vi.fn(async () => undefined),
+      openInTerminal: vi.fn(async () => undefined),
     },
     git: {
       pull: vi.fn(async () => undefined),
