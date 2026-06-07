@@ -675,6 +675,8 @@ export const AutomodeSnapshot = Schema.Struct({
   goals: Schema.Array(AutomodeGoal),
   activePeerCount: NonNegativeInt,
   pendingApprovalCount: NonNegativeInt,
+  driverHalted: Schema.Boolean,
+  driverHaltedReason: Schema.NullOr(SummaryString),
   lastEvent: Schema.NullOr(SummaryString),
   updatedAt: IsoDateTime,
 });
@@ -713,6 +715,17 @@ export const AutomodeRejectGoalInput = Schema.Struct({
   reason: Schema.optional(SummaryString),
 });
 export type AutomodeRejectGoalInput = typeof AutomodeRejectGoalInput.Type;
+
+export const AutomodeGoalOutcomeInput = Schema.Struct({
+  goalId: TrimmedNonEmptyString,
+  reason: Schema.optional(SummaryString),
+});
+export type AutomodeGoalOutcomeInput = typeof AutomodeGoalOutcomeInput.Type;
+
+export const AutomodeDriverHaltInput = Schema.Struct({
+  reason: SummaryString,
+});
+export type AutomodeDriverHaltInput = typeof AutomodeDriverHaltInput.Type;
 
 export const AutomodeDispatchResult = Schema.Struct({
   snapshot: AutomodeSnapshot,
