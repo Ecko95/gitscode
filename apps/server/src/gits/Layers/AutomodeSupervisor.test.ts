@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
-import type { AutomodeBudgetUsage, DelamainPeer, DelamainPeerListResult } from "@t3tools/contracts";
+import type { AutomodeBudgetUsage, DelamainPeer, DelamainPeerListResult, DelamainSpawnPeerInput } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
@@ -55,7 +55,7 @@ const defaultBudgetUsage: AutomodeBudgetUsage = {
 function makeLayer(options?: {
   readonly peers?: ReadonlyArray<DelamainPeer>;
   readonly budgetUsage?: AutomodeBudgetUsage;
-  readonly onSpawn?: (input: { readonly repo: string; readonly prompt: string }) => void;
+  readonly onSpawn?: (input: DelamainSpawnPeerInput) => void;
   readonly baseDir?: string;
 }) {
   return AutomodeSupervisorLive.pipe(
@@ -351,4 +351,29 @@ describe("AutomodeSupervisorLive", () => {
       ),
     ),
   );
+
+  it.effect("autonomous dispatch requests a confined --yolo peer", () => {
+    let spawnInput: { confine?: boolean; yolo?: boolean; egress?: string } | null = null;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Confined goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(spawnInput?.confine, true);
+      assert.equal(spawnInput?.yolo, true);
+      assert.equal(spawnInput?.egress, "host");
+    }).pipe(
+      Effect.provide(makeLayer({ onSpawn: (input) => { spawnInput = input; } })),
+    );
+  });
 });

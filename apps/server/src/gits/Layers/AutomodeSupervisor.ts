@@ -565,6 +565,9 @@ export const AutomodeSupervisorLive = Layer.effect(
               prompt: goal.prompt,
               name: goal.title,
               ...(effectiveModel ? { model: effectiveModel } : {}),
+              confine: true,
+              yolo: true,
+              egress: "host",
             })
             .pipe(
               Effect.mapError((cause) =>
