@@ -1,6 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import type { Dirent } from "node:fs";
 import * as Fs from "node:fs/promises";
 import * as Path from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -164,6 +167,12 @@ async function readJsonRecord(absolutePath: string): Promise<Record<string, unkn
   }
 }
 
+// JSON serialization is an untyped boundary here; the config file is written for humans to edit,
+// so it is intentionally pretty-printed rather than encoded through a schema codec.
+function toPrettyJson(value: unknown): string {
+  return JSON.stringify(value, null, 2);
+}
+
 function readScriptsFromPackageJson(json: Record<string, unknown> | null): Record<string, string> {
   const scripts = json?.scripts;
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) {
@@ -199,7 +208,7 @@ async function discoverRootPackageCommands(projectDir: string): Promise<Readonly
 
 async function discoverAppPackageCommands(projectDir: string): Promise<ReadonlyArray<DiscoveryCommand>> {
   const appsDirectory = Path.join(projectDir, APPS_DIRECTORY);
-  let entries: Awaited<ReturnType<typeof Fs.readdir>>;
+  let entries: ReadonlyArray<Dirent<string>>;
   try {
     entries = await Fs.readdir(appsDirectory, { withFileTypes: true });
   } catch {
@@ -361,8 +370,11 @@ function toConfigCommandForWrite(input: {
 async function resolveRuntimeContext() {
   const tailscaleBaseUrl = await resolveTailscaleHttpsBaseUrl().pipe(
     Effect.map((url) => url),
-    Effect.catchTag("TailscaleCommandError", () => Effect.succeed<string | null>(null)),
-    Effect.catchTag("TailscaleStatusParseError", () => Effect.succeed<string | null>(null)),
+    Effect.catchTags({
+      TailscaleCommandError: () => Effect.succeed<string | null>(null),
+      TailscaleStatusParseError: () => Effect.succeed<string | null>(null),
+    }),
+    Effect.provide(NodeServices.layer),
     Effect.runPromise,
   );
   const magicDnsName = tailscaleBaseUrl ? new URL(tailscaleBaseUrl).hostname : null;
@@ -379,7 +391,7 @@ async function buildListResult(projectDir: string): Promise<GitsDevCommandListRe
 
   if (config !== null) {
     const parsedJson = JSON.parse(config.raw) as unknown;
-    const parsed = await Schema.decodeUnknown(ConfigFileSchema)(parsedJson).pipe(Effect.runPromise);
+    const parsed = await Schema.decodeUnknownEffect(ConfigFileSchema)(parsedJson).pipe(Effect.runPromise);
     return {
       projectDir,
       configPath: config.configPath,
@@ -426,14 +438,8 @@ const makeListCommands: GitsDevCommandsShape["listCommands"] = (input: GitsDevCo
   Effect.tryPromise({
     try: () => buildListResult(input.projectDir),
     catch: (cause) =>
-      toDevCommandError(`Failed to inspect dev command config in ${input.projectDir}.`, cause),
-  }).pipe(
-    Effect.catchTag("ParseError", (cause) =>
-      Effect.fail(
-        toDevCommandError(`Failed to parse dev command config in ${input.projectDir}.`, cause),
-      ),
-    ),
-  );
+      toDevCommandError(`Failed to inspect or parse dev command config in ${input.projectDir}.`, cause),
+  });
 
 const makeInitCommands: GitsDevCommandsShape["initCommands"] = (input: GitsDevCommandInitInput) =>
   Effect.tryPromise({
@@ -458,23 +464,17 @@ const makeInitCommands: GitsDevCommandsShape["initCommands"] = (input: GitsDevCo
           }),
         ),
       } satisfies typeof ConfigFileSchema.Type;
-      await Fs.writeFile(configPath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+      await Fs.writeFile(configPath, `${toPrettyJson(file)}\n`, "utf8");
       return buildListResult(input.projectDir);
     },
     catch: (cause) =>
-      cause instanceof GitsDevCommandError
+      Schema.is(GitsDevCommandError)(cause)
         ? cause
         : toDevCommandError(
-            `Failed to initialize dev command config in ${input.projectDir}.`,
+            `Failed to initialize or parse dev command config in ${input.projectDir}.`,
             cause,
           ),
-  }).pipe(
-    Effect.catchTag("ParseError", (cause) =>
-      Effect.fail(
-        toDevCommandError(`Failed to write or parse initialized dev commands in ${input.projectDir}.`, cause),
-      ),
-    ),
-  );
+  });
 
 export const makeGitsDevCommands = Effect.succeed({
   listCommands: makeListCommands,
