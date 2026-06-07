@@ -84,7 +84,13 @@ export function useVoiceTranscription(options: {
   const onTranscriptRef = useRef(options.onTranscript);
   onTranscriptRef.current = options.onTranscript;
 
-  const apiKeyRedacted = useSettings((settings) => settings.voiceTranscription.apiKeyRedacted);
+  // The active provider owns its own key; reflect that provider's redacted flag
+  // so switching providers re-evaluates whether a key is configured.
+  const apiKeyRedacted = useSettings((settings) =>
+    settings.voiceTranscription.provider === "groq"
+      ? settings.voiceTranscription.groqApiKeyRedacted
+      : settings.voiceTranscription.openaiApiKeyRedacted,
+  );
   const missingApiKey = !apiKeyRedacted;
 
   const [state, setState] = useState<VoiceTranscriptionState>("idle");
@@ -119,12 +125,14 @@ export function useVoiceTranscription(options: {
     }
 
     setState("transcribing");
+    const mimeType = mimeTypeRef.current;
+    console.info("[voice] captured audio", blob.size, "bytes", mimeType);
     try {
-      const mimeType = mimeTypeRef.current;
       const dataUrl = await readFileAsDataUrl(
         new File([blob], `voice-input.${fileExtensionForMimeType(mimeType)}`, { type: mimeType }),
       );
       const audioBase64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      console.info("[voice] sending to transcription provider…");
       const result = await ensureLocalApi().audio.transcribe({
         audioBase64,
         mimeType,
@@ -132,10 +140,14 @@ export function useVoiceTranscription(options: {
       });
       const text = result.text.trim();
       if (text.length > 0) {
+        console.info("[voice] transcript received:", text.length, "chars:", text.slice(0, 120));
         onTranscriptRef.current(text);
+      } else {
+        console.warn("[voice] provider returned empty transcript");
       }
       setState("idle");
     } catch (error) {
+      console.error("[voice] transcription failed:", error);
       toastManager.add({ type: "error", title: describeError(error) });
       setState("idle");
     }
@@ -170,6 +182,14 @@ export function useVoiceTranscription(options: {
       });
       recorder.addEventListener("stop", () => {
         const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
+        console.info(
+          "[voice] recording stopped:",
+          chunksRef.current.length,
+          "chunks,",
+          blob.size,
+          "bytes",
+          blob.type,
+        );
         releaseStream();
         void transcribeBlob(blob);
       });

@@ -869,6 +869,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  insertText: (text: string) => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1535,6 +1536,44 @@ function ComposerPromptEditorInner({
     return snapshot;
   }, [editor]);
 
+  const insertText = useCallback(
+    (text: string) => {
+      if (text.length === 0) return;
+      const rootElement = editor.getRootElement();
+      rootElement?.focus({ preventScroll: true });
+      editor.update(() => {
+        const composerLength = $getComposerRootLength();
+        const selection = $getSelection();
+        const caret =
+          $isRangeSelection(selection) && selection.isCollapsed()
+            ? $readSelectionOffsetFromEditorState(composerLength)
+            : composerLength;
+        // Prefix a separating space when inserting after existing,
+        // non-whitespace content so the transcript never glues onto the
+        // preceding word.
+        const existingValue = $getRoot().getTextContent();
+        const needsSeparator = caret > 0 && !/\s$/.test(existingValue.slice(0, caret));
+        const insertion = needsSeparator ? ` ${text}` : text;
+        $setSelectionAtComposerOffset(caret);
+        const insertSelection = $getSelection();
+        if ($isRangeSelection(insertSelection)) {
+          insertSelection.insertText(insertion);
+        }
+      });
+      // Surface the freshly-inserted text back to the controlled `prompt` value
+      // so it is preserved across re-renders and included on submit.
+      const snapshot = readSnapshot();
+      onChangeRef.current(
+        snapshot.value,
+        snapshot.cursor,
+        snapshot.expandedCursor,
+        false,
+        snapshot.terminalContextIds,
+      );
+    },
+    [editor, readSnapshot],
+  );
+
   useImperativeHandle(
     editorRef,
     () => ({
@@ -1550,9 +1589,10 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      insertText,
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [focusAt, insertText, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {
