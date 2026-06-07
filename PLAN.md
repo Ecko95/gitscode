@@ -318,3 +318,31 @@ New file `apps/server/src/remote/RemoteAgentRegistry.ts` (+ `.test.ts`):
 - **`AdvertisedEndpoint` unification** (`.plans/19-remote-endpoints-hosted-static.md`).
   Keep `RemoteAgentRecord` separate for now; converge later once the API surface
   exists.
+
+---
+
+## Deferred (implementation status)
+
+Implemented in this slice:
+- `t3 serve` verified as the canonical headless entrypoint; regression covered by
+  the existing `apps/server/src/cli/config.test.ts` test
+  "forces noBrowser and disables auto-bootstrap for headless startup presentation".
+- `t3 remote {add,list,status,remove}` (`apps/server/src/cli/remote.ts`,
+  registered in `bin.ts`), reusing `packages/ssh` primitives with a no-op
+  `SshPasswordPrompt` for non-interactive mode.
+- Saved-agent registry (`apps/server/src/remote/RemoteAgentRegistry.ts`) persisting
+  `<base-dir>/userdata/remote-agents.json` via `atomicWrite`; contracts schemas
+  `RemoteAgentRecord` / `RemoteAgentRegistryFile` and the neutral `RemoteSshTarget`
+  alias in `packages/contracts/src/remoteAccess.ts`; `remoteAgentsPath` added to
+  `deriveServerPaths`.
+- Tests: `remote.test.ts`, `RemoteAgentRegistry.test.ts`. REMOTE.md Option 4 docs.
+
+Explicitly deferred (rationale in §7 above):
+- Persistent local port-forward daemon for headless (`t3 remote forward`); reach
+  remotes directly over Tailnet/LAN/HTTPS in the meantime.
+- Interactive SSH password prompts in the CLI (headless boxes use key-based auth;
+  `batchMode: "yes"` is the default and fails fast).
+- HTTP/WS API + web-UI surface for remote-agent management (registry shape is
+  forward-compatible).
+- Remote project management GUI (use `t3 project ...` on the server).
+- `AdvertisedEndpoint` unification with `RemoteAgentRecord`.

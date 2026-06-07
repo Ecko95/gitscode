@@ -152,6 +152,33 @@ With mise/asdf/fnm/nodenv, make sure the tool's shim directory is installed and 
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
 
+### Option 4: Headless Control Plane (`t3 remote`)
+
+Use this when a headless box (for example a cloud dev machine running `t3 serve`, see Option 2) should also set up and manage T3 Code on *other* machines over SSH, without a GUI.
+
+`t3 remote` reuses the same SSH provisioning engine as the desktop SSH launcher (Option 3). It provisions or reuses a remote T3 server, issues a pairing credential from the remote server, and saves the environment in a small registry under `<base-dir>/userdata/remote-agents.json`.
+
+```bash
+# Provision or reuse a remote agent and issue a pairing token
+t3 remote add user@example.com
+
+# List saved remote agents (never prints pairing secrets)
+t3 remote list
+
+# Probe a saved agent's reachability from this host
+t3 remote status example.com
+
+# Stop a managed remote agent (best-effort) and drop its saved record
+t3 remote remove example.com
+```
+
+Flags: `--user` / `--port` override the resolved SSH user/port, `--no-pair` provisions without issuing a credential, and `--json` emits machine-readable output. Add `--help` to any subcommand for the full reference.
+
+`t3 remote` connects non-interactively (key-based auth; `BatchMode=yes`). If the remote host needs a password it fails fast rather than blocking on a prompt. If a launch fails with a Node version error or `node: command not found`, follow the SSH Launch Troubleshooting steps above on the target host.
+
+> Note
+> Unlike the desktop SSH launch (Option 3), the one-shot CLI does not hold a long-lived local port forward open. `t3 remote add` provisions and pairs, then hands back the remote-reachable URL. Reach the agent directly over Tailnet/LAN/HTTPS (the recommended setup at the top of this document), or run `t3 serve --tailscale-serve` on the remote host. A persistent local port-forward daemon for headless hosts is not yet implemented.
+
 ## How Pairing Works
 
 The remote device does not need a long-lived secret up front.

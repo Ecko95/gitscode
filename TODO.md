@@ -12,6 +12,16 @@
 
 - [ ] Queueing messages
 
+## Headless / remote-agent mode (plan: `PLAN.md`)
+
+Headless control plane: run T3 Code on a GUI-less box and manage remote SSH agents from it.
+
+- [x] Verified `t3 serve` as the canonical headless entrypoint (no browser, no Electron; prints connection string + owner pairing token + pairing URL + QR). Regression test: `apps/server/src/cli/config.test.ts` "forces noBrowser and disables auto-bootstrap for headless startup presentation".
+- [x] `t3 remote {add,list,status,remove}` CLI group (`apps/server/src/cli/remote.ts`) reusing the existing `packages/ssh` engine (`launchOrReuseRemoteServer` / `issueRemotePairingToken` / `stopRemoteServer` / `waitForHttpReady`); registered in `bin.ts`.
+- [x] Server-side saved-agent registry (`apps/server/src/remote/RemoteAgentRegistry.ts`) persisting `<base-dir>/userdata/remote-agents.json` via `atomicWrite`; contracts schemas `RemoteAgentRecord` / `RemoteAgentRegistryFile` + neutral `RemoteSshTarget` alias in `packages/contracts/src/remoteAccess.ts`.
+- [x] Tests: `remote.test.ts` (CLI parsing + offline registry no-ops), `RemoteAgentRegistry.test.ts` (persistence round-trip). REMOTE.md documents Option 4.
+- [ ] Deferred (see `PLAN.md` §Deferred): persistent local port-forward daemon for headless, interactive SSH password prompts, HTTP/WS + web-UI surface for remote-agent management, `AdvertisedEndpoint` unification.
+
 ## Self-improving orchestration (design: `docs/gits/ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md`)
 
 - [x] Map current orchestration (Delamain / autopilot / Automode / Motoko)
