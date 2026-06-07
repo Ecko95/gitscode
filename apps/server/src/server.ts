@@ -65,6 +65,7 @@ import { HermesCliAdapterLive } from "./gits/Layers/HermesCliAdapter.ts";
 import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
 import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
+import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -236,6 +237,11 @@ const AutomodeSupervisorLayerLive = AutomodeSupervisorLive.pipe(
   Layer.provide(AutomodeUsageMeterLayerLive),
 );
 
+const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
+  Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(DelamainCliAdapterLive),
+);
+
 const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
   Layer.provide(GitsCapacityMonitorLive),
   Layer.provide(DelamainCliAdapterLive),
@@ -257,6 +263,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsPlanningScannerLive),
   Layer.provideMerge(HermesAdapterLayerLive),
   Layer.provideMerge(AutomodeSupervisorLayerLive),
+  Layer.provideMerge(AutomodeDriverLayerLive),
   // GitsReviewPipeline composes the gate/verifier/criteria services. Provide them
   // directly to it so its own requirements are satisfied here rather than leaking
   // into the server launch layer (which must only require ServerConfig). The dep
