@@ -26,7 +26,7 @@ import {
 const AuthSessionDbRow = Schema.Struct({
   sessionId: AuthSessionId,
   subject: Schema.String,
-  role: Schema.Literals(["owner", "client"]),
+  role: Schema.Literals(["owner", "client", "thread-scoped"]),
   method: Schema.Literals(["browser-session-cookie", "bearer-session-token"]),
   clientLabel: Schema.NullOr(Schema.String),
   clientIpAddress: Schema.NullOr(Schema.String),

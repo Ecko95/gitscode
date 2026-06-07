@@ -26,7 +26,9 @@ import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 import { authWebSocketTokenRouteLayer } from "../auth/http.ts";
 import { ServerAuthLive } from "../auth/Layers/ServerAuth.ts";
 import { ServerSecretStoreLive } from "../auth/Layers/ServerSecretStore.ts";
+import { attachmentsRouteLayer } from "../http.ts";
 import { ServerConfig, deriveServerPaths, type ServerConfigShape } from "../config.ts";
+import type { SessionRole } from "../auth/Services/SessionCredentialService.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { orchestrationDispatchRouteLayer } from "../orchestration/http.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -262,6 +264,7 @@ const make_app_layer = (config: ServerConfigShape, options: StubOptions) => {
     critTurnStatusRouteLayer,
     orchestrationDispatchRouteLayer,
     authWebSocketTokenRouteLayer,
+    attachmentsRouteLayer,
   );
 
   return HttpRouter.serve(routesLayer, {
@@ -283,7 +286,7 @@ const with_app = <A, E>(
   options: StubOptions,
   run: (
     baseUrl: string,
-    token: (subject: string) => Effect.Effect<string>,
+    token: (subject: string, role?: SessionRole) => Effect.Effect<string>,
   ) => Effect.Effect<A, E, any>,
 ) =>
   Effect.gen(function* () {
@@ -299,11 +302,11 @@ const with_app = <A, E>(
           return assert.fail(`Expected TCP address, got ${String(address)}`);
         }
         const baseUrl = `http://127.0.0.1:${address.port}`;
-        const issueToken = (subject: string) =>
+        const issueToken = (subject: string, role: SessionRole = "client") =>
           Effect.gen(function* () {
             const authControlPlane = yield* AuthControlPlane;
             const issued = yield* authControlPlane.issueSession({
-              role: "client",
+              role,
               subject,
               label: `crit test ${subject}`,
             });
@@ -363,6 +366,15 @@ const post_ws_token = (baseUrl: string, token: string) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const request = HttpClientRequest.post(`${baseUrl}/api/auth/ws-token`).pipe(
+      HttpClientRequest.setHeaders({ authorization: `Bearer ${token}` }),
+    );
+    return yield* client.execute(request);
+  });
+
+const get_attachment = (baseUrl: string, attachmentId: string, token: string) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const request = HttpClientRequest.get(`${baseUrl}/attachments/${attachmentId}`).pipe(
       HttpClientRequest.setHeaders({ authorization: `Bearer ${token}` }),
     );
     return yield* client.execute(request);
@@ -556,5 +568,67 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
           }),
         );
       }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  // ---------------------------------------------------------------------------
+  // thread-scoped realtime deny — the dedicated crit role is rejected at the
+  // broad surfaces (ws-token + attachments) while owner/client keep working.
+  // ---------------------------------------------------------------------------
+
+  it.effect("POST /api/auth/ws-token rejects a thread-scoped session with 403", () =>
+    Effect.gen(function* () {
+      yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token(THREAD_A, "thread-scoped");
+          const response = yield* post_ws_token(baseUrl, bearer);
+          assert.equal(response.status, 403);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("GET /attachments rejects a thread-scoped session with 403", () =>
+    Effect.gen(function* () {
+      yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token(THREAD_A, "thread-scoped");
+          const response = yield* get_attachment(baseUrl, "some-attachment-id", bearer);
+          assert.equal(response.status, 403);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  // REGRESSION: paired "Shared Devices" run as role:"client" and DO use /ws — the
+  // dedicated thread-scoped deny must not break them. An ordinary client session
+  // still mints a ws-token (200), and is not 403'd at attachments (its
+  // missing-file path returns 404, never the thread-scoped 403).
+  it.effect(
+    "REGRESSION: an ordinary client session still mints a ws-token (200) and is not 403'd at attachments",
+    () =>
+      Effect.gen(function* () {
+        yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+          Effect.gen(function* () {
+            const bearer = yield* token("cli-issued-session", "client");
+            const wsResponse = yield* post_ws_token(baseUrl, bearer);
+            assert.equal(wsResponse.status, 200);
+            const attachmentResponse = yield* get_attachment(baseUrl, "missing-id", bearer);
+            assert.notEqual(attachmentResponse.status, 403);
+            assert.equal(attachmentResponse.status, 404);
+          }),
+        );
+      }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("REGRESSION: an owner session still mints a ws-token (200)", () =>
+    Effect.gen(function* () {
+      yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token("owner-bootstrap", "owner");
+          const response = yield* post_ws_token(baseUrl, bearer);
+          assert.equal(response.status, 200);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
   );
 });

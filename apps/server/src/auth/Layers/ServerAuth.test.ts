@@ -7,6 +7,7 @@ import type { ServerConfigShape } from "../../config.ts";
 import { ServerConfig } from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { BootstrapCredentialError } from "../Services/BootstrapCredentialService.ts";
+import { AuthControlPlane } from "../Services/AuthControlPlane.ts";
 import { ServerAuth, type ServerAuthShape } from "../Services/ServerAuth.ts";
 import { ServerAuthLive, toBootstrapExchangeAuthError } from "./ServerAuth.ts";
 import { ServerSecretStoreLive } from "./ServerSecretStore.ts";
@@ -39,6 +40,17 @@ const makeCookieRequest = (
     },
     headers: {},
   }) as unknown as Parameters<ServerAuthShape["authenticateHttpRequest"]>[0];
+
+const makeBearerRequest = (
+  sessionToken: string,
+): Parameters<ServerAuthShape["authenticateWebSocketUpgrade"]>[0] =>
+  ({
+    cookies: {},
+    headers: {
+      authorization: `Bearer ${sessionToken}`,
+    },
+    url: "/ws",
+  }) as unknown as Parameters<ServerAuthShape["authenticateWebSocketUpgrade"]>[0];
 
 const requestMetadata = {
   deviceType: "desktop" as const,
@@ -179,5 +191,109 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
         }),
       ),
     ),
+  );
+
+  // ---------------------------------------------------------------------------
+  // thread-scoped realtime deny (crit sidecar confinement)
+  // ---------------------------------------------------------------------------
+
+  it.effect("denies issueWebSocketToken for a thread-scoped session with 403", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+      const authControlPlane = yield* AuthControlPlane;
+      const issued = yield* authControlPlane.issueSession({
+        role: "thread-scoped",
+        subject: "thread-deadbeef",
+        label: "crit sidecar",
+      });
+
+      const error = yield* Effect.flip(
+        serverAuth.issueWebSocketToken({
+          sessionId: issued.sessionId,
+          subject: issued.subject,
+          method: issued.method,
+          role: issued.role,
+        }),
+      );
+
+      expect(error._tag).toBe("AuthError");
+      expect(error.status).toBe(403);
+      expect(error.message).toBe("Thread-scoped sessions cannot open a realtime connection.");
+    }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect(
+    "denies authenticateWebSocketUpgrade for a thread-scoped session with 403 (defense-in-depth)",
+    () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* ServerAuth;
+        const authControlPlane = yield* AuthControlPlane;
+        const issued = yield* authControlPlane.issueSession({
+          role: "thread-scoped",
+          subject: "thread-deadbeef",
+          label: "crit sidecar",
+        });
+
+        const error = yield* Effect.flip(
+          serverAuth.authenticateWebSocketUpgrade(makeBearerRequest(issued.token)),
+        );
+
+        expect(error._tag).toBe("AuthError");
+        expect(error.status).toBe(403);
+      }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect(
+    "REGRESSION: an ordinary client session is still granted a ws-token and passes the upgrade",
+    () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* ServerAuth;
+        const authControlPlane = yield* AuthControlPlane;
+        // Paired "Shared Devices" run as role:"client" and DO use /ws.
+        const issued = yield* authControlPlane.issueSession({
+          role: "client",
+          subject: "cli-issued-session",
+          label: "shared device",
+        });
+
+        const wsToken = yield* serverAuth.issueWebSocketToken({
+          sessionId: issued.sessionId,
+          subject: issued.subject,
+          method: issued.method,
+          role: issued.role,
+        });
+        expect(typeof wsToken.token).toBe("string");
+        expect(wsToken.token.length).toBeGreaterThan(0);
+
+        const upgraded = yield* serverAuth.authenticateWebSocketUpgrade(
+          makeBearerRequest(issued.token),
+        );
+        expect(upgraded.role).toBe("client");
+      }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect("REGRESSION: an owner session is still granted a ws-token and passes the upgrade", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+      const authControlPlane = yield* AuthControlPlane;
+      const issued = yield* authControlPlane.issueSession({
+        role: "owner",
+        subject: "owner-bootstrap",
+        label: "owner device",
+      });
+
+      const wsToken = yield* serverAuth.issueWebSocketToken({
+        sessionId: issued.sessionId,
+        subject: issued.subject,
+        method: issued.method,
+        role: issued.role,
+      });
+      expect(wsToken.token.length).toBeGreaterThan(0);
+
+      const upgraded = yield* serverAuth.authenticateWebSocketUpgrade(
+        makeBearerRequest(issued.token),
+      );
+      expect(upgraded.role).toBe("owner");
+    }).pipe(Effect.provide(makeServerAuthLayer())),
   );
 });
