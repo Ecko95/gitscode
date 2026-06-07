@@ -359,7 +359,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AuthLayerLive),
 );
 
-const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+const RuntimeDependenciesBaseLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
   Layer.provideMerge(ProcessDiagnostics.layer),
   Layer.provideMerge(ProcessResourceMonitor.layer),
@@ -367,12 +367,21 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(ServerLifecycleEventsLive),
-  // CritSidecarManager exposes the crit PR-review sidecar over the WS NativeApi.
-  // It still requires ChildProcessSpawner (PlatformServicesLive) + HttpClient
-  // (FetchHttpClient.layer) from the outer runtime; NetService it provides for
-  // itself. Merged here so `yield* CritSidecarManager` resolves in ws.ts.
-  Layer.provideMerge(CritSidecarManagerLive),
   Layer.provide(NetService.layer),
+);
+
+// CritSidecarManager exposes the crit PR-review sidecar over the WS NativeApi.
+// Besides ChildProcessSpawner (PlatformServicesLive) + HttpClient
+// (FetchHttpClient.layer) from the outer runtime — and NetService it provides for
+// itself — it requires AuthControlPlane to mint/revoke the sidecar's scoped
+// session token. AuthControlPlane is exposed by RuntimeDependenciesBaseLive (via
+// AuthLayerLive), so CritSidecarManagerLive must CONSUME that base rather than be
+// merged as a sibling provider; `provideMerge` is directional and a sibling merge
+// leaves the AuthControlPlane requirement unsatisfied (it leaks to bin.ts and the
+// server crashes at boot). The base's outputs are merged through, so
+// `yield* CritSidecarManager` still resolves in ws.ts.
+const RuntimeDependenciesLive = CritSidecarManagerLive.pipe(
+  Layer.provideMerge(RuntimeDependenciesBaseLive),
 );
 
 const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
