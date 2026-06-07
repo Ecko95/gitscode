@@ -230,26 +230,22 @@ const makeCritSidecarManager = Effect.gen(function* () {
       // refCount above and never reaches here), with a bounded TTL. The session is
       // revoked when `scope` closes — wiring it here means every teardown path
       // that closes the scope also revokes the token.
-      // NOTE: the token is role:"client" bound to subject:threadId — a thread-scoped
-      // capability for the dedicated /api/crit/{turn,turn-status} endpoints, which
-      // require session.subject === threadId. The owner-gated /api/orchestration/*
-      // HTTP endpoints reject this client-role token (role !== "owner"), and the
-      // bounded TTL + revoke-on-teardown wired here further limit the blast radius.
-      //
-      // CAVEAT (known residual, tracked): this is NOT a full least-privilege
-      // confinement. The WebSocket RPC surface (POST /api/auth/ws-token + GET /ws,
-      // see apps/server/src/auth/http.ts + apps/server/src/ws.ts) authenticates ANY
-      // session with no role/subject gate, and the RPC handlers reached after the
-      // upgrade call orchestrationEngine.dispatch() with no subject filtering. So a
-      // *leaked* sidecar token can still mint a ws-token and dispatch arbitrary
-      // orchestration commands over /ws against any thread — the same broad reach an
-      // owner token had. This is a pre-existing gap, not introduced by this change;
-      // subject-scoping the WS/RPC surface is tracked as follow-up. The dedicated
-      // /api/crit/* HTTP endpoints here are correctly subject-scoped; the WS path is
-      // not yet. See critHttp.test.ts for the asserted-limitation coverage.
+      // NOTE: the token is role:"thread-scoped" bound to subject:threadId — a
+      // dedicated least-privilege capability minted ONLY for the crit sidecar. It
+      // can reach ONLY the /api/crit/{turn,turn-status} endpoints for its own
+      // thread, which require session.subject === threadId; a token for thread A is
+      // rejected (403) for thread B. The thread-scoped role is explicitly DENIED at
+      // the broad surfaces it must not touch: POST /api/auth/ws-token and the GET
+      // /ws upgrade (centralized deny in ServerAuth — see apps/server/src/auth/
+      // Services/ServerAuth.ts + Layers/ServerAuth.ts, asserted in ServerAuth.test.ts
+      // and critHttp.test.ts) and GET /api/attachments/*. It also cannot reach the
+      // owner-gated /api/orchestration/* endpoints (role !== "owner"). So even a
+      // *leaked* sidecar token confers no broader reach than starting a turn on its
+      // own thread. The bounded TTL + revoke-on-teardown wired here further cap the
+      // blast radius. This guarantee HOLDS — it is no longer a residual gap.
       const issued = yield* authControlPlane
         .issueSession({
-          role: "client",
+          role: "thread-scoped",
           subject: input.threadId,
           label: `crit sidecar ${input.workspaceRoot}`,
           ttl: CRIT_SIDECAR_SESSION_TTL,
