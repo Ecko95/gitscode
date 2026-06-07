@@ -353,7 +353,7 @@ describe("AutomodeSupervisorLive", () => {
   );
 
   it.effect("autonomous dispatch requests a confined --yolo peer", () => {
-    let spawnInput: { confine?: boolean; yolo?: boolean; egress?: string } | null = null;
+    let spawnInput: DelamainSpawnPeerInput | null = null;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       yield* supervisor.updatePolicy({
