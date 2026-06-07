@@ -115,7 +115,7 @@ const DEFAULT_CRIT_BASE_PORT = 4400;
 const DEFAULT_CRIT_READINESS_TIMEOUT_MS = 10_000;
 // Interval between readiness probe attempts while the sidecar boots.
 const CRIT_READINESS_PROBE_INTERVAL_MS = 100;
-// Bounded lifetime for the owner-scoped session minted for a sidecar. The token
+// Bounded lifetime for the thread-scoped session minted for a sidecar. The token
 // is also revoked on every teardown path (see the scope finalizer below); the
 // TTL is a backstop in case the process/server dies without running finalizers.
 const CRIT_SIDECAR_SESSION_TTL = Duration.hours(2);
@@ -230,13 +230,17 @@ const makeCritSidecarManager = Effect.gen(function* () {
       // refCount above and never reaches here), with a bounded TTL. The session is
       // revoked when `scope` closes — wiring it here means every teardown path
       // that closes the scope also revokes the token.
-      // NOTE: the token is still role:"owner" for v1 because
-      // /api/orchestration/{dispatch,snapshot} are owner-gated; least-privilege
-      // scoping via a dedicated crit endpoint is a tracked follow-up. The bounded
-      // TTL + revoke-on-teardown wired here are the v1 mitigation.
+      // NOTE: the token is role:"client" bound to subject:threadId — a thread-scoped
+      // least-privilege capability. It is authorized only by the dedicated
+      // /api/crit/{turn,turn-status} endpoints, which require session.subject ===
+      // threadId, so a leaked token can act on nothing but its own thread. The
+      // owner-gated /api/orchestration/* endpoints reject this client-role token, so
+      // they remain unreachable by the sidecar. The bounded TTL + revoke-on-teardown
+      // wired here further limit the blast radius.
       const issued = yield* authControlPlane
         .issueSession({
-          role: "owner",
+          role: "client",
+          subject: input.threadId,
           label: `crit sidecar ${input.workspaceRoot}`,
           ttl: CRIT_SIDECAR_SESSION_TTL,
         })
