@@ -52,6 +52,14 @@ export interface KnownTerminalMetadata {
   readonly summary: TerminalSummary;
 }
 
+export interface RunningTerminalSession {
+  readonly target: KnownTerminalSessionTarget;
+  readonly label: string;
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+  readonly updatedAt: string;
+}
+
 export interface TerminalSessionListFilter {
   readonly environmentId: EnvironmentId | null;
   readonly threadId?: ThreadId | null;
@@ -107,6 +115,7 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
 });
 
 const EMPTY_KNOWN_TERMINAL_SESSIONS = Object.freeze<Array<KnownTerminalSession>>([]);
+const EMPTY_RUNNING_TERMINAL_SESSIONS = Object.freeze<Array<RunningTerminalSession>>([]);
 const EMPTY_TERMINAL_ID_LIST = Object.freeze<Array<string>>([]);
 const DEFAULT_MAX_BUFFER_BYTES = 512 * 1024;
 const knownTerminalMetadataEnvironmentIds = new Set<EnvironmentId>();
@@ -119,6 +128,11 @@ const terminalIdOrder = Order.make<string>(
 const knownTerminalSessionOrder = Order.mapInput(
   terminalIdOrder,
   (session: KnownTerminalSession) => session.target.terminalId,
+);
+const runningTerminalSessionOrder = Order.mapInput(
+  terminalIdOrder,
+  (session: RunningTerminalSession) =>
+    `${session.target.environmentId}:${session.target.threadId}:${session.target.terminalId}`,
 );
 
 export const terminalSessionMetadataAtom = Atom.family((environmentId: EnvironmentId) => {
@@ -156,6 +170,11 @@ export const EMPTY_KNOWN_TERMINAL_SESSIONS_ATOM = Atom.make(EMPTY_KNOWN_TERMINAL
 export const EMPTY_TERMINAL_ID_LIST_ATOM = Atom.make(EMPTY_TERMINAL_ID_LIST).pipe(
   Atom.keepAlive,
   Atom.withLabel("terminal-session:running-terminal-ids:null"),
+);
+
+export const EMPTY_RUNNING_TERMINAL_SESSIONS_ATOM = Atom.make(EMPTY_RUNNING_TERMINAL_SESSIONS).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("terminal-session:running-sessions:null"),
 );
 
 export function getKnownTerminalSessionTarget(
@@ -326,6 +345,31 @@ export const runningTerminalIdsAtom = Atom.family((filter: KnownTerminalSessionL
     Atom.withLabel(`terminal-session:running-terminal-ids:${JSON.stringify(filter)}`),
   ),
 );
+
+/**
+ * Aggregate every terminal session with a running subprocess across all known
+ * environments. Reactive over each environment's metadata atom, so a backgrounded
+ * dev server (e.g. `npm run dev` on :3000) surfaces regardless of which thread is
+ * currently selected.
+ */
+export const runningTerminalSessionsAtom = Atom.make((get) =>
+  pipe(
+    Arr.fromIterable(knownTerminalMetadataEnvironmentIds),
+    Arr.flatMap((environmentId) => Object.values(get(terminalSessionMetadataAtom(environmentId)))),
+    Arr.filterMap((entry) =>
+      entry.summary.hasRunningSubprocess
+        ? Result.succeed<RunningTerminalSession>({
+            target: entry.target,
+            label: entry.summary.label,
+            cwd: entry.summary.cwd,
+            worktreePath: entry.summary.worktreePath,
+            updatedAt: entry.summary.updatedAt,
+          })
+        : Result.failVoid,
+    ),
+    Arr.sort(runningTerminalSessionOrder),
+  ),
+).pipe(Atom.keepAlive, Atom.withLabel("terminal-session:running-sessions"));
 
 export function createTerminalSessionManager(config: TerminalSessionManagerConfig) {
   const maxBufferBytes = config.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
