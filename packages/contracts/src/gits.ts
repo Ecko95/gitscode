@@ -361,6 +361,74 @@ export const GitsSkillInventorySnapshot = Schema.Struct({
 });
 export type GitsSkillInventorySnapshot = typeof GitsSkillInventorySnapshot.Type;
 
+export const GitsMcpServerProvider = Schema.Literals(["codex", "claude", "cursor", "unknown"]);
+export type GitsMcpServerProvider = typeof GitsMcpServerProvider.Type;
+
+export const GitsMcpServerSource = Schema.Literals(["codex-app-server", "config-file", "unknown"]);
+export type GitsMcpServerSource = typeof GitsMcpServerSource.Type;
+
+export const GitsMcpAuthStatus = Schema.Literals([
+  "unsupported",
+  "unauthenticated",
+  "authenticated",
+  "unknown",
+]);
+export type GitsMcpAuthStatus = typeof GitsMcpAuthStatus.Type;
+
+export const GitsMcpServerStatus = Schema.Literals([
+  "running",
+  "stopped",
+  "error",
+  "disabled",
+  "unknown",
+]);
+export type GitsMcpServerStatus = typeof GitsMcpServerStatus.Type;
+
+export const GitsMcpServerItem = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  provider: GitsMcpServerProvider,
+  name: TrimmedNonEmptyString,
+  source: GitsMcpServerSource,
+  status: GitsMcpServerStatus,
+  authStatus: GitsMcpAuthStatus,
+  enabled: Schema.Boolean,
+  command: Schema.NullOr(TrimmedNonEmptyString),
+  transport: Schema.NullOr(TrimmedNonEmptyString),
+  toolCount: NonNegativeInt,
+  resourceCount: NonNegativeInt,
+  tools: Schema.Array(TrimmedNonEmptyString),
+  configPath: Schema.NullOr(PathString),
+  error: Schema.NullOr(SummaryString),
+});
+export type GitsMcpServerItem = typeof GitsMcpServerItem.Type;
+
+export const GitsMcpServerProviderSummary = Schema.Struct({
+  provider: GitsMcpServerProvider,
+  serverCount: NonNegativeInt,
+  runningCount: NonNegativeInt,
+  disabledCount: NonNegativeInt,
+  toolCount: NonNegativeInt,
+});
+export type GitsMcpServerProviderSummary = typeof GitsMcpServerProviderSummary.Type;
+
+export const GitsMcpInventoryTotals = Schema.Struct({
+  serverCount: NonNegativeInt,
+  runningCount: NonNegativeInt,
+  errorCount: NonNegativeInt,
+  disabledCount: NonNegativeInt,
+  toolCount: NonNegativeInt,
+});
+export type GitsMcpInventoryTotals = typeof GitsMcpInventoryTotals.Type;
+
+export const GitsMcpInventorySnapshot = Schema.Struct({
+  scannedAt: IsoDateTime,
+  servers: Schema.Array(GitsMcpServerItem),
+  providers: Schema.Array(GitsMcpServerProviderSummary),
+  totals: GitsMcpInventoryTotals,
+  warnings: Schema.Array(TrimmedNonEmptyString),
+});
+export type GitsMcpInventorySnapshot = typeof GitsMcpInventorySnapshot.Type;
+
 export const DelamainEngine = Schema.Literals(["codex", "cursor", "unknown"]);
 export type DelamainEngine = typeof DelamainEngine.Type;
 

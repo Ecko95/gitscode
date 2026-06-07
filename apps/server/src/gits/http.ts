@@ -4,6 +4,10 @@ import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import { browserApiCorsHeaders } from "../httpCors.ts";
 import { GitsBuildInfoResolver, GitsBuildInfoResolverError } from "./Services/GitsBuildInfo.ts";
 import {
+  GitsMcpInventoryResolver,
+  GitsMcpInventoryResolverError,
+} from "./Services/GitsMcpInventory.ts";
+import {
   GitsSkillInventoryResolver,
   GitsSkillInventoryResolverError,
 } from "./Services/GitsSkillInventory.ts";
@@ -66,4 +70,34 @@ export const gitsSkillInventoryRouteLayer = HttpRouter.add(
       headers: browserApiCorsHeaders,
     });
   }).pipe(Effect.catchTag("GitsSkillInventoryResolverError", respondToSkillInventoryError)),
+);
+
+const respondToMcpInventoryError = (error: GitsMcpInventoryResolverError) =>
+  Effect.gen(function* () {
+    yield* Effect.logError("gits mcp inventory route failed", {
+      message: error.message,
+      cause: error.cause,
+    });
+    return HttpServerResponse.jsonUnsafe(
+      {
+        error: error.message,
+      },
+      {
+        status: 500,
+        headers: browserApiCorsHeaders,
+      },
+    );
+  });
+
+export const gitsMcpInventoryRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/gits/mcp",
+  Effect.gen(function* () {
+    const resolver = yield* GitsMcpInventoryResolver;
+    const snapshot = yield* resolver.getSnapshot();
+    return HttpServerResponse.jsonUnsafe(snapshot, {
+      status: 200,
+      headers: browserApiCorsHeaders,
+    });
+  }).pipe(Effect.catchTag("GitsMcpInventoryResolverError", respondToMcpInventoryError)),
 );

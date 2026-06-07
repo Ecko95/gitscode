@@ -10,6 +10,7 @@ import {
   type GitsBuildInfo,
   type GitsCapacitySnapshot,
   type GitsDevCommandListResult,
+  type GitsMcpInventorySnapshot,
   type GitsSkillInventorySnapshot,
   type HermesCommandResult,
   type HermesChatResult,
@@ -106,6 +107,10 @@ import {
   GitsSkillInventoryResolver,
   type GitsSkillInventoryResolverShape,
 } from "./gits/Services/GitsSkillInventory.ts";
+import {
+  GitsMcpInventoryResolver,
+  type GitsMcpInventoryResolverShape,
+} from "./gits/Services/GitsMcpInventory.ts";
 import { GitsDevCommands, type GitsDevCommandsShape } from "./gits/Services/GitsDevCommands.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
@@ -302,6 +307,19 @@ const defaultGitsSkillInventory: GitsSkillInventorySnapshot = {
   },
   warnings: [],
   insights: [],
+};
+const defaultGitsMcpInventory: GitsMcpInventorySnapshot = {
+  scannedAt: "1970-01-01T00:00:00.000Z",
+  servers: [],
+  providers: [],
+  totals: {
+    serverCount: 0,
+    runningCount: 0,
+    errorCount: 0,
+    disabledCount: 0,
+    toolCount: 0,
+  },
+  warnings: [],
 };
 const defaultGitsCapacitySnapshot: GitsCapacitySnapshot = {
   checkedAt: "1970-01-01T00:00:00.000Z",
@@ -722,6 +740,7 @@ const buildAppUnderTest = (options?: {
     gitsPlanningScanner?: Partial<GitsPlanningScannerShape>;
     gitsBuildInfoResolver?: Partial<GitsBuildInfoResolverShape>;
     gitsSkillInventoryResolver?: Partial<GitsSkillInventoryResolverShape>;
+    gitsMcpInventoryResolver?: Partial<GitsMcpInventoryResolverShape>;
     gitsDevCommands?: Partial<GitsDevCommandsShape>;
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
@@ -914,6 +933,10 @@ const buildAppUnderTest = (options?: {
       Layer.mock(GitsSkillInventoryResolver)({
         getSnapshot: () => Effect.succeed(defaultGitsSkillInventory),
         ...options?.layers?.gitsSkillInventoryResolver,
+      }),
+      Layer.mock(GitsMcpInventoryResolver)({
+        getSnapshot: () => Effect.succeed(defaultGitsMcpInventory),
+        ...options?.layers?.gitsMcpInventoryResolver,
       }),
       Layer.mock(GitsDevCommands)({
         listCommands: () => Effect.succeed(defaultGitsDevCommands),
@@ -1673,6 +1696,68 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
       const body = (yield* response.json) as GitsSkillInventorySnapshot;
+
+      assert.equal(response.status, 200);
+      assertBrowserApiCorsHeaders(response.headers);
+      assert.deepEqual(body, expectedSnapshot);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves public GITS MCP inventory without requiring auth", () =>
+    Effect.gen(function* () {
+      const expectedSnapshot: GitsMcpInventorySnapshot = {
+        scannedAt: "2026-06-02T10:00:00.000Z",
+        servers: [
+          {
+            id: "codex:context7",
+            provider: "codex",
+            name: "context7",
+            source: "config-file",
+            status: "unknown",
+            authStatus: "unknown",
+            enabled: true,
+            command: "npx -y @upstash/context7-mcp",
+            transport: "stdio",
+            toolCount: 0,
+            resourceCount: 0,
+            tools: [],
+            configPath: "/home/test/.codex/config.toml",
+            error: null,
+          },
+        ],
+        providers: [
+          {
+            provider: "codex",
+            serverCount: 1,
+            runningCount: 0,
+            disabledCount: 0,
+            toolCount: 0,
+          },
+        ],
+        totals: {
+          serverCount: 1,
+          runningCount: 0,
+          errorCount: 0,
+          disabledCount: 0,
+          toolCount: 0,
+        },
+        warnings: [],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitsMcpInventoryResolver: {
+            getSnapshot: () => Effect.succeed(expectedSnapshot),
+          },
+        },
+      });
+
+      const response = yield* HttpClient.get("/api/gits/mcp", {
+        headers: {
+          origin: crossOriginClientOrigin,
+        },
+      });
+      const body = (yield* response.json) as GitsMcpInventorySnapshot;
 
       assert.equal(response.status, 200);
       assertBrowserApiCorsHeaders(response.headers);

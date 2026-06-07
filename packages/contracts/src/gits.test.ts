@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   GitsBuildInfo,
   GitsCapacitySnapshot,
+  GitsMcpInventorySnapshot,
   GitsSkillInventorySnapshot,
   HermesChatResult,
   HermesExecutionDraft,
@@ -14,6 +15,7 @@ import {
 
 const decodeGitsBuildInfo = Schema.decodeUnknownSync(GitsBuildInfo);
 const decodeGitsSkillInventorySnapshot = Schema.decodeUnknownSync(GitsSkillInventorySnapshot);
+const decodeGitsMcpInventorySnapshot = Schema.decodeUnknownSync(GitsMcpInventorySnapshot);
 const decodeGitsCapacitySnapshot = Schema.decodeUnknownSync(GitsCapacitySnapshot);
 const decodeHermesStatus = Schema.decodeUnknownSync(HermesStatusResult);
 const decodeHermesChatResult = Schema.decodeUnknownSync(HermesChatResult);
@@ -86,6 +88,77 @@ describe("GitsSkillInventorySnapshot", () => {
 
     expect(parsed.skills[0]?.provider).toBe("codex");
     expect(parsed.totals.skillCount).toBe(1);
+  });
+});
+
+describe("GitsMcpInventorySnapshot", () => {
+  it("accepts local MCP server inventory fields", () => {
+    const parsed = decodeGitsMcpInventorySnapshot({
+      scannedAt: "2026-06-02T10:00:00.000Z",
+      servers: [
+        {
+          id: "codex:context7",
+          provider: "codex",
+          name: "context7",
+          source: "config-file",
+          status: "unknown",
+          authStatus: "unknown",
+          enabled: true,
+          command: "npx -y @upstash/context7-mcp",
+          transport: "stdio",
+          toolCount: 0,
+          resourceCount: 0,
+          tools: [],
+          configPath: "/home/test/.codex/config.toml",
+          error: null,
+        },
+        {
+          id: "claude:linear",
+          provider: "claude",
+          name: "linear",
+          source: "config-file",
+          status: "disabled",
+          authStatus: "unknown",
+          enabled: false,
+          command: null,
+          transport: "sse",
+          toolCount: 3,
+          resourceCount: 0,
+          tools: ["create_issue", "list_issues", "search"],
+          configPath: "/home/test/.claude.json",
+          error: null,
+        },
+      ],
+      providers: [
+        {
+          provider: "codex",
+          serverCount: 1,
+          runningCount: 0,
+          disabledCount: 0,
+          toolCount: 0,
+        },
+        {
+          provider: "claude",
+          serverCount: 1,
+          runningCount: 0,
+          disabledCount: 1,
+          toolCount: 3,
+        },
+      ],
+      totals: {
+        serverCount: 2,
+        runningCount: 0,
+        errorCount: 0,
+        disabledCount: 1,
+        toolCount: 3,
+      },
+      warnings: ["Missing cursor MCP config: /home/test/.cursor/mcp.json"],
+    });
+
+    expect(parsed.servers[0]?.provider).toBe("codex");
+    expect(parsed.servers[1]?.enabled).toBe(false);
+    expect(parsed.totals.serverCount).toBe(2);
+    expect(parsed.warnings[0]).toContain("cursor");
   });
 });
 
