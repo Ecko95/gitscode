@@ -17,6 +17,7 @@
 #                   [--egress off|host|proxy=<addr>]   # peer net policy (default: off)
 #                   [--ignore-scripts on|off]          # override profile default
 #                   [--ro <abs-path> ...]              # extra read-only binds (toolchains)
+#                   [--setenv KEY=VAL ...]             # inject extra env vars into the jail
 #                   -- <cmd> [args...]
 #
 # Exit code = the confined command's exit code (or 70 on wrapper misuse).
@@ -26,7 +27,7 @@ die() { printf 'gits-confine: %s\n' "$*" >&2; exit 70; }
 warn() { printf 'gits-confine: WARNING: %s\n' "$*" >&2; }
 
 WORKTREE="" PROFILE="verify" LABEL="confined" EGRESS="" IGNORE_SCRIPTS=""
-CREDS=() EXTRA_RO=() CMD=()
+CREDS=() EXTRA_RO=() CMD=() USER_ENV=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --worktree) WORKTREE="${2:-}"; shift 2 ;;
@@ -36,6 +37,7 @@ while [ $# -gt 0 ]; do
     --ro)       EXTRA_RO+=("${2:-}"); shift 2 ;;
     --egress)   EGRESS="${2:-}"; shift 2 ;;
     --ignore-scripts) IGNORE_SCRIPTS="${2:-}"; shift 2 ;;
+    --setenv)   USER_ENV+=("${2:-}"); shift 2 ;;
     --)         shift; CMD=("$@"); break ;;
     *)          die "unknown arg: $1 (forget '--' before the command?)" ;;
   esac
@@ -106,6 +108,16 @@ fi
 PATH_IN="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 [ -n "$NODE_BIN" ] && PATH_IN="${NODE_BIN}:${PATH_IN}"
 
+# User-supplied env (e.g. CODEX_HOME for a confined codex peer). KEY=VAL form.
+user_env_args=()
+for kv in "${USER_ENV[@]}"; do
+  [ -n "$kv" ] || continue
+  case "$kv" in
+    *=*) user_env_args+=( --setenv "${kv%%=*}" "${kv#*=}" ) ;;
+    *)   die "--setenv expects KEY=VAL, got: $kv" ;;
+  esac
+done
+
 exec bwrap \
   --clearenv \
   --setenv PATH "$PATH_IN" \
@@ -114,6 +126,7 @@ exec bwrap \
   --setenv TERM "${TERM:-xterm}" \
   --setenv LANG "${LANG:-C.UTF-8}" \
   --setenv GITS_CONFINED "$PROFILE:$LABEL" \
+  "${user_env_args[@]}" \
   "${script_env[@]}" \
   "${proxy_env[@]}" \
   "${sys_args[@]}" \
