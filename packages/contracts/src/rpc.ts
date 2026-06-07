@@ -271,6 +271,9 @@ export const WS_METHODS = {
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
 
+  // Audio methods
+  audioTranscribe: "audio.transcribe",
+
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -380,6 +383,46 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     error: SourceControlRepositoryError,
   },
 );
+
+export const VoiceTranscriptionErrorReason = Schema.Literals([
+  "missing_api_key",
+  "empty_audio",
+  "provider_error",
+  "network_error",
+]);
+export type VoiceTranscriptionErrorReason = typeof VoiceTranscriptionErrorReason.Type;
+
+export class VoiceTranscriptionError extends Schema.TaggedErrorClass<VoiceTranscriptionError>()(
+  "VoiceTranscriptionError",
+  {
+    reason: VoiceTranscriptionErrorReason,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Voice transcription failed (${this.reason}): ${this.detail}`;
+  }
+}
+
+export const AudioTranscribeInput = Schema.Struct({
+  audioBase64: Schema.String,
+  mimeType: Schema.String,
+  fileName: Schema.String,
+  durationMs: Schema.optional(Schema.Number),
+});
+export type AudioTranscribeInput = typeof AudioTranscribeInput.Type;
+
+export const AudioTranscribeResult = Schema.Struct({
+  text: Schema.String,
+});
+export type AudioTranscribeResult = typeof AudioTranscribeResult.Type;
+
+export const WsAudioTranscribeRpc = Rpc.make(WS_METHODS.audioTranscribe, {
+  payload: AudioTranscribeInput,
+  success: AudioTranscribeResult,
+  error: VoiceTranscriptionError,
+});
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -847,6 +890,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsAudioTranscribeRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
