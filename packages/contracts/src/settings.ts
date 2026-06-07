@@ -337,6 +337,46 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const VoiceTranscriptionProvider = Schema.Literals(["groq", "openai"]);
+export type VoiceTranscriptionProvider = typeof VoiceTranscriptionProvider.Type;
+export const DEFAULT_VOICE_TRANSCRIPTION_PROVIDER: VoiceTranscriptionProvider = "groq";
+
+export const VoiceTranscriptionSettings = makeProviderSettingsSchema(
+  {
+    provider: VoiceTranscriptionProvider.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_TRANSCRIPTION_PROVIDER)),
+      Schema.annotateKey({
+        title: "Provider",
+        description: "Hosted Whisper provider used to transcribe recorded audio.",
+        providerSettingsForm: { hidden: true },
+      }),
+    ),
+    apiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API key",
+        description: "Stored server-side in the secret store, never written to disk in plain text.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    // Server-set indicator: `true` when a key is stored in the secret store. The
+    // cleartext key is never sent to the client; this flag lets the UI show a
+    // "key configured" state without leaking it.
+    apiKeyRedacted: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["provider", "apiKey"],
+  },
+);
+export type VoiceTranscriptionSettings = typeof VoiceTranscriptionSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -380,6 +420,12 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Voice transcription is server-authoritative: the Whisper API key lives on
+  // the server (routed through ServerSecretStore) and is redacted before the
+  // settings object is streamed to the browser.
+  voiceTranscription: VoiceTranscriptionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -445,6 +491,14 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const VoiceTranscriptionSettingsPatch = Schema.Struct({
+  provider: Schema.optionalKey(VoiceTranscriptionProvider),
+  apiKey: Schema.optionalKey(TrimmedString),
+  // When `true`, the client is echoing back a stored (redacted) key and the
+  // server must preserve the existing secret rather than overwrite/clear it.
+  apiKeyRedacted: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -458,6 +512,7 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  voiceTranscription: Schema.optionalKey(VoiceTranscriptionSettingsPatch),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
