@@ -56,10 +56,8 @@ const PersistedAutomodeState = Schema.Struct({
   version: Schema.Literal(1),
   policy: AutomodePolicySchema,
   goals: Schema.Array(AutomodeGoalSchema),
-  driverHalted: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
-  driverHaltedReason: Schema.optional(Schema.NullOr(Schema.String)).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
+  driverHalted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  driverHaltedReason: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   lastEvent: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
 });
