@@ -513,6 +513,8 @@ export const DelamainSpawnPeerInput = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   sandbox: Schema.optional(Schema.Literals(["read-only", "workspace-write", "danger-full-access"])),
   yolo: Schema.optional(Schema.Boolean),
+  confine: Schema.optional(Schema.Boolean),
+  egress: Schema.optional(Schema.Literals(["off", "host"])),
 });
 export type DelamainSpawnPeerInput = typeof DelamainSpawnPeerInput.Type;
 
