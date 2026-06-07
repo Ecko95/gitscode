@@ -1448,7 +1448,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "open-terminal" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1464,6 +1464,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               case "grouping":
                 openProjectGroupingDialog(member);
                 return;
+              case "open-terminal":
+                return readLocalApi()?.shell.openInTerminal(member.cwd);
               case "copy-path":
                 copyPathToClipboard(member.cwd, { path: member.cwd });
                 return;
@@ -1481,7 +1483,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "open-terminal" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1515,6 +1517,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           [
             buildTargetedItem("rename", "Rename project"),
             buildTargetedItem("grouping", "Project grouping…"),
+            buildTargetedItem("open-terminal", "Open in terminal"),
             buildTargetedItem("copy-path", "Copy Project Path"),
             buildTargetedItem("delete", "Remove project", {
               destructive: true,
@@ -1936,6 +1939,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "open-terminal", label: "Open in terminal", disabled: !threadWorkspacePath },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
@@ -1950,6 +1954,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        return;
+      }
+      if (clicked === "open-terminal") {
+        if (threadWorkspacePath) {
+          await api.shell.openInTerminal(threadWorkspacePath);
+        }
         return;
       }
       if (clicked === "copy-path") {
