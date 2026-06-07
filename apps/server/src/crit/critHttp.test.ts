@@ -20,7 +20,12 @@ import {
   HttpServer,
 } from "effect/unstable/http";
 
-import { type OrchestrationThread, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  type OrchestrationThread,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 import { authWebSocketTokenRouteLayer } from "../auth/http.ts";
@@ -43,7 +48,10 @@ import { compute_turn_status, critTurnRouteLayer, critTurnStatusRouteLayer } fro
 
 const NOW = "2026-06-07T00:00:00.000Z";
 const PROJECT_ID = ProjectId.make("project-crit");
-const MODEL_SELECTION = { instanceId: "codex", model: "gpt-5-codex" } as const;
+const MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5-codex",
+} as const;
 
 const make_thread = (overrides: Partial<OrchestrationThread> = {}): OrchestrationThread => ({
   id: ThreadId.make("thread-crit-a"),
@@ -286,8 +294,8 @@ const with_app = <A, E>(
   options: StubOptions,
   run: (
     baseUrl: string,
-    token: (subject: string, role?: SessionRole) => Effect.Effect<string>,
-  ) => Effect.Effect<A, E, any>,
+    token: (subject: string, role?: SessionRole) => Effect.Effect<string, never, AuthControlPlane>,
+  ) => Effect.Effect<A, E, AuthControlPlane | HttpClient.HttpClient>,
 ) =>
   Effect.gen(function* () {
     const baseDir = mkdtempSync(join(tmpdir(), "t3-crit-http-test-"));

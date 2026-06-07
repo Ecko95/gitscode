@@ -45,8 +45,13 @@ export const makeAuthControlPlane = Effect.gen(function* () {
   const createPairingLink: AuthControlPlaneShape["createPairingLink"] = (input) =>
     Effect.gen(function* () {
       const createdAt = yield* DateTime.now;
+      // Pairing links / one-time tokens are only ever issued for interactive
+      // sessions (owner or client). The "thread-scoped" role is minted in-process
+      // for the crit sidecar via issueSession and is never paired, so narrow it
+      // out here to the BootstrapCredentialRole the credential store accepts.
+      const pairingRole = input?.role === "owner" ? "owner" : "client";
       const issued = yield* bootstrapCredentials.issueOneTimeToken({
-        role: input?.role ?? "client",
+        role: pairingRole,
         subject: input?.subject ?? "one-time-token",
         ...(input?.ttl ? { ttl: input.ttl } : {}),
         ...(input?.label ? { label: input.label } : {}),
@@ -54,7 +59,7 @@ export const makeAuthControlPlane = Effect.gen(function* () {
       return {
         id: issued.id,
         credential: issued.credential,
-        role: input?.role ?? "client",
+        role: pairingRole,
         subject: input?.subject ?? "one-time-token",
         ...(issued.label ? { label: issued.label } : {}),
         createdAt: DateTime.toUtc(createdAt),
