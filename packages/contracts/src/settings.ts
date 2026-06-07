@@ -341,7 +341,12 @@ export const VoiceTranscriptionProvider = Schema.Literals(["groq", "openai"]);
 export type VoiceTranscriptionProvider = typeof VoiceTranscriptionProvider.Type;
 export const DEFAULT_VOICE_TRANSCRIPTION_PROVIDER: VoiceTranscriptionProvider = "groq";
 
-export const VoiceTranscriptionSettings = makeProviderSettingsSchema(
+// Canonical (decoded) voice transcription settings. Each provider owns its own
+// key + server-set redacted indicator so switching provider does not reuse a
+// single shared key. The cleartext key is never sent to the client; the
+// per-provider `*Redacted` flag lets the UI show a "key configured" state
+// without leaking it.
+const VoiceTranscriptionSettingsWire = makeProviderSettingsSchema(
   {
     provider: VoiceTranscriptionProvider.pipe(
       Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_TRANSCRIPTION_PROVIDER)),
@@ -351,10 +356,10 @@ export const VoiceTranscriptionSettings = makeProviderSettingsSchema(
         providerSettingsForm: { hidden: true },
       }),
     ),
-    apiKey: TrimmedString.pipe(
+    groqApiKey: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
-        title: "API key",
+        title: "Groq API key",
         description: "Stored server-side in the secret store, never written to disk in plain text.",
         providerSettingsForm: {
           control: "password",
@@ -363,17 +368,86 @@ export const VoiceTranscriptionSettings = makeProviderSettingsSchema(
         },
       }),
     ),
-    // Server-set indicator: `true` when a key is stored in the secret store. The
-    // cleartext key is never sent to the client; this flag lets the UI show a
-    // "key configured" state without leaking it.
-    apiKeyRedacted: Schema.Boolean.pipe(
+    groqApiKeyRedacted: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    openaiApiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "OpenAI API key",
+        description: "Stored server-side in the secret store, never written to disk in plain text.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    openaiApiKeyRedacted: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["provider", "apiKey"],
+    order: ["provider", "groqApiKey", "openaiApiKey"],
   },
+);
+
+// Source shape for persisted payloads. Carries both the new per-provider fields
+// and the legacy single `apiKey`/`apiKeyRedacted`. Legacy fields are typed as
+// `Schema.Unknown` so rollout-era payloads still reach the transform, which
+// migrates them into the active provider's key with no data loss. The transform
+// is the only backward-compat surface; no post-decode compat code is needed.
+const VoiceTranscriptionSettingsSource = Schema.Struct({
+  provider: Schema.optional(Schema.Unknown),
+  apiKey: Schema.optional(Schema.Unknown),
+  apiKeyRedacted: Schema.optional(Schema.Unknown),
+  groqApiKey: Schema.optional(Schema.Unknown),
+  groqApiKeyRedacted: Schema.optional(Schema.Unknown),
+  openaiApiKey: Schema.optional(Schema.Unknown),
+  openaiApiKeyRedacted: Schema.optional(Schema.Unknown),
+});
+
+export const VoiceTranscriptionSettings = VoiceTranscriptionSettingsSource.pipe(
+  Schema.decodeTo(
+    VoiceTranscriptionSettingsWire,
+    SchemaTransformation.transformOrFail({
+      decode: (raw) => {
+        const provider =
+          raw.provider === "groq" || raw.provider === "openai"
+            ? raw.provider
+            : DEFAULT_VOICE_TRANSCRIPTION_PROVIDER;
+        const legacyKeyKey = provider === "groq" ? "groqApiKey" : "openaiApiKey";
+        const legacyRedactedKey =
+          provider === "groq" ? "groqApiKeyRedacted" : "openaiApiKeyRedacted";
+        const base: Record<string, unknown> = { provider };
+        if (raw.groqApiKey !== undefined) base.groqApiKey = raw.groqApiKey;
+        if (raw.groqApiKeyRedacted !== undefined) base.groqApiKeyRedacted = raw.groqApiKeyRedacted;
+        if (raw.openaiApiKey !== undefined) base.openaiApiKey = raw.openaiApiKey;
+        if (raw.openaiApiKeyRedacted !== undefined) {
+          base.openaiApiKeyRedacted = raw.openaiApiKeyRedacted;
+        }
+        // Migrate the legacy single key into the active provider's slot when the
+        // per-provider field has not been written yet.
+        if (raw.apiKey !== undefined && base[legacyKeyKey] === undefined) {
+          base[legacyKeyKey] = raw.apiKey;
+        }
+        if (raw.apiKeyRedacted !== undefined && base[legacyRedactedKey] === undefined) {
+          base[legacyRedactedKey] = raw.apiKeyRedacted;
+        }
+        return Effect.succeed(base as typeof VoiceTranscriptionSettingsWire.Encoded);
+      },
+      encode: (value) =>
+        Effect.succeed({
+          provider: value.provider,
+          groqApiKey: value.groqApiKey,
+          groqApiKeyRedacted: value.groqApiKeyRedacted,
+          openaiApiKey: value.openaiApiKey,
+          openaiApiKeyRedacted: value.openaiApiKeyRedacted,
+        } satisfies typeof VoiceTranscriptionSettingsSource.Encoded),
+    }),
+  ),
 );
 export type VoiceTranscriptionSettings = typeof VoiceTranscriptionSettings.Type;
 
@@ -493,10 +567,13 @@ const OpenCodeSettingsPatch = Schema.Struct({
 
 const VoiceTranscriptionSettingsPatch = Schema.Struct({
   provider: Schema.optionalKey(VoiceTranscriptionProvider),
-  apiKey: Schema.optionalKey(TrimmedString),
-  // When `true`, the client is echoing back a stored (redacted) key and the
-  // server must preserve the existing secret rather than overwrite/clear it.
-  apiKeyRedacted: Schema.optionalKey(Schema.Boolean),
+  // Per-provider keys. Each `*Redacted` flag, when `true`, means the client is
+  // echoing back a stored (redacted) key and the server must preserve the
+  // existing secret rather than overwrite/clear it.
+  groqApiKey: Schema.optionalKey(TrimmedString),
+  groqApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
+  openaiApiKey: Schema.optionalKey(TrimmedString),
+  openaiApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
 });
 
 export const ServerSettingsPatch = Schema.Struct({
