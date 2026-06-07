@@ -68,6 +68,7 @@ const rpcClientMock = {
   },
   shell: {
     openInEditor: vi.fn(),
+    openInTerminal: vi.fn(),
   },
   vcs: {
     pull: vi.fn(),

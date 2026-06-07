@@ -111,6 +111,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     },
     shell: {
       openInEditor: vi.fn(),
+      openInTerminal: vi.fn(),
     },
     vcs: {
       pull: vi.fn(),

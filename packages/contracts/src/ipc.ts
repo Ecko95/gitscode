@@ -443,6 +443,7 @@ export interface LocalApi {
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openInTerminal: (cwd: string) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
   contextMenu: {

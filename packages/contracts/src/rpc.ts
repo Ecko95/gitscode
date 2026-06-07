@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
+import { ExternalLauncherError, LaunchEditorInput, OpenInTerminalInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
 import {
   FilesystemBrowseInput,
@@ -183,6 +183,7 @@ export const WS_METHODS = {
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
+  shellOpenInTerminal: "shell.openInTerminal",
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
@@ -394,6 +395,11 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
+  error: ExternalLauncherError,
+});
+
+export const WsShellOpenInTerminalRpc = Rpc.make(WS_METHODS.shellOpenInTerminal, {
+  payload: OpenInTerminalInput,
   error: ExternalLauncherError,
 });
 
@@ -844,6 +850,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
+  WsShellOpenInTerminalRpc,
   WsFilesystemBrowseRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -18,6 +19,7 @@ import {
   resolveAvailableEditors,
   resolveBrowserLaunch,
   resolveEditorLaunch,
+  resolveTerminalLaunch,
 } from "./externalLauncher.ts";
 
 function encodeUtf16LeBase64(input: string): string {
@@ -565,6 +567,52 @@ it("resolveBrowserLaunch keeps xdg-open for WSL over SSH", () => {
     SSH_CONNECTION: "client server",
   });
   assert.equal(launch.command, "xdg-open");
+});
+
+it("resolveTerminalLaunch opens Terminal.app on darwin", () => {
+  const cwd = "/Users/me/workspace";
+  const launch = resolveTerminalLaunch(cwd, "darwin");
+  assert.equal(Option.isSome(launch), true);
+  if (!Option.isSome(launch)) {
+    throw new Error("Expected a launch");
+  }
+  assert.equal(launch.value.command, "open");
+  assert.deepEqual(launch.value.args, ["-a", "Terminal", cwd]);
+  assert.deepEqual(launch.value.options, {
+    detached: true,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+});
+
+it("resolveTerminalLaunch falls back to cmd start on Windows without wt", () => {
+  const cwd = "C:\\Users\\me\\workspace";
+  const launch = resolveTerminalLaunch(cwd, "win32", { SYSTEMROOT: "C:\\Windows" });
+  assert.equal(Option.isSome(launch), true);
+  if (!Option.isSome(launch)) {
+    throw new Error("Expected a launch");
+  }
+  assert.equal(launch.value.command, "cmd");
+  assert.deepEqual(launch.value.args, ["/c", "start", "cmd", "/K", "cd", "/d", cwd]);
+  assert.equal(launch.value.options.detached, true);
+  assert.equal(launch.value.options.shell, true);
+});
+
+it("resolveTerminalLaunch opens through Windows from WSL when not remote", () => {
+  const launch = resolveTerminalLaunch("/home/me/workspace", "linux", {
+    WSL_DISTRO_NAME: "Ubuntu",
+  });
+  assert.equal(Option.isSome(launch), true);
+  if (!Option.isSome(launch)) {
+    throw new Error("Expected a launch");
+  }
+  assert.equal(launch.value.command, "cmd");
+});
+
+it("resolveTerminalLaunch returns none on Linux when no emulator is available", () => {
+  const launch = resolveTerminalLaunch("/home/me/workspace", "linux", { PATH: "" });
+  assert.equal(Option.isNone(launch), true);
 });
 
 it.layer(NodeServices.layer)("launchBrowser", (it) => {
