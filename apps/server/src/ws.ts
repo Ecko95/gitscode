@@ -65,6 +65,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
+import { VoiceTranscriptionService } from "./voice/Services/VoiceTranscription.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
@@ -202,6 +203,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
+      const voiceTranscription = yield* VoiceTranscriptionService;
       const startup = yield* ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
@@ -999,6 +1001,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.audioTranscribe]: (input) =>
+          observeRpcEffect(WS_METHODS.audioTranscribe, voiceTranscription.transcribe(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,

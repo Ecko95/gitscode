@@ -79,6 +79,10 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+export function voiceTranscriptionSecretName(): string {
+  return "voice-transcription-api-key";
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -90,6 +94,17 @@ function redactProviderEnvironmentVariable(
     ...variable,
     value: "",
     ...(variable.value.length > 0 || variable.valueRedacted ? { valueRedacted: true } : {}),
+  };
+}
+
+function redactVoiceTranscriptionSettings(
+  voiceTranscription: ServerSettings["voiceTranscription"],
+): ServerSettings["voiceTranscription"] {
+  const hasKey = voiceTranscription.apiKey.length > 0 || voiceTranscription.apiKeyRedacted;
+  return {
+    ...voiceTranscription,
+    apiKey: "",
+    apiKeyRedacted: hasKey,
   };
 }
 
@@ -105,7 +120,11 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return {
+    ...settings,
+    providerInstances,
+    voiceTranscription: redactVoiceTranscriptionSettings(settings.voiceTranscription),
+  };
 }
 
 export interface ServerSettingsShape {
@@ -357,9 +376,24 @@ const makeServerSettings = Effect.gen(function* () {
           environment,
         } satisfies ProviderInstanceConfig;
       }
+
+      const voiceSecret = yield* secretStore
+        .get(voiceTranscriptionSecretName())
+        .pipe(
+          Effect.mapError((cause) =>
+            toSettingsError("failed to read voice transcription API key", cause),
+          ),
+        );
+      const voiceTranscription: ServerSettings["voiceTranscription"] = {
+        ...settings.voiceTranscription,
+        apiKey: voiceSecret ? textDecoder.decode(voiceSecret) : "",
+        apiKeyRedacted: false,
+      };
+
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
+        voiceTranscription,
       };
     });
 
@@ -445,6 +479,59 @@ const makeServerSettings = Effect.gen(function* () {
         ...next,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
       };
+    });
+
+  // Route the Whisper API key through the secret store so it is never written to
+  // settings.json in cleartext. The patch carries intent (set / clear / omit);
+  // the on-disk value is always blanked with a redacted indicator.
+  const persistVoiceTranscriptionSecret = (
+    patch: ServerSettingsPatch,
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings["voiceTranscription"], ServerSettingsError> =>
+    Effect.gen(function* () {
+      const voicePatch = patch.voiceTranscription;
+      const storeBlanked = (apiKeyRedacted: boolean): ServerSettings["voiceTranscription"] => ({
+        ...next.voiceTranscription,
+        apiKey: "",
+        apiKeyRedacted,
+      });
+
+      const readExisting = secretStore
+        .get(voiceTranscriptionSecretName())
+        .pipe(
+          Effect.mapError((cause) =>
+            toSettingsError("failed to read voice transcription API key", cause),
+          ),
+        );
+
+      // No key field in the patch (e.g. provider-only change), or the client is
+      // echoing back the redacted indicator — preserve whatever is stored.
+      if (voicePatch?.apiKey === undefined || voicePatch.apiKeyRedacted === true) {
+        const existing = yield* readExisting;
+        return storeBlanked(existing !== null && existing.byteLength > 0);
+      }
+
+      // Explicit clear.
+      if (voicePatch.apiKey.length === 0) {
+        yield* secretStore
+          .remove(voiceTranscriptionSecretName())
+          .pipe(
+            Effect.mapError((cause) =>
+              toSettingsError("failed to remove voice transcription API key", cause),
+            ),
+          );
+        return storeBlanked(false);
+      }
+
+      // New key supplied.
+      yield* secretStore
+        .set(voiceTranscriptionSecretName(), textEncoder.encode(voicePatch.apiKey))
+        .pipe(
+          Effect.mapError((cause) =>
+            toSettingsError("failed to persist voice transcription API key", cause),
+          ),
+        );
+      return storeBlanked(true);
     });
 
   const writeSettingsAtomically = Effect.fnUntraced(
@@ -550,11 +637,10 @@ const makeServerSettings = Effect.gen(function* () {
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* normalizeServerSettings(nextPersisted);
+          const merged = applyServerSettingsPatch(current, patch);
+          const nextPersisted = yield* persistProviderEnvironmentSecrets(current, merged);
+          const voiceTranscription = yield* persistVoiceTranscriptionSecret(patch, nextPersisted);
+          const next = yield* normalizeServerSettings({ ...nextPersisted, voiceTranscription });
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);

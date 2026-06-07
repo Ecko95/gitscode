@@ -128,6 +128,10 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/provid
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
+import {
+  VoiceTranscriptionService,
+  type VoiceTranscriptionServiceShape,
+} from "./voice/Services/VoiceTranscription.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
 import {
   BrowserTraceCollector,
@@ -278,7 +282,8 @@ const defaultGitsDevCommands: GitsDevCommandListResult = {
       publishOnTailnet: true,
       servePort: 3000,
       previewUrl: "https://subject28.tail.ts.net:3000/",
-      launchCommand: "GITS_DEV_NAME='Web dev' bash '/tmp/default-project/scripts/dev/run-dev-command.sh'",
+      launchCommand:
+        "GITS_DEV_NAME='Web dev' bash '/tmp/default-project/scripts/dev/run-dev-command.sh'",
     },
   ],
   warnings: [],
@@ -701,6 +706,7 @@ const buildAppUnderTest = (options?: {
     keybindings?: Partial<KeybindingsShape>;
     providerRegistry?: Partial<ProviderRegistryShape>;
     serverSettings?: Partial<ServerSettingsShape>;
+    voiceTranscription?: Partial<VoiceTranscriptionServiceShape>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncherShape>;
     vcsDriver?: Partial<VcsDriver.VcsDriverShape>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistryShape>;
@@ -1068,14 +1074,20 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ServerSettingsService)({
-          start: Effect.void,
-          ready: Effect.void,
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          streamChanges: Stream.empty,
-          ...options?.layers?.serverSettings,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ServerSettingsService)({
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            streamChanges: Stream.empty,
+            ...options?.layers?.serverSettings,
+          }),
+          Layer.mock(VoiceTranscriptionService)({
+            transcribe: () => Effect.succeed({ text: "" }),
+            ...options?.layers?.voiceTranscription,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ExternalLauncher.ExternalLauncher)({
@@ -4108,10 +4120,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.gitsDevCommandsInit]({ projectDir: "/tmp/default-project" }),
         ),
       );
-      assert.equal(
-        initializedDevCommands.commands[0]?.id,
-        defaultGitsDevCommands.commands[0]?.id,
-      );
+      assert.equal(initializedDevCommands.commands[0]?.id, defaultGitsDevCommands.commands[0]?.id);
 
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>

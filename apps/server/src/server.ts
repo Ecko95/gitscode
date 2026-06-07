@@ -44,6 +44,7 @@ import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import { ServerSettingsLive } from "./serverSettings.ts";
+import { VoiceTranscriptionLive } from "./voice/Layers/VoiceTranscription.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
@@ -334,6 +335,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntimeLive),
+  // Voice transcription consumes ServerSettingsService (provided by
+  // ServerSettingsLive below) + HttpClient (FetchHttpClient.layer, outermost)
+  // and provides its own ServerSecretStore for the stored Whisper API key,
+  // mirroring how ServerSettingsLive scopes the secret store. It is composed
+  // ABOVE ServerSettingsLive so that layer satisfies its requirement rather
+  // than leaking ServerSettingsService into the server launch layer.
+  Layer.provideMerge(VoiceTranscriptionLive.pipe(Layer.provide(ServerSecretStoreLive))),
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(GitsLayerLive),
