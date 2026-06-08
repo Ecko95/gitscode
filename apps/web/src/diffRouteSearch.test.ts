@@ -1,74 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
-  it("parses valid diff search values", () => {
-    const parsed = parseDiffRouteSearch({
-      diff: "1",
-      diffTurnId: "turn-1",
-      diffFilePath: "src/app.ts",
-    });
-
-    expect(parsed).toEqual({
-      diff: "1",
-      diffTurnId: "turn-1",
-      diffFilePath: "src/app.ts",
-    });
+  it("parses the native diff value", () => {
+    expect(parseDiffRouteSearch({ diff: "1" }).diff).toBe("1");
   });
 
-  it("treats numeric and boolean diff toggles as open", () => {
-    expect(
-      parseDiffRouteSearch({
-        diff: 1,
-        diffTurnId: "turn-1",
-      }),
-    ).toEqual({
-      diff: "1",
-      diffTurnId: "turn-1",
-    });
-
-    expect(
-      parseDiffRouteSearch({
-        diff: true,
-        diffTurnId: "turn-1",
-      }),
-    ).toEqual({
-      diff: "1",
-      diffTurnId: "turn-1",
-    });
+  it("parses the crit value", () => {
+    expect(parseDiffRouteSearch({ diff: "crit" }).diff).toBe("crit");
   });
 
-  it("drops turn and file values when diff is closed", () => {
-    const parsed = parseDiffRouteSearch({
-      diff: "0",
-      diffTurnId: "turn-1",
-      diffFilePath: "src/app.ts",
-    });
-
-    expect(parsed).toEqual({});
+  it("drops unknown diff values", () => {
+    expect(parseDiffRouteSearch({ diff: "bogus" }).diff).toBeUndefined();
   });
 
-  it("drops file value when turn is not selected", () => {
-    const parsed = parseDiffRouteSearch({
-      diff: "1",
-      diffFilePath: "src/app.ts",
-    });
-
-    expect(parsed).toEqual({
-      diff: "1",
-    });
+  it("keeps diffTurnId/diffFilePath for native diff but not for crit", () => {
+    const native = parseDiffRouteSearch({ diff: "1", diffTurnId: "turn-1", diffFilePath: "a.ts" });
+    expect(native.diffTurnId).toBe("turn-1");
+    expect(native.diffFilePath).toBe("a.ts");
+    const crit = parseDiffRouteSearch({ diff: "crit", diffTurnId: "turn-1", diffFilePath: "a.ts" });
+    expect(crit.diffTurnId).toBeUndefined();
+    expect(crit.diffFilePath).toBeUndefined();
   });
 
-  it("normalizes whitespace-only values", () => {
-    const parsed = parseDiffRouteSearch({
-      diff: "1",
-      diffTurnId: "  ",
-      diffFilePath: "  ",
-    });
-
-    expect(parsed).toEqual({
-      diff: "1",
-    });
+  it("strips all diff params", () => {
+    expect(stripDiffSearchParams({ diff: "crit", other: "keep" })).toEqual({ other: "keep" });
   });
 });
