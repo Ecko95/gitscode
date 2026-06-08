@@ -5,26 +5,36 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { readEnvironmentApi } from "~/environmentApi";
 
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { Button } from "./ui/button";
 
 interface CritReviewPanelProps {
   environmentId: EnvironmentId;
   workspaceRoot: string;
   branch: string;
   threadId: ThreadId;
-  onUnavailable: () => void;
+  onSwitchToNativeDiff: () => void;
+  /** @internal test-only: seeds the initial status to bypass useEffect for renderToStaticMarkup tests */
+  __testInitialStatus?: CritReviewState["status"];
 }
 
 interface CritReviewState {
-  status: string;
+  status: "starting" | "ready" | "unavailable";
   url: string | null;
 }
 
 const CRIT_REVIEW_PANEL_MODE: DiffPanelMode = "sidebar";
 
 export function CritReviewPanel(props: CritReviewPanelProps) {
-  const { environmentId, workspaceRoot, branch, threadId, onUnavailable } = props;
+  const {
+    environmentId,
+    workspaceRoot,
+    branch,
+    threadId,
+    onSwitchToNativeDiff,
+    __testInitialStatus,
+  } = props;
   const [reviewState, setReviewState] = useState<CritReviewState>({
-    status: "starting",
+    status: __testInitialStatus ?? "starting",
     url: null,
   });
 
@@ -33,7 +43,7 @@ export function CritReviewPanel(props: CritReviewPanelProps) {
 
     const api = readEnvironmentApi(environmentId);
     if (!api) {
-      onUnavailable();
+      setReviewState({ status: "unavailable", url: null });
       return;
     }
 
@@ -46,13 +56,13 @@ export function CritReviewPanel(props: CritReviewPanelProps) {
           return;
         }
         if (result.status === "crashed" || result.status === "stopped") {
-          onUnavailable();
+          setReviewState({ status: "unavailable", url: null });
           return;
         }
-        setReviewState({ status: result.status, url: result.url });
+        setReviewState({ status: result.status as CritReviewState["status"], url: result.url });
       } catch {
         if (!cancelled) {
-          onUnavailable();
+          setReviewState({ status: "unavailable", url: null });
         }
       }
     })();
@@ -66,9 +76,22 @@ export function CritReviewPanel(props: CritReviewPanelProps) {
       // the prior workspace, not the next one.
       void api.crit.releaseSidecar({ workspaceRoot }).catch(() => {});
     };
-  }, [environmentId, workspaceRoot, branch, threadId, onUnavailable]);
+  }, [environmentId, workspaceRoot, branch, threadId]);
 
   const isReady = reviewState.status === "ready" && reviewState.url !== null;
+
+  if (reviewState.status === "unavailable") {
+    return (
+      <DiffPanelShell mode={CRIT_REVIEW_PANEL_MODE} header={null}>
+        <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
+          <p>Crit review is unavailable for this thread.</p>
+          <Button type="button" size="sm" variant="outline" onClick={onSwitchToNativeDiff}>
+            View native diff
+          </Button>
+        </div>
+      </DiffPanelShell>
+    );
+  }
 
   return (
     <DiffPanelShell mode={CRIT_REVIEW_PANEL_MODE} header={null}>
