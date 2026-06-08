@@ -13,8 +13,6 @@ interface CritReviewPanelProps {
   branch: string;
   threadId: ThreadId;
   onSwitchToNativeDiff: () => void;
-  /** @internal test-only: seeds the initial status to bypass useEffect for renderToStaticMarkup tests */
-  __testInitialStatus?: CritReviewState["status"];
 }
 
 interface CritReviewState {
@@ -24,17 +22,23 @@ interface CritReviewState {
 
 const CRIT_REVIEW_PANEL_MODE: DiffPanelMode = "sidebar";
 
+export function CritReviewUnavailable(props: { onSwitchToNativeDiff: () => void }) {
+  return (
+    <DiffPanelShell mode={CRIT_REVIEW_PANEL_MODE} header={null}>
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
+        <p>Crit review is unavailable for this thread.</p>
+        <Button type="button" size="sm" variant="outline" onClick={props.onSwitchToNativeDiff}>
+          View native diff
+        </Button>
+      </div>
+    </DiffPanelShell>
+  );
+}
+
 export function CritReviewPanel(props: CritReviewPanelProps) {
-  const {
-    environmentId,
-    workspaceRoot,
-    branch,
-    threadId,
-    onSwitchToNativeDiff,
-    __testInitialStatus,
-  } = props;
+  const { environmentId, workspaceRoot, branch, threadId, onSwitchToNativeDiff } = props;
   const [reviewState, setReviewState] = useState<CritReviewState>({
-    status: __testInitialStatus ?? "starting",
+    status: "starting",
     url: null,
   });
 
@@ -81,16 +85,7 @@ export function CritReviewPanel(props: CritReviewPanelProps) {
   const isReady = reviewState.status === "ready" && reviewState.url !== null;
 
   if (reviewState.status === "unavailable") {
-    return (
-      <DiffPanelShell mode={CRIT_REVIEW_PANEL_MODE} header={null}>
-        <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
-          <p>Crit review is unavailable for this thread.</p>
-          <Button type="button" size="sm" variant="outline" onClick={onSwitchToNativeDiff}>
-            View native diff
-          </Button>
-        </div>
-      </DiffPanelShell>
-    );
+    return <CritReviewUnavailable onSwitchToNativeDiff={onSwitchToNativeDiff} />;
   }
 
   return (
