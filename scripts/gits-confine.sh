@@ -99,6 +99,19 @@ case "$EGRESS" in
   *)          die "unknown --egress: $EGRESS (off | host | proxy=<addr>)" ;;
 esac
 
+# DNS for shared-network peers: /etc/resolv.conf is commonly a symlink whose target lives
+# OUTSIDE the sandbox (WSL: /mnt/wsl/resolv.conf; systemd: /run/systemd/resolve/stub-resolv.conf).
+# The /etc bind brings the symlink but NOT its target, leaving a dangling link and broken DNS
+# (EAI_AGAIN). When the peer actually has network, bind the target at its own path so the link
+# resolves. No-op for egress=off (net unshared) or a real-file /etc/resolv.conf.
+dns_args=()
+if [ "$EGRESS" != "off" ]; then
+  resolv_target="$(readlink -f /etc/resolv.conf 2>/dev/null || true)"
+  if [ -n "$resolv_target" ] && [ -f "$resolv_target" ] && [ "$resolv_target" != "/etc/resolv.conf" ]; then
+    dns_args+=( --ro-bind "$resolv_target" "$resolv_target" )
+  fi
+fi
+
 # Scripts policy
 script_env=()
 if [ "$IGNORE_SCRIPTS" = "on" ]; then
@@ -133,6 +146,7 @@ exec bwrap \
   "${cred_args[@]}" \
   --proc /proc --dev /dev \
   --tmpfs /tmp --tmpfs /run --tmpfs /sandbox-home \
+  "${dns_args[@]}" \
   --bind "$WORKTREE" "$WORKTREE" \
   --chdir "$WORKTREE" \
   --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup \
