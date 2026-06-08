@@ -97,6 +97,8 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  critReviewAvailable: boolean;
+  onOpenCritReview: () => void;
 }
 
 interface TimelineRowActivityState {
@@ -126,6 +128,8 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  critReviewAvailable: boolean;
+  onOpenCritReview: () => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -155,6 +159,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  critReviewAvailable,
+  onOpenCritReview,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -231,6 +237,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      critReviewAvailable,
+      onOpenCritReview,
     }),
     [
       timestampFormat,
@@ -243,6 +251,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      critReviewAvailable,
+      onOpenCritReview,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -438,6 +448,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           routeThreadKey={ctx.routeThreadKey}
           resolvedTheme={ctx.resolvedTheme}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
+          critReviewAvailable={ctx.critReviewAvailable}
+          onOpenCritReview={ctx.onOpenCritReview}
         />
         <div className="mt-1.5 flex items-center gap-2">
           <p className="text-[10px] text-muted-foreground/30">
@@ -659,11 +671,15 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   routeThreadKey,
   resolvedTheme,
   onOpenTurnDiff,
+  critReviewAvailable,
+  onOpenCritReview,
 }: {
   turnSummary: TurnDiffSummary | undefined;
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  critReviewAvailable: boolean;
+  onOpenCritReview: () => void;
 }) {
   if (!turnSummary) return null;
   const checkpointFiles = turnSummary.files;
@@ -676,6 +692,8 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
       routeThreadKey={routeThreadKey}
       resolvedTheme={resolvedTheme}
       onOpenTurnDiff={onOpenTurnDiff}
+      critReviewAvailable={critReviewAvailable}
+      onOpenCritReview={onOpenCritReview}
     />
   );
 });
@@ -688,12 +706,16 @@ function AssistantChangedFilesSectionInner({
   routeThreadKey,
   resolvedTheme,
   onOpenTurnDiff,
+  critReviewAvailable,
+  onOpenCritReview,
 }: {
   turnSummary: TurnDiffSummary;
   checkpointFiles: TurnDiffSummary["files"];
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  critReviewAvailable: boolean;
+  onOpenCritReview: () => void;
 }) {
   const allDirectoriesExpanded = useUiStateStore(
     (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId] ?? true,
@@ -732,6 +754,11 @@ function AssistantChangedFilesSectionInner({
           >
             View diff
           </Button>
+          {critReviewAvailable ? (
+            <Button type="button" size="xs" variant="outline" onClick={onOpenCritReview}>
+              Crit review
+            </Button>
+          ) : null}
         </div>
       </div>
       <ChangedFilesTree
