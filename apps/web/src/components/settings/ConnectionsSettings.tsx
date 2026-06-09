@@ -1401,9 +1401,9 @@ const DesktopSshHostRow = memo(function DesktopSshHostRow({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
-  const [currentSessionRole, setCurrentSessionRole] = useState<"owner" | "client" | null>(
-    desktopBridge ? "owner" : null,
-  );
+  const [currentSessionRole, setCurrentSessionRole] = useState<
+    "owner" | "client" | "thread-scoped" | null
+  >(desktopBridge ? "owner" : null);
   const [currentAuthPolicy, setCurrentAuthPolicy] = useState<
     "desktop-managed-local" | "loopback-browser" | "remote-reachable" | "unsafe-no-auth" | null
   >(desktopBridge ? null : null);

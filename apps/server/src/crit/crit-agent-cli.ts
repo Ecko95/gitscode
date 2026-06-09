@@ -2,29 +2,16 @@
 // Standalone child-process CLI spawned by crit as its agent_cmd. It is deliberately
 // dependency-light (global fetch, node timers, plain Date) and is NOT an Effect program,
 // so the Effect runtime diagnostics that apply to the rest of apps/server are disabled here.
-import { build_review_comment_block } from "@t3tools/shared/crit/review-comment-block";
+// crit invokes this command as its `agent_cmd` and pipes a fully-formatted,
+// plain-text review prompt on stdin (see crit's buildAgentPrompt: file path,
+// line range, quoted code, comment body, replies, and closing instructions).
+// We forward that prompt verbatim as the user message of a GITS thread turn;
+// the thread's assistant reply is written to stdout, which crit captures and
+// posts back as the comment reply.
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export interface NormalizedComment {
-  readonly text: string;
-  readonly filePath: string;
-  readonly startIndex: number;
-  readonly endIndex: number;
-  readonly diff: string;
-}
-
-// Shape per docs/crit-integration-notes.md "## agent_cmd stdin" (PENDING Task 0c).
-// crit's exact payload is unconfirmed; assume JSON with a plain-text fallback.
-interface CritStdinPayload {
-  readonly comment?: string;
-  readonly quoted?: string;
-  readonly filePath?: string;
-  readonly startLine?: number;
-  readonly endLine?: number;
-}
 
 interface CritTurnResponse {
   readonly priorTurnId: string | null;
@@ -43,48 +30,6 @@ export interface RunCritAgentOptions {
   readonly stdin: string;
   readonly timeoutMs?: number;
   readonly pollMs?: number;
-}
-
-// ---------------------------------------------------------------------------
-// parse_crit_payload
-// ---------------------------------------------------------------------------
-
-export function parse_crit_payload(raw: string): NormalizedComment {
-  let payload: CritStdinPayload;
-  try {
-    payload = JSON.parse(raw) as CritStdinPayload;
-  } catch {
-    payload = { comment: raw };
-  }
-
-  const start = payload.startLine ?? 0;
-  const end = payload.endLine ?? start;
-  const quoted = (payload.quoted ?? "").trim();
-
-  return {
-    text: (payload.comment ?? "").trim(),
-    filePath: (payload.filePath ?? "").trim(),
-    startIndex: start,
-    endIndex: end,
-    diff: quoted.length > 0 ? quoted : "",
-  };
-}
-
-// ---------------------------------------------------------------------------
-// build_review_text
-// ---------------------------------------------------------------------------
-
-export function build_review_text(comment: NormalizedComment): string {
-  return build_review_comment_block({
-    filePath: comment.filePath,
-    sectionId: `crit:${comment.filePath}:${comment.startIndex}-${comment.endIndex}`,
-    sectionTitle: "Crit review",
-    rangeLabel: comment.startIndex === comment.endIndex ? "line" : "lines",
-    startIndex: comment.startIndex,
-    endIndex: comment.endIndex,
-    text: comment.text,
-    diff: comment.diff,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +79,9 @@ async function read_turn_status(
 export async function run_crit_agent(options: RunCritAgentOptions): Promise<string> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const pollMs = options.pollMs ?? 500;
-  const comment = parse_crit_payload(options.stdin);
-  const text = build_review_text(comment);
+  // crit already formats the full review prompt; forward it verbatim as the
+  // thread's user message.
+  const text = options.stdin.trim();
 
   // The server captures the baseline prior turn and correlates the started turn
   // for us; we only forward the opaque priorTurnId it returns on each poll.

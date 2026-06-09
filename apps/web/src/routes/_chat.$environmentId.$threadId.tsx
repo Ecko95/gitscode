@@ -18,7 +18,6 @@ import {
   stripDiffSearchParams,
 } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { useSettings } from "../hooks/useSettings";
 import { useVcsStatus } from "~/lib/vcsStatusState";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
@@ -176,22 +175,11 @@ function ChatThreadRouteView() {
   const routeThreadExists = threadExists || draftThreadExists;
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
-  const diffOpen = search.diff === "1";
+  const critMode = search.diff === "crit";
+  const diffOpen = search.diff === "1" || critMode;
 
-  // Crit PR review (off by default behind a client setting). When the active
-  // thread's branch has an associated open pull request, prefer the crit review
-  // sidecar over the native diff panel — unless the sidecar has crashed for this
-  // session (tracked by `critReviewDisabled`).
-  const critReviewEnabled = useSettings((settings) => settings.critReviewEnabled);
-  const [critReviewDisabled, setCritReviewDisabled] = useState(true);
-  const disableCritReview = useCallback(() => {
-    setCritReviewDisabled(true);
-  }, []);
-  useEffect(() => {
-    // Re-arm crit for a freshly viewed thread; a crash only disables it for the
-    // current thread session.
-    setCritReviewDisabled(false);
-  }, [threadRef?.environmentId, threadRef?.threadId]);
+  // Crit PR review panel content. The panel mode is explicit (driven by
+  // `?diff=crit`, set by the "Crit review" button); there is no auto-swap.
   const activeProjectId = serverThread?.projectId ?? null;
   const activeProject = useStore((store) =>
     threadRef && activeProjectId
@@ -207,22 +195,27 @@ function ChatThreadRouteView() {
     cwd: activeWorkspaceRoot,
   }).data;
   const activeBranch = gitStatus?.refName ?? null;
-  const activePullRequest = gitStatus?.pr ?? null;
-  const shouldUseCritReview =
-    critReviewEnabled &&
-    !critReviewDisabled &&
-    activePullRequest !== null &&
-    activeWorkspaceRoot !== null &&
-    activeBranch !== null &&
-    threadRef !== null;
+  const switchToNativeDiff = useCallback(() => {
+    if (!threadRef) {
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: "1" };
+      },
+    });
+  }, [navigate, threadRef]);
   const critPanel =
-    shouldUseCritReview && threadRef && activeWorkspaceRoot && activeBranch ? (
+    critMode && threadRef && activeWorkspaceRoot && activeBranch ? (
       <CritReviewPanel
         environmentId={threadRef.environmentId}
         workspaceRoot={activeWorkspaceRoot}
         branch={activeBranch}
         threadId={threadRef.threadId}
-        onUnavailable={disableCritReview}
+        onSwitchToNativeDiff={switchToNativeDiff}
       />
     ) : null;
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);

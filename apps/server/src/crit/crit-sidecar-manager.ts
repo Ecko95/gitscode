@@ -7,6 +7,7 @@ import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -21,44 +22,43 @@ import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 export interface CritSpawnInput {
   readonly binaryPath: string;
   readonly repoRoot: string;
-  readonly branch: string;
   readonly host: string;
   readonly port: number;
   readonly origin: string;
   readonly token: string;
   readonly threadId: string;
-  readonly wrapperCommand: string;
+  // Isolated HOME for this sidecar. crit resolves its global config via
+  // os.UserHomeDir() ($HOME), and `agent_cmd` is honored only from the global
+  // config — so we point crit at a private HOME holding a `.crit.config.json`
+  // with our wrapper, instead of mutating the user's real ~/.crit.config.json.
+  readonly critHome: string;
 }
 
 export interface CritSpawnSpec {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly env: Record<string, string>;
+  // crit reviews the repository at its working directory (there is no --repo
+  // flag); the manager spawns it with cwd set to the workspace root.
+  readonly cwd: string;
   readonly url: string;
 }
 
 export function build_crit_spawn_spec(input: CritSpawnInput): CritSpawnSpec {
-  // NOTE: flag names below are PLACEHOLDERS pending Task 0b (crit's real CLI flags —
-  // see docs/crit-integration-notes.md "## CLI"). Correct them once crit can be built.
+  // crit v0.16 CLI: bind host/port, never open a browser (headless sidecar),
+  // and suppress status chatter. The repo is selected via cwd, and `agent_cmd`
+  // via the isolated-HOME `.crit.config.json` (written by the manager) — not flags.
   return {
     command: input.binaryPath,
-    args: [
-      "--repo",
-      input.repoRoot,
-      "--branch",
-      input.branch,
-      "--host",
-      input.host,
-      "--port",
-      String(input.port),
-      "--agent-cmd",
-      input.wrapperCommand,
-    ],
+    args: ["--host", input.host, "--port", String(input.port), "--no-open", "--quiet"],
     env: {
+      HOME: input.critHome,
+      // Consumed by the agent_cmd wrapper crit spawns for "send to agent".
       GITS_ORIGIN: input.origin,
       GITS_TOKEN: input.token,
       GITS_THREAD_ID: input.threadId,
     },
+    cwd: input.repoRoot,
     url: `http://${input.host}:${input.port}`,
   };
 }
@@ -125,6 +125,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
   const netService = yield* NetService.NetService;
   const httpClient = yield* HttpClient.HttpClient;
   const authControlPlane = yield* AuthControlPlane;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const entries = yield* Ref.make(new Map<string, CritSidecarEntry>());
 
@@ -278,16 +279,48 @@ const makeCritSidecarManager = Effect.gen(function* () {
         Effect.tapError(() => abortStartup),
       );
 
+      // Private HOME so crit reads OUR global config (with the wrapper as
+      // agent_cmd) instead of the user's real ~/.crit.config.json. Removed on
+      // teardown via the scope finalizer.
+      const critHome = yield* fileSystem.makeTempDirectory({ prefix: "gits-crit-" }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CritSidecarError({
+              operation: "ensure_sidecar",
+              detail: `Failed to create the crit sidecar home directory: ${String(cause)}`,
+              cause,
+            }),
+        ),
+        Effect.tapError(() => abortStartup),
+      );
+      yield* Scope.addFinalizer(
+        scope,
+        fileSystem.remove(critHome, { recursive: true }).pipe(Effect.ignore),
+      );
+      // crit owns this config's schema; a Schema round-trip buys nothing here.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const critConfigJson = JSON.stringify({ agent_cmd: input.wrapperCommand }, null, 2);
+      yield* fileSystem.writeFileString(`${critHome}/.crit.config.json`, critConfigJson).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CritSidecarError({
+              operation: "ensure_sidecar",
+              detail: `Failed to write the crit sidecar config: ${String(cause)}`,
+              cause,
+            }),
+        ),
+        Effect.tapError(() => abortStartup),
+      );
+
       const spec = build_crit_spawn_spec({
         binaryPath: input.binaryPath,
         repoRoot: input.workspaceRoot,
-        branch: input.branch,
         host,
         port,
         origin: input.origin,
         token: issued.token,
         threadId: input.threadId,
-        wrapperCommand: input.wrapperCommand,
+        critHome,
       });
 
       const child = yield* spawner
@@ -295,6 +328,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
           ChildProcess.make(spec.command, [...spec.args], {
             shell: process.platform === "win32",
             env: { ...process.env, ...spec.env },
+            cwd: spec.cwd,
           }),
         )
         .pipe(

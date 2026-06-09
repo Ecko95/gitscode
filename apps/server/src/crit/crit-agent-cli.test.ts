@@ -2,47 +2,11 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { build_review_text, parse_crit_payload, run_crit_agent } from "./crit-agent-cli.ts";
+import { run_crit_agent } from "./crit-agent-cli.ts";
 
-describe("parse_crit_payload", () => {
-  it("normalizes crit's JSON stdin into a comment record", () => {
-    const raw = JSON.stringify({
-      comment: "use a guard clause",
-      quoted: "if (x) { ... }",
-      filePath: "src/app.ts",
-      startLine: 10,
-      endLine: 12,
-    });
-    const parsed = parse_crit_payload(raw);
-    expect(parsed.text).toBe("use a guard clause");
-    expect(parsed.filePath).toBe("src/app.ts");
-    expect(parsed.startIndex).toBe(10);
-    expect(parsed.endIndex).toBe(12);
-    expect(parsed.diff).toContain("if (x)");
-  });
-
-  it("falls back to treating raw stdin as the comment text", () => {
-    const parsed = parse_crit_payload("just a plain comment");
-    expect(parsed.text).toBe("just a plain comment");
-    expect(parsed.filePath).toBe("");
-  });
-});
-
-describe("build_review_text", () => {
-  it("builds a review-comment block from a normalized comment", () => {
-    const text = build_review_text({
-      text: "fix this",
-      filePath: "a.ts",
-      startIndex: 1,
-      endIndex: 2,
-      diff: "-a\n+b",
-    });
-    expect(text).toContain("<review_comment");
-    expect(text).toContain('filePath="a.ts"');
-    expect(text).toContain("fix this");
-    expect(text).toContain("```diff");
-  });
-});
+// crit pipes a fully-formatted plain-text prompt on stdin; the wrapper forwards
+// it verbatim as the thread message, so the tests use a representative prompt.
+const CRIT_PROMPT = "A reviewer left a comment on a.ts (line 1):\n\nComment:\n> fix\n";
 
 function start_mock_gits(
   handler: (url: string, method: string) => unknown,
@@ -87,7 +51,7 @@ describe("run_crit_agent", () => {
       threadId: "thread-123",
       timeoutMs: 2000,
       pollMs: 50,
-      stdin: JSON.stringify({ comment: "fix", filePath: "a.ts", startLine: 1, endLine: 1 }),
+      stdin: CRIT_PROMPT,
     });
     expect(started).toBe(true);
     expect(reply).toBe("Done — applied the guard clause.");
@@ -114,7 +78,7 @@ describe("run_crit_agent", () => {
       threadId: "thread-123",
       timeoutMs: 2000,
       pollMs: 50,
-      stdin: JSON.stringify({ comment: "fix", filePath: "a.ts", startLine: 1, endLine: 1 }),
+      stdin: CRIT_PROMPT,
     });
     expect(statusPolls).toBeGreaterThan(1);
     expect(reply).toBe("NEW REPLY");
@@ -136,7 +100,7 @@ describe("run_crit_agent", () => {
       threadId: "thread-123",
       timeoutMs: 300,
       pollMs: 50,
-      stdin: JSON.stringify({ comment: "fix", filePath: "a.ts", startLine: 1, endLine: 1 }),
+      stdin: CRIT_PROMPT,
     });
     expect(reply).toContain("Sent to GITS");
   });

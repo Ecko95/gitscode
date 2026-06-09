@@ -29,7 +29,7 @@ const isBootstrapHttpError = (u: unknown): u is BootstrapHttpError =>
 export interface ServerPairingLinkRecord {
   readonly id: string;
   readonly credential: string;
-  readonly role: "owner" | "client";
+  readonly role: "owner" | "client" | "thread-scoped";
   readonly subject: string;
   readonly label?: string;
   readonly createdAt: string;
@@ -39,7 +39,7 @@ export interface ServerPairingLinkRecord {
 export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
-  readonly role: "owner" | "client";
+  readonly role: "owner" | "client" | "thread-scoped";
   readonly method: "browser-session-cookie" | "bearer-session-token";
   readonly client: AuthClientMetadata;
   readonly issuedAt: string;
