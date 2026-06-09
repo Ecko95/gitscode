@@ -22,9 +22,7 @@ describe("resolve_crit_binary_path", () => {
     const bin = join(dir, "crit");
     writeFileSync(bin, "#!/bin/sh\n");
     chmodSync(bin, 0o755);
-    expect(
-      resolve_crit_binary_path({ env: { GITS_CRIT_BINARY: bin }, resourcesPath: undefined }),
-    ).toBe(bin);
+    expect(resolve_crit_binary_path({ env: { GITS_CRIT_BINARY: bin } })).toBe(bin);
   });
 
   it("falls back to bare 'crit' when nothing resolves", () => {
