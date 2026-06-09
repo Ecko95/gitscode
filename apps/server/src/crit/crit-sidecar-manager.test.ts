@@ -75,24 +75,27 @@ function makeStubAuthControlPlane() {
 }
 
 describe("build_crit_spawn_spec", () => {
-  vitestIt("binds to loopback and wires agent_cmd env for the wrapper", () => {
+  vitestIt("uses crit's headless flags, repo cwd, and an isolated HOME", () => {
     const spec = build_crit_spawn_spec({
       binaryPath: "/opt/crit",
       repoRoot: "/work/repo",
-      branch: "feature/x",
       host: "127.0.0.1",
       port: 4321,
       origin: "http://127.0.0.1:4310",
       token: "scoped-token",
       threadId: "thread-1",
-      wrapperCommand: "node /app/crit-agent-cli.js",
+      critHome: "/tmp/gits-crit-abc",
     });
 
     expect(spec.command).toBe("/opt/crit");
-    expect(spec.args).toContain("127.0.0.1");
-    expect(spec.args).toContain("4321");
-    expect(spec.args).toContain("/work/repo");
-    expect(spec.args).toContain("node /app/crit-agent-cli.js");
+    // Corrected crit v0.16 CLI: headless bind, no browser, quiet. The repo is
+    // selected via cwd (no --repo flag) and agent_cmd via the isolated-HOME config.
+    expect(spec.args).toEqual(["--host", "127.0.0.1", "--port", "4321", "--no-open", "--quiet"]);
+    expect(spec.args).not.toContain("--repo");
+    expect(spec.args).not.toContain("--branch");
+    expect(spec.args).not.toContain("--agent-cmd");
+    expect(spec.cwd).toBe("/work/repo");
+    expect(spec.env.HOME).toBe("/tmp/gits-crit-abc");
     expect(spec.env.GITS_ORIGIN).toBe("http://127.0.0.1:4310");
     expect(spec.env.GITS_TOKEN).toBe("scoped-token");
     expect(spec.env.GITS_THREAD_ID).toBe("thread-1");
