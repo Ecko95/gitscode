@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
-import type { AutomodeBudgetUsage, DelamainPeer, DelamainPeerListResult, DelamainSpawnPeerInput } from "@t3tools/contracts";
+import type {
+  AutomodeBudgetUsage,
+  DelamainPeer,
+  DelamainPeerListResult,
+  DelamainSpawnPeerInput,
+} from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
@@ -442,7 +447,81 @@ describe("AutomodeSupervisorLive", () => {
       assert.equal(spawnInput?.yolo, true);
       assert.equal(spawnInput?.egress, "host");
     }).pipe(
-      Effect.provide(makeLayer({ onSpawn: (input) => { spawnInput = input; } })),
+      Effect.provide(
+        makeLayer({
+          onSpawn: (input) => {
+            spawnInput = input;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("persists verificationCommands + integrationBranch across restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "gits-automode-held-test-" });
+
+      yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.updatePolicy({
+          mode: "autonomous",
+          killSwitchEnabled: false,
+          allowedRepos: ["/tmp/source-repo"],
+          integrationBranch: "auto/gits-self",
+          verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        });
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+
+      const after = yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        return yield* supervisor.getSnapshot();
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+
+      assert.equal(after.policy.integrationBranch, "auto/gits-self");
+      assert.equal(after.policy.verificationCommands[0]?.label, "typecheck");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("defaults integrationBranch null + verificationCommands empty", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.policy.integrationBranch, null);
+      assert.deepEqual(snapshot.policy.verificationCommands, []);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("autonomous dispatch spawns from the integration tip to a per-slice branch", () => {
+    let spawnInput: DelamainSpawnPeerInput | null = null;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        integrationBranch: "auto/gits-self",
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Slice goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const goalId = queued.goals[0]!.id;
+      yield* supervisor.dispatchGoal({ goalId });
+      assert.equal(spawnInput?.startRef, "auto/gits-self");
+      assert.equal(spawnInput?.mergeBranch, `auto/slice/${goalId}`);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          onSpawn: (input) => {
+            spawnInput = input;
+          },
+        }),
+      ),
     );
   });
 });

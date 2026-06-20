@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -624,6 +625,16 @@ export const AutomodeGoalStatus = Schema.Literals([
 ]);
 export type AutomodeGoalStatus = typeof AutomodeGoalStatus.Type;
 
+// Server-pinned verification command (argv array, not a shell string). Defined here
+// because `AutomodePolicy.verificationCommands` references it; the verification-gate
+// section below (GitsVerifyInput/Result) reuses the same schema.
+export const GitsVerifyCommand = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  cmd: Schema.Array(TrimmedNonEmptyString), // explicit argv (argv[0] is the program), not a shell string
+  timeoutSeconds: Schema.optional(NonNegativeInt),
+});
+export type GitsVerifyCommand = typeof GitsVerifyCommand.Type;
+
 export const AutomodePolicy = Schema.Struct({
   mode: AutomodeMode,
   killSwitchEnabled: Schema.Boolean,
@@ -636,6 +647,12 @@ export const AutomodePolicy = Schema.Struct({
   requireApprovalForPeerSpawn: Schema.Boolean,
   requireApprovalBeforeIntegrate: Schema.Boolean,
   requireApprovalBeforeDestructiveAction: Schema.Boolean,
+  verificationCommands: Schema.Array(GitsVerifyCommand).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  integrationBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   updatedAt: IsoDateTime,
 });
 export type AutomodePolicy = typeof AutomodePolicy.Type;
@@ -696,6 +713,8 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   requireApprovalForPeerSpawn: Schema.optional(Schema.Boolean),
   requireApprovalBeforeIntegrate: Schema.optional(Schema.Boolean),
   requireApprovalBeforeDestructiveAction: Schema.optional(Schema.Boolean),
+  verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
+  integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type AutomodePolicyUpdateInput = typeof AutomodePolicyUpdateInput.Type;
 
@@ -1268,13 +1287,7 @@ export class HermesAdapterError extends Schema.TaggedErrorClass<HermesAdapterErr
 // worktree's verification suite under OS-level confinement (scripts/gits-confine.sh, verify
 // profile). Commands are SERVER-PINNED argv arrays — never the repo's own `npm run` indirection.
 // See docs/gits/H0_CONFINEMENT.md.
-
-export const GitsVerifyCommand = Schema.Struct({
-  label: TrimmedNonEmptyString,
-  cmd: Schema.Array(TrimmedNonEmptyString), // explicit argv (argv[0] is the program), not a shell string
-  timeoutSeconds: Schema.optional(NonNegativeInt),
-});
-export type GitsVerifyCommand = typeof GitsVerifyCommand.Type;
+// `GitsVerifyCommand` is defined earlier (above `AutomodePolicy`, which references it).
 
 export const GitsVerifyInput = Schema.Struct({
   worktree: PathString,

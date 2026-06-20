@@ -55,6 +55,7 @@ import { GitsBuildInfoResolverLive } from "./gits/Layers/GitsBuildInfo.ts";
 import { GitsCapacityMonitorLive } from "./gits/Layers/GitsCapacityMonitor.ts";
 import { GitsCodexVerifierAdapterLive } from "./gits/Layers/GitsCodexVerifierAdapter.ts";
 import { GitsReviewPipelineLive } from "./gits/Layers/GitsReviewPipeline.ts";
+import { AutomodeLandingLive } from "./gits/Layers/AutomodeLanding.ts";
 import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
@@ -238,9 +239,19 @@ const AutomodeSupervisorLayerLive = AutomodeSupervisorLive.pipe(
   Layer.provide(AutomodeUsageMeterLayerLive),
 );
 
+const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(Layer.provide(GitVcsDriver.layer));
+
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(AutomodeLandingLayerLive),
+  Layer.provide(
+    GitsReviewPipelineLive.pipe(
+      Layer.provide(GitsCodexVerifierAdapterLive),
+      Layer.provide(GitsSliceCriteriaStoreLive),
+      Layer.provide(GitsConfinedVerifyAdapterLive),
+    ),
+  ),
 );
 
 const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
