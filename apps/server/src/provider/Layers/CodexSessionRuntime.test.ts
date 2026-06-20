@@ -246,6 +246,7 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
+        visualPlanMcpUrl: undefined,
       }),
     );
 
@@ -286,6 +287,7 @@ describe("openCodexThread", () => {
           requestedModel: "gpt-5.3-codex",
           serviceTier: undefined,
           resumeThreadId: "stale-thread",
+          visualPlanMcpUrl: undefined,
         }),
       ),
       (error: unknown) =>

@@ -43,6 +43,10 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
+  issueVisualPlanToken,
+  VISUAL_PLAN_MCP_PATH,
+} from "../../gits/mcp/VisualPlanMcpRegistry.ts";
+import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
@@ -526,6 +530,7 @@ export function makeCursorAdapter(
             ? yield* options.resolveSettings
             : cursorSettings;
 
+          const visualPlanMcpToken = issueVisualPlanToken(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
@@ -533,6 +538,14 @@ export function makeCursorAdapter(
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
+            mcpServers: [
+              {
+                type: "http",
+                name: "gits-visual-plan",
+                url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
+                headers: [{ name: "Authorization", value: `Bearer ${visualPlanMcpToken}` }],
+              },
+            ],
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Scope.Scope, sessionScope),
