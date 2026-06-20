@@ -9,6 +9,7 @@ import type {
   AutomodeGoalInput,
   AutomodeGoalOutcomeInput,
   AutomodePolicyUpdateInput,
+  AutomodeRecordHeldPrInput,
   AutomodeRejectGoalInput,
   AutomodeSnapshot,
   AutomodeSupervisorError,
@@ -41,6 +42,10 @@ export interface AutomodeSupervisorShape {
     input: AutomodeDriverHaltInput,
   ) => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
   readonly resumeDriver: () => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
+  readonly recordHeldPr: (
+    input: AutomodeRecordHeldPrInput,
+  ) => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
+  readonly markRunMerged: () => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
 }
 
 export class AutomodeSupervisor extends Context.Service<

@@ -524,4 +524,47 @@ describe("AutomodeSupervisorLive", () => {
       ),
     );
   });
+
+  it.effect("records a held PR and marks the run merged; both persist across restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "gits-automode-heldpr-test-" });
+
+      yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.recordHeldPr({
+          url: "https://github.com/Ecko95/gitscode/pull/30",
+          number: 30,
+        });
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+
+      const afterRecord = yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        return yield* supervisor.getSnapshot();
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+      assert.equal(afterRecord.heldPrNumber, 30);
+      assert.equal(afterRecord.runMerged, false);
+
+      yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.markRunMerged();
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+
+      const afterMerge = yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        return yield* supervisor.getSnapshot();
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+      assert.equal(afterMerge.runMerged, true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("defaults held-PR run state empty", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.heldPrUrl, null);
+      assert.equal(snapshot.heldPrNumber, null);
+      assert.equal(snapshot.runMerged, false);
+    }).pipe(Effect.provide(makeLayer())),
+  );
 });
