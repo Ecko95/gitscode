@@ -43,6 +43,9 @@ interface AutomodeState {
   readonly goals: ReadonlyArray<AutomodeGoal>;
   readonly driverHalted: boolean;
   readonly driverHaltedReason: string | null;
+  readonly heldPrUrl: string | null;
+  readonly heldPrNumber: number | null;
+  readonly runMerged: boolean;
   readonly lastEvent: string | null;
   readonly updatedAt: string;
 }
@@ -60,6 +63,9 @@ const PersistedAutomodeState = Schema.Struct({
   driverHaltedReason: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  heldPrUrl: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  heldPrNumber: Schema.NullOr(Schema.Number).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  runMerged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   lastEvent: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
 });
@@ -99,6 +105,9 @@ function toPersistedAutomodeState(state: AutomodeState): PersistedAutomodeState 
     goals: [...state.goals],
     driverHalted: state.driverHalted,
     driverHaltedReason: state.driverHaltedReason,
+    heldPrUrl: state.heldPrUrl,
+    heldPrNumber: state.heldPrNumber,
+    runMerged: state.runMerged,
     lastEvent: state.lastEvent,
     updatedAt: state.updatedAt,
   };
@@ -110,6 +119,9 @@ function fromPersistedAutomodeState(state: PersistedAutomodeState): AutomodeStat
     goals: state.goals,
     driverHalted: state.driverHalted,
     driverHaltedReason: state.driverHaltedReason,
+    heldPrUrl: state.heldPrUrl,
+    heldPrNumber: state.heldPrNumber,
+    runMerged: state.runMerged,
     lastEvent: state.lastEvent,
     updatedAt: state.updatedAt,
   };
@@ -272,6 +284,9 @@ function makeSnapshot(
     pendingApprovalCount: pendingApprovalCount(state.goals),
     driverHalted: state.driverHalted,
     driverHaltedReason: state.driverHaltedReason,
+    heldPrUrl: state.heldPrUrl,
+    heldPrNumber: state.heldPrNumber,
+    runMerged: state.runMerged,
     lastEvent: state.lastEvent,
     updatedAt: state.updatedAt,
   };
@@ -320,6 +335,9 @@ export const AutomodeSupervisorLive = Layer.effect(
       goals: [],
       driverHalted: false,
       driverHaltedReason: null,
+      heldPrUrl: null,
+      heldPrNumber: null,
+      runMerged: false,
       lastEvent: "Automode initialized with kill switch enabled.",
       updatedAt: initializedAt,
     });
@@ -701,6 +719,30 @@ export const AutomodeSupervisorLive = Layer.effect(
             driverHalted: false,
             driverHaltedReason: null,
             lastEvent: "Driver resumed by operator.",
+            updatedAt,
+          }));
+          return yield* snapshotFromState(nextState);
+        }),
+      recordHeldPr: (input) =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const reason = `Opened held PR #${input.number} → gits.`;
+          const nextState = yield* commitState((state) => ({
+            ...state,
+            heldPrUrl: input.url,
+            heldPrNumber: input.number,
+            lastEvent: reason,
+            updatedAt,
+          }));
+          return yield* snapshotFromState(nextState);
+        }),
+      markRunMerged: () =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const nextState = yield* commitState((state) => ({
+            ...state,
+            runMerged: true,
+            lastEvent: "Run complete: held PR merged to gits.",
             updatedAt,
           }));
           return yield* snapshotFromState(nextState);

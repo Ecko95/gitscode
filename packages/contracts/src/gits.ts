@@ -696,6 +696,11 @@ export const AutomodeSnapshot = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   driverHalted: Schema.Boolean,
   driverHaltedReason: Schema.NullOr(SummaryString),
+  heldPrUrl: Schema.NullOr(SummaryString).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  heldPrNumber: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  runMerged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   lastEvent: Schema.NullOr(SummaryString),
   updatedAt: IsoDateTime,
 });
@@ -747,6 +752,12 @@ export const AutomodeDriverHaltInput = Schema.Struct({
   reason: SummaryString,
 });
 export type AutomodeDriverHaltInput = typeof AutomodeDriverHaltInput.Type;
+
+export const AutomodeRecordHeldPrInput = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  number: NonNegativeInt,
+});
+export type AutomodeRecordHeldPrInput = typeof AutomodeRecordHeldPrInput.Type;
 
 export const AutomodeDispatchResult = Schema.Struct({
   snapshot: AutomodeSnapshot,

@@ -9,6 +9,7 @@ import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeDriver, type AutomodeDriverShape } from "../Services/AutomodeDriver.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
+import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
 import { decide_automode_gate } from "./AutomodeReviewGate.ts";
 
 const TICK_INTERVAL_MS = (() => {
@@ -37,6 +38,7 @@ export const AutomodeDriverLive = Layer.effect(
     const delamainAdapter = yield* DelamainAdapter;
     const reviewPipeline = yield* GitsReviewPipeline;
     const landing = yield* AutomodeLanding;
+    const heldPr = yield* AutomodeHeldPr;
 
     const tickOnce: AutomodeDriverShape["tickOnce"] = () =>
       Effect.gen(function* () {
@@ -162,9 +164,58 @@ export const AutomodeDriverLive = Layer.effect(
           return;
         }
 
-        // 3) Dispatch the oldest queued goal (sequential start).
+        // 3) Queue drained → held-PR lifecycle, then dispatch.
         const next = oldestQueued(snapshot.goals);
         if (next === null) {
+          // Run is terminal once the held PR merged.
+          if (snapshot.runMerged) {
+            return;
+          }
+          const policy = snapshot.policy;
+          if (policy.integrationBranch === null) {
+            return;
+          }
+          const landedRepo =
+            snapshot.goals.find((goal) => goal.status === "completed")?.repo ?? null;
+
+          if (snapshot.heldPrUrl === null || snapshot.heldPrNumber === null) {
+            // Open the held PR exactly once, only if at least one slice landed.
+            if (landedRepo === null) {
+              return;
+            }
+            const landedTitles = snapshot.goals
+              .filter((goal) => goal.status === "completed")
+              .map((goal) => `- ${goal.title}`)
+              .join("\n");
+            const result = yield* heldPr.open_held_pr({
+              repo: landedRepo,
+              integrationBranch: policy.integrationBranch,
+              baseBranch: "gits",
+              title: `automode: held PR for ${policy.integrationBranch}`,
+              body: `Autonomous run — landed slices (held for review, not auto-merged):\n\n${landedTitles}`,
+            });
+            if (result.status === "rejected") {
+              yield* supervisor.haltDriver({
+                reason: `Halted: could not open held PR — ${result.reason}`,
+              });
+              return;
+            }
+            yield* supervisor.recordHeldPr({ url: result.url, number: result.number });
+            return;
+          }
+
+          // Held PR already open → poll GitHub for the merge.
+          if (landedRepo === null) {
+            return;
+          }
+          const detect = yield* heldPr.detect_merge({
+            repo: landedRepo,
+            prNumber: snapshot.heldPrNumber,
+          });
+          if (detect.merged) {
+            yield* supervisor.markRunMerged();
+            yield* Effect.logInfo("gits.automode.run-merged", { heldPrUrl: snapshot.heldPrUrl });
+          }
           return;
         }
         const result = yield* supervisor.dispatchGoal({ goalId: next.id });
