@@ -242,6 +242,8 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     requireApprovalForPeerSpawn: true,
     requireApprovalBeforeIntegrate: true,
     requireApprovalBeforeDestructiveAction: true,
+    verificationCommands: [],
+    integrationBranch: null,
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
   budgetUsage: {
