@@ -122,6 +122,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
     type:
       | "thread.message-sent"
       | "thread.proposed-plan-upserted"
+      | "thread.visual-plan-upserted"
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
       | "thread.reverted"
@@ -131,6 +132,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   return (
     event.type === "thread.message-sent" ||
     event.type === "thread.proposed-plan-upserted" ||
+    event.type === "thread.visual-plan-upserted" ||
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
