@@ -140,6 +140,9 @@ export interface WsRpcClient {
       readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsList>;
       readonly init: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsInit>;
     };
+    readonly visualPlan: {
+      readonly mutate: RpcUnaryMethod<typeof WS_METHODS.gitsVisualPlanMutate>;
+    };
     readonly delamain: {
       readonly listPeers: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsDelamainListPeers>;
       readonly getPeerStatus: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainGetPeerStatus>;
@@ -359,6 +362,10 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsDevCommandsList](input)),
         init: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDevCommandsInit](input)),
+      },
+      visualPlan: {
+        mutate: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsVisualPlanMutate](input)),
       },
       delamain: {
         listPeers: () =>

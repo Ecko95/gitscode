@@ -7,15 +7,7 @@
  * dispatched into the orchestration engine as `thread.visual-plan.upsert`
  * commands, so the plan renders live in the GITS visual plan panel.
  */
-import {
-  CommandId,
-  type OrchestrationVisualPlan,
-  PlanComment,
-  PlanContent,
-  PlanContentPatch,
-  type ThreadId,
-} from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import { PlanContent, PlanContentPatch, type ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -23,12 +15,8 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { browserApiCorsHeaders } from "../../httpCors.ts";
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
-  getVisualPlanState,
   resolveVisualPlanThread,
-  setVisualPlanState,
   VISUAL_PLAN_MCP_PATH,
   type VisualPlanState,
 } from "./VisualPlanMcpRegistry.ts";
@@ -38,6 +26,7 @@ import {
   exportPlanToMarkdown,
   VISUAL_PLAN_TOOLS,
 } from "./visualPlanModel.ts";
+import { loadVisualPlanState, upsertVisualPlanState } from "./visualPlanWrite.ts";
 
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -83,61 +72,6 @@ const bearerFromRequest = (request: HttpServerRequest.HttpServerRequest): Option
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** Load the current plan state from cache, falling back to the persisted read model. */
-const loadState = (threadId: ThreadId) =>
-  Effect.gen(function* () {
-    const cached = getVisualPlanState(threadId);
-    if (cached) {
-      return Option.some(cached);
-    }
-    const snapshot = yield* ProjectionSnapshotQuery;
-    const detail = yield* snapshot
-      .getThreadDetailById(threadId)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(detail)) {
-      return Option.none<VisualPlanState>();
-    }
-    const plans = detail.value.visualPlans;
-    const latest = plans.length > 0 ? plans[plans.length - 1] : undefined;
-    if (!latest) {
-      return Option.none<VisualPlanState>();
-    }
-    return Option.some<VisualPlanState>({
-      planId: latest.id,
-      content: latest.content,
-      comments: latest.comments,
-      createdAt: latest.createdAt,
-    });
-  });
-
-const upsertVisualPlan = (threadId: ThreadId, next: VisualPlanState) =>
-  Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
-    const crypto = yield* Crypto.Crypto;
-    const at = yield* nowIso;
-    const uuid = yield* crypto.randomUUIDv4;
-    const visualPlan: OrchestrationVisualPlan = {
-      id: next.planId,
-      turnId: null,
-      content: next.content,
-      comments: next.comments,
-      createdAt: next.createdAt,
-      updatedAt: at,
-    };
-    yield* engine
-      .dispatch({
-        type: "thread.visual-plan.upsert",
-        commandId: CommandId.make(`visual-plan:${threadId}:${uuid}`),
-        threadId,
-        visualPlan,
-        createdAt: at,
-      })
-      .pipe(
-        Effect.catch((cause: unknown) => Effect.logError("visual-plan dispatch failed", cause)),
-      );
-    setVisualPlanState(threadId, next);
-  });
-
 const callTool = (threadId: ThreadId, name: string, args: Record<string, unknown>) =>
   Effect.gen(function* () {
     switch (name) {
@@ -145,20 +79,20 @@ const callTool = (threadId: ThreadId, name: string, args: Record<string, unknown
         return toolText(jsonString(buildBlockCatalog()));
 
       case "get-visual-plan": {
-        const state = yield* loadState(threadId);
+        const state = yield* loadVisualPlanState(threadId);
         return Option.isSome(state)
           ? toolText(jsonString(state.value.content))
           : toolText("No visual plan exists yet for this session.");
       }
 
       case "get-plan-feedback": {
-        const state = yield* loadState(threadId);
+        const state = yield* loadVisualPlanState(threadId);
         const comments = Option.isSome(state) ? state.value.comments : [];
         return toolText(jsonString(comments));
       }
 
       case "export-visual-plan": {
-        const state = yield* loadState(threadId);
+        const state = yield* loadVisualPlanState(threadId);
         return Option.isSome(state)
           ? toolText(exportPlanToMarkdown(state.value.content, state.value.comments))
           : toolText("No visual plan exists yet for this session.");
@@ -169,7 +103,7 @@ const callTool = (threadId: ThreadId, name: string, args: Record<string, unknown
         if (Option.isNone(decoded)) {
           return toolText("Invalid plan content. Call get-plan-blocks and retry.", true);
         }
-        const existing = yield* loadState(threadId);
+        const existing = yield* loadVisualPlanState(threadId);
         const at = yield* nowIso;
         const next: VisualPlanState = {
           planId: Option.isSome(existing) ? existing.value.planId : `vp_${threadId}`,
@@ -177,7 +111,7 @@ const callTool = (threadId: ThreadId, name: string, args: Record<string, unknown
           comments: Option.isSome(existing) ? existing.value.comments : [],
           createdAt: Option.isSome(existing) ? existing.value.createdAt : at,
         };
-        yield* upsertVisualPlan(threadId, next);
+        yield* upsertVisualPlanState(threadId, next);
         return toolText(
           "Visual plan created. It is now rendering in the GITS visual plan side panel.",
         );
@@ -188,12 +122,12 @@ const callTool = (threadId: ThreadId, name: string, args: Record<string, unknown
         if (Option.isNone(decoded)) {
           return toolText("Invalid contentPatches. Call get-plan-blocks and retry.", true);
         }
-        const existing = yield* loadState(threadId);
+        const existing = yield* loadVisualPlanState(threadId);
         if (Option.isNone(existing)) {
           return toolText("No visual plan to update. Call create-visual-plan first.", true);
         }
         const nextContent = applyPlanPatches(existing.value.content, decoded.value);
-        yield* upsertVisualPlan(threadId, { ...existing.value, content: nextContent });
+        yield* upsertVisualPlanState(threadId, { ...existing.value, content: nextContent });
         return toolText("Visual plan updated.");
       }
 

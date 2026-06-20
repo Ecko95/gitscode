@@ -2449,6 +2449,35 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, []);
   const closeVisualPlan = useCallback(() => setVisualPlanOpen(false), []);
+  const handleSendVisualPlanToAgent = useCallback(
+    (markdown: string) => {
+      const threadIdForSend = activeThread?.id;
+      if (!threadIdForSend) return;
+      const sendCtx = composerRef.current?.getSendContext();
+      const modelSelection = sendCtx?.selectedModelSelection;
+      const api = readEnvironmentApi(environmentId);
+      if (!api) return;
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: buildPlanImplementationPrompt(markdown),
+            attachments: [],
+          },
+          ...(modelSelection ? { modelSelection } : {}),
+          runtimeMode,
+          interactionMode: "default",
+          createdAt: new Date().toISOString(),
+        })
+        .catch(() => undefined);
+      closeVisualPlan();
+    },
+    [activeThread?.id, environmentId, runtimeMode, closeVisualPlan],
+  );
   const closePlanSidebar = useCallback(() => {
     setPlanSidebarOpen(false);
     planSidebarDismissedForTurnRef.current =
@@ -4060,6 +4089,9 @@ export default function ChatView(props: ChatViewProps) {
               visualPlan={activeVisualPlan}
               mode="sidebar"
               onClose={closeVisualPlan}
+              threadId={activeThread?.id}
+              environmentId={environmentId}
+              onSendToAgent={handleSendVisualPlanToAgent}
             />
           ) : null}
         </Suspense>
@@ -4115,7 +4147,14 @@ export default function ChatView(props: ChatViewProps) {
 
       {shouldUsePlanSidebarSheet ? (
         <RightPanelSheet open={visualPlanOpen} onClose={closeVisualPlan}>
-          <VisualPlanPanel visualPlan={activeVisualPlan} mode="sheet" onClose={closeVisualPlan} />
+          <VisualPlanPanel
+            visualPlan={activeVisualPlan}
+            mode="sheet"
+            onClose={closeVisualPlan}
+            threadId={activeThread?.id}
+            environmentId={environmentId}
+            onSendToAgent={handleSendVisualPlanToAgent}
+          />
         </RightPanelSheet>
       ) : null}
 

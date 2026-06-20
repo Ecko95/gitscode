@@ -79,6 +79,7 @@ import { ReviewService } from "./review/ReviewService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { GitsDevCommands } from "./gits/Services/GitsDevCommands.ts";
+import { mutateVisualPlan } from "./gits/mcp/visualPlanWrite.ts";
 import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
 import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
 import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
@@ -1315,6 +1316,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "gits" },
           ),
+        [WS_METHODS.gitsVisualPlanMutate]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsVisualPlanMutate, mutateVisualPlan(input), {
+            "rpc.aggregate": "gits",
+          }),
         [WS_METHODS.gitsDelamainListPeers]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsDelamainListPeers,
