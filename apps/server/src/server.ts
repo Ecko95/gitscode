@@ -101,10 +101,7 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import { gitsBuildInfoRouteLayer, gitsSkillInventoryRouteLayer } from "./gits/http.ts";
-import {
-  visualPlanMcpRouteLayer,
-  VisualPlanMcpRegistryLive,
-} from "./gits/mcp/http.ts";
+import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -244,7 +241,6 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsPlanningScannerLive),
   Layer.provideMerge(HermesAdapterLayerLive),
   Layer.provideMerge(AutomodeSupervisorLayerLive),
-  Layer.provideMerge(VisualPlanMcpRegistryLive),
 );
 
 const VcsLayerLive = Layer.empty.pipe(

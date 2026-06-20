@@ -26,7 +26,10 @@ import { browserApiCorsHeaders } from "../../httpCors.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
-  VisualPlanMcpRegistry,
+  getVisualPlanState,
+  resolveVisualPlanThread,
+  setVisualPlanState,
+  VISUAL_PLAN_MCP_PATH,
   type VisualPlanState,
 } from "./VisualPlanMcpRegistry.ts";
 import {
@@ -36,7 +39,6 @@ import {
   VISUAL_PLAN_TOOLS,
 } from "./visualPlanModel.ts";
 
-export const VISUAL_PLAN_MCP_PATH = "/api/gits/visual-plan/mcp";
 const PROTOCOL_VERSION = "2025-06-18";
 
 const decodeContent = Schema.decodeUnknownEffect(PlanContent);
@@ -84,10 +86,9 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 /** Load the current plan state from cache, falling back to the persisted read model. */
 const loadState = (threadId: ThreadId) =>
   Effect.gen(function* () {
-    const registry = yield* VisualPlanMcpRegistry;
-    const cached = yield* registry.getState(threadId);
-    if (Option.isSome(cached)) {
-      return Option.some(cached.value);
+    const cached = getVisualPlanState(threadId);
+    if (cached) {
+      return Option.some(cached);
     }
     const snapshot = yield* ProjectionSnapshotQuery;
     const detail = yield* snapshot.getThreadDetailById(threadId).pipe(Effect.orElseSucceed(() => Option.none()));
@@ -110,7 +111,6 @@ const loadState = (threadId: ThreadId) =>
 const upsertVisualPlan = (threadId: ThreadId, next: VisualPlanState) =>
   Effect.gen(function* () {
     const engine = yield* OrchestrationEngineService;
-    const registry = yield* VisualPlanMcpRegistry;
     const crypto = yield* Crypto.Crypto;
     const at = yield* nowIso;
     const uuid = yield* crypto.randomUUIDv4;
@@ -131,7 +131,7 @@ const upsertVisualPlan = (threadId: ThreadId, next: VisualPlanState) =>
         createdAt: at,
       })
       .pipe(Effect.catch((cause: unknown) => Effect.logError("visual-plan dispatch failed", cause)));
-    yield* registry.setState(threadId, next);
+    setVisualPlanState(threadId, next);
   });
 
 const callTool = (threadId: ThreadId, name: string, args: Record<string, unknown>) =>
@@ -201,7 +201,6 @@ export const visualPlanMcpRouteLayer = HttpRouter.add(
   VISUAL_PLAN_MCP_PATH,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const registry = yield* VisualPlanMcpRegistry;
 
     const token = bearerFromRequest(request);
     if (Option.isNone(token)) {
@@ -210,14 +209,13 @@ export const visualPlanMcpRouteLayer = HttpRouter.add(
         { status: 401, headers: browserApiCorsHeaders },
       );
     }
-    const threadOption = yield* registry.resolveThread(token.value);
-    if (Option.isNone(threadOption)) {
+    const threadId = resolveVisualPlanThread(token.value);
+    if (!threadId) {
       return HttpServerResponse.jsonUnsafe(
         { jsonrpc: "2.0", id: null, error: { code: -32001, message: "Invalid session token" } },
         { status: 401, headers: browserApiCorsHeaders },
       );
     }
-    const threadId = threadOption.value;
 
     const body = yield* Effect.option(HttpServerRequest.schemaBodyJson(Schema.Unknown));
     const message = (Option.getOrElse(body, () => ({})) ?? {}) as JsonRpcMessage;
@@ -263,6 +261,3 @@ export const visualPlanMcpRouteLayer = HttpRouter.add(
     ),
   ),
 );
-
-// re-export so the registry layer can be wired alongside the route
-export { VisualPlanMcpRegistry, VisualPlanMcpRegistryLive } from "./VisualPlanMcpRegistry.ts";
