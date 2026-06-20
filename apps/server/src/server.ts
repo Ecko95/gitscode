@@ -57,6 +57,7 @@ import { GitsCodexVerifierAdapterLive } from "./gits/Layers/GitsCodexVerifierAda
 import { GitsReviewPipelineLive } from "./gits/Layers/GitsReviewPipeline.ts";
 import { AutomodeLandingLive } from "./gits/Layers/AutomodeLanding.ts";
 import { AutomodeHeldPrLive } from "./gits/Layers/AutomodeHeldPr.ts";
+import { AutomodeEpisodeLedgerLive } from "./persistence/Layers/AutomodeEpisodeLedger.ts";
 import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
@@ -245,11 +246,16 @@ const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(Layer.provide(GitVcsDr
 
 const AutomodeHeldPrLayerLive = AutomodeHeldPrLive.pipe(Layer.provide(GitHubCli.layer));
 
+const AutomodeEpisodeLedgerLayerLive = AutomodeEpisodeLedgerLive.pipe(
+  Layer.provide(PersistenceLayerLive),
+);
+
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(DelamainCliAdapterLive),
   Layer.provide(AutomodeLandingLayerLive),
   Layer.provide(AutomodeHeldPrLayerLive),
+  Layer.provide(AutomodeEpisodeLedgerLayerLive),
   Layer.provide(
     GitsReviewPipelineLive.pipe(
       Layer.provide(GitsCodexVerifierAdapterLive),
