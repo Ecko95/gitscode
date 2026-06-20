@@ -258,6 +258,9 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
   pendingApprovalCount: 0,
   driverHalted: false,
   driverHaltedReason: null,
+  heldPrUrl: null,
+  heldPrNumber: null,
+  runMerged: false,
   lastEvent: "ready",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
