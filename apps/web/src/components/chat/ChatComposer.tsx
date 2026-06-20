@@ -86,6 +86,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  LayoutDashboardIcon,
   ListTodoIcon,
   type LucideIcon,
   LockIcon,
@@ -188,10 +189,13 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   delamainSidebarOpen: boolean;
+  visualPlanOpen: boolean;
+  hasVisualPlan: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
   onToggleDelamainSidebar: () => void;
+  onToggleVisualPlan: () => void;
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
@@ -305,6 +309,25 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <span className="sr-only sm:not-sr-only">Delamain</span>
           </Button>
         </>
+      ) : null}
+
+      {props.hasVisualPlan ? (
+        <Button
+          variant="ghost"
+          className={cn(
+            "shrink-0 whitespace-nowrap px-2 sm:px-3",
+            props.visualPlanOpen
+              ? "text-violet-400 hover:text-violet-300"
+              : "text-muted-foreground/70 hover:text-foreground/80",
+          )}
+          size="sm"
+          type="button"
+          onClick={props.onToggleVisualPlan}
+          title={props.visualPlanOpen ? "Hide visual plan" : "Show visual plan"}
+        >
+          <LayoutDashboardIcon />
+          <span className="sr-only sm:not-sr-only">Visual Plan</span>
+        </Button>
       ) : null}
     </>
   );
@@ -449,6 +472,8 @@ export interface ChatComposerProps {
   sidebarProposedPlan: { turnId?: TurnId } | null;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
+  visualPlanOpen: boolean;
+  hasVisualPlan: boolean;
   hasDeployedDelamainPeers: boolean;
   delamainSidebarOpen: boolean;
 
@@ -507,6 +532,7 @@ export interface ChatComposerProps {
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   togglePlanSidebar: () => void;
   toggleDelamainSidebar: () => void;
+  toggleVisualPlan: () => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -550,6 +576,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sidebarProposedPlan,
     planSidebarLabel,
     planSidebarOpen,
+    visualPlanOpen,
+    hasVisualPlan,
     hasDeployedDelamainPeers,
     delamainSidebarOpen,
     runtimeMode,
@@ -584,6 +612,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     handleInteractionModeChange,
     togglePlanSidebar,
     toggleDelamainSidebar,
+    toggleVisualPlan,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -2431,10 +2460,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       delamainSidebarOpen={delamainSidebarOpen}
+                      visualPlanOpen={visualPlanOpen}
+                      hasVisualPlan={hasVisualPlan}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
                       onToggleDelamainSidebar={toggleDelamainSidebar}
+                      onToggleVisualPlan={toggleVisualPlan}
                     />
                   </>
                 )}
