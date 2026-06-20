@@ -115,6 +115,7 @@ import {
   type GitsCapacityMonitorShape,
 } from "./gits/Services/GitsCapacityMonitor.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
+import { issueVisualPlanToken } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import {
@@ -1617,6 +1618,73 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assertBrowserApiCorsHeaders(response.headers);
       assert.deepEqual(body, expectedSnapshot);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("visual-plan MCP completes the connect handshake for an authenticated client", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      // A provider session would mint this token; drive it directly here.
+      const token = issueVisualPlanToken(ThreadId.make("vp-handshake-thread"));
+      const authHeaders = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+
+      const postMcp = (payload: unknown) =>
+        Effect.gen(function* () {
+          const response = yield* HttpClient.post("/api/gits/visual-plan/mcp", {
+            headers: authHeaders,
+            body: yield* HttpBody.json(payload),
+          });
+          return (yield* response.json) as {
+            readonly result?: Record<string, unknown>;
+            readonly error?: { readonly code: number; readonly message: string };
+          };
+        });
+
+      // initialize → serverInfo
+      const init = yield* postMcp({ jsonrpc: "2.0", id: 1, method: "initialize" });
+      assert.equal((init.result?.serverInfo as { name: string }).name, "gits-visual-plan");
+
+      // tools/list → the six visual-plan tools
+      const list = yield* postMcp({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+      const toolNames = (list.result?.tools as Array<{ name: string }>).map((t) => t.name);
+      assert.deepEqual([...toolNames].sort(), [
+        "create-visual-plan",
+        "export-visual-plan",
+        "get-plan-blocks",
+        "get-plan-feedback",
+        "get-visual-plan",
+        "update-visual-plan",
+      ]);
+
+      // tools/call get-plan-blocks → the block catalog
+      const blocks = yield* postMcp({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "get-plan-blocks", arguments: {} },
+      });
+      const text = (blocks.result?.content as Array<{ text: string }>)[0]?.text ?? "";
+      assert.ok(text.includes("rich-text"), "catalog should list the rich-text block");
+      assert.ok(text.includes("question-form"), "catalog should list the question-form block");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("visual-plan MCP rejects calls without a valid session token", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const response = yield* HttpClient.post("/api/gits/visual-plan/mcp", {
+        headers: {
+          authorization: "Bearer vpmcp_not_a_real_token",
+          "content-type": "application/json",
+        },
+        body: yield* HttpBody.json({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      const body = (yield* response.json) as { readonly error?: { readonly message: string } };
+
+      assert.equal(response.status, 401);
+      assert.equal(body.error?.message, "Invalid session token");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
