@@ -118,6 +118,7 @@ import {
   AutomodeSupervisor,
   type AutomodeSupervisorShape,
 } from "./gits/Services/AutomodeSupervisor.ts";
+import { CritSidecarManager } from "./crit/crit-sidecar-manager.ts";
 import {
   GitsCapacityMonitor,
   type GitsCapacityMonitorShape,
@@ -1263,6 +1264,13 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
+      Layer.provide(
+        Layer.mock(CritSidecarManager)({
+          ensure_sidecar: () => Effect.succeed({ status: "stopped", url: null }),
+          sidecar_status: () => Effect.succeed({ status: "stopped", url: null }),
+          release_sidecar: () => Effect.void,
+        }),
+      ),
       Layer.provide(
         Layer.mock(BrowserTraceCollector)({
           record: () => Effect.void,
