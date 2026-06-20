@@ -405,3 +405,255 @@ export const PlanComment = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type PlanComment = typeof PlanComment.Type;
+
+/* -------------------------------------------------------------------------- *
+ *  Pure plan model helpers (shared by the server MCP/WS write paths and the
+ *  web panel's optimistic updates / markdown export). No Effect, no IO.
+ * -------------------------------------------------------------------------- */
+
+/** Apply an ordered list of content patches, returning the next content. */
+export function applyPlanPatches(
+  content: PlanContent,
+  patches: ReadonlyArray<PlanContentPatch>,
+): PlanContent {
+  let next = content;
+  for (const patch of patches) {
+    next = applyPlanPatch(next, patch);
+  }
+  return next;
+}
+
+function applyPlanPatch(content: PlanContent, patch: PlanContentPatch): PlanContent {
+  switch (patch.op) {
+    case "set-metadata":
+      return {
+        ...content,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.brief !== undefined ? { brief: patch.brief } : {}),
+      };
+    case "replace-blocks":
+      return { ...content, blocks: patch.blocks };
+    case "replace-block":
+      return {
+        ...content,
+        blocks: content.blocks.map((block) => (block.id === patch.blockId ? patch.block : block)),
+      };
+    case "remove-block":
+      return { ...content, blocks: content.blocks.filter((block) => block.id !== patch.blockId) };
+    case "append-block": {
+      if (patch.afterBlockId) {
+        const index = content.blocks.findIndex((block) => block.id === patch.afterBlockId);
+        if (index >= 0) {
+          const blocks = [...content.blocks];
+          blocks.splice(index + 1, 0, patch.block);
+          return { ...content, blocks };
+        }
+      }
+      return { ...content, blocks: [...content.blocks, patch.block] };
+    }
+    case "update-rich-text":
+      return {
+        ...content,
+        blocks: content.blocks.map((block) => {
+          if (block.id !== patch.blockId || block.type !== "rich-text") {
+            return block;
+          }
+          return {
+            ...block,
+            ...(patch.title !== undefined ? { title: patch.title } : {}),
+            data: {
+              ...block.data,
+              ...(patch.markdown !== undefined ? { markdown: patch.markdown } : {}),
+            },
+          };
+        }),
+      };
+    case "update-block":
+      return {
+        ...content,
+        blocks: content.blocks.map((block) => {
+          if (block.id !== patch.blockId) {
+            return block;
+          }
+          const merged = {
+            ...block,
+            ...(patch.patch.title !== undefined ? { title: patch.patch.title } : {}),
+            ...(patch.patch.summary !== undefined ? { summary: patch.patch.summary } : {}),
+            ...(patch.patch.editable !== undefined ? { editable: patch.patch.editable } : {}),
+            ...(patch.patch.data !== undefined
+              ? { data: { ...((block as { data: unknown }).data as object), ...patch.patch.data } }
+              : {}),
+          };
+          return merged as PlanBlock;
+        }),
+      };
+  }
+}
+
+/** Insert or replace a comment by id, preserving order (replace in place). */
+export function upsertPlanComment(
+  comments: ReadonlyArray<PlanComment>,
+  comment: PlanComment,
+): ReadonlyArray<PlanComment> {
+  const index = comments.findIndex((existing) => existing.id === comment.id);
+  if (index < 0) {
+    return [...comments, comment];
+  }
+  const next = [...comments];
+  next[index] = comment;
+  return next;
+}
+
+/** Mark a comment resolved (no-op if the id is unknown or already resolved). */
+export function resolvePlanComment(
+  comments: ReadonlyArray<PlanComment>,
+  commentId: string,
+  resolvedAt: string,
+): ReadonlyArray<PlanComment> {
+  return comments.map((comment) =>
+    comment.id === commentId ? { ...comment, resolvedAt, updatedAt: resolvedAt } : comment,
+  );
+}
+
+/** Serialize a plan + open reviewer comments to a single markdown document. */
+export function exportPlanToMarkdown(
+  content: PlanContent,
+  comments: ReadonlyArray<PlanComment>,
+): string {
+  const lines: string[] = [];
+  if (content.title) {
+    lines.push(`# ${content.title}`, "");
+  }
+  if (content.brief) {
+    lines.push(content.brief, "");
+  }
+  for (const block of content.blocks) {
+    lines.push(...blockToMarkdown(block));
+    lines.push("");
+  }
+  const open = comments.filter((comment) => !comment.resolvedAt);
+  if (open.length > 0) {
+    lines.push("## Reviewer comments", "");
+    for (const comment of open) {
+      const target = describeAnchor(comment);
+      const routing = comment.resolutionTarget ? ` _(for: ${comment.resolutionTarget})_` : "";
+      lines.push(`- **${target}**${routing}: ${comment.message}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim() + "\n";
+}
+
+function describeAnchor(comment: PlanComment): string {
+  const anchor = comment.anchor;
+  if (anchor.textQuote) {
+    return `on “${truncate(anchor.textQuote, 80)}”`;
+  }
+  if (anchor.blockId) {
+    return `on block ${anchor.blockId}`;
+  }
+  if (anchor.sectionId) {
+    return `on section ${anchor.sectionId}`;
+  }
+  return "general";
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function blockToMarkdown(block: PlanBlock): string[] {
+  const heading = block.title ? [`### ${block.title}`, ""] : [];
+  switch (block.type) {
+    case "rich-text":
+      return [...heading, block.data.markdown];
+    case "callout":
+      return [
+        ...heading,
+        `> ${block.data.tone ? `**${block.data.tone.toUpperCase()}** ` : ""}${block.data.body}`,
+      ];
+    case "checklist":
+      return [
+        ...heading,
+        ...block.data.items.map(
+          (item) =>
+            `- [${item.checked ? "x" : " "}] ${item.label}${item.note ? ` — ${item.note}` : ""}`,
+        ),
+      ];
+    case "table":
+      return [
+        ...heading,
+        `| ${block.data.columns.join(" | ")} |`,
+        `| ${block.data.columns.map(() => "---").join(" | ")} |`,
+        ...block.data.rows.map((row) => `| ${row.join(" | ")} |`),
+      ];
+    case "code":
+      return [...heading, "```" + (block.data.language ?? ""), block.data.code, "```"];
+    case "annotated-code":
+      return [
+        ...heading,
+        block.data.filename ? `_${block.data.filename}_` : "",
+        "```" + (block.data.language ?? ""),
+        block.data.code,
+        "```",
+        ...(block.data.annotations ?? []).map(
+          (a) => `- lines ${a.lines}: ${a.label ? `**${a.label}** ` : ""}${a.note}`,
+        ),
+      ].filter((line) => line !== "");
+    case "file-tree":
+      return [
+        ...heading,
+        ...block.data.entries.map(
+          (e) =>
+            `- ${e.change ? `[${e.change}] ` : ""}\`${e.path}\`${e.note ? ` — ${e.note}` : ""}`,
+        ),
+      ];
+    case "implementation-map":
+      return [
+        ...heading,
+        ...block.data.files.map(
+          (f) => `- \`${f.path}\`${f.title ? ` (${f.title})` : ""} — ${f.note}`,
+        ),
+      ];
+    case "api-endpoint":
+      return [
+        ...heading,
+        `\`${block.data.method} ${block.data.path}\`${block.data.summary ? ` — ${block.data.summary}` : ""}`,
+      ];
+    case "data-model":
+      return [
+        ...heading,
+        ...block.data.entities.flatMap((entity) => [
+          `**${entity.name}**`,
+          ...entity.fields.map(
+            (field) =>
+              `- ${field.name}${field.type ? `: ${field.type}` : ""}${field.pk ? " (pk)" : ""}`,
+          ),
+        ]),
+      ];
+    case "question-form":
+      return [
+        ...heading,
+        ...block.data.questions.map(
+          (question) =>
+            `**${question.title}** (${question.mode})${question.options ? `: ${question.options.map((o) => o.label).join(", ")}` : ""}`,
+        ),
+      ];
+    case "diagram":
+    case "custom-html":
+      return [...heading, block.data.caption ?? "_(visual block)_"];
+    case "tabs":
+      return [
+        ...heading,
+        ...block.data.tabs.flatMap((tab) => [
+          `**${tab.label}**`,
+          ...tab.blocks.flatMap(blockToMarkdown),
+        ]),
+      ];
+    case "columns":
+      return [
+        ...heading,
+        ...block.data.columns.flatMap((column) => column.blocks.flatMap(blockToMarkdown)),
+      ];
+  }
+}

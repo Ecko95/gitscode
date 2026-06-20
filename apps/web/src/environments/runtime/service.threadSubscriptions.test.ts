@@ -146,6 +146,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         list: vi.fn(),
         init: vi.fn(),
       },
+      visualPlan: {
+        mutate: vi.fn(),
+      },
       delamain: {
         listPeers: vi.fn(),
         getPeerStatus: vi.fn(),

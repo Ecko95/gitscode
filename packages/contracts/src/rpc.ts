@@ -125,6 +125,9 @@ import {
   OrchestrationReplayEventsError,
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
+  VisualPlanMutateError,
+  VisualPlanMutateInput,
+  VisualPlanMutateResult,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
@@ -222,6 +225,7 @@ export const WS_METHODS = {
   gitsGetCockpit: "gits.cockpit.get",
   gitsDevCommandsList: "gits.devCommands.list",
   gitsDevCommandsInit: "gits.devCommands.init",
+  gitsVisualPlanMutate: "gits.visualPlan.mutate",
   gitsDelamainListPeers: "gits.delamain.peers.list",
   gitsDelamainGetPeerStatus: "gits.delamain.peers.status",
   gitsDelamainReadPeerLog: "gits.delamain.peers.log",
@@ -581,6 +585,12 @@ export const WsGitsDevCommandsInitRpc = Rpc.make(WS_METHODS.gitsDevCommandsInit,
   payload: GitsDevCommandInitInput,
   success: GitsDevCommandListResult,
   error: GitsDevCommandError,
+});
+
+export const WsGitsVisualPlanMutateRpc = Rpc.make(WS_METHODS.gitsVisualPlanMutate, {
+  payload: VisualPlanMutateInput,
+  success: VisualPlanMutateResult,
+  error: VisualPlanMutateError,
 });
 
 export const WsGitsDelamainListPeersRpc = Rpc.make(WS_METHODS.gitsDelamainListPeers, {
@@ -945,6 +955,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsGetCockpitRpc,
   WsGitsDevCommandsListRpc,
   WsGitsDevCommandsInitRpc,
+  WsGitsVisualPlanMutateRpc,
   WsGitsDelamainListPeersRpc,
   WsGitsDelamainGetPeerStatusRpc,
   WsGitsDelamainReadPeerLogRpc,

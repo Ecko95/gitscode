@@ -42,6 +42,7 @@ import {
   ProviderInstanceId,
   ResolvedKeybindingRule,
   ThreadId,
+  VisualPlanMutateError,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
@@ -124,7 +125,7 @@ import {
   type GitsCapacityMonitorShape,
 } from "./gits/Services/GitsCapacityMonitor.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
-import { issueVisualPlanToken } from "./gits/mcp/VisualPlanMcpRegistry.ts";
+import { issueVisualPlanToken, setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import {
@@ -1843,6 +1844,139 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 401);
       assert.equal(body.error?.message, "Invalid session token");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "gits.visualPlan.mutate merges a web comment + patch and keeps the agent's MCP read coherent",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("vp-mutate-thread");
+        // Seed the registry cache with an existing plan (an agent would have
+        // minted it via create-visual-plan).
+        setVisualPlanState(threadId, {
+          planId: "vp_seed",
+          content: {
+            version: 1,
+            title: "Auth plan",
+            blocks: [{ id: "intro", type: "rich-text", data: { markdown: "Original." } }],
+          },
+          comments: [],
+          createdAt: "2026-06-20T00:00:00.000Z",
+        });
+
+        const dispatched: Array<OrchestrationCommand> = [];
+        yield* buildAppUnderTest({
+          layers: {
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatched.push(command);
+                  return { sequence: dispatched.length };
+                }),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.gitsVisualPlanMutate]({
+              threadId,
+              contentPatches: [
+                { op: "update-rich-text", blockId: "intro", markdown: "Edited prose." },
+              ],
+              addComment: {
+                anchor: {
+                  blockId: "intro",
+                  blockType: "rich-text",
+                  anchorKind: "block",
+                  textQuote: "Edited prose.",
+                },
+                message: "Tighten the rollout order.",
+                resolutionTarget: "agent",
+              },
+            }),
+          ),
+        );
+
+        // 1. The RPC result reflects the merged plan + markdown export.
+        const intro = result.visualPlan.content.blocks.find((block) => block.id === "intro");
+        assert.equal(intro?.type === "rich-text" && intro.data.markdown, "Edited prose.");
+        assert.equal(result.visualPlan.comments.length, 1);
+        assert.equal(result.visualPlan.comments[0]?.message, "Tighten the rollout order.");
+        assert.equal(result.visualPlan.comments[0]?.resolutionTarget, "agent");
+        assert.equal(result.visualPlan.comments[0]?.anchor.anchorKind, "block");
+        assert.equal(result.visualPlan.comments[0]?.createdBy, "human");
+        assertInclude(result.exportMarkdown, "Edited prose.");
+        assertInclude(result.exportMarkdown, "Tighten the rollout order.");
+
+        // 2. It round-tripped through the orchestration event pipeline.
+        assert.deepEqual(
+          dispatched.map((command) => command.type),
+          ["thread.visual-plan.upsert"],
+        );
+
+        // 3. The agent's MCP read path sees the new comment (cache coherence).
+        const token = issueVisualPlanToken(threadId);
+        const authHeaders = {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        };
+        const postMcp = (payload: unknown) =>
+          Effect.gen(function* () {
+            const response = yield* HttpClient.post("/api/gits/visual-plan/mcp", {
+              headers: authHeaders,
+              body: yield* HttpBody.json(payload),
+            });
+            return (yield* response.json) as {
+              readonly result?: { readonly content?: ReadonlyArray<{ readonly text: string }> };
+            };
+          });
+
+        const feedback = yield* postMcp({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "get-plan-feedback", arguments: {} },
+        });
+        const feedbackText = feedback.result?.content?.[0]?.text ?? "";
+        assertInclude(feedbackText, "Tighten the rollout order.");
+        assertInclude(feedbackText, '"resolutionTarget":"agent"');
+
+        const exported = yield* postMcp({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "export-visual-plan", arguments: {} },
+        });
+        const exportedText = exported.result?.content?.[0]?.text ?? "";
+        assertInclude(exportedText, "Edited prose.");
+        assertInclude(exportedText, "Tighten the rollout order.");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("gits.visualPlan.mutate fails cleanly when no plan exists for the thread", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsVisualPlanMutate]({
+            threadId: ThreadId.make("vp-missing-thread"),
+            addComment: {
+              anchor: { anchorKind: "block" },
+              message: "no plan here",
+            },
+          }),
+        ).pipe(Effect.result),
+      );
+      assertFailure(
+        result,
+        new VisualPlanMutateError({
+          message: "No visual plan exists for this thread. Ask the agent to render one first.",
+        }),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

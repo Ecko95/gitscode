@@ -21,7 +21,15 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { PlanComment, PlanContent } from "./visualPlan.ts";
+import {
+  PlanBlockId,
+  PlanComment,
+  PlanCommentAnchor,
+  PlanCommentAuthor,
+  PlanCommentResolutionTarget,
+  PlanContent,
+  PlanContentPatch,
+} from "./visualPlan.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -1308,6 +1316,52 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
 
 export class OrchestrationReplayEventsError extends Schema.TaggedErrorClass<OrchestrationReplayEventsError>()(
   "OrchestrationReplayEventsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+/* -------------------------------------------------------------------------- *
+ *  Visual-plan web → server write path (Phase 2).
+ *
+ *  The web panel cannot dispatch the internal `thread.visual-plan.upsert`
+ *  command directly (it is not part of ClientOrchestrationCommand, and the MCP
+ *  registry cache must stay coherent). Instead it calls the dedicated
+ *  `gits.visualPlan.mutate` RPC: the server merges the comment / patches /
+ *  resolution into the current plan and round-trips the upsert through the same
+ *  event pipeline so it renders live and the agent's `get-plan-feedback` MCP
+ *  tool sees the new comments.
+ * -------------------------------------------------------------------------- */
+
+/** A reviewer comment authored client-side. The server mints id + timestamps. */
+export const PlanCommentDraft = Schema.Struct({
+  id: Schema.optional(PlanBlockId),
+  parentCommentId: Schema.optional(Schema.NullOr(PlanBlockId)),
+  anchor: PlanCommentAnchor,
+  message: TrimmedNonEmptyString,
+  createdBy: Schema.optional(PlanCommentAuthor),
+  resolutionTarget: Schema.optional(PlanCommentResolutionTarget),
+});
+export type PlanCommentDraft = typeof PlanCommentDraft.Type;
+
+export const VisualPlanMutateInput = Schema.Struct({
+  threadId: ThreadId,
+  planId: Schema.optional(OrchestrationVisualPlanId),
+  contentPatches: Schema.optional(Schema.Array(PlanContentPatch)),
+  addComment: Schema.optional(PlanCommentDraft),
+  resolveCommentId: Schema.optional(PlanBlockId),
+});
+export type VisualPlanMutateInput = typeof VisualPlanMutateInput.Type;
+
+export const VisualPlanMutateResult = Schema.Struct({
+  visualPlan: OrchestrationVisualPlan,
+  exportMarkdown: Schema.String,
+});
+export type VisualPlanMutateResult = typeof VisualPlanMutateResult.Type;
+
+export class VisualPlanMutateError extends Schema.TaggedErrorClass<VisualPlanMutateError>()(
+  "VisualPlanMutateError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),
