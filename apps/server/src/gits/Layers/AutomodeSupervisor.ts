@@ -57,7 +57,9 @@ const PersistedAutomodeState = Schema.Struct({
   policy: AutomodePolicySchema,
   goals: Schema.Array(AutomodeGoalSchema),
   driverHalted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  driverHaltedReason: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  driverHaltedReason: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   lastEvent: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
 });
@@ -170,6 +172,8 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     requireApprovalForPeerSpawn: true,
     requireApprovalBeforeIntegrate: true,
     requireApprovalBeforeDestructiveAction: true,
+    verificationCommands: [],
+    integrationBranch: null,
     updatedAt,
   };
 }
@@ -294,6 +298,9 @@ function applyPolicyUpdate(
       input.requireApprovalBeforeIntegrate ?? policy.requireApprovalBeforeIntegrate,
     requireApprovalBeforeDestructiveAction:
       input.requireApprovalBeforeDestructiveAction ?? policy.requireApprovalBeforeDestructiveAction,
+    verificationCommands: input.verificationCommands ?? policy.verificationCommands,
+    integrationBranch:
+      input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,
     updatedAt,
   };
 }
@@ -579,6 +586,12 @@ export const AutomodeSupervisorLive = Layer.effect(
               prompt: goal.prompt,
               name: goal.title,
               ...(effectiveModel ? { model: effectiveModel } : {}),
+              ...(state.policy.integrationBranch
+                ? {
+                    startRef: state.policy.integrationBranch,
+                    mergeBranch: `auto/slice/${goal.id}`,
+                  }
+                : {}),
               confine: true,
               yolo: true,
               egress: "host",
