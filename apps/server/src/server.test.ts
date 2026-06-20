@@ -124,6 +124,7 @@ import {
   type GitsCapacityMonitorShape,
 } from "./gits/Services/GitsCapacityMonitor.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
+import { VisualPlanMcpRegistryLive } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import {
@@ -1072,6 +1073,7 @@ const buildAppUnderTest = (options?: {
           }),
         ...options?.layers?.hermesAdapter,
       }),
+      VisualPlanMcpRegistryLive,
     );
 
     const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
