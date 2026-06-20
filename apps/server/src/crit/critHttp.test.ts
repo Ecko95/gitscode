@@ -70,6 +70,7 @@ const make_thread = (overrides: Partial<OrchestrationThread> = {}): Orchestratio
   deletedAt: null,
   messages: [],
   proposedPlans: [],
+  visualPlans: [],
   activities: [],
   checkpoints: [],
   session: null,

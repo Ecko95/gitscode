@@ -4056,7 +4056,11 @@ export default function ChatView(props: ChatViewProps) {
             />
           ) : null}
           {visualPlanOpen && !shouldUsePlanSidebarSheet ? (
-            <VisualPlanPanel visualPlan={activeVisualPlan} mode="sidebar" onClose={closeVisualPlan} />
+            <VisualPlanPanel
+              visualPlan={activeVisualPlan}
+              mode="sidebar"
+              onClose={closeVisualPlan}
+            />
           ) : null}
         </Suspense>
       </div>
