@@ -70,7 +70,7 @@ describe("exportPlanToMarkdown", () => {
     const md = exportPlanToMarkdown(baseContent, [
       {
         id: "c1",
-        anchor: { textQuote: "users can log in", resolutionTarget: "agent" },
+        anchor: { textQuote: "users can log in" },
         message: "clarify SSO",
         createdBy: "human",
         resolutionTarget: "agent",
