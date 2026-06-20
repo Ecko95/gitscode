@@ -21,6 +21,7 @@ import {
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
+  ThreadVisualPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadUnarchivedPayload,
   ThreadRevertedPayload,
@@ -494,6 +495,38 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             proposedPlans,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.visual-plan-upserted":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadVisualPlanUpsertedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const visualPlans = [
+          ...thread.visualPlans.filter((entry) => entry.id !== payload.visualPlan.id),
+          payload.visualPlan,
+        ]
+          .toSorted(
+            (left, right) =>
+              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          )
+          .slice(-50);
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            visualPlans,
             updatedAt: event.occurredAt,
           }),
         };

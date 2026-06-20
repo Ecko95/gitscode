@@ -21,6 +21,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { PlanComment, PlanContent } from "./visualPlan.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -246,6 +247,19 @@ const SourceProposedPlanReference = Schema.Struct({
   planId: OrchestrationProposedPlanId,
 });
 
+export const OrchestrationVisualPlanId = TrimmedNonEmptyString;
+export type OrchestrationVisualPlanId = typeof OrchestrationVisualPlanId.Type;
+
+export const OrchestrationVisualPlan = Schema.Struct({
+  id: OrchestrationVisualPlanId,
+  turnId: Schema.NullOr(TurnId),
+  content: PlanContent,
+  comments: Schema.Array(PlanComment).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationVisualPlan = typeof OrchestrationVisualPlan.Type;
+
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
   "starting",
@@ -348,6 +362,9 @@ export const OrchestrationThread = Schema.Struct({
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  visualPlans: Schema.Array(OrchestrationVisualPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
@@ -721,6 +738,14 @@ const ThreadProposedPlanUpsertCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadVisualPlanUpsertCommand = Schema.Struct({
+  type: Schema.Literal("thread.visual-plan.upsert"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  visualPlan: OrchestrationVisualPlan,
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnDiffCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.diff.complete"),
   commandId: CommandId,
@@ -756,6 +781,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadProposedPlanUpsertCommand,
+  ThreadVisualPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
@@ -789,6 +815,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.session-stop-requested",
   "thread.session-set",
   "thread.proposed-plan-upserted",
+  "thread.visual-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
 ]);
@@ -949,6 +976,11 @@ export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
   proposedPlan: OrchestrationProposedPlan,
 });
 
+export const ThreadVisualPlanUpsertedPayload = Schema.Struct({
+  threadId: ThreadId,
+  visualPlan: OrchestrationVisualPlan,
+});
+
 export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -1086,6 +1118,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.proposed-plan-upserted"),
     payload: ThreadProposedPlanUpsertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.visual-plan-upserted"),
+    payload: ThreadVisualPlanUpsertedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
