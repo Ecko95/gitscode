@@ -114,4 +114,37 @@ describe("DelamainCliAdapter", () => {
       expect(error.message).toBe("Delamain command output exceeded 8388608 bytes.");
     }).pipe(Effect.provide(TestLayer)),
   );
+
+  it.effect("forwards confine/egress/yolo flags to `delamain spawn`", () =>
+    Effect.gen(function* () {
+      runMock.mockImplementationOnce((input) => {
+        expect(input.command).toBe("delamain");
+        expect(input.args).toEqual([
+          "spawn",
+          "--repo", "/tmp/repo",
+          "--prompt", "do the thing",
+          "--yolo",
+          "--confine",
+          "--egress", "host",
+        ]);
+        return Effect.succeed({
+          stdout: JSON.stringify({ id: "peer-x", status: "running", engine: "codex" }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+      });
+      const adapter = yield* DelamainAdapter;
+      const peer = yield* adapter.spawnPeer({
+        repo: "/tmp/repo",
+        prompt: "do the thing",
+        yolo: true,
+        confine: true,
+        egress: "host",
+      });
+      expect(peer.id).toBe("peer-x");
+    }).pipe(Effect.provide(TestLayer)),
+  );
 });
