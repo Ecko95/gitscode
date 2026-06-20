@@ -40,6 +40,11 @@ const proposedPlanOrder = O.combine<OrchestrationThread["proposedPlans"][number]
   O.mapInput(O.String, (p) => p.id),
 );
 
+const visualPlanOrder = O.combine<OrchestrationThread["visualPlans"][number]>(
+  O.mapInput(O.String, (p) => p.createdAt),
+  O.mapInput(O.String, (p) => p.id),
+);
+
 const checkpointOrder = O.mapInput(
   O.Number,
   (cp: OrchestrationThread["checkpoints"][number]) =>
@@ -93,6 +98,7 @@ export function applyThreadDetailEvent(
           deletedAt: null,
           messages: [],
           proposedPlans: [],
+          visualPlans: [],
           activities: [],
           checkpoints: [],
           session: null,
@@ -351,6 +357,24 @@ export function applyThreadDetailEvent(
       return {
         kind: "updated",
         thread: { ...thread, proposedPlans, updatedAt: event.occurredAt },
+      };
+    }
+
+    // ── Visual plans ────────────────────────────────────────────────
+    case "thread.visual-plan-upserted": {
+      const visualPlan = event.payload.visualPlan;
+
+      const visualPlans = pipe(
+        thread.visualPlans,
+        Arr.filter((entry) => entry.id !== visualPlan.id),
+        Arr.append(visualPlan),
+        Arr.sort(visualPlanOrder),
+        Arr.takeRight(limits.maxProposedPlans),
+      );
+
+      return {
+        kind: "updated",
+        thread: { ...thread, visualPlans, updatedAt: event.occurredAt },
       };
     }
 

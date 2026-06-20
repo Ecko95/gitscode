@@ -14,6 +14,7 @@ import type {
   OrchestrationThread,
   OrchestrationThreadShell,
   OrchestrationThreadActivity,
+  OrchestrationVisualPlan,
   ProjectId,
   ScopedProjectRef,
   ScopedThreadRef,
@@ -81,6 +82,7 @@ export interface EnvironmentState {
   activityByThreadId: Record<ThreadId, Record<string, OrchestrationThreadActivity>>;
   proposedPlanIdsByThreadId: Record<ThreadId, string[]>;
   proposedPlanByThreadId: Record<ThreadId, Record<string, ProposedPlan>>;
+  visualPlanByThreadId: Record<ThreadId, OrchestrationVisualPlan[]>;
   turnDiffIdsByThreadId: Record<ThreadId, TurnId[]>;
   turnDiffSummaryByThreadId: Record<ThreadId, Record<TurnId, TurnDiffSummary>>;
 
@@ -115,6 +117,7 @@ const initialEnvironmentState: EnvironmentState = {
   activityByThreadId: {},
   proposedPlanIdsByThreadId: {},
   proposedPlanByThreadId: {},
+  visualPlanByThreadId: {},
   turnDiffIdsByThreadId: {},
   turnDiffSummaryByThreadId: {},
   sidebarThreadSummaryById: {},
@@ -249,6 +252,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     session: thread.session ? mapSession(thread.session) : null,
     messages: thread.messages.map((message) => mapMessage(environmentId, message)),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
+    visualPlans: thread.visualPlans.map((plan) => ({ ...plan })),
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
@@ -668,6 +672,16 @@ function writeThreadState(
     };
   }
 
+  if (previousThread?.visualPlans !== nextThread.visualPlans) {
+    nextState = {
+      ...nextState,
+      visualPlanByThreadId: {
+        ...nextState.visualPlanByThreadId,
+        [nextThread.id]: nextThread.visualPlans,
+      },
+    };
+  }
+
   if (previousThread?.turnDiffSummaries !== nextThread.turnDiffSummaries) {
     const nextTurnDiffSlice = buildTurnDiffSlice(nextThread);
     nextState = {
@@ -808,6 +822,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   const { [threadId]: _removedPlanIds, ...proposedPlanIdsByThreadId } =
     state.proposedPlanIdsByThreadId;
   const { [threadId]: _removedPlans, ...proposedPlanByThreadId } = state.proposedPlanByThreadId;
+  const { [threadId]: _removedVisualPlans, ...visualPlanByThreadId } = state.visualPlanByThreadId;
   const { [threadId]: _removedTurnDiffIds, ...turnDiffIdsByThreadId } = state.turnDiffIdsByThreadId;
   const { [threadId]: _removedTurnDiffs, ...turnDiffSummaryByThreadId } =
     state.turnDiffSummaryByThreadId;
@@ -827,6 +842,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     activityByThreadId,
     proposedPlanIdsByThreadId,
     proposedPlanByThreadId,
+    visualPlanByThreadId,
     turnDiffIdsByThreadId,
     turnDiffSummaryByThreadId,
     sidebarThreadSummaryById,
@@ -1278,6 +1294,7 @@ function applyEnvironmentOrchestrationEvent(
           deletedAt: null,
           messages: [],
           proposedPlans: [],
+          visualPlans: [],
           activities: [],
           checkpoints: [],
           session: null,
@@ -1521,6 +1538,25 @@ function applyEnvironmentOrchestrationEvent(
         return {
           ...thread,
           proposedPlans,
+          updatedAt: event.occurredAt,
+        };
+      });
+
+    case "thread.visual-plan-upserted":
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        const visualPlan = event.payload.visualPlan;
+        const visualPlans = [
+          ...thread.visualPlans.filter((entry) => entry.id !== visualPlan.id),
+          visualPlan,
+        ]
+          .toSorted(
+            (left, right) =>
+              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          )
+          .slice(-MAX_THREAD_PROPOSED_PLANS);
+        return {
+          ...thread,
+          visualPlans,
           updatedAt: event.occurredAt,
         };
       });
