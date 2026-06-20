@@ -109,6 +109,7 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 // don't need to sit in the eager ChatView chunk.
 const DelamainSidebar = lazy(() => import("./DelamainSidebar"));
 const PlanSidebar = lazy(() => import("./PlanSidebar"));
+const VisualPlanPanel = lazy(() => import("./VisualPlanPanel"));
 // Lazy-loaded: pulls xterm.js (+addons) and the terminal CSS into a separate
 // chunk that only downloads when a user actually opens a terminal drawer.
 const ThreadTerminalDrawer = lazy(() => import("./ThreadTerminalDrawer"));
@@ -876,6 +877,7 @@ export default function ChatView(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [delamainSidebarOpen, setDelamainSidebarOpen] = useState(false);
+  const [visualPlanOpen, setVisualPlanOpen] = useState(false);
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -1551,6 +1553,10 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  const activeVisualPlan = useMemo(() => {
+    const plans = activeThread?.visualPlans ?? [];
+    return plans.length > 0 ? (plans[plans.length - 1] ?? null) : null;
+  }, [activeThread?.visualPlans]);
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const delamainPeersQuery = useQuery({
     queryKey: ["gits", "delamain", "peers", environmentId],
@@ -2429,10 +2435,20 @@ export default function ChatView(props: ChatViewProps) {
           activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
       } else {
         planSidebarDismissedForTurnRef.current = null;
+        setVisualPlanOpen(false);
       }
       return !open;
     });
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  const toggleVisualPlan = useCallback(() => {
+    setVisualPlanOpen((open) => {
+      if (!open) {
+        setPlanSidebarOpen(false);
+      }
+      return !open;
+    });
+  }, []);
+  const closeVisualPlan = useCallback(() => setVisualPlanOpen(false), []);
   const closePlanSidebar = useCallback(() => {
     setPlanSidebarOpen(false);
     planSidebarDismissedForTurnRef.current =
@@ -3926,6 +3942,8 @@ export default function ChatView(props: ChatViewProps) {
                   sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
                   planSidebarLabel={planSidebarLabel}
                   planSidebarOpen={planSidebarOpen}
+                  visualPlanOpen={visualPlanOpen}
+                  hasVisualPlan={Boolean(activeVisualPlan)}
                   hasDeployedDelamainPeers={hasDeployedDelamainPeers}
                   delamainSidebarOpen={delamainSidebarOpen}
                   runtimeMode={runtimeMode}
@@ -3963,6 +3981,7 @@ export default function ChatView(props: ChatViewProps) {
                   handleInteractionModeChange={handleInteractionModeChange}
                   togglePlanSidebar={togglePlanSidebar}
                   toggleDelamainSidebar={toggleDelamainSidebar}
+                  toggleVisualPlan={toggleVisualPlan}
                   focusComposer={focusComposer}
                   scheduleComposerFocus={scheduleComposerFocus}
                   setThreadError={setThreadError}
@@ -4036,6 +4055,9 @@ export default function ChatView(props: ChatViewProps) {
               onClose={closeDelamainSidebar}
             />
           ) : null}
+          {visualPlanOpen && !shouldUsePlanSidebarSheet ? (
+            <VisualPlanPanel visualPlan={activeVisualPlan} mode="sidebar" onClose={closeVisualPlan} />
+          ) : null}
         </Suspense>
       </div>
       {/* end horizontal flex container */}
@@ -4084,6 +4106,12 @@ export default function ChatView(props: ChatViewProps) {
               onClose={closeDelamainSidebar}
             />
           </Suspense>
+        </RightPanelSheet>
+      ) : null}
+
+      {shouldUsePlanSidebarSheet ? (
+        <RightPanelSheet open={visualPlanOpen} onClose={closeVisualPlan}>
+          <VisualPlanPanel visualPlan={activeVisualPlan} mode="sheet" onClose={closeVisualPlan} />
         </RightPanelSheet>
       ) : null}
 
