@@ -116,7 +116,7 @@ import {
   gitsMcpInventoryRouteLayer,
   gitsSkillInventoryRouteLayer,
 } from "./gits/http.ts";
-import { visualPlanMcpRouteLayer, VisualPlanMcpRegistryLive } from "./gits/mcp/http.ts";
+import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -288,7 +288,6 @@ const GitsLayerLive = Layer.empty.pipe(
       Layer.provide(GitsConfinedVerifyAdapterLive),
     ),
   ),
-  Layer.provideMerge(VisualPlanMcpRegistryLive),
 );
 
 const VcsLayerLive = Layer.empty.pipe(
