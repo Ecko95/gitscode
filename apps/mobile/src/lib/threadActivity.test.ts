@@ -42,6 +42,7 @@ function makeThread(
     proposedPlans: [],
     activities: [],
     checkpoints: [],
+    visualPlans: [],
     session: null,
     ...input,
   };
