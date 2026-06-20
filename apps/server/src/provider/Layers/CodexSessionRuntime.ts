@@ -36,6 +36,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import { issueVisualPlanToken } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
@@ -103,6 +104,7 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  readonly visualPlanMcpUrl?: string;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -287,6 +289,7 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly visualPlanMcp: { readonly url: string; readonly token: string } | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -295,6 +298,20 @@ function buildThreadStartParams(input: {
     sandbox: config.sandbox,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    // Per-thread config override (mirrors config.toml). Registers the GITS
+    // visual-plan MCP as a streamable-HTTP server scoped to this thread's token.
+    ...(input.visualPlanMcp
+      ? {
+          config: {
+            mcp_servers: {
+              "gits-visual-plan": {
+                url: input.visualPlanMcp.url,
+                bearer_token: input.visualPlanMcp.token,
+              },
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -437,6 +454,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly visualPlanMcpUrl: string | undefined;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -444,6 +462,9 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    visualPlanMcp: input.visualPlanMcpUrl
+      ? { url: input.visualPlanMcpUrl, token: issueVisualPlanToken(input.threadId) }
+      : undefined,
   });
 
   if (resumeThreadId === undefined) {
@@ -1202,6 +1223,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        visualPlanMcpUrl: options.visualPlanMcpUrl,
       });
 
       const providerThreadId = opened.thread.id;
