@@ -351,4 +351,73 @@ describe("AutomodeSupervisorLive", () => {
       ),
     ),
   );
+
+  it.effect("completeGoal transitions a running goal to completed", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Done goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(dispatched.goal.status, "running");
+
+      const completed = yield* supervisor.completeGoal({ goalId: dispatched.goal.id });
+      assert.equal(completed.status, "completed");
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.find((g) => g.id === completed.id)?.status, "completed");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("failGoal marks failed with reason; haltDriver/resumeDriver toggle the flag", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Failing goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const goalId = queued.goals[0]!.id;
+
+      const failed = yield* supervisor.failGoal({ goalId, reason: "Peer crashed." });
+      assert.equal(failed.status, "failed");
+      assert.equal(failed.blockedReason, "Peer crashed.");
+
+      const halted = yield* supervisor.haltDriver({ reason: "Halted after failure." });
+      assert.equal(halted.driverHalted, true);
+      assert.equal(halted.driverHaltedReason, "Halted after failure.");
+
+      const resumed = yield* supervisor.resumeDriver();
+      assert.equal(resumed.driverHalted, false);
+      assert.equal(resumed.driverHaltedReason, null);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("driverHalted persists across supervisor restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "gits-automode-halt-test-" });
+
+      yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.haltDriver({ reason: "Persist me." });
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+
+      const after = yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        return yield* supervisor.getSnapshot();
+      }).pipe(Effect.provide(makeLayer({ baseDir })));
+
+      assert.equal(after.driverHalted, true);
+      assert.equal(after.driverHaltedReason, "Persist me.");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

@@ -18,7 +18,9 @@ import {
   AutomodeSupervisorError,
   type AutomodeBudgetUsage,
   type AutomodeDispatchResult,
+  type AutomodeDriverHaltInput,
   type AutomodeGoal,
+  type AutomodeGoalOutcomeInput,
   type AutomodeGoalStatus,
   type AutomodePolicyUpdateInput,
   type AutomodePolicy,
@@ -39,6 +41,8 @@ import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 interface AutomodeState {
   readonly policy: AutomodePolicy;
   readonly goals: ReadonlyArray<AutomodeGoal>;
+  readonly driverHalted: boolean;
+  readonly driverHaltedReason: string | null;
   readonly lastEvent: string | null;
   readonly updatedAt: string;
 }
@@ -52,6 +56,8 @@ const PersistedAutomodeState = Schema.Struct({
   version: Schema.Literal(1),
   policy: AutomodePolicySchema,
   goals: Schema.Array(AutomodeGoalSchema),
+  driverHalted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  driverHaltedReason: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   lastEvent: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
 });
@@ -89,6 +95,8 @@ function toPersistedAutomodeState(state: AutomodeState): PersistedAutomodeState 
     version: 1,
     policy: state.policy,
     goals: [...state.goals],
+    driverHalted: state.driverHalted,
+    driverHaltedReason: state.driverHaltedReason,
     lastEvent: state.lastEvent,
     updatedAt: state.updatedAt,
   };
@@ -98,6 +106,8 @@ function fromPersistedAutomodeState(state: PersistedAutomodeState): AutomodeStat
   return {
     policy: state.policy,
     goals: state.goals,
+    driverHalted: state.driverHalted,
+    driverHaltedReason: state.driverHaltedReason,
     lastEvent: state.lastEvent,
     updatedAt: state.updatedAt,
   };
@@ -256,6 +266,8 @@ function makeSnapshot(
     goals: sortGoals(state.goals),
     activePeerCount: activePeers,
     pendingApprovalCount: pendingApprovalCount(state.goals),
+    driverHalted: state.driverHalted,
+    driverHaltedReason: state.driverHaltedReason,
     lastEvent: state.lastEvent,
     updatedAt: state.updatedAt,
   };
@@ -299,6 +311,8 @@ export const AutomodeSupervisorLive = Layer.effect(
     const initialState = yield* loadAutomodeState(statePath, {
       policy: defaultPolicy(initializedAt),
       goals: [],
+      driverHalted: false,
+      driverHaltedReason: null,
       lastEvent: "Automode initialized with kill switch enabled.",
       updatedAt: initializedAt,
     });
@@ -599,6 +613,81 @@ export const AutomodeSupervisorLive = Layer.effect(
             approvalRequired: false,
             blockedReason: null,
           } satisfies AutomodeDispatchResult;
+        }),
+      completeGoal: (input) =>
+        Effect.gen(function* () {
+          const completedAt = yield* nowIso;
+          const nextState = yield* commitState((state) => {
+            const goal = findGoal(state, input.goalId);
+            if (goal === null) {
+              return state;
+            }
+            return updateGoal(
+              { ...state, lastEvent: `Completed ${goal.title}.`, updatedAt: completedAt },
+              input.goalId,
+              (existing) => ({
+                ...existing,
+                status: "completed",
+                blockedReason: null,
+                updatedAt: completedAt,
+              }),
+            );
+          });
+          const goal = findGoal(nextState, input.goalId);
+          if (goal === null) {
+            return yield* toAutomodeError(`Automode goal ${input.goalId} was not found.`);
+          }
+          return goal;
+        }),
+      failGoal: (input) =>
+        Effect.gen(function* () {
+          const failedAt = yield* nowIso;
+          const reason = input.reason ?? "Peer ended in a failure state.";
+          const nextState = yield* commitState((state) => {
+            const goal = findGoal(state, input.goalId);
+            if (goal === null) {
+              return state;
+            }
+            return updateGoal(
+              { ...state, lastEvent: `Failed ${goal.title}.`, updatedAt: failedAt },
+              input.goalId,
+              (existing) => ({
+                ...existing,
+                status: "failed",
+                blockedReason: reason,
+                updatedAt: failedAt,
+              }),
+            );
+          });
+          const goal = findGoal(nextState, input.goalId);
+          if (goal === null) {
+            return yield* toAutomodeError(`Automode goal ${input.goalId} was not found.`);
+          }
+          return goal;
+        }),
+      haltDriver: (input) =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const nextState = yield* commitState((state) => ({
+            ...state,
+            driverHalted: true,
+            driverHaltedReason: input.reason,
+            lastEvent: input.reason,
+            updatedAt,
+          }));
+          return yield* snapshotFromState(nextState);
+        }),
+      resumeDriver: () =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const nextState = yield* commitState((state) => ({
+            ...state,
+            driverHalted: false,
+            driverHaltedReason: null,
+            lastEvent: "Driver resumed by operator.",
+            updatedAt,
+          }));
+          return yield* snapshotFromState(nextState);
         }),
     };
 
