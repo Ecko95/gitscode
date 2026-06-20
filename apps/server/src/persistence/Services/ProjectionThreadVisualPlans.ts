@@ -36,8 +36,7 @@ export type ProjectionThreadVisualPlan = typeof ProjectionThreadVisualPlan.Type;
 export const ListProjectionThreadVisualPlansInput = Schema.Struct({
   threadId: ThreadId,
 });
-export type ListProjectionThreadVisualPlansInput =
-  typeof ListProjectionThreadVisualPlansInput.Type;
+export type ListProjectionThreadVisualPlansInput = typeof ListProjectionThreadVisualPlansInput.Type;
 
 export const DeleteProjectionThreadVisualPlansInput = Schema.Struct({
   threadId: ThreadId,
@@ -60,6 +59,4 @@ export interface ProjectionThreadVisualPlanRepositoryShape {
 export class ProjectionThreadVisualPlanRepository extends Context.Service<
   ProjectionThreadVisualPlanRepository,
   ProjectionThreadVisualPlanRepositoryShape
->()(
-  "t3/persistence/Services/ProjectionThreadVisualPlans/ProjectionThreadVisualPlanRepository",
-) {}
+>()("t3/persistence/Services/ProjectionThreadVisualPlans/ProjectionThreadVisualPlanRepository") {}

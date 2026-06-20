@@ -157,12 +157,12 @@ function LeafBlockView({ block }: { block: PlanLeafBlock }) {
           {block.data.entries.map((entry, i) => (
             <li key={i} className="flex items-baseline gap-1.5">
               {entry.change ? (
-                <span className="text-[9px] text-muted-foreground/50 uppercase">{entry.change}</span>
+                <span className="text-[9px] text-muted-foreground/50 uppercase">
+                  {entry.change}
+                </span>
               ) : null}
               <span className="text-foreground/80">{entry.path}</span>
-              {entry.note ? (
-                <span className="text-muted-foreground/50">— {entry.note}</span>
-              ) : null}
+              {entry.note ? <span className="text-muted-foreground/50">— {entry.note}</span> : null}
             </li>
           ))}
         </ul>
@@ -174,7 +174,9 @@ function LeafBlockView({ block }: { block: PlanLeafBlock }) {
           {block.data.files.map((file, i) => (
             <li key={i}>
               <span className="font-mono text-foreground/80">{file.path}</span>
-              {file.title ? <span className="text-muted-foreground/60"> ({file.title})</span> : null}
+              {file.title ? (
+                <span className="text-muted-foreground/60"> ({file.title})</span>
+              ) : null}
               <div className="text-muted-foreground/70">{file.note}</div>
             </li>
           ))}

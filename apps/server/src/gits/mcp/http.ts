@@ -91,7 +91,9 @@ const loadState = (threadId: ThreadId) =>
       return Option.some(cached);
     }
     const snapshot = yield* ProjectionSnapshotQuery;
-    const detail = yield* snapshot.getThreadDetailById(threadId).pipe(Effect.orElseSucceed(() => Option.none()));
+    const detail = yield* snapshot
+      .getThreadDetailById(threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(detail)) {
       return Option.none<VisualPlanState>();
     }
@@ -130,7 +132,9 @@ const upsertVisualPlan = (threadId: ThreadId, next: VisualPlanState) =>
         visualPlan,
         createdAt: at,
       })
-      .pipe(Effect.catch((cause: unknown) => Effect.logError("visual-plan dispatch failed", cause)));
+      .pipe(
+        Effect.catch((cause: unknown) => Effect.logError("visual-plan dispatch failed", cause)),
+      );
     setVisualPlanState(threadId, next);
   });
 
@@ -174,7 +178,9 @@ const callTool = (threadId: ThreadId, name: string, args: Record<string, unknown
           createdAt: Option.isSome(existing) ? existing.value.createdAt : at,
         };
         yield* upsertVisualPlan(threadId, next);
-        return toolText("Visual plan created. It is now rendering in the GITS visual plan side panel.");
+        return toolText(
+          "Visual plan created. It is now rendering in the GITS visual plan side panel.",
+        );
       }
 
       case "update-visual-plan": {
@@ -229,7 +235,8 @@ export const visualPlanMcpRouteLayer = HttpRouter.add(
 
     switch (method) {
       case "initialize": {
-        const requested = (message.params?.protocolVersion as string | undefined) ?? PROTOCOL_VERSION;
+        const requested =
+          (message.params?.protocolVersion as string | undefined) ?? PROTOCOL_VERSION;
         return jsonRpcResult(id, {
           protocolVersion: requested,
           capabilities: { tools: { listChanged: false } },
