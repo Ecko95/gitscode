@@ -36,12 +36,12 @@ All tools are exposed by the `gits-visual-plan` MCP server (call them as
    - `api-endpoint` / `data-model` for contracts and schema.
    - `callout` with `tone: "decision"` for hard-to-reverse choices; `tone: "risk"` for risks.
    - `question-form` (single block, at the end) for open questions needing the user's call.
-3. **Tell the user** the plan is rendering in the GITS visual plan panel and ask them to
+4. **Tell the user** the plan is rendering in the GITS visual plan panel and ask them to
    review, edit, and comment there. **Do not start implementing** until they approve.
-4. **Before revising,** call `get-plan-feedback`. Act on comments whose
+5. **Before revising,** call `get-plan-feedback`. Act on comments whose
    `resolutionTarget` is `"agent"`; apply targeted `update-visual-plan` patches rather
    than recreating the whole plan.
-5. When the user approves, implement from the plan (and their edits/comments).
+6. When the user approves, implement from the plan (and their edits/comments).
 
 ## Discipline
 

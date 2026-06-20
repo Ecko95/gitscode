@@ -9,6 +9,7 @@
 **Tech Stack:** delamain = TypeScript/ESM, `node --test` over `dist/*.js`, `node:child_process` spawn. gitscode = effect Schema contracts, `@effect/vitest`, bash (`gits-confine.sh` + `bwrap`).
 
 **Repos & branches:**
+
 - gitscode: branch `feat/confined-yolo-spawn` off `origin/gits`.
 - delamain: branch `feat/confine-codex-peer` off its default branch.
 
@@ -20,19 +21,19 @@
 
 ## File Structure
 
-| Repo | File | Responsibility | Change |
-|---|---|---|---|
-| gitscode | `scripts/gits-confine.sh` | Add repeatable `--setenv KEY=VAL` passed into the bwrap env (so the jail can receive `CODEX_HOME`). | Modify |
-| gitscode | `spikes/h0b-confined-codex/run-spike.sh` (+ `SPIKE_FINDINGS.md`) | Empirically determine the exact confined-`codex exec` invocation that authenticates and completes a trivial task. | Create |
-| gitscode | `packages/contracts/src/gits.ts` | Add `confine`/`egress` to `DelamainSpawnPeerInput`. | Modify |
-| gitscode | `apps/server/src/gits/Services/DelamainAdapter.ts` | (No change — `spawnPeer` param type derives from the contract via `Parameters<…>`.) | — |
-| gitscode | `apps/server/src/gits/Layers/DelamainCliAdapter.ts` | `spawnArgs` maps `confine`→`--confine`, `egress`→`--egress <v>`. | Modify |
-| gitscode | `apps/server/src/gits/Layers/DelamainCliAdapter.test.ts` | First `spawnPeer`/`spawnArgs` argv test (asserts `--confine`/`--egress`/`--yolo`). | Modify |
-| gitscode | `apps/server/src/gits/Layers/AutomodeSupervisor.ts` | The driver's spawn (`dispatchGoal` → `spawnPeer`) passes `confine:true, yolo:true, egress:"host"` in autonomous mode. | Modify |
-| gitscode | `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts` | Assert the autonomous dispatch passes confine/yolo/egress to spawn. | Modify |
-| delamain | `src/runner.ts` | Export `buildCodexArgs`; add a pure `buildConfinedCommand(...)`; wrap the codex `spawn` through `gits-confine.sh` when confinement is on. | Modify |
-| delamain | `src/cli.ts` + `src/peerManager.ts` + `src/runner.ts` | Parse `--confine`/`--egress`; thread through `spawnRunner` → `run-peer` → `parseArgs`. | Modify |
-| delamain | `tests/runner.test.mjs` | New: unit-test `buildConfinedCommand` (argv shape). | Create |
+| Repo     | File                                                             | Responsibility                                                                                                                            | Change |
+| -------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| gitscode | `scripts/gits-confine.sh`                                        | Add repeatable `--setenv KEY=VAL` passed into the bwrap env (so the jail can receive `CODEX_HOME`).                                       | Modify |
+| gitscode | `spikes/h0b-confined-codex/run-spike.sh` (+ `SPIKE_FINDINGS.md`) | Empirically determine the exact confined-`codex exec` invocation that authenticates and completes a trivial task.                         | Create |
+| gitscode | `packages/contracts/src/gits.ts`                                 | Add `confine`/`egress` to `DelamainSpawnPeerInput`.                                                                                       | Modify |
+| gitscode | `apps/server/src/gits/Services/DelamainAdapter.ts`               | (No change — `spawnPeer` param type derives from the contract via `Parameters<…>`.)                                                       | —      |
+| gitscode | `apps/server/src/gits/Layers/DelamainCliAdapter.ts`              | `spawnArgs` maps `confine`→`--confine`, `egress`→`--egress <v>`.                                                                          | Modify |
+| gitscode | `apps/server/src/gits/Layers/DelamainCliAdapter.test.ts`         | First `spawnPeer`/`spawnArgs` argv test (asserts `--confine`/`--egress`/`--yolo`).                                                        | Modify |
+| gitscode | `apps/server/src/gits/Layers/AutomodeSupervisor.ts`              | The driver's spawn (`dispatchGoal` → `spawnPeer`) passes `confine:true, yolo:true, egress:"host"` in autonomous mode.                     | Modify |
+| gitscode | `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`         | Assert the autonomous dispatch passes confine/yolo/egress to spawn.                                                                       | Modify |
+| delamain | `src/runner.ts`                                                  | Export `buildCodexArgs`; add a pure `buildConfinedCommand(...)`; wrap the codex `spawn` through `gits-confine.sh` when confinement is on. | Modify |
+| delamain | `src/cli.ts` + `src/peerManager.ts` + `src/runner.ts`            | Parse `--confine`/`--egress`; thread through `spawnRunner` → `run-peer` → `parseArgs`.                                                    | Modify |
+| delamain | `tests/runner.test.mjs`                                          | New: unit-test `buildConfinedCommand` (argv shape).                                                                                       | Create |
 
 ---
 
@@ -41,6 +42,7 @@
 **Why:** the jail `--clearenv`s and only sets a fixed env set, so a confined codex never receives `CODEX_HOME` and can't find its bound credential. Add a passthrough.
 
 **Files:**
+
 - Modify: `scripts/gits-confine.sh` (arg parser ~28-48; bwrap exec ~106-128)
 - Test: `spikes/h0b-confined-codex/setenv.test.sh` (Create)
 
@@ -135,6 +137,7 @@ rtk git commit -m "feat(confine): add --setenv KEY=VAL passthrough to gits-confi
 **Why:** Whether a confined codex authenticates depends on `CODEX_HOME` placement and whether codex needs to **write** to its home (sessions/rollout). The bound creds are read-only; the recipe must be proven, not assumed. This spike produces the exact, working `gits-confine.sh … -- codex exec …` invocation that Task 5 (delamain) encodes.
 
 **Files:**
+
 - Create: `spikes/h0b-confined-codex/run-spike.sh`, `spikes/h0b-confined-codex/SPIKE_FINDINGS.md`
 
 - [ ] **Step 1: Write the spike script**
@@ -210,6 +213,7 @@ rtk git commit -m "spike(confine): determine working confined codex exec recipe 
 ## Task 3 (gitscode) — spawn contract: `confine` + `egress`
 
 **Files:**
+
 - Modify: `packages/contracts/src/gits.ts` (`DelamainSpawnPeerInput`, ~437-449)
 
 - [ ] **Step 1: Add the fields**
@@ -253,6 +257,7 @@ rtk git commit -m "feat(contracts): confine + egress fields on DelamainSpawnPeer
 ## Task 4 (gitscode) — `spawnArgs` maps the new fields to delamain flags + first spawn test
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/DelamainCliAdapter.ts` (`spawnArgs`, ~290-301)
 - Test: `apps/server/src/gits/Layers/DelamainCliAdapter.test.ts`
 
@@ -261,38 +266,41 @@ rtk git commit -m "feat(contracts): confine + egress fields on DelamainSpawnPeer
 Add to `apps/server/src/gits/Layers/DelamainCliAdapter.test.ts` (mirroring the `runMock.mockImplementationOnce` + `expect(input).toMatchObject({args})` idiom already in the file):
 
 ```typescript
-  it.effect("forwards confine/egress/yolo flags to `delamain spawn`", () =>
-    Effect.gen(function* () {
-      runMock.mockImplementationOnce((input) => {
-        expect(input.command).toBe("delamain");
-        expect(input.args).toEqual([
-          "spawn",
-          "--repo", "/tmp/repo",
-          "--prompt", "do the thing",
-          "--yolo",
-          "--confine",
-          "--egress", "host",
-        ]);
-        return Effect.succeed({
-          stdout: JSON.stringify({ id: "peer-x", status: "running", engine: "codex" }),
-          stderr: "",
-          code: ChildProcessSpawner.ExitCode(0),
-          timedOut: false,
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        });
+it.effect("forwards confine/egress/yolo flags to `delamain spawn`", () =>
+  Effect.gen(function* () {
+    runMock.mockImplementationOnce((input) => {
+      expect(input.command).toBe("delamain");
+      expect(input.args).toEqual([
+        "spawn",
+        "--repo",
+        "/tmp/repo",
+        "--prompt",
+        "do the thing",
+        "--yolo",
+        "--confine",
+        "--egress",
+        "host",
+      ]);
+      return Effect.succeed({
+        stdout: JSON.stringify({ id: "peer-x", status: "running", engine: "codex" }),
+        stderr: "",
+        code: ChildProcessSpawner.ExitCode(0),
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
       });
-      const adapter = yield* DelamainAdapter;
-      const peer = yield* adapter.spawnPeer({
-        repo: "/tmp/repo",
-        prompt: "do the thing",
-        yolo: true,
-        confine: true,
-        egress: "host",
-      });
-      expect(peer.id).toBe("peer-x");
-    }).pipe(Effect.provide(TestLayer)),
-  );
+    });
+    const adapter = yield* DelamainAdapter;
+    const peer = yield* adapter.spawnPeer({
+      repo: "/tmp/repo",
+      prompt: "do the thing",
+      yolo: true,
+      confine: true,
+      egress: "host",
+    });
+    expect(peer.id).toBe("peer-x");
+  }).pipe(Effect.provide(TestLayer)),
+);
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -305,8 +313,8 @@ Expected: FAIL — argv is missing `--confine`/`--egress` (spawnArgs doesn't emi
 In `spawnArgs` (`DelamainCliAdapter.ts`), after the `if (input.yolo) args.push("--yolo");` line and before `return args;`:
 
 ```typescript
-  if (input.confine) args.push("--confine");
-  if (input.egress) args.push("--egress", input.egress);
+if (input.confine) args.push("--confine");
+if (input.egress) args.push("--egress", input.egress);
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -328,6 +336,7 @@ rtk git commit -m "feat(automode): forward confine/egress spawn flags to delamai
 > Work in the **delamain** repo (`/home/joshua/dev/projects/delamain`), branch `feat/confine-codex-peer`. Encode the exact `gits-confine.sh` flag list validated in Task 2 (default to Recipe A if the spike was SKIPPED).
 
 **Files:**
+
 - Modify: `src/cli.ts`, `src/peerManager.ts`, `src/runner.ts`
 - Test: `tests/runner.test.mjs` (Create)
 
@@ -336,8 +345,8 @@ rtk git commit -m "feat(automode): forward confine/egress spawn flags to delamai
 In `src/cli.ts` `spawn` handler, parse `confine` (boolean, like `--yolo`) and `egress` (string, default `"host"` when confine is on) and add them to the `spawnPeer({...})` options. In `src/peerManager.ts` `spawnRunner` (the block that re-serialises `--model`/`--sandbox`/`--yolo`/`--engine` onto the `run-peer` argv, ~383-394), append:
 
 ```ts
-    if (options.confine) runArgs.push("--confine");
-    if (options.egress) runArgs.push("--egress", options.egress);
+if (options.confine) runArgs.push("--confine");
+if (options.egress) runArgs.push("--egress", options.egress);
 ```
 
 (match the surrounding `runArgs.push(...)` style and the option names used there). In `src/runner.ts` `parseArgs` (~268-310), read `--confine` (boolean) and `--egress` (string) into `RunnerArgs` (add `confine?: boolean; egress?: string` to the `RunnerArgs` type).
@@ -369,20 +378,32 @@ test("buildConfinedCommand wraps codex in gits-confine.sh --profile peer with wo
   const post = args.slice(sep + 1);
   assert.deepEqual(post, ["codex", "exec", "--json", "-C", "/wt/peer-1", "-"]);
   assert.deepEqual(pre, [
-    "--worktree", "/wt/peer-1",
-    "--profile", "peer",
-    "--label", "peer-1",
-    "--egress", "host",
-    "--cred", "/home/u/.delamain/peer-codex-home/auth.json",
-    "--cred", "/home/u/.delamain/peer-codex-home/config.toml",
-    "--setenv", "CODEX_HOME=/home/u/.delamain/peer-codex-home",
+    "--worktree",
+    "/wt/peer-1",
+    "--profile",
+    "peer",
+    "--label",
+    "peer-1",
+    "--egress",
+    "host",
+    "--cred",
+    "/home/u/.delamain/peer-codex-home/auth.json",
+    "--cred",
+    "/home/u/.delamain/peer-codex-home/config.toml",
+    "--setenv",
+    "CODEX_HOME=/home/u/.delamain/peer-codex-home",
   ]);
 });
 
 test("buildConfinedCommand returns the raw engine command when confineBin is empty", () => {
   const { command, args } = buildConfinedCommand({
-    confineBin: "", worktree: "/wt", codexHome: "/h", egress: "host",
-    label: "p", engineCmd: "codex", engineArgs: ["exec", "-"],
+    confineBin: "",
+    worktree: "/wt",
+    codexHome: "/h",
+    egress: "host",
+    label: "p",
+    engineCmd: "codex",
+    engineArgs: ["exec", "-"],
   });
   assert.equal(command, "codex");
   assert.deepEqual(args, ["exec", "-"]);
@@ -409,20 +430,28 @@ export interface ConfinedSpawnInput {
   readonly engineArgs: ReadonlyArray<string>;
 }
 
-export function buildConfinedCommand(
-  input: ConfinedSpawnInput,
-): { command: string; args: string[] } {
+export function buildConfinedCommand(input: ConfinedSpawnInput): {
+  command: string;
+  args: string[];
+} {
   if (!input.confineBin) {
     return { command: input.engineCmd, args: [...input.engineArgs] };
   }
   const pre = [
-    "--worktree", input.worktree,
-    "--profile", "peer",
-    "--label", input.label,
-    "--egress", input.egress,
-    "--cred", `${input.codexHome}/auth.json`,
-    "--cred", `${input.codexHome}/config.toml`,
-    "--setenv", `CODEX_HOME=${input.codexHome}`,
+    "--worktree",
+    input.worktree,
+    "--profile",
+    "peer",
+    "--label",
+    input.label,
+    "--egress",
+    input.egress,
+    "--cred",
+    `${input.codexHome}/auth.json`,
+    "--cred",
+    `${input.codexHome}/config.toml`,
+    "--setenv",
+    `CODEX_HOME=${input.codexHome}`,
   ];
   return { command: input.confineBin, args: [...pre, "--", input.engineCmd, ...input.engineArgs] };
 }
@@ -435,25 +464,25 @@ export function buildConfinedCommand(
 In `src/runner.ts` (~46-67), replace the direct `spawn("codex", codexArgs, {...})` with the confined form. Compute the confine binary from env, gated on `args.confine`:
 
 ```ts
-  const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".delamain", "peer-codex-home");
-  const confineBin = args.confine ? (process.env.GITS_CONFINE_BIN ?? "gits-confine.sh") : "";
-  const { command, args: spawnArgv } = buildConfinedCommand({
-    confineBin,
-    worktree: args.repo,
-    codexHome,
-    egress: args.egress ?? "host",
-    label: args.peerId,
-    engineCmd: "codex",
-    engineArgs: codexArgs,
-  });
-  append(log, `[delamain] starting: ${command} ${spawnArgv.join(" ")}\n`);
-  // ... existing updatePeer(...) ...
-  const child = spawn(command, spawnArgv, {
-    cwd: args.repo,
-    detached: true,
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, CODEX_HOME: codexHome },
-  });
+const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".delamain", "peer-codex-home");
+const confineBin = args.confine ? (process.env.GITS_CONFINE_BIN ?? "gits-confine.sh") : "";
+const { command, args: spawnArgv } = buildConfinedCommand({
+  confineBin,
+  worktree: args.repo,
+  codexHome,
+  egress: args.egress ?? "host",
+  label: args.peerId,
+  engineCmd: "codex",
+  engineArgs: codexArgs,
+});
+append(log, `[delamain] starting: ${command} ${spawnArgv.join(" ")}\n`);
+// ... existing updatePeer(...) ...
+const child = spawn(command, spawnArgv, {
+  cwd: args.repo,
+  detached: true,
+  stdio: ["pipe", "pipe", "pipe"],
+  env: { ...process.env, CODEX_HOME: codexHome },
+});
 ```
 
 Leave the stdin prompt write (`child.stdin.write(prompt)`) unchanged — bubblewrap passes stdin through to the confined codex, which reads the prompt from the trailing `-` argv.
@@ -475,6 +504,7 @@ git -C /home/joshua/dev/projects/delamain commit -m "feat(confine): run codex pe
 ## Task 6 (gitscode) — driver requests confine+yolo for autonomous spawns
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.ts` (the `dispatchGoal` → `spawnPeer` call, ~562-573)
 - Test: `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`
 
@@ -483,30 +513,36 @@ git -C /home/joshua/dev/projects/delamain commit -m "feat(confine): run codex pe
 Add to `AutomodeSupervisor.test.ts` — extend the existing spawn spy. The `makeLayer` `onSpawn` callback receives the spawn input; assert confine/yolo/egress. (If `onSpawn`'s type doesn't expose the new fields, widen it to receive the full input object.)
 
 ```typescript
-  it.effect("autonomous dispatch requests a confined --yolo peer", () => {
-    let spawnInput: { confine?: boolean; yolo?: boolean; egress?: string } | null = null;
-    return Effect.gen(function* () {
-      const supervisor = yield* AutomodeSupervisor;
-      yield* supervisor.updatePolicy({
-        mode: "autonomous",
-        killSwitchEnabled: false,
-        maxActivePeers: 1,
-        allowedRepos: ["/tmp/source-repo"],
-        requireApprovalForPeerSpawn: false,
-      });
-      const queued = yield* supervisor.enqueueGoal({
-        title: "Confined goal",
-        repo: "/tmp/source-repo",
-        prompt: "Run a safe task.",
-      });
-      yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
-      assert.equal(spawnInput?.confine, true);
-      assert.equal(spawnInput?.yolo, true);
-      assert.equal(spawnInput?.egress, "host");
-    }).pipe(
-      Effect.provide(makeLayer({ onSpawn: (input) => { spawnInput = input; } })),
-    );
-  });
+it.effect("autonomous dispatch requests a confined --yolo peer", () => {
+  let spawnInput: { confine?: boolean; yolo?: boolean; egress?: string } | null = null;
+  return Effect.gen(function* () {
+    const supervisor = yield* AutomodeSupervisor;
+    yield* supervisor.updatePolicy({
+      mode: "autonomous",
+      killSwitchEnabled: false,
+      maxActivePeers: 1,
+      allowedRepos: ["/tmp/source-repo"],
+      requireApprovalForPeerSpawn: false,
+    });
+    const queued = yield* supervisor.enqueueGoal({
+      title: "Confined goal",
+      repo: "/tmp/source-repo",
+      prompt: "Run a safe task.",
+    });
+    yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+    assert.equal(spawnInput?.confine, true);
+    assert.equal(spawnInput?.yolo, true);
+    assert.equal(spawnInput?.egress, "host");
+  }).pipe(
+    Effect.provide(
+      makeLayer({
+        onSpawn: (input) => {
+          spawnInput = input;
+        },
+      }),
+    ),
+  );
+});
 ```
 
 > The existing `makeLayer` `onSpawn` is typed `(input: { repo; prompt }) => void`. Widen it to `(input: DelamainSpawnPeerInput) => void` (import the type) so the test can read `confine`/`yolo`/`egress`.
@@ -521,21 +557,23 @@ Expected: FAIL — `spawnInput.confine` is `undefined` (dispatch doesn't pass it
 In `AutomodeSupervisor.ts` `dispatchGoal`, change the `spawnPeer` call (~562-568) to request confinement + yolo:
 
 ```typescript
-          const peer = yield* delamainAdapter
-            .spawnPeer({
-              repo: goal.repo,
-              prompt: goal.prompt,
-              name: goal.title,
-              ...(effectiveModel ? { model: effectiveModel } : {}),
-              confine: true,
-              yolo: true,
-              egress: "host",
-            })
-            .pipe(
-              Effect.mapError((cause) =>
-                toAutomodeError("Automode failed to spawn a Delamain peer.", cause),
-              ),
-            );
+const peer =
+  yield *
+  delamainAdapter
+    .spawnPeer({
+      repo: goal.repo,
+      prompt: goal.prompt,
+      name: goal.title,
+      ...(effectiveModel ? { model: effectiveModel } : {}),
+      confine: true,
+      yolo: true,
+      egress: "host",
+    })
+    .pipe(
+      Effect.mapError((cause) =>
+        toAutomodeError("Automode failed to spawn a Delamain peer.", cause),
+      ),
+    );
 ```
 
 > v1 hard-codes confined+yolo+host for every automode spawn (the autonomous toggle is always confined — Q7/Q8). Making these operator-tunable `AutomodePolicy` fields is deferred; if desired later, add `peerConfine`/`peerEgress` to `AutomodePolicy` (`gits.ts:557`) + `defaultPolicy` (`AutomodeSupervisor.ts:150`) + `AutomodePolicyUpdateInput` and read them here.
@@ -580,16 +618,16 @@ While the peer runs (or from its log): confirm the codex process was launched vi
 
 **1. Spec coverage** (`autonomous-toggle.md` Q7/Q8, H0b):
 
-| Spec element | Task |
-|---|---|
-| Keep `--yolo` (full autonomy) for the trusted repo | Task 6 (`yolo:true`) + Task 5 (passes through to codex `--dangerously-bypass-approvals-and-sandbox`) |
-| Jail the peer to the assigned repo (bubblewrap, secrets hidden) | Task 5 (wrap in `gits-confine.sh --profile peer`) + Task 7 (verify) |
-| Modify delamain so `delamain spawn` launches the child through `gits-confine.sh` (Option 1) | Task 5 |
-| `CODEX_HOME` reachable inside the jail (the real gap) | Task 1 (`--setenv`) + Task 2 (spike) + Task 5 (encode) |
-| Egress = `host` (unfiltered, accepted v1 residual risk; `proxy=` deferred) | Tasks 3/4/6 (`egress:"host"`); `off/host` only in the contract |
-| codex-only (cursor never auto-routed) | Scope note; Task 5 wraps codex only |
-| GITS keeps calling `delamainAdapter.spawnPeer` (delamain stays peer manager) | Tasks 3/4/6 (add flags, not a new path) |
-| Fail-closed if `bwrap` missing | inherited from `gits-confine.sh:47` (`die` exit 70) → spawn fails → goal reconciles `failed` + driver halts (Plan 1) |
+| Spec element                                                                                | Task                                                                                                                 |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Keep `--yolo` (full autonomy) for the trusted repo                                          | Task 6 (`yolo:true`) + Task 5 (passes through to codex `--dangerously-bypass-approvals-and-sandbox`)                 |
+| Jail the peer to the assigned repo (bubblewrap, secrets hidden)                             | Task 5 (wrap in `gits-confine.sh --profile peer`) + Task 7 (verify)                                                  |
+| Modify delamain so `delamain spawn` launches the child through `gits-confine.sh` (Option 1) | Task 5                                                                                                               |
+| `CODEX_HOME` reachable inside the jail (the real gap)                                       | Task 1 (`--setenv`) + Task 2 (spike) + Task 5 (encode)                                                               |
+| Egress = `host` (unfiltered, accepted v1 residual risk; `proxy=` deferred)                  | Tasks 3/4/6 (`egress:"host"`); `off/host` only in the contract                                                       |
+| codex-only (cursor never auto-routed)                                                       | Scope note; Task 5 wraps codex only                                                                                  |
+| GITS keeps calling `delamainAdapter.spawnPeer` (delamain stays peer manager)                | Tasks 3/4/6 (add flags, not a new path)                                                                              |
+| Fail-closed if `bwrap` missing                                                              | inherited from `gits-confine.sh:47` (`die` exit 70) → spawn fails → goal reconciles `failed` + driver halts (Plan 1) |
 
 **2. Placeholder scan:** The one genuine unknown (exact confined-codex recipe) is handled by an explicit **spike (Task 2)** with concrete candidate commands and a recorded decision, not a vague "figure it out." Task 5's code uses Recipe A concretely with an explicit instruction to adjust to the spike's validated recipe. No other placeholders.
 
@@ -602,6 +640,7 @@ While the peer runs (or from its log): confirm the codex process was launched vi
 ## Execution Handoff
 
 Plan 2 spans two repos and includes a spike + a manual integration gate, so it is **not** purely mechanical. Recommended:
+
 - Tasks 1, 3, 4, 6 (gitscode, pure TDD) → subagent-driven, isolated worktree off `origin/gits`.
 - Task 5 (delamain) → its own worktree/branch; export+builder is TDD, the spawn wiring is integration.
 - Tasks 2 & 7 (spike + e2e) → run by the human/controller against a real logged-in codex peer; they gate trust and cannot be faked.
@@ -609,6 +648,7 @@ Plan 2 spans two repos and includes a spike + a manual integration gate, so it i
 Open the gitscode changes as a PR to `gits` and the delamain changes as a PR to delamain's default branch; they must land together (the `--confine` flag is produced by gitscode and consumed by delamain).
 
 **Two execution options (per writing-plans):**
+
 1. **Subagent-Driven (recommended)** for the TDD tasks (1,3,4,5,6); human runs the spike/e2e (2,7).
 2. **Inline Execution** with checkpoints.
 

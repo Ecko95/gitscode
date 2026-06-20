@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript, Effect (Layer/Effect/Ref/Schema), `@t3tools/contracts`, `@effect/vitest` (`it.effect`, `Layer.mock`), `@effect/platform-node` (`NodeServices`), vitest. RTK prefix. Conventions: repo style is 2-space (oxfmt normalizes); double quotes, semicolons, snake_case functions, PascalCase types, kebab-case files. Gate each task on `bun fmt` (targeted paths), `bun lint`, `bun typecheck`, `bun run test`. Use direct `tsgo --noEmit` per package for ground-truth typecheck — turbo caches stale success (`[[gitscode-no-ci-verify-locally]]`). Commit after each task.
 
 **Design decisions locked (2026-06-20 checkpoint):**
+
 1. **gh-native merge detection** via `GitHubCli.getPullRequest().state === "merged"` — NOT the git patch-id cascade. (`GitVcsDriver.execute` is git-only and can't run `gh`; `GitHubCli` already shells `gh` and exposes authoritative PR state.) No pushed-SHA / `git cherry` needed.
 2. **One held PR per run**, head = `policy.integrationBranch`, base = `gits`, never auto-merged (no `gh pr merge`).
 3. **Run is terminal after merge** (v1): once `runMerged` is true the driver stops opening PRs / dispatching. Starting a fresh run (per-project keying, resettable runs) is Plan 7. The repo for `gh` is derived from a completed goal's `repo` (v1 is single-repo per run).
@@ -19,25 +20,26 @@
 
 ## File Structure
 
-| File | Responsibility | Change |
-|---|---|---|
-| `packages/contracts/src/gits.ts` | Add `heldPrUrl`/`heldPrNumber`/`runMerged` to `AutomodeSnapshot`; add `AutomodeRecordHeldPrInput`. | Modify |
-| `apps/server/src/gits/Services/AutomodeSupervisor.ts` | Add `recordHeldPr` + `markRunMerged` to the shape. | Modify |
-| `apps/server/src/gits/Layers/AutomodeSupervisor.ts` | Add the 3 fields to `AutomodeState` + `PersistedAutomodeState` (decoding defaults) + `toPersisted`/`fromPersisted` + initial state + `makeSnapshot`; implement the 2 methods. | Modify |
-| `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts` | Persistence + method cases. | Modify |
-| `apps/server/src/gits/Services/AutomodeHeldPr.ts` | New service tag + shape (`open_held_pr`, `detect_merge`). | Create |
-| `apps/server/src/gits/Layers/AutomodeHeldPr.ts` | `AutomodeHeldPrLive` over `GitHubCli`. | Create |
-| `apps/server/src/gits/Layers/AutomodeHeldPr.test.ts` | Runner tests against a mocked `GitHubCli`. | Create |
-| `apps/server/src/gits/Layers/AutomodeDriver.ts` | Idle-branch open-once + poll-merge; inject `AutomodeHeldPr`. | Modify |
-| `apps/server/src/gits/Layers/AutomodeDriver.test.ts` | Driver tests: open held PR on drain, poll → merged → runMerged, terminal. | Modify |
-| `apps/server/src/server.ts` | Provide `AutomodeHeldPrLive` (over `GitHubCli.layer`) to `AutomodeDriverLayerLive`. | Modify |
-| `apps/server/src/server.test.ts` | Add the 3 new snapshot fields to the policy/snapshot fixture. | Modify |
+| File                                                     | Responsibility                                                                                                                                                                | Change |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `packages/contracts/src/gits.ts`                         | Add `heldPrUrl`/`heldPrNumber`/`runMerged` to `AutomodeSnapshot`; add `AutomodeRecordHeldPrInput`.                                                                            | Modify |
+| `apps/server/src/gits/Services/AutomodeSupervisor.ts`    | Add `recordHeldPr` + `markRunMerged` to the shape.                                                                                                                            | Modify |
+| `apps/server/src/gits/Layers/AutomodeSupervisor.ts`      | Add the 3 fields to `AutomodeState` + `PersistedAutomodeState` (decoding defaults) + `toPersisted`/`fromPersisted` + initial state + `makeSnapshot`; implement the 2 methods. | Modify |
+| `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts` | Persistence + method cases.                                                                                                                                                   | Modify |
+| `apps/server/src/gits/Services/AutomodeHeldPr.ts`        | New service tag + shape (`open_held_pr`, `detect_merge`).                                                                                                                     | Create |
+| `apps/server/src/gits/Layers/AutomodeHeldPr.ts`          | `AutomodeHeldPrLive` over `GitHubCli`.                                                                                                                                        | Create |
+| `apps/server/src/gits/Layers/AutomodeHeldPr.test.ts`     | Runner tests against a mocked `GitHubCli`.                                                                                                                                    | Create |
+| `apps/server/src/gits/Layers/AutomodeDriver.ts`          | Idle-branch open-once + poll-merge; inject `AutomodeHeldPr`.                                                                                                                  | Modify |
+| `apps/server/src/gits/Layers/AutomodeDriver.test.ts`     | Driver tests: open held PR on drain, poll → merged → runMerged, terminal.                                                                                                     | Modify |
+| `apps/server/src/server.ts`                              | Provide `AutomodeHeldPrLive` (over `GitHubCli.layer`) to `AutomodeDriverLayerLive`.                                                                                           | Modify |
+| `apps/server/src/server.test.ts`                         | Add the 3 new snapshot fields to the policy/snapshot fixture.                                                                                                                 | Modify |
 
 ---
 
 ## Task 1: Contracts — snapshot run-state + record-held-PR input
 
 **Files:**
+
 - Modify: `packages/contracts/src/gits.ts` (`AutomodeSnapshot` ~691-702; input schemas ~729-749)
 
 - [ ] **Step 1: Write the failing test**
@@ -51,17 +53,35 @@ import { AutomodeSnapshot, AutomodeRecordHeldPrInput } from "./gits.ts";
 
 const baseSnapshot = {
   policy: {
-    mode: "autonomous", killSwitchEnabled: false, maxActivePeers: 1,
-    allowedRepos: [], allowedModels: [], defaultModel: null, maxBudgetUsd: null,
-    maxRuntimeMinutes: null, requireApprovalForPeerSpawn: false,
-    requireApprovalBeforeIntegrate: true, requireApprovalBeforeDestructiveAction: true,
-    verificationCommands: [], integrationBranch: null,
+    mode: "autonomous",
+    killSwitchEnabled: false,
+    maxActivePeers: 1,
+    allowedRepos: [],
+    allowedModels: [],
+    defaultModel: null,
+    maxBudgetUsd: null,
+    maxRuntimeMinutes: null,
+    requireApprovalForPeerSpawn: false,
+    requireApprovalBeforeIntegrate: true,
+    requireApprovalBeforeDestructiveAction: true,
+    verificationCommands: [],
+    integrationBranch: null,
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
-  budgetUsage: { source: "unavailable", totalCostUsd: null, totalProcessedTokens: null, updatedAt: null, note: null },
-  goals: [], activePeerCount: 0, pendingApprovalCount: 0,
-  driverHalted: false, driverHaltedReason: null,
-  lastEvent: null, updatedAt: "2026-01-01T00:00:00.000Z",
+  budgetUsage: {
+    source: "unavailable",
+    totalCostUsd: null,
+    totalProcessedTokens: null,
+    updatedAt: null,
+    note: null,
+  },
+  goals: [],
+  activePeerCount: 0,
+  pendingApprovalCount: 0,
+  driverHalted: false,
+  driverHaltedReason: null,
+  lastEvent: null,
+  updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
 describe("AutomodeSnapshot held-PR fields", () => {
@@ -142,6 +162,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt packages/contracts/src/gits.ts package
 ## Task 2: Supervisor — persist run state + recordHeldPr/markRunMerged
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Services/AutomodeSupervisor.ts` (shape ~17-44)
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.ts` (state 41-48; persisted 55-66; toPersisted 95-105; fromPersisted 107-116; initial state ~318-325; makeSnapshot ~262-278; methods near `haltDriver`/`resumeDriver` ~671-694)
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`
@@ -298,6 +319,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/gits/Services/Automode
 ## Task 3: `AutomodeHeldPr` service tag
 
 **Files:**
+
 - Create: `apps/server/src/gits/Services/AutomodeHeldPr.ts`
 
 - [ ] **Step 1: Define the service**
@@ -349,6 +371,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/gits/Services/Automode
 ## Task 4: `AutomodeHeldPrLive` — open via gh, detect via PR state
 
 **Files:**
+
 - Create: `apps/server/src/gits/Layers/AutomodeHeldPr.ts`
 - Test: `apps/server/src/gits/Layers/AutomodeHeldPr.test.ts`
 
@@ -366,11 +389,13 @@ import { GitHubCli, type GitHubPullRequestSummary } from "../../sourceControl/Gi
 import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
 import { AutomodeHeldPrLive } from "./AutomodeHeldPr.ts";
 
-function gh(overrides: Partial<{
-  list: ReadonlyArray<GitHubPullRequestSummary>;
-  created: ReadonlyArray<GitHubPullRequestSummary>;
-  get: GitHubPullRequestSummary;
-}>) {
+function gh(
+  overrides: Partial<{
+    list: ReadonlyArray<GitHubPullRequestSummary>;
+    created: ReadonlyArray<GitHubPullRequestSummary>;
+    get: GitHubPullRequestSummary;
+  }>,
+) {
   let createCalls = 0;
   return Layer.mock(GitHubCli)({
     execute: () =>
@@ -378,21 +403,36 @@ function gh(overrides: Partial<{
         createCalls += 1;
         return { stdout: "", stderr: "", exitCode: 0 } as never;
       }),
-    listOpenPullRequests: () => Effect.succeed(createCalls === 0 ? (overrides.list ?? []) : (overrides.created ?? [])),
+    listOpenPullRequests: () =>
+      Effect.succeed(createCalls === 0 ? (overrides.list ?? []) : (overrides.created ?? [])),
     getPullRequest: () =>
       overrides.get
         ? Effect.succeed(overrides.get)
-        : Effect.succeed({ number: 30, title: "t", url: "u", baseRefName: "gits", headRefName: "auto/x", state: "open" }),
+        : Effect.succeed({
+            number: 30,
+            title: "t",
+            url: "u",
+            baseRefName: "gits",
+            headRefName: "auto/x",
+            state: "open",
+          }),
   });
 }
 
 const openInput = {
-  repo: "/tmp/repo", integrationBranch: "auto/gits-self", baseBranch: "gits",
-  title: "automode held PR", body: "landed slices",
+  repo: "/tmp/repo",
+  integrationBranch: "auto/gits-self",
+  baseBranch: "gits",
+  title: "automode held PR",
+  body: "landed slices",
 };
 const pr: GitHubPullRequestSummary = {
-  number: 30, title: "t", url: "https://github.com/o/r/pull/30",
-  baseRefName: "gits", headRefName: "auto/gits-self", state: "open",
+  number: 30,
+  title: "t",
+  url: "https://github.com/o/r/pull/30",
+  baseRefName: "gits",
+  headRefName: "auto/gits-self",
+  state: "open",
 };
 
 describe("AutomodeHeldPrLive", () => {
@@ -410,7 +450,9 @@ describe("AutomodeHeldPrLive", () => {
       const held = yield* AutomodeHeldPr;
       const result = yield* held.open_held_pr(openInput);
       assert.equal(result.status, "opened");
-    }).pipe(Effect.provide(AutomodeHeldPrLive.pipe(Layer.provide(gh({ list: [], created: [pr] }))))),
+    }).pipe(
+      Effect.provide(AutomodeHeldPrLive.pipe(Layer.provide(gh({ list: [], created: [pr] })))),
+    ),
   );
 
   it.effect("rejects when the PR still cannot be found after create", () =>
@@ -426,7 +468,11 @@ describe("AutomodeHeldPrLive", () => {
       const held = yield* AutomodeHeldPr;
       const result = yield* held.detect_merge({ repo: "/tmp/repo", prNumber: 30 });
       assert.equal(result.merged, true);
-    }).pipe(Effect.provide(AutomodeHeldPrLive.pipe(Layer.provide(gh({ get: { ...pr, state: "merged" } }))))),
+    }).pipe(
+      Effect.provide(
+        AutomodeHeldPrLive.pipe(Layer.provide(gh({ get: { ...pr, state: "merged" } }))),
+      ),
+    ),
   );
 
   it.effect("detect_merge false when PR state is open", () =>
@@ -434,7 +480,9 @@ describe("AutomodeHeldPrLive", () => {
       const held = yield* AutomodeHeldPr;
       const result = yield* held.detect_merge({ repo: "/tmp/repo", prNumber: 30 });
       assert.equal(result.merged, false);
-    }).pipe(Effect.provide(AutomodeHeldPrLive.pipe(Layer.provide(gh({ get: { ...pr, state: "open" } }))))),
+    }).pipe(
+      Effect.provide(AutomodeHeldPrLive.pipe(Layer.provide(gh({ get: { ...pr, state: "open" } })))),
+    ),
   );
 });
 ```
@@ -459,15 +507,12 @@ export const AutomodeHeldPrLive = Layer.effect(
     const gh = yield* GitHubCli;
 
     const findForHead = (repo: string, head: string, base: string) =>
-      gh
-        .listOpenPullRequests({ cwd: repo, headSelector: head })
-        .pipe(
-          Effect.map((prs) => prs.find((candidate) => candidate.baseRefName === base) ?? null),
-          Effect.mapError(
-            (cause) =>
-              new AutomodeSupervisorError({ message: "gh pr list failed.", cause }),
-          ),
-        );
+      gh.listOpenPullRequests({ cwd: repo, headSelector: head }).pipe(
+        Effect.map((prs) => prs.find((candidate) => candidate.baseRefName === base) ?? null),
+        Effect.mapError(
+          (cause) => new AutomodeSupervisorError({ message: "gh pr list failed.", cause }),
+        ),
+      );
 
     const open_held_pr: AutomodeHeldPrShape["open_held_pr"] = (input) =>
       Effect.gen(function* () {
@@ -510,14 +555,12 @@ export const AutomodeHeldPrLive = Layer.effect(
       });
 
     const detect_merge: AutomodeHeldPrShape["detect_merge"] = (input) =>
-      gh
-        .getPullRequest({ cwd: input.repo, reference: String(input.prNumber) })
-        .pipe(
-          Effect.map((pr) => ({ merged: pr.state === "merged" })),
-          Effect.mapError(
-            (cause) => new AutomodeSupervisorError({ message: "gh pr view failed.", cause }),
-          ),
-        );
+      gh.getPullRequest({ cwd: input.repo, reference: String(input.prNumber) }).pipe(
+        Effect.map((pr) => ({ merged: pr.state === "merged" })),
+        Effect.mapError(
+          (cause) => new AutomodeSupervisorError({ message: "gh pr view failed.", cause }),
+        ),
+      );
 
     return { open_held_pr, detect_merge } satisfies AutomodeHeldPrShape;
   }),
@@ -540,6 +583,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/gits/Layers/AutomodeHe
 ## Task 5: Driver — open held PR on drain, poll for merge
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/AutomodeDriver.ts`
 - Modify: `apps/server/src/gits/Layers/AutomodeDriver.test.ts`
 
@@ -556,11 +600,11 @@ it.effect("opens a held PR when the queue drains with a landed goal", () => {
     const driver = yield* AutomodeDriver;
     yield* armAutonomous(supervisor);
     yield* supervisor.enqueueGoal({ title: "One", repo: "/tmp/source-repo", prompt: "x" });
-    yield* driver.tickOnce();            // dispatch
+    yield* driver.tickOnce(); // dispatch
     peerStatus.current = "done";
-    yield* driver.tickOnce();            // gate → land → complete
+    yield* driver.tickOnce(); // gate → land → complete
     peerStatus.current = "absent";
-    yield* driver.tickOnce();            // queue drained → open held PR
+    yield* driver.tickOnce(); // queue drained → open held PR
 
     const snapshot = yield* supervisor.getSnapshot();
     assert.equal(snapshot.heldPrNumber, 30);
@@ -568,7 +612,9 @@ it.effect("opens a held PR when the queue drains with a landed goal", () => {
   }).pipe(
     Effect.provide(
       makeLayer(peerStatus, {
-        onOpenHeldPr: () => { openCalls += 1; },
+        onOpenHeldPr: () => {
+          openCalls += 1;
+        },
         openResult: { status: "opened", url: "https://github.com/o/r/pull/30", number: 30 },
       }),
     ),
@@ -582,13 +628,13 @@ it.effect("polls the held PR and marks the run merged when GitHub reports merged
     const driver = yield* AutomodeDriver;
     yield* armAutonomous(supervisor);
     yield* supervisor.enqueueGoal({ title: "One", repo: "/tmp/source-repo", prompt: "x" });
-    yield* driver.tickOnce();            // dispatch
+    yield* driver.tickOnce(); // dispatch
     peerStatus.current = "done";
-    yield* driver.tickOnce();            // land + complete
+    yield* driver.tickOnce(); // land + complete
     peerStatus.current = "absent";
-    yield* driver.tickOnce();            // open held PR
-    yield* driver.tickOnce();            // poll → not merged
-    yield* driver.tickOnce();            // poll → merged
+    yield* driver.tickOnce(); // open held PR
+    yield* driver.tickOnce(); // poll → not merged
+    yield* driver.tickOnce(); // poll → merged
 
     const snapshot = yield* supervisor.getSnapshot();
     assert.equal(snapshot.runMerged, true);
@@ -608,12 +654,20 @@ it.effect("does not open a held PR when nothing landed (empty arm)", () => {
   return Effect.gen(function* () {
     const supervisor = yield* AutomodeSupervisor;
     const driver = yield* AutomodeDriver;
-    yield* armAutonomous(supervisor);   // no goals enqueued
-    yield* driver.tickOnce();           // drained, nothing landed
+    yield* armAutonomous(supervisor); // no goals enqueued
+    yield* driver.tickOnce(); // drained, nothing landed
     const snapshot = yield* supervisor.getSnapshot();
     assert.equal(snapshot.heldPrUrl, null);
     assert.equal(openCalls, 0);
-  }).pipe(Effect.provide(makeLayer(peerStatus, { onOpenHeldPr: () => { openCalls += 1; } })));
+  }).pipe(
+    Effect.provide(
+      makeLayer(peerStatus, {
+        onOpenHeldPr: () => {
+          openCalls += 1;
+        },
+      }),
+    ),
+  );
 });
 ```
 
@@ -631,69 +685,74 @@ Add `const heldPr = yield* AutomodeHeldPr;` next to the other deps, and import `
 Replace the idle `next === null` return block:
 
 ```typescript
-        // 3) Dispatch the oldest queued goal (sequential start).
-        const next = oldestQueued(snapshot.goals);
-        if (next === null) {
-          return;
-        }
+// 3) Dispatch the oldest queued goal (sequential start).
+const next = oldestQueued(snapshot.goals);
+if (next === null) {
+  return;
+}
 ```
 
 with the open-once / poll-merge state machine (still after the `driverHalted` early-return, so a halted run does no PR activity):
 
 ```typescript
-        // 3) Queue drained → held-PR lifecycle, then dispatch.
-        const next = oldestQueued(snapshot.goals);
-        if (next === null) {
-          // Run is terminal once the held PR merged.
-          if (snapshot.runMerged) {
-            return;
-          }
-          const policy = snapshot.policy;
-          if (policy.integrationBranch === null) {
-            return;
-          }
-          const landedRepo = snapshot.goals.find((goal) => goal.status === "completed")?.repo ?? null;
+// 3) Queue drained → held-PR lifecycle, then dispatch.
+const next = oldestQueued(snapshot.goals);
+if (next === null) {
+  // Run is terminal once the held PR merged.
+  if (snapshot.runMerged) {
+    return;
+  }
+  const policy = snapshot.policy;
+  if (policy.integrationBranch === null) {
+    return;
+  }
+  const landedRepo = snapshot.goals.find((goal) => goal.status === "completed")?.repo ?? null;
 
-          if (snapshot.heldPrUrl === null || snapshot.heldPrNumber === null) {
-            // Open the held PR exactly once, only if at least one slice landed.
-            if (landedRepo === null) {
-              return;
-            }
-            const landedTitles = snapshot.goals
-              .filter((goal) => goal.status === "completed")
-              .map((goal) => `- ${goal.title}`)
-              .join("\n");
-            const result = yield* heldPr.open_held_pr({
-              repo: landedRepo,
-              integrationBranch: policy.integrationBranch,
-              baseBranch: "gits",
-              title: `automode: held PR for ${policy.integrationBranch}`,
-              body: `Autonomous run — landed slices (held for review, not auto-merged):\n\n${landedTitles}`,
-            });
-            if (result.status === "rejected") {
-              yield* supervisor.haltDriver({
-                reason: `Halted: could not open held PR — ${result.reason}`,
-              });
-              return;
-            }
-            yield* supervisor.recordHeldPr({ url: result.url, number: result.number });
-            return;
-          }
+  if (snapshot.heldPrUrl === null || snapshot.heldPrNumber === null) {
+    // Open the held PR exactly once, only if at least one slice landed.
+    if (landedRepo === null) {
+      return;
+    }
+    const landedTitles = snapshot.goals
+      .filter((goal) => goal.status === "completed")
+      .map((goal) => `- ${goal.title}`)
+      .join("\n");
+    const result =
+      yield *
+      heldPr.open_held_pr({
+        repo: landedRepo,
+        integrationBranch: policy.integrationBranch,
+        baseBranch: "gits",
+        title: `automode: held PR for ${policy.integrationBranch}`,
+        body: `Autonomous run — landed slices (held for review, not auto-merged):\n\n${landedTitles}`,
+      });
+    if (result.status === "rejected") {
+      yield *
+        supervisor.haltDriver({
+          reason: `Halted: could not open held PR — ${result.reason}`,
+        });
+      return;
+    }
+    yield * supervisor.recordHeldPr({ url: result.url, number: result.number });
+    return;
+  }
 
-          // Held PR already open → poll GitHub for the merge.
-          if (landedRepo === null) {
-            return;
-          }
-          const detect = yield* heldPr.detect_merge({
-            repo: landedRepo,
-            prNumber: snapshot.heldPrNumber,
-          });
-          if (detect.merged) {
-            yield* supervisor.markRunMerged();
-            yield* Effect.logInfo("gits.automode.run-merged", { heldPrUrl: snapshot.heldPrUrl });
-          }
-          return;
-        }
+  // Held PR already open → poll GitHub for the merge.
+  if (landedRepo === null) {
+    return;
+  }
+  const detect =
+    yield *
+    heldPr.detect_merge({
+      repo: landedRepo,
+      prNumber: snapshot.heldPrNumber,
+    });
+  if (detect.merged) {
+    yield * supervisor.markRunMerged();
+    yield * Effect.logInfo("gits.automode.run-merged", { heldPrUrl: snapshot.heldPrUrl });
+  }
+  return;
+}
 ```
 
 (The dispatch tail — `supervisor.dispatchGoal(...)` + halt-on-null-peer — stays unchanged after this block.)
@@ -714,6 +773,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/gits/Layers/AutomodeDr
 ## Task 6: Server layer wiring + snapshot fixture
 
 **Files:**
+
 - Modify: `apps/server/src/server.ts` (`AutomodeDriverLayerLive` ~242-255)
 - Modify: `apps/server/src/server.test.ts` (snapshot fixture ~233-246)
 

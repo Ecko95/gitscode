@@ -131,7 +131,10 @@ export default defineConfig({
         // splitting). Does not reduce first-load bytes, only improves caching.
         codeSplitting: {
           groups: [
-            { name: "vendor-react", test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            {
+              name: "vendor-react",
+              test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
             { name: "vendor-effect", test: /[\\/]node_modules[\\/](effect|@effect)[\\/]/ },
             { name: "vendor-tanstack", test: /[\\/]node_modules[\\/]@tanstack[\\/]/ },
           ],

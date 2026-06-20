@@ -133,7 +133,9 @@ const DelamainSidebar = memo(function DelamainSidebar({
             </>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-[13px] text-muted-foreground/40">No deployed peers for this repo.</p>
+              <p className="text-[13px] text-muted-foreground/40">
+                No deployed peers for this repo.
+              </p>
               <p className="mt-1 text-[11px] text-muted-foreground/30">
                 Only peers whose repo matches the active project are shown here.
               </p>

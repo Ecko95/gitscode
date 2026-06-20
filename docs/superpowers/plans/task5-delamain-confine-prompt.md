@@ -42,7 +42,7 @@ gits-confine.sh \
   -- codex exec --json -C "$WORKTREE" -
 ```
 
-**Why `--ro $NODE_ROOT` + `--setenv PATH`:** `codex` is typically `~/.local/bin/codex` → symlink → `~/.nvm/versions/node/v<V>/bin/codex` (a node script needing `node`). The jail uses a fixed PATH and only auto-detects whatever `node` is first on the *caller's* PATH — which may be a *different* node version than codex's. So you must bind codex's **own** node version root (`--ro`) and put its `bin` dir (which holds both that `node` and `codex`) first on `PATH`. Full investigation + the failed/working recipes are in the gitscode repo at `spikes/h0b-confined-codex/SPIKE_FINDINGS.md` (PR #27).
+**Why `--ro $NODE_ROOT` + `--setenv PATH`:** `codex` is typically `~/.local/bin/codex` → symlink → `~/.nvm/versions/node/v<V>/bin/codex` (a node script needing `node`). The jail uses a fixed PATH and only auto-detects whatever `node` is first on the _caller's_ PATH — which may be a _different_ node version than codex's. So you must bind codex's **own** node version root (`--ro`) and put its `bin` dir (which holds both that `node` and `codex`) first on `PATH`. Full investigation + the failed/working recipes are in the gitscode repo at `spikes/h0b-confined-codex/SPIKE_FINDINGS.md` (PR #27).
 
 `$CODEX_HOME` = `process.env.CODEX_HOME ?? ~/.delamain/peer-codex-home` (delamain already computes this — see anchor below).
 
@@ -52,7 +52,9 @@ gits-confine.sh \
   ```ts
   const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".delamain", "peer-codex-home");
   const child = spawn("codex", codexArgs, {
-    cwd: args.repo, detached: true, stdio: ["pipe", "pipe", "pipe"],
+    cwd: args.repo,
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, CODEX_HOME: codexHome },
   });
   ```
@@ -71,31 +73,43 @@ Export `buildCodexArgs`, and add a **pure** `buildConfinedCommand` (toolchain di
 
 ```ts
 export interface ConfinedSpawnInput {
-  readonly confineBin: string;       // GITS_CONFINE_BIN, or "" to run unconfined
+  readonly confineBin: string; // GITS_CONFINE_BIN, or "" to run unconfined
   readonly worktree: string;
   readonly codexHome: string;
-  readonly egress: string;           // "host" | "off"
+  readonly egress: string; // "host" | "off"
   readonly label: string;
   readonly toolchainRootDir: string; // node version root to --ro bind (contains node + codex)
-  readonly toolchainBinDir: string;  // node version bin dir to put first on PATH
-  readonly engineCmd: string;        // "codex"
+  readonly toolchainBinDir: string; // node version bin dir to put first on PATH
+  readonly engineCmd: string; // "codex"
   readonly engineArgs: ReadonlyArray<string>;
 }
 
-export function buildConfinedCommand(input: ConfinedSpawnInput): { command: string; args: string[] } {
+export function buildConfinedCommand(input: ConfinedSpawnInput): {
+  command: string;
+  args: string[];
+} {
   if (!input.confineBin) {
     return { command: input.engineCmd, args: [...input.engineArgs] };
   }
   const pre = [
-    "--worktree", input.worktree,
-    "--profile", "peer",
-    "--label", input.label,
-    "--egress", input.egress,
-    "--ro", input.toolchainRootDir,
-    "--cred", `${input.codexHome}/auth.json`,
-    "--cred", `${input.codexHome}/config.toml`,
-    "--setenv", `CODEX_HOME=${input.codexHome}`,
-    "--setenv", `PATH=${input.toolchainBinDir}:/usr/local/bin:/usr/bin:/bin`,
+    "--worktree",
+    input.worktree,
+    "--profile",
+    "peer",
+    "--label",
+    input.label,
+    "--egress",
+    input.egress,
+    "--ro",
+    input.toolchainRootDir,
+    "--cred",
+    `${input.codexHome}/auth.json`,
+    "--cred",
+    `${input.codexHome}/config.toml`,
+    "--setenv",
+    `CODEX_HOME=${input.codexHome}`,
+    "--setenv",
+    `PATH=${input.toolchainBinDir}:/usr/local/bin:/usr/bin:/bin`,
   ];
   return { command: input.confineBin, args: [...pre, "--", input.engineCmd, ...input.engineArgs] };
 }
@@ -113,12 +127,15 @@ export function resolveCodexToolchain(): { rootDir: string; binDir: string } {
   try {
     const st = lstatSync(p);
     if (st.isSymbolicLink()) p = resolve(dirname(p), readlinkSync(p));
-  } catch { /* ignore */ }
-  const binDir = dirname(p);          // .../v<V>/bin  (holds both node and codex)
-  const rootDir = dirname(binDir);    // .../v<V>      (the version root to --ro bind)
+  } catch {
+    /* ignore */
+  }
+  const binDir = dirname(p); // .../v<V>/bin  (holds both node and codex)
+  const rootDir = dirname(binDir); // .../v<V>      (the version root to --ro bind)
   return { rootDir, binDir };
 }
 ```
+
 (Import `lstatSync`, `readlinkSync` from `node:fs`; `dirname`, `resolve` from `node:path`. Use `bash -lc` so the LOGIN PATH — which has codex — is consulted, matching how delamain finds `codex` at runtime.)
 
 ### 3. Wire it into the real spawn — `src/runner.ts:~46-67`
@@ -130,17 +147,26 @@ const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".delamain", "peer-c
 const confineBin = args.confine ? (process.env.GITS_CONFINE_BIN ?? "gits-confine.sh") : "";
 const toolchain = confineBin ? resolveCodexToolchain() : { rootDir: "", binDir: "" };
 const { command, args: spawnArgv } = buildConfinedCommand({
-  confineBin, worktree: args.repo, codexHome, egress: args.egress ?? "host",
-  label: args.peerId, toolchainRootDir: toolchain.rootDir, toolchainBinDir: toolchain.binDir,
-  engineCmd: "codex", engineArgs: codexArgs,
+  confineBin,
+  worktree: args.repo,
+  codexHome,
+  egress: args.egress ?? "host",
+  label: args.peerId,
+  toolchainRootDir: toolchain.rootDir,
+  toolchainBinDir: toolchain.binDir,
+  engineCmd: "codex",
+  engineArgs: codexArgs,
 });
 append(log, `[delamain] starting: ${command} ${spawnArgv.join(" ")}\n`);
 // ...keep the existing updatePeer(...) status write...
 const child = spawn(command, spawnArgv, {
-  cwd: args.repo, detached: true, stdio: ["pipe", "pipe", "pipe"],
+  cwd: args.repo,
+  detached: true,
+  stdio: ["pipe", "pipe", "pipe"],
   env: { ...process.env, CODEX_HOME: codexHome },
 });
 ```
+
 Keep the stdin write unchanged.
 
 ### 4. Thread `--confine`/`--egress` through cli.ts → spawnRunner → parseArgs
@@ -150,9 +176,10 @@ Mirror exactly how `--yolo`/`--sandbox` flow today (see anchors). `--confine` is
 ### 5. Tests — `tests/runner.test.mjs` (new, `node --test`)
 
 Unit-test `buildConfinedCommand` purely (no child process):
+
 - With `confineBin` set: assert `command === confineBin`; the argv has the confine flags **before** a `--` separator and the exact engine argv **after** it; assert the `--ro <rootDir>`, both `--cred` paths, `--setenv CODEX_HOME=…`, and `--setenv PATH=<binDir>:…` are present and correctly ordered.
 - With `confineBin === ""`: assert it returns the raw `{ command: "codex", args: [...engineArgs] }` (unconfined passthrough).
-Run: `npm run build && node --test tests/runner.test.mjs tests/cursorRunner.test.mjs` → all green.
+  Run: `npm run build && node --test tests/runner.test.mjs tests/cursorRunner.test.mjs` → all green.
 
 ## Commit + PR
 
@@ -168,6 +195,7 @@ gh pr create --repo Ecko95/delamain --base main --head feat/confine-codex-peer \
 ## End-to-end validation (Task 7 — the trust gate)
 
 Unit tests prove the argv shape; only a real run proves the jail. With `GITS_CONFINE_BIN` pointing at the PR-#27 `gits-confine.sh` and `GITS_DELAMAIN_BIN` pointing at this branch's `dist/index.js`:
+
 1. **First, a fresh peer login** — the spike's token was stale (HTTP 401 "refresh token already used"). Run `CODEX_HOME=~/.delamain/peer-codex-home codex login` so the peer home has a valid token.
 2. `delamain spawn --confine --yolo --repo <throwaway> --prompt "create HELLO.txt with HELLO"` and confirm: the peer log shows `starting: …/gits-confine.sh --worktree … --profile peer …`; the codex process env has `GITS_CONFINED=peer:<id>`; the peer **cannot** see host secrets (`~/.codex`, `~/.gits/hermes`, telegram creds absent); and HELLO.txt lands on the peer branch.
 3. If it fails, debug the toolchain resolution (step 2) + the recipe in `SPIKE_FINDINGS.md` — do **not** claim done until a real confined run completes.

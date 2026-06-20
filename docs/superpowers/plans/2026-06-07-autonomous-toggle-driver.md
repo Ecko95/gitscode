@@ -9,7 +9,8 @@
 **Tech Stack:** TypeScript, Effect (Layer/Effect/Ref/Schedule/Schema), `@t3tools/contracts` (effect Schema), `@effect/vitest` (`it.effect`, `Layer.mock`), `@effect/platform-node` (`NodeServices`), vitest runner. RTK prefix for commands.
 
 **Scope — this plan is the spine only.** It deliberately excludes (each is its own later plan):
-- **Plan 2 — Confined-yolo spawn (H0b):** modify `delamain` + pass `gits-confine.sh --profile peer` + `sandbox/yolo` spawn args. (This plan dispatches via the *existing* `spawnPeer` args.)
+
+- **Plan 2 — Confined-yolo spawn (H0b):** modify `delamain` + pass `gits-confine.sh --profile peer` + `sandbox/yolo` spawn args. (This plan dispatches via the _existing_ `spawnPeer` args.)
 - **Plan 3 — Held-PR pipeline:** integration branch, slice→integration landing, `GitsReviewPipeline` gate, held PR → `gits`, patch-id merge detection.
 - **Plan 4 — Episode ledger (SQLite):** verifier-output summaries, Motoko rehydrate.
 - **Plan 5 — Telegram notifier:** the `waiting`/`failed`/`done` events this plan currently only `logInfo`s become Telegram messages on the existing bot channel.
@@ -23,22 +24,23 @@ Source of truth for the whole design: `docs/brainstorms/autonomous-toggle.md`.
 
 ## File Structure
 
-| File | Responsibility | Change |
-|---|---|---|
-| `packages/contracts/src/gits.ts` | Automode schemas. Add `driverHalted`/`driverHaltedReason` to `AutomodeSnapshot`; add `AutomodeGoalOutcomeInput`, `AutomodeDriverHaltInput`. | Modify |
-| `apps/server/src/gits/Services/AutomodeSupervisor.ts` | Supervisor service interface. Add `completeGoal`/`failGoal`/`haltDriver`/`resumeDriver`. | Modify |
-| `apps/server/src/gits/Layers/AutomodeSupervisor.ts` | Supervisor impl. Add halt fields to state + persisted schema; implement the 4 new methods; surface halt in `makeSnapshot`. | Modify |
-| `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts` | Supervisor tests. Add cases for the 4 new methods + persistence of the halt flag. | Modify |
-| `apps/server/src/gits/Services/AutomodeDriver.ts` | New `AutomodeDriver` service tag + shape (`tickOnce`). | Create |
-| `apps/server/src/gits/Layers/AutomodeDriver.ts` | New driver layer: `tickOnce()` reconcile+dispatch logic + scoped forked tick fiber. | Create |
-| `apps/server/src/gits/Layers/AutomodeDriver.test.ts` | Driver tests: dispatch next queued, reconcile done→completed, failed→failed+halt, waiting→halt, sequential, respects kill switch/mode/halt. | Create |
-| `apps/server/src/server.ts` | Layer wiring. Build `AutomodeDriverLayerLive`, merge into `GitsLayerLive`. | Modify |
+| File                                                     | Responsibility                                                                                                                              | Change |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `packages/contracts/src/gits.ts`                         | Automode schemas. Add `driverHalted`/`driverHaltedReason` to `AutomodeSnapshot`; add `AutomodeGoalOutcomeInput`, `AutomodeDriverHaltInput`. | Modify |
+| `apps/server/src/gits/Services/AutomodeSupervisor.ts`    | Supervisor service interface. Add `completeGoal`/`failGoal`/`haltDriver`/`resumeDriver`.                                                    | Modify |
+| `apps/server/src/gits/Layers/AutomodeSupervisor.ts`      | Supervisor impl. Add halt fields to state + persisted schema; implement the 4 new methods; surface halt in `makeSnapshot`.                  | Modify |
+| `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts` | Supervisor tests. Add cases for the 4 new methods + persistence of the halt flag.                                                           | Modify |
+| `apps/server/src/gits/Services/AutomodeDriver.ts`        | New `AutomodeDriver` service tag + shape (`tickOnce`).                                                                                      | Create |
+| `apps/server/src/gits/Layers/AutomodeDriver.ts`          | New driver layer: `tickOnce()` reconcile+dispatch logic + scoped forked tick fiber.                                                         | Create |
+| `apps/server/src/gits/Layers/AutomodeDriver.test.ts`     | Driver tests: dispatch next queued, reconcile done→completed, failed→failed+halt, waiting→halt, sequential, respects kill switch/mode/halt. | Create |
+| `apps/server/src/server.ts`                              | Layer wiring. Build `AutomodeDriverLayerLive`, merge into `GitsLayerLive`.                                                                  | Modify |
 
 ---
 
 ## Task 1: Contracts — snapshot halt fields + driver input types
 
 **Files:**
+
 - Modify: `packages/contracts/src/gits.ts` (Automode block ~543–656)
 
 - [ ] **Step 1: Add the two new input schemas + extend the snapshot**
@@ -92,6 +94,7 @@ rtk git commit -m "feat(contracts): automode snapshot halt fields + driver outco
 ## Task 2: Supervisor — terminal-state transitions + persisted halt flag
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Services/AutomodeSupervisor.ts`
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.ts`
 - Test: `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`
@@ -135,74 +138,74 @@ Add to `AutomodeSupervisorShape` (after `dispatchGoal`, before the closing brace
 In `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`, add these cases inside the existing `describe` block (the harness `makeLayer` already exists). They rely only on the existing mock:
 
 ```typescript
-  it.effect("completeGoal transitions a running goal to completed", () =>
-    Effect.gen(function* () {
+it.effect("completeGoal transitions a running goal to completed", () =>
+  Effect.gen(function* () {
+    const supervisor = yield* AutomodeSupervisor;
+    yield* supervisor.updatePolicy({
+      mode: "autonomous",
+      killSwitchEnabled: false,
+      allowedRepos: ["/tmp/source-repo"],
+      requireApprovalForPeerSpawn: false,
+    });
+    const queued = yield* supervisor.enqueueGoal({
+      title: "Done goal",
+      repo: "/tmp/source-repo",
+      prompt: "Run a safe task.",
+    });
+    const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+    assert.equal(dispatched.goal.status, "running");
+
+    const completed = yield* supervisor.completeGoal({ goalId: dispatched.goal.id });
+    assert.equal(completed.status, "completed");
+
+    const snapshot = yield* supervisor.getSnapshot();
+    assert.equal(snapshot.goals.find((g) => g.id === completed.id)?.status, "completed");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("failGoal marks failed with reason; haltDriver/resumeDriver toggle the flag", () =>
+  Effect.gen(function* () {
+    const supervisor = yield* AutomodeSupervisor;
+    const queued = yield* supervisor.enqueueGoal({
+      title: "Failing goal",
+      repo: "/tmp/source-repo",
+      prompt: "Run a safe task.",
+    });
+    const goalId = queued.goals[0]!.id;
+
+    const failed = yield* supervisor.failGoal({ goalId, reason: "Peer crashed." });
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.blockedReason, "Peer crashed.");
+
+    const halted = yield* supervisor.haltDriver({ reason: "Halted after failure." });
+    assert.equal(halted.driverHalted, true);
+    assert.equal(halted.driverHaltedReason, "Halted after failure.");
+
+    const resumed = yield* supervisor.resumeDriver();
+    assert.equal(resumed.driverHalted, false);
+    assert.equal(resumed.driverHaltedReason, null);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("driverHalted persists across supervisor restart", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "gits-automode-halt-test-" });
+
+    yield* Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
-      yield* supervisor.updatePolicy({
-        mode: "autonomous",
-        killSwitchEnabled: false,
-        allowedRepos: ["/tmp/source-repo"],
-        requireApprovalForPeerSpawn: false,
-      });
-      const queued = yield* supervisor.enqueueGoal({
-        title: "Done goal",
-        repo: "/tmp/source-repo",
-        prompt: "Run a safe task.",
-      });
-      const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
-      assert.equal(dispatched.goal.status, "running");
+      yield* supervisor.haltDriver({ reason: "Persist me." });
+    }).pipe(Effect.provide(makeLayer({ baseDir })));
 
-      const completed = yield* supervisor.completeGoal({ goalId: dispatched.goal.id });
-      assert.equal(completed.status, "completed");
-
-      const snapshot = yield* supervisor.getSnapshot();
-      assert.equal(snapshot.goals.find((g) => g.id === completed.id)?.status, "completed");
-    }).pipe(Effect.provide(makeLayer())),
-  );
-
-  it.effect("failGoal marks failed with reason; haltDriver/resumeDriver toggle the flag", () =>
-    Effect.gen(function* () {
+    const after = yield* Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
-      const queued = yield* supervisor.enqueueGoal({
-        title: "Failing goal",
-        repo: "/tmp/source-repo",
-        prompt: "Run a safe task.",
-      });
-      const goalId = queued.goals[0]!.id;
+      return yield* supervisor.getSnapshot();
+    }).pipe(Effect.provide(makeLayer({ baseDir })));
 
-      const failed = yield* supervisor.failGoal({ goalId, reason: "Peer crashed." });
-      assert.equal(failed.status, "failed");
-      assert.equal(failed.blockedReason, "Peer crashed.");
-
-      const halted = yield* supervisor.haltDriver({ reason: "Halted after failure." });
-      assert.equal(halted.driverHalted, true);
-      assert.equal(halted.driverHaltedReason, "Halted after failure.");
-
-      const resumed = yield* supervisor.resumeDriver();
-      assert.equal(resumed.driverHalted, false);
-      assert.equal(resumed.driverHaltedReason, null);
-    }).pipe(Effect.provide(makeLayer())),
-  );
-
-  it.effect("driverHalted persists across supervisor restart", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "gits-automode-halt-test-" });
-
-      yield* Effect.gen(function* () {
-        const supervisor = yield* AutomodeSupervisor;
-        yield* supervisor.haltDriver({ reason: "Persist me." });
-      }).pipe(Effect.provide(makeLayer({ baseDir })));
-
-      const after = yield* Effect.gen(function* () {
-        const supervisor = yield* AutomodeSupervisor;
-        return yield* supervisor.getSnapshot();
-      }).pipe(Effect.provide(makeLayer({ baseDir })));
-
-      assert.equal(after.driverHalted, true);
-      assert.equal(after.driverHaltedReason, "Persist me.");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+    assert.equal(after.driverHalted, true);
+    assert.equal(after.driverHaltedReason, "Persist me.");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 ```
 
 - [ ] **Step 3: Run the new tests to verify they fail**
@@ -269,14 +272,16 @@ function fromPersistedAutomodeState(state: PersistedAutomodeState): AutomodeStat
 Update the `initialState` fallback in the layer body (currently lines 299–304) to include the new fields:
 
 ```typescript
-    const initialState = yield* loadAutomodeState(statePath, {
-      policy: defaultPolicy(initializedAt),
-      goals: [],
-      driverHalted: false,
-      driverHaltedReason: null,
-      lastEvent: "Automode initialized with kill switch enabled.",
-      updatedAt: initializedAt,
-    });
+const initialState =
+  yield *
+  loadAutomodeState(statePath, {
+    policy: defaultPolicy(initializedAt),
+    goals: [],
+    driverHalted: false,
+    driverHaltedReason: null,
+    lastEvent: "Automode initialized with kill switch enabled.",
+    updatedAt: initializedAt,
+  });
 ```
 
 - [ ] **Step 5: Surface halt in `makeSnapshot`**
@@ -402,6 +407,7 @@ rtk git commit -m "feat(automode): goal complete/fail transitions + persisted dr
 ## Task 3: AutomodeDriver service tag
 
 **Files:**
+
 - Create: `apps/server/src/gits/Services/AutomodeDriver.ts`
 
 - [ ] **Step 1: Create the service**
@@ -443,6 +449,7 @@ rtk git commit -m "feat(automode): AutomodeDriver service tag"
 ## Task 4: AutomodeDriver layer — tick loop
 
 **Files:**
+
 - Create: `apps/server/src/gits/Layers/AutomodeDriver.ts`
 - Test: `apps/server/src/gits/Layers/AutomodeDriver.test.ts`
 
@@ -532,9 +539,9 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }) {
         note: "n/a",
       }),
   });
-  const config = ServerConfig.layerTest(process.cwd(), { prefix: "gits-automode-driver-test-" }).pipe(
-    Layer.provide(NodeServices.layer),
-  );
+  const config = ServerConfig.layerTest(process.cwd(), {
+    prefix: "gits-automode-driver-test-",
+  }).pipe(Layer.provide(NodeServices.layer));
   const supervisor = AutomodeSupervisorLive.pipe(
     Layer.provide(delamain),
     Layer.provide(usage),
@@ -814,6 +821,7 @@ rtk git commit -m "feat(automode): AutomodeDriver sequential autonomous loop wit
 ## Task 5: Wire AutomodeDriver into the server layer
 
 **Files:**
+
 - Modify: `apps/server/src/server.ts`
 
 - [ ] **Step 1: Import the driver layer**
@@ -864,19 +872,19 @@ rtk git commit -m "feat(automode): wire AutomodeDriver into GITS server layer"
 
 ## Self-Review
 
-**1. Spec coverage (this plan's slice only — the autonomous *spine*):**
+**1. Spec coverage (this plan's slice only — the autonomous _spine_):**
 
-| Spec element (`autonomous-toggle.md`) | Task |
-|---|---|
-| Server-side `AutomodeDriver` loop (Q2) | Tasks 3–5 |
-| Sequential, one peer at a time (Q3/Q11) | Task 4 (`running` guard + `oldestQueued`) |
-| Poll-tick observation of `listPeers` (Q4) | Task 4 (`tickOnce` reconcile) |
-| Goal `running → completed/failed` transitions (the dead-status gap) | Task 2 (`completeGoal`/`failGoal`) |
-| `waiting` peer → pause (Q4) | Task 4 (`haltDriver` on `waiting`) |
-| Halt-on-hold/fail (Q5) | Task 2 (`haltDriver`, persisted) + Task 4 |
-| Resume after halt (Q9) | Task 2 (`resumeDriver`) |
-| Persistence across restart (open flag) | Task 2 (persisted `driverHalted`) |
-| Respect mode/kill switch (Q9) | Task 4 (early return) |
+| Spec element (`autonomous-toggle.md`)                               | Task                                      |
+| ------------------------------------------------------------------- | ----------------------------------------- |
+| Server-side `AutomodeDriver` loop (Q2)                              | Tasks 3–5                                 |
+| Sequential, one peer at a time (Q3/Q11)                             | Task 4 (`running` guard + `oldestQueued`) |
+| Poll-tick observation of `listPeers` (Q4)                           | Task 4 (`tickOnce` reconcile)             |
+| Goal `running → completed/failed` transitions (the dead-status gap) | Task 2 (`completeGoal`/`failGoal`)        |
+| `waiting` peer → pause (Q4)                                         | Task 4 (`haltDriver` on `waiting`)        |
+| Halt-on-hold/fail (Q5)                                              | Task 2 (`haltDriver`, persisted) + Task 4 |
+| Resume after halt (Q9)                                              | Task 2 (`resumeDriver`)                   |
+| Persistence across restart (open flag)                              | Task 2 (persisted `driverHalted`)         |
+| Respect mode/kill switch (Q9)                                       | Task 4 (early return)                     |
 
 Deferred-by-design (NOT gaps — see the Scope section): confined-yolo spawn args (Plan 2), held-PR/integration/verifier (Plan 3), ledger summaries (Plan 4), Telegram for the `waiting`/`failed` events currently `logWarning`/`logInfo`'d (Plan 5), auto-answer (Plan 6), Motoko dispatch/grill + per-project keying (Plan 7), cockpit arm/kill/resume UI (Plan 8). The driver dispatches via the existing `dispatchGoal`→`spawnPeer`; confinement is layered in Plan 2 by changing the spawn args, not the loop.
 

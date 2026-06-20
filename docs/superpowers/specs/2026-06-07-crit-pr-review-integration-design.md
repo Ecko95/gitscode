@@ -24,14 +24,14 @@ Embed the crit binary as a GITS-managed sidecar and surface its browser review U
 
 ## Key decisions (locked)
 
-| Decision | Choice | Rationale |
-| --- | --- | --- |
-| Integration shape | Embed the crit binary (sidecar + webview) | User wants crit's real UI, not a reimplementation. |
-| Render location | Inside the PR view, replacing the sidebar diff | The ask: PR-centric review, not the diff side menu. |
-| "Send to agent" target | Inject into the **active GITS thread** | Honors the default provider; keeps one conversation. |
-| Binary distribution | **Bundle & manage** per-platform binaries | True "native plugin" feel, zero setup. |
-| Lifecycle owner | **`apps/server`** | Already owns sidecars, auth, dispatch, workspace resolution; works for desktop *and* remote/web. |
-| Async-turn bridge | **Block-and-return** (with timeout fallback to ack) | Keeps the review conversation inside crit's UI. |
+| Decision               | Choice                                              | Rationale                                                                                        |
+| ---------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Integration shape      | Embed the crit binary (sidecar + webview)           | User wants crit's real UI, not a reimplementation.                                               |
+| Render location        | Inside the PR view, replacing the sidebar diff      | The ask: PR-centric review, not the diff side menu.                                              |
+| "Send to agent" target | Inject into the **active GITS thread**              | Honors the default provider; keeps one conversation.                                             |
+| Binary distribution    | **Bundle & manage** per-platform binaries           | True "native plugin" feel, zero setup.                                                           |
+| Lifecycle owner        | **`apps/server`**                                   | Already owns sidecars, auth, dispatch, workspace resolution; works for desktop _and_ remote/web. |
+| Async-turn bridge      | **Block-and-return** (with timeout fallback to ack) | Keeps the review conversation inside crit's UI.                                                  |
 
 ## Why crit's lack of codex support is not a problem
 
@@ -39,7 +39,7 @@ crit ships no `agent_cmd` recipe for codex because bare `codex` is an interactiv
 
 - crit's `agent_cmd` points at the **GITS wrapper CLI**, never at codex.
 - The wrapper satisfies crit's contract perfectly: reads the comment context on **stdin**, writes the agent reply on **stdout**, runs non-interactively with no prompts.
-- The actual codex run happens *inside GITS* via the codex app-server GITS already drives correctly. crit has no idea what's downstream.
+- The actual codex run happens _inside GITS_ via the codex app-server GITS already drives correctly. crit has no idea what's downstream.
 
 Had we chosen "spawn a fresh agent" (`agent_cmd = codex exec ...`), crit's codex gap would have required the `codex exec --full-auto -` workaround. The injection route avoids it.
 
@@ -118,14 +118,14 @@ Had we chosen "spawn a fresh agent" (`agent_cmd = codex exec ...`), crit's codex
 
 ## Error handling & failure modes
 
-| Failure | Handling |
-| --- | --- |
-| Missing/unbuilt binary for platform | Clear error in PR view; fall back to native `DiffPanel`. |
-| crit process crash | Sidecar status → `crashed`; PR view offers restart; fall back to `DiffPanel`. |
-| Port conflict | Ephemeral-port retry in `CritSidecarManager`. |
-| No active thread | Wrapper starts a new thread, or returns a clear error to crit. |
-| Turn exceeds timeout | Block-and-return degrades to ack message; reply still appears in GITS conversation. |
-| Dispatch auth failure | Wrapper returns a readable error to crit; status surfaced. |
+| Failure                             | Handling                                                                            |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| Missing/unbuilt binary for platform | Clear error in PR view; fall back to native `DiffPanel`.                            |
+| crit process crash                  | Sidecar status → `crashed`; PR view offers restart; fall back to `DiffPanel`.       |
+| Port conflict                       | Ephemeral-port retry in `CritSidecarManager`.                                       |
+| No active thread                    | Wrapper starts a new thread, or returns a clear error to crit.                      |
+| Turn exceeds timeout                | Block-and-return degrades to ack message; reply still appears in GITS conversation. |
+| Dispatch auth failure               | Wrapper returns a readable error to crit; status surfaced.                          |
 
 ## Security
 

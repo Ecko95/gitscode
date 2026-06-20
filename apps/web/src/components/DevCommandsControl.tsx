@@ -127,7 +127,10 @@ export default function DevCommandsControl({ environmentId, projectDir }: DevCom
             variant="outline"
             aria-label="Dev commands"
             disabled={commandsQuery.isPending || (commands.length === 0 && warnings.length === 0)}
-            title={actionError ?? (actionLabel ? `${actionLabel}${actionPending ? "..." : ""}` : "Dev commands")}
+            title={
+              actionError ??
+              (actionLabel ? `${actionLabel}${actionPending ? "..." : ""}` : "Dev commands")
+            }
           />
         }
       >

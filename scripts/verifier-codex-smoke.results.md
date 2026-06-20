@@ -8,7 +8,14 @@ A real `codex exec` reviewer run against a sample diff + acceptance criterion re
 parseable verdict:
 
 ```json
-{"verdict":"pass","confidence":"high","reasons":["The diff changes the implementation from subtraction to addition, so add(a,b) now computes the arithmetic sum."],"missed":[]}
+{
+  "verdict": "pass",
+  "confidence": "high",
+  "reasons": [
+    "The diff changes the implementation from subtraction to addition, so add(a,b) now computes the arithmetic sum."
+  ],
+  "missed": []
+}
 ```
 
 ## What the smoke found (and fixed)
@@ -19,7 +26,7 @@ parseable verdict:
    `--skip-git-repo-check`. Final invocation: `codex exec --sandbox read-only --skip-git-repo-check -m <model>` with the prompt on stdin.
 2. **Auth.** The isolated peer codex home (`~/.delamain/peer-codex-home`) had a **stale** token
    (HTTP 401 "refresh token already used") — it diverges from the primary once `~/.codex` refreshes.
-   Since the verifier is a *trusted* server-side reviewer (not an untrusted peer), the adapter now
+   Since the verifier is a _trusted_ server-side reviewer (not an untrusted peer), the adapter now
    defaults `CODEX_HOME` to the primary `~/.codex` (override via `GITS_VERIFIER_CODEX_HOME`). To use
    the peer home instead, refresh it: `CODEX_HOME=~/.delamain/peer-codex-home codex login`.
 3. **Cost.** ~26.9k tokens for one small verification call (codex exec overhead + reasoning).

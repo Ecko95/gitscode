@@ -6,16 +6,16 @@ Implements §Hardening **H0** of `ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md` — 
 
 ## Status
 
-| Step | State | Where |
-|---|---|---|
-| Feasibility (bubblewrap viable) | ✅ done | `spikes/h0-confinement/` (10/10 → now 14/14) |
-| Canonical, profiled wrapper | ✅ done | `scripts/gits-confine.sh` (`verify`/`peer` profiles) |
-| **Verification-under-confinement** (RCE-closer) | ✅ done (artifact ready) | `scripts/confined-verify.sh` |
-| Peer **minimal-credential** binding | ✅ done | `gits-confine.sh --profile peer --cred …` |
-| Peer **egress allowlist** | ⛔ blocked on host | needs `passt`/`pasta` or root nftables (absent here) |
-| **Wire into autopilot `supervisor.py`** | ✅ applied (backward-compatible) | external skill (`run_gate`/`confine_script`); validated end-to-end |
-| **GITS-side gate** (typed adapter) | ✅ added + server-wired + tested | `GitsVerificationGate` + `GitsConfinedVerifyAdapter` (4/4 tests) |
-| Wire into delamain peer spawn | ◻ pending (needs delamain support) | external binary |
+| Step                                            | State                              | Where                                                              |
+| ----------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------ |
+| Feasibility (bubblewrap viable)                 | ✅ done                            | `spikes/h0-confinement/` (10/10 → now 14/14)                       |
+| Canonical, profiled wrapper                     | ✅ done                            | `scripts/gits-confine.sh` (`verify`/`peer` profiles)               |
+| **Verification-under-confinement** (RCE-closer) | ✅ done (artifact ready)           | `scripts/confined-verify.sh`                                       |
+| Peer **minimal-credential** binding             | ✅ done                            | `gits-confine.sh --profile peer --cred …`                          |
+| Peer **egress allowlist**                       | ⛔ blocked on host                 | needs `passt`/`pasta` or root nftables (absent here)               |
+| **Wire into autopilot `supervisor.py`**         | ✅ applied (backward-compatible)   | external skill (`run_gate`/`confine_script`); validated end-to-end |
+| **GITS-side gate** (typed adapter)              | ✅ added + server-wired + tested   | `GitsVerificationGate` + `GitsConfinedVerifyAdapter` (4/4 tests)   |
+| Wire into delamain peer spawn                   | ◻ pending (needs delamain support) | external binary                                                    |
 
 All harness checks pass: `./spikes/h0-confinement/run-spike.sh` → **14/14**, deterministic, self-cleaning. The GITS gate adapter passes `4/4` unit tests; its contracts typecheck clean.
 
@@ -45,9 +45,11 @@ The original file is backed up at `supervisor.py.bak-h0-*`. (The autopilot is a 
 this repo; the edit is recorded here.)
 
 **Activate per chain** by adding to that chain's `config.json`:
+
 ```json
 { "confine_verification": true, "gitscode_path": "/abs/path/to/a/gitscode/checkout-with-scripts" }
 ```
+
 (or set `GITS_CONFINE_SCRIPT=/abs/.../scripts/gits-confine.sh`). Without it, the chain keeps the
 legacy behavior — no surprise breakage. **Caveat:** point `gitscode_path` at a checkout/branch that
 actually contains `scripts/gits-confine.sh` (this branch), or install the script to a fixed path.
@@ -73,13 +75,15 @@ rc = subprocess.call([
 ```
 
 Notes:
+
 - Prefer **direct tool argv** (`npx eslint .`, `npx tsc --noEmit`, `npx vitest run`) over `npm run <label>` for untrusted repos, so the repo can't redefine the gate via its scripts (server-pinned).
 - This is **net-off, secret-free**, so it is safe today with no further host changes.
 
 ### 1b — GITS-side gate: typed `GitsVerificationGate` adapter (✅ added + server-wired + tested)
 
-GITS had no command-executing verification gate (the planning scanner only *reads* `.planning`
+GITS had no command-executing verification gate (the planning scanner only _reads_ `.planning`
 evidence). Added one, mirroring the existing CLI adapters:
+
 - **Contracts** (`packages/contracts/src/gits.ts`): `GitsVerifyCommand` (label + **server-pinned argv** + optional timeout), `GitsVerifyInput` (worktree, commands, `requireConfinement` default true), `GitsVerifyCommandResult`, `GitsVerifyResult` (worktree, `confined`, `passed`, results, checkedAt), `GitsVerificationGateError`.
 - **Service** `apps/server/src/gits/Services/GitsVerificationGate.ts`.
 - **Layer** `apps/server/src/gits/Layers/GitsConfinedVerifyAdapter.ts`: probes `bwrap`; **fails closed** (`GitsVerificationGateError`) when confinement is unavailable and `requireConfinement` is set; otherwise runs each command through `gits-confine.sh --profile verify` (resolved via `GITS_CONFINE_BIN`) via the shared `ProcessRunner`, aggregating structured per-command results.
@@ -97,6 +101,7 @@ canary consumption are the follow-up; the capability is constructed and tested n
 
 The peer (codex/cursor) is launched by the external `delamain` binary (`DelamainCliAdapter.spawnArgs`
 builds `delamain spawn …`). Two ways to confine it:
+
 1. delamain launches its codex/cursor child through `gits-confine.sh --profile peer …` (needs delamain support), or
 2. GITS spawns peers under confinement directly.
 
@@ -121,13 +126,15 @@ no cursor `--force --trust`.
 A peer needs network to reach the model API — but should reach **only** the model API + the
 authenticated memory proxy (H3), nothing else. A true allowlist for an unprivileged user-namespace
 sandbox needs one of:
+
 - **`passt`/`pasta`** (userspace TAP) + a CONNECT proxy enforcing the host allowlist; peer uses
-  `--egress proxy=<addr>`. *Recommended once `passt` is installed (`apt install passt`).*
+  `--egress proxy=<addr>`. _Recommended once `passt` is installed (`apt install passt`)._
 - **root netns + nftables** egress filter.
 
 Neither `passt`/`pasta`/`slirp4netns` is present on this host, so `--egress proxy=` is currently
 **advisory only** (the wrapper sets `HTTPS_PROXY` but cannot prevent a hostile peer from bypassing it
 over shared host net). Therefore, until userspace-net lands:
+
 - run **verification** confined + net-off (safe now), and
 - run **peers** only on trusted repos, or accept unfiltered peer egress as a known residual risk.
 
@@ -140,11 +147,11 @@ over shared host net). Therefore, until userspace-net lands:
 
 ## Build on this: the semantic verifier-critic
 
-This mechanical gate (lint/tsc/test/build, confined) is the floor the **semantic verifier-critic** runs on top of — see `ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md` §"Revision 2" and `docs/brainstorms/self-improving-orchestration.md`. After this gate is green, a *fresh read-only codex* run judges the diff against the slice's **acceptance criteria** ("green ≠ correct") and **triages** the PR (auto-merge vs hold-for-review). The verifier itself runs **confined** (this wrapper, verify profile) and its codex spend counts toward the **20%-weekly reserve** (`GitsCapacityMonitor`).
+This mechanical gate (lint/tsc/test/build, confined) is the floor the **semantic verifier-critic** runs on top of — see `ORCHESTRATION_SELF_IMPROVEMENT_DESIGN.md` §"Revision 2" and `docs/brainstorms/self-improving-orchestration.md`. After this gate is green, a _fresh read-only codex_ run judges the diff against the slice's **acceptance criteria** ("green ≠ correct") and **triages** the PR (auto-merge vs hold-for-review). The verifier itself runs **confined** (this wrapper, verify profile) and its codex spend counts toward the **20%-weekly reserve** (`GitsCapacityMonitor`).
 
 ## Recommended next implementation slices
 
 1. **Wire `confined-verify.sh` into the autopilot + GITS gate** — ✅ done (see §Integration 1).
-2. **Semantic verifier-critic** on top of this gate — the operator's #1 pain (green-but-wrong PRs). *Now the highest-value next slice.*
+2. **Semantic verifier-critic** on top of this gate — the operator's #1 pain (green-but-wrong PRs). _Now the highest-value next slice._
 3. **Confine peer spawn with `--profile peer` + minimal creds** (cred-minimization works today; drop bypass flags).
 4. **Install `passt` and enable the egress allowlist** (`--egress proxy=`), turning peer net into model-API-+-memory-proxy-only.

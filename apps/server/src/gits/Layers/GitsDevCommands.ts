@@ -122,25 +122,24 @@ function inferPortHint(value: string): number | null {
 function inferDiscoveryMetadata(input: {
   readonly key: string;
   readonly packageName: string | null;
-}): Pick<DiscoveryCommand, "id" | "name" | "description" | "port" | "host" | "publishOnTailnet" | "servePort"> {
+}): Pick<
+  DiscoveryCommand,
+  "id" | "name" | "description" | "port" | "host" | "publishOnTailnet" | "servePort"
+> {
   const normalizedKey = input.key.toLowerCase();
-  const packageStem = (
-    input.packageName?.split("/").at(-1)?.replace(/^t3tools-/, "") ??
+  const packageStem =
+    input.packageName
+      ?.split("/")
+      .at(-1)
+      ?.replace(/^t3tools-/, "") ??
     normalizedKey.replace(/^dev:?/, "") ??
-    "workspace"
-  );
+    "workspace";
   const resourceLabel =
-    normalizedKey === "dev"
-      ? "Workspace dev"
-      : `${titleCaseSegment(packageStem)} dev`;
+    normalizedKey === "dev" ? "Workspace dev" : `${titleCaseSegment(packageStem)} dev`;
   const port = inferPortHint(`${normalizedKey} ${input.packageName ?? ""}`);
   const publishOnTailnet = port !== null;
   return {
-    id: sanitizeId(
-      normalizedKey === "dev"
-        ? "workspace-dev"
-        : `${packageStem}-dev`,
-    ),
+    id: sanitizeId(normalizedKey === "dev" ? "workspace-dev" : `${packageStem}-dev`),
     name: resourceLabel,
     description:
       normalizedKey === "dev"
@@ -186,10 +185,14 @@ function readScriptsFromPackageJson(json: Record<string, unknown> | null): Recor
   );
 }
 
-async function discoverRootPackageCommands(projectDir: string): Promise<ReadonlyArray<DiscoveryCommand>> {
+async function discoverRootPackageCommands(
+  projectDir: string,
+): Promise<ReadonlyArray<DiscoveryCommand>> {
   const packageJson = await readJsonRecord(Path.join(projectDir, ROOT_PACKAGE_JSON));
   const scripts = readScriptsFromPackageJson(packageJson);
-  const devScriptNames = Object.keys(scripts).filter((key) => key === "dev" || key.startsWith("dev:"));
+  const devScriptNames = Object.keys(scripts).filter(
+    (key) => key === "dev" || key.startsWith("dev:"),
+  );
   return devScriptNames.map((scriptName) => {
     const metadata = inferDiscoveryMetadata({ key: scriptName, packageName: null });
     return {
@@ -206,7 +209,9 @@ async function discoverRootPackageCommands(projectDir: string): Promise<Readonly
   });
 }
 
-async function discoverAppPackageCommands(projectDir: string): Promise<ReadonlyArray<DiscoveryCommand>> {
+async function discoverAppPackageCommands(
+  projectDir: string,
+): Promise<ReadonlyArray<DiscoveryCommand>> {
   const appsDirectory = Path.join(projectDir, APPS_DIRECTORY);
   let entries: ReadonlyArray<Dirent<string>>;
   try {
@@ -225,8 +230,7 @@ async function discoverAppPackageCommands(projectDir: string): Promise<ReadonlyA
     if (typeof scripts.dev !== "string") {
       continue;
     }
-    const packageName =
-      typeof packageJson?.name === "string" ? packageJson.name : null;
+    const packageName = typeof packageJson?.name === "string" ? packageJson.name : null;
     const metadata = inferDiscoveryMetadata({ key: "dev", packageName });
     commands.push({
       id: metadata.id,
@@ -251,7 +255,9 @@ async function discoverCommands(projectDir: string): Promise<ReadonlyArray<Disco
   return discoverAppPackageCommands(projectDir);
 }
 
-function uniqueCommands(commands: ReadonlyArray<DiscoveryCommand>): ReadonlyArray<DiscoveryCommand> {
+function uniqueCommands(
+  commands: ReadonlyArray<DiscoveryCommand>,
+): ReadonlyArray<DiscoveryCommand> {
   const seen = new Set<string>();
   return commands.filter((command) => {
     if (seen.has(command.id)) {
@@ -288,7 +294,10 @@ export function buildDevCommandLaunchCommand(input: {
   return `${env.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} bash ${shellQuote(input.wrapperPath)}`;
 }
 
-function buildPreviewUrl(input: { readonly magicDnsName: string | null; readonly servePort: number | null }) {
+function buildPreviewUrl(input: {
+  readonly magicDnsName: string | null;
+  readonly servePort: number | null;
+}) {
   if (!input.magicDnsName || input.servePort === null) {
     return null;
   }
@@ -346,10 +355,7 @@ function toConfigCommandForWrite(input: {
   readonly command: DiscoveryCommand;
   readonly projectDir: string;
 }): ConfigCommand {
-  const cwd =
-    input.command.cwd && input.command.cwd !== "."
-      ? input.command.cwd
-      : undefined;
+  const cwd = input.command.cwd && input.command.cwd !== "." ? input.command.cwd : undefined;
   return {
     id: input.command.id,
     name: input.command.name,
@@ -391,7 +397,9 @@ async function buildListResult(projectDir: string): Promise<GitsDevCommandListRe
 
   if (config !== null) {
     const parsedJson = JSON.parse(config.raw) as unknown;
-    const parsed = await Schema.decodeUnknownEffect(ConfigFileSchema)(parsedJson).pipe(Effect.runPromise);
+    const parsed = await Schema.decodeUnknownEffect(ConfigFileSchema)(parsedJson).pipe(
+      Effect.runPromise,
+    );
     return {
       projectDir,
       configPath: config.configPath,
@@ -438,7 +446,10 @@ const makeListCommands: GitsDevCommandsShape["listCommands"] = (input: GitsDevCo
   Effect.tryPromise({
     try: () => buildListResult(input.projectDir),
     catch: (cause) =>
-      toDevCommandError(`Failed to inspect or parse dev command config in ${input.projectDir}.`, cause),
+      toDevCommandError(
+        `Failed to inspect or parse dev command config in ${input.projectDir}.`,
+        cause,
+      ),
   });
 
 const makeInitCommands: GitsDevCommandsShape["initCommands"] = (input: GitsDevCommandInitInput) =>
