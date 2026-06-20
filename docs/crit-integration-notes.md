@@ -44,7 +44,9 @@ A reviewer left a comment on <filePath> (lines <start>-<end>):
 
 Code:
 ```
+
 <quoted code, if any>
+
 ```
 
 Comment:

@@ -121,11 +121,14 @@ describe("DelamainCliAdapter", () => {
         expect(input.command).toBe("delamain");
         expect(input.args).toEqual([
           "spawn",
-          "--repo", "/tmp/repo",
-          "--prompt", "do the thing",
+          "--repo",
+          "/tmp/repo",
+          "--prompt",
+          "do the thing",
           "--yolo",
           "--confine",
-          "--egress", "host",
+          "--egress",
+          "host",
         ]);
         return Effect.succeed({
           stdout: JSON.stringify({ id: "peer-x", status: "running", engine: "codex" }),

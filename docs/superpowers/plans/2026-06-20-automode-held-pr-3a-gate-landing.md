@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript, Effect (Layer/Effect/Ref/Schema), `@t3tools/contracts` (effect Schema), `@effect/vitest` (`it.effect`, `Layer.mock`), `@effect/platform-node` (`NodeServices`), vitest runner. RTK prefix for commands. Conventions: tabs, double quotes, semicolons, snake_case functions/vars, PascalCase types/components, kebab-case files. Gate every task on `bun fmt`, `bun lint`, `bun typecheck`, `bun run test` (NEVER `bun test`). Commit after each task.
 
 **Design decisions locked for 3a (from the 2026-06-20 design checkpoint):**
+
 1. Verifier runs **criteria-less** — `sliceId = goal.id`, no per-slice acceptance criteria stored (the criteria importer is Plan 7). The gate uses the mechanical suite + the semantic verifier's adversarial "what did it miss". Landing is gated on `mechanicalPassed && verdict !== "fail"`; `verdict === "uncertain"` lands but is **flagged** (recorded in `lastEvent`), because v1 holds everything for review anyway.
 2. `verificationCommands` is a **new `AutomodePolicy` field**, supplied at arm time. Empty list ⇒ fail-closed: the driver refuses to land unverified work.
 3. This is **Plan 3a only** (gate + landing). Held PR + patch-id merge detection are Plan 3b.
@@ -19,28 +20,29 @@
 
 ## File Structure
 
-| File | Responsibility | Change |
-|---|---|---|
-| `packages/contracts/src/gits.ts` | Add `verificationCommands` + `integrationBranch` to `AutomodePolicy` and `AutomodePolicyUpdateInput`. | Modify |
-| `apps/server/src/gits/Layers/AutomodeReviewGate.ts` | Pure `decide_automode_gate(review) → AutomodeGateDecision`. | Create |
-| `apps/server/src/gits/Layers/AutomodeReviewGate.test.ts` | Gate decision unit tests. | Create |
-| `apps/server/src/gits/Layers/AutomodeLandingCommands.ts` | Pure git-argv builders: ensure-integration-branch + fast-forward-land. | Create |
-| `apps/server/src/gits/Layers/AutomodeLandingCommands.test.ts` | Argv builder unit tests. | Create |
-| `apps/server/src/gits/Services/AutomodeLanding.ts` | New `AutomodeLanding` service tag + shape (`land_slice`). | Create |
-| `apps/server/src/gits/Layers/AutomodeLanding.ts` | `AutomodeLandingLive`: ensure branch + FF-push via `GitVcsDriver.execute`. | Create |
-| `apps/server/src/gits/Layers/AutomodeLanding.test.ts` | Landing-runner tests against a faked `GitVcsDriver`. | Create |
-| `apps/server/src/gits/Layers/AutomodeSupervisor.ts` | `defaultPolicy` + persisted-schema decoding-defaults for the 2 new fields; `updatePolicy` maps them; dispatch passes `startRef`/`mergeBranch`. | Modify |
-| `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts` | Policy-persistence + dispatch-spawn-args cases. | Modify |
-| `apps/server/src/gits/Services/AutomodeDriver.ts` | Widen `tickOnce` error channel if needed (review/landing errors are caught in-layer; no signature change expected). | Verify |
-| `apps/server/src/gits/Layers/AutomodeDriver.ts` | Replace the `TERMINAL_DONE` branch with gate→land→complete / fail→halt. Add `GitsReviewPipeline` + `AutomodeLanding` deps. | Modify |
-| `apps/server/src/gits/Layers/AutomodeDriver.test.ts` | Driver tests: pass→land→complete, mechanical-fail→fail+halt, verdict-fail→fail+halt, non-FF land→halt, uncertain→land+flag, no-verify-commands→halt. | Modify |
-| `apps/server/src/server.ts` | Provide `GitsReviewPipelineLive` + `AutomodeLandingLive` (+ `GitVcsDriver`) to `AutomodeDriverLayerLive`. | Modify |
+| File                                                          | Responsibility                                                                                                                                       | Change |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `packages/contracts/src/gits.ts`                              | Add `verificationCommands` + `integrationBranch` to `AutomodePolicy` and `AutomodePolicyUpdateInput`.                                                | Modify |
+| `apps/server/src/gits/Layers/AutomodeReviewGate.ts`           | Pure `decide_automode_gate(review) → AutomodeGateDecision`.                                                                                          | Create |
+| `apps/server/src/gits/Layers/AutomodeReviewGate.test.ts`      | Gate decision unit tests.                                                                                                                            | Create |
+| `apps/server/src/gits/Layers/AutomodeLandingCommands.ts`      | Pure git-argv builders: ensure-integration-branch + fast-forward-land.                                                                               | Create |
+| `apps/server/src/gits/Layers/AutomodeLandingCommands.test.ts` | Argv builder unit tests.                                                                                                                             | Create |
+| `apps/server/src/gits/Services/AutomodeLanding.ts`            | New `AutomodeLanding` service tag + shape (`land_slice`).                                                                                            | Create |
+| `apps/server/src/gits/Layers/AutomodeLanding.ts`              | `AutomodeLandingLive`: ensure branch + FF-push via `GitVcsDriver.execute`.                                                                           | Create |
+| `apps/server/src/gits/Layers/AutomodeLanding.test.ts`         | Landing-runner tests against a faked `GitVcsDriver`.                                                                                                 | Create |
+| `apps/server/src/gits/Layers/AutomodeSupervisor.ts`           | `defaultPolicy` + persisted-schema decoding-defaults for the 2 new fields; `updatePolicy` maps them; dispatch passes `startRef`/`mergeBranch`.       | Modify |
+| `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`      | Policy-persistence + dispatch-spawn-args cases.                                                                                                      | Modify |
+| `apps/server/src/gits/Services/AutomodeDriver.ts`             | Widen `tickOnce` error channel if needed (review/landing errors are caught in-layer; no signature change expected).                                  | Verify |
+| `apps/server/src/gits/Layers/AutomodeDriver.ts`               | Replace the `TERMINAL_DONE` branch with gate→land→complete / fail→halt. Add `GitsReviewPipeline` + `AutomodeLanding` deps.                           | Modify |
+| `apps/server/src/gits/Layers/AutomodeDriver.test.ts`          | Driver tests: pass→land→complete, mechanical-fail→fail+halt, verdict-fail→fail+halt, non-FF land→halt, uncertain→land+flag, no-verify-commands→halt. | Modify |
+| `apps/server/src/server.ts`                                   | Provide `GitsReviewPipelineLive` + `AutomodeLandingLive` (+ `GitVcsDriver`) to `AutomodeDriverLayerLive`.                                            | Modify |
 
 ---
 
 ## Task 1: Contracts — policy gains `verificationCommands` + `integrationBranch`
 
 **Files:**
+
 - Modify: `packages/contracts/src/gits.ts` (`AutomodePolicy` ~627-641, `AutomodePolicyUpdateInput` ~687-700)
 
 - [ ] **Step 1: Write the failing test**
@@ -151,6 +153,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add packages/contracts/src/gits.ts package
 ## Task 2: Supervisor — policy defaults, persistence, and update mapping
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.ts` (`defaultPolicy` ~160-175, `updatePolicy` ~400-429)
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`
 
@@ -241,6 +244,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/gits/Layers/AutomodeSu
 The chain only fast-forwards if each peer branches **from the integration tip** and pushes to a **known per-slice branch**. `dispatchGoal` must pass `startRef`/`mergeBranch` to `spawnPeer` when `integrationBranch` is set.
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.ts` (`dispatchGoal` spawn call ~560-575)
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`
 
@@ -272,7 +276,13 @@ it.effect("autonomous dispatch spawns from the integration tip to a per-slice br
     assert.equal(spawnInput?.startRef, "auto/gits-self");
     assert.equal(spawnInput?.mergeBranch, `auto/slice/${goalId}`);
   }).pipe(
-    Effect.provide(makeLayer({ onSpawn: (input) => { spawnInput = input; } })),
+    Effect.provide(
+      makeLayer({
+        onSpawn: (input) => {
+          spawnInput = input;
+        },
+      }),
+    ),
   );
 });
 ```
@@ -287,19 +297,20 @@ Expected: FAIL — `spawnInput.startRef`/`mergeBranch` are `undefined`.
 In `dispatchGoal`, the `delamainAdapter.spawnPeer({ … })` call (currently passes `repo, prompt, name, [model], confine, yolo, egress`) gains the chain args **only when `integrationBranch` is set**:
 
 ```typescript
-    const peer = yield* delamainAdapter
-      .spawnPeer({
-        repo: goal.repo,
-        prompt: goal.prompt,
-        name: goal.title,
-        ...(effectiveModel ? { model: effectiveModel } : {}),
-        ...(state.policy.integrationBranch
-          ? { startRef: state.policy.integrationBranch, mergeBranch: `auto/slice/${goal.id}` }
-          : {}),
-        confine: true,
-        yolo: true,
-        egress: "host",
-      })
+const peer =
+  yield *
+  delamainAdapter.spawnPeer({
+    repo: goal.repo,
+    prompt: goal.prompt,
+    name: goal.title,
+    ...(effectiveModel ? { model: effectiveModel } : {}),
+    ...(state.policy.integrationBranch
+      ? { startRef: state.policy.integrationBranch, mergeBranch: `auto/slice/${goal.id}` }
+      : {}),
+    confine: true,
+    yolo: true,
+    egress: "host",
+  });
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -318,6 +329,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/gits/Layers/AutomodeSu
 ## Task 4: Pure gate decision — `decide_automode_gate`
 
 **Files:**
+
 - Create: `apps/server/src/gits/Layers/AutomodeReviewGate.ts`
 - Test: `apps/server/src/gits/Layers/AutomodeReviewGate.test.ts`
 
@@ -406,23 +418,27 @@ import type { GitsReviewResult } from "@t3tools/contracts";
 export type AutomodeGateAction = "land" | "fail";
 
 export interface AutomodeGateDecision {
-	readonly action: AutomodeGateAction;
-	readonly flagged: boolean;
-	readonly reason: string;
+  readonly action: AutomodeGateAction;
+  readonly flagged: boolean;
+  readonly reason: string;
 }
 
 // v1 (autoMerge OFF): land iff the mechanical suite passed AND the verifier did not
 // reject. "uncertain" (or a skipped/absent semantic result) lands but is flagged for
 // the operator's held-PR review. Only "fail" halts the chain.
 export function decide_automode_gate(review: GitsReviewResult): AutomodeGateDecision {
-	if (!review.mechanicalPassed) {
-		return { action: "fail", flagged: false, reason: `Mechanical gate failed: ${review.summary}` };
-	}
-	const verdict = review.semantic?.verdict ?? "uncertain";
-	if (verdict === "fail") {
-		return { action: "fail", flagged: false, reason: `Verifier rejected the slice: ${review.summary}` };
-	}
-	return { action: "land", flagged: verdict === "uncertain", reason: review.summary };
+  if (!review.mechanicalPassed) {
+    return { action: "fail", flagged: false, reason: `Mechanical gate failed: ${review.summary}` };
+  }
+  const verdict = review.semantic?.verdict ?? "uncertain";
+  if (verdict === "fail") {
+    return {
+      action: "fail",
+      flagged: false,
+      reason: `Verifier rejected the slice: ${review.summary}`,
+    };
+  }
+  return { action: "land", flagged: verdict === "uncertain", reason: review.summary };
 }
 ```
 
@@ -444,6 +460,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/gits/Layers/AutomodeRe
 The integration branch is fast-forwarded to the slice tip. Two pure builders return ordered `{ operation, args }` git-argv records (executed later via `GitVcsDriver.execute`).
 
 **Files:**
+
 - Create: `apps/server/src/gits/Layers/AutomodeLandingCommands.ts`
 - Test: `apps/server/src/gits/Layers/AutomodeLandingCommands.test.ts`
 
@@ -452,36 +469,32 @@ The integration branch is fast-forwarded to the slice tip. Two pure builders ret
 ```typescript
 import { describe, expect, it } from "vitest";
 import {
-	build_ensure_integration_branch_commands,
-	build_land_slice_commands,
+  build_ensure_integration_branch_commands,
+  build_land_slice_commands,
 } from "./AutomodeLandingCommands.ts";
 
 describe("automode landing commands", () => {
-	it("creates the integration branch from the base ref on origin", () => {
-		const cmds = build_ensure_integration_branch_commands({
-			integrationBranch: "auto/gits-self",
-			baseRef: "gits",
-		});
-		expect(cmds.map((c) => c.args)).toEqual([
-			["fetch", "origin", "gits"],
-			["push", "origin", "refs/remotes/origin/gits:refs/heads/auto/gits-self"],
-		]);
-	});
+  it("creates the integration branch from the base ref on origin", () => {
+    const cmds = build_ensure_integration_branch_commands({
+      integrationBranch: "auto/gits-self",
+      baseRef: "gits",
+    });
+    expect(cmds.map((c) => c.args)).toEqual([
+      ["fetch", "origin", "gits"],
+      ["push", "origin", "refs/remotes/origin/gits:refs/heads/auto/gits-self"],
+    ]);
+  });
 
-	it("fast-forwards the integration branch to the slice tip on origin", () => {
-		const cmds = build_land_slice_commands({
-			sliceBranch: "auto/slice/goal-1",
-			integrationBranch: "auto/gits-self",
-		});
-		expect(cmds.map((c) => c.args)).toEqual([
-			["fetch", "origin", "auto/slice/goal-1"],
-			[
-				"push",
-				"origin",
-				"refs/remotes/origin/auto/slice/goal-1:refs/heads/auto/gits-self",
-			],
-		]);
-	});
+  it("fast-forwards the integration branch to the slice tip on origin", () => {
+    const cmds = build_land_slice_commands({
+      sliceBranch: "auto/slice/goal-1",
+      integrationBranch: "auto/gits-self",
+    });
+    expect(cmds.map((c) => c.args)).toEqual([
+      ["fetch", "origin", "auto/slice/goal-1"],
+      ["push", "origin", "refs/remotes/origin/auto/slice/goal-1:refs/heads/auto/gits-self"],
+    ]);
+  });
 });
 ```
 
@@ -494,53 +507,53 @@ Expected: FAIL — builders not defined.
 
 ```typescript
 export interface AutomodeGitArgv {
-	readonly operation: string;
-	readonly args: ReadonlyArray<string>;
+  readonly operation: string;
+  readonly args: ReadonlyArray<string>;
 }
 
 export interface EnsureIntegrationBranchInput {
-	readonly integrationBranch: string;
-	readonly baseRef: string; // e.g. "gits"
+  readonly integrationBranch: string;
+  readonly baseRef: string; // e.g. "gits"
 }
 
 // Idempotent create-from-base. The runner only invokes this when the integration
 // branch does not yet exist on origin (ls-remote check), so the push is a creation.
 export function build_ensure_integration_branch_commands(
-	input: EnsureIntegrationBranchInput,
+  input: EnsureIntegrationBranchInput,
 ): ReadonlyArray<AutomodeGitArgv> {
-	return [
-		{ operation: "automode-fetch-base", args: ["fetch", "origin", input.baseRef] },
-		{
-			operation: "automode-create-integration",
-			args: [
-				"push",
-				"origin",
-				`refs/remotes/origin/${input.baseRef}:refs/heads/${input.integrationBranch}`,
-			],
-		},
-	];
+  return [
+    { operation: "automode-fetch-base", args: ["fetch", "origin", input.baseRef] },
+    {
+      operation: "automode-create-integration",
+      args: [
+        "push",
+        "origin",
+        `refs/remotes/origin/${input.baseRef}:refs/heads/${input.integrationBranch}`,
+      ],
+    },
+  ];
 }
 
 export interface LandSliceInput {
-	readonly sliceBranch: string;
-	readonly integrationBranch: string;
+  readonly sliceBranch: string;
+  readonly integrationBranch: string;
 }
 
 // Fast-forward the integration branch to the verified slice tip. Because the peer
 // branched FROM the integration tip (Task 3) and v1 is sequential, this push is a
 // fast-forward; a non-FF rejection means the chain diverged and the runner halts.
 export function build_land_slice_commands(input: LandSliceInput): ReadonlyArray<AutomodeGitArgv> {
-	return [
-		{ operation: "automode-fetch-slice", args: ["fetch", "origin", input.sliceBranch] },
-		{
-			operation: "automode-land-slice",
-			args: [
-				"push",
-				"origin",
-				`refs/remotes/origin/${input.sliceBranch}:refs/heads/${input.integrationBranch}`,
-			],
-		},
-	];
+  return [
+    { operation: "automode-fetch-slice", args: ["fetch", "origin", input.sliceBranch] },
+    {
+      operation: "automode-land-slice",
+      args: [
+        "push",
+        "origin",
+        `refs/remotes/origin/${input.sliceBranch}:refs/heads/${input.integrationBranch}`,
+      ],
+    },
+  ];
 }
 ```
 
@@ -560,6 +573,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/gits/Layers/AutomodeLa
 ## Task 6: `AutomodeLanding` service — ensure branch + FF-push
 
 **Files:**
+
 - Create: `apps/server/src/gits/Services/AutomodeLanding.ts`
 - Create: `apps/server/src/gits/Layers/AutomodeLanding.ts`
 - Test: `apps/server/src/gits/Layers/AutomodeLanding.test.ts`
@@ -567,6 +581,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/gits/Layers/AutomodeLa
 - [ ] **Step 1: Read the `GitVcsDriver` surface**
 
 Read `apps/server/src/vcs/GitVcsDriver.ts`:
+
 - the `GitVcsDriver` Context tag,
 - `execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>` where `ExecuteGitInput = { operation, cwd, args }` and `ExecuteGitResult = { exitCode, stdout, stderr, stdoutTruncated, stderrTruncated }`.
 
@@ -582,24 +597,24 @@ import type * as Effect from "effect/Effect";
 import type { AutomodeSupervisorError } from "@t3tools/contracts";
 
 export interface AutomodeLandSliceInput {
-	readonly repo: string;
-	readonly integrationBranch: string;
-	readonly baseRef: string; // branch the integration line is cut from, e.g. "gits"
-	readonly sliceBranch: string;
+  readonly repo: string;
+  readonly integrationBranch: string;
+  readonly baseRef: string; // branch the integration line is cut from, e.g. "gits"
+  readonly sliceBranch: string;
 }
 
 export type AutomodeLandResult =
-	| { readonly status: "landed" }
-	| { readonly status: "rejected"; readonly reason: string };
+  | { readonly status: "landed" }
+  | { readonly status: "rejected"; readonly reason: string };
 
 export interface AutomodeLandingShape {
-	readonly land_slice: (
-		input: AutomodeLandSliceInput,
-	) => Effect.Effect<AutomodeLandResult, AutomodeSupervisorError>;
+  readonly land_slice: (
+    input: AutomodeLandSliceInput,
+  ) => Effect.Effect<AutomodeLandResult, AutomodeSupervisorError>;
 }
 
 export class AutomodeLanding extends Context.Service<AutomodeLanding, AutomodeLandingShape>()(
-	"t3/gits/Services/AutomodeLanding",
+  "t3/gits/Services/AutomodeLanding",
 ) {}
 ```
 
@@ -617,91 +632,95 @@ import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeLandingLive } from "./AutomodeLanding.ts";
 
-function gitDriverMock(handler: (args: ReadonlyArray<string>) => { exitCode: number; stderr?: string }) {
-	return Layer.mock(GitVcsDriver)({
-		execute: (input) =>
-			Effect.sync(() => {
-				const { exitCode, stderr } = handler(input.args);
-				return {
-					exitCode,
-					stdout: "",
-					stderr: stderr ?? "",
-					stdoutTruncated: false,
-					stderrTruncated: false,
-				};
-			}),
-	} as never);
+function gitDriverMock(
+  handler: (args: ReadonlyArray<string>) => { exitCode: number; stderr?: string },
+) {
+  return Layer.mock(GitVcsDriver)({
+    execute: (input) =>
+      Effect.sync(() => {
+        const { exitCode, stderr } = handler(input.args);
+        return {
+          exitCode,
+          stdout: "",
+          stderr: stderr ?? "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }),
+  } as never);
 }
 
 const landInput = {
-	repo: "/tmp/repo",
-	integrationBranch: "auto/gits-self",
-	baseRef: "gits",
-	sliceBranch: "auto/slice/goal-1",
+  repo: "/tmp/repo",
+  integrationBranch: "auto/gits-self",
+  baseRef: "gits",
+  sliceBranch: "auto/slice/goal-1",
 };
 
 describe("AutomodeLandingLive", () => {
-	it.effect("fast-forwards the integration branch when it already exists", () =>
-		Effect.gen(function* () {
-			const seen: string[][] = [];
-			const landing = yield* AutomodeLanding;
-			const result = yield* landing.land_slice(landInput);
-			assert.equal(result.status, "landed");
-		}).pipe(
-			Effect.provide(
-				AutomodeLandingLive.pipe(
-					Layer.provide(
-						gitDriverMock((args) => {
-							// ls-remote integration branch → exists (exit 0)
-							if (args[0] === "ls-remote") return { exitCode: 0 };
-							return { exitCode: 0 };
-						}),
-					),
-				),
-			),
-		),
-	);
+  it.effect("fast-forwards the integration branch when it already exists", () =>
+    Effect.gen(function* () {
+      const seen: string[][] = [];
+      const landing = yield* AutomodeLanding;
+      const result = yield* landing.land_slice(landInput);
+      assert.equal(result.status, "landed");
+    }).pipe(
+      Effect.provide(
+        AutomodeLandingLive.pipe(
+          Layer.provide(
+            gitDriverMock((args) => {
+              // ls-remote integration branch → exists (exit 0)
+              if (args[0] === "ls-remote") return { exitCode: 0 };
+              return { exitCode: 0 };
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
 
-	it.effect("creates the integration branch first when ls-remote reports it absent", () =>
-		Effect.gen(function* () {
-			const landing = yield* AutomodeLanding;
-			const result = yield* landing.land_slice(landInput);
-			assert.equal(result.status, "landed");
-		}).pipe(
-			Effect.provide(
-				AutomodeLandingLive.pipe(
-					Layer.provide(
-						gitDriverMock((args) => {
-							if (args[0] === "ls-remote") return { exitCode: 2 }; // absent
-							return { exitCode: 0 };
-						}),
-					),
-				),
-			),
-		),
-	);
+  it.effect("creates the integration branch first when ls-remote reports it absent", () =>
+    Effect.gen(function* () {
+      const landing = yield* AutomodeLanding;
+      const result = yield* landing.land_slice(landInput);
+      assert.equal(result.status, "landed");
+    }).pipe(
+      Effect.provide(
+        AutomodeLandingLive.pipe(
+          Layer.provide(
+            gitDriverMock((args) => {
+              if (args[0] === "ls-remote") return { exitCode: 2 }; // absent
+              return { exitCode: 0 };
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
 
-	it.effect("returns rejected (not an error) when the FF push is refused", () =>
-		Effect.gen(function* () {
-			const landing = yield* AutomodeLanding;
-			const result = yield* landing.land_slice(landInput);
-			assert.equal(result.status, "rejected");
-		}).pipe(
-			Effect.provide(
-				AutomodeLandingLive.pipe(
-					Layer.provide(
-						gitDriverMock((args) => {
-							if (args[0] === "ls-remote") return { exitCode: 0 };
-							if (args[0] === "push" && args.includes(
-								"refs/remotes/origin/auto/slice/goal-1:refs/heads/auto/gits-self",
-							)) return { exitCode: 1, stderr: "! [rejected] (non-fast-forward)" };
-							return { exitCode: 0 };
-						}),
-					),
-				),
-			),
-		),
-	);
+  it.effect("returns rejected (not an error) when the FF push is refused", () =>
+    Effect.gen(function* () {
+      const landing = yield* AutomodeLanding;
+      const result = yield* landing.land_slice(landInput);
+      assert.equal(result.status, "rejected");
+    }).pipe(
+      Effect.provide(
+        AutomodeLandingLive.pipe(
+          Layer.provide(
+            gitDriverMock((args) => {
+              if (args[0] === "ls-remote") return { exitCode: 0 };
+              if (
+                args[0] === "push" &&
+                args.includes("refs/remotes/origin/auto/slice/goal-1:refs/heads/auto/gits-self")
+              )
+                return { exitCode: 1, stderr: "! [rejected] (non-fast-forward)" };
+              return { exitCode: 0 };
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
 });
 ```
 
@@ -721,85 +740,82 @@ import { AutomodeSupervisorError } from "@t3tools/contracts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import { AutomodeLanding, type AutomodeLandingShape } from "../Services/AutomodeLanding.ts";
 import {
-	build_ensure_integration_branch_commands,
-	build_land_slice_commands,
-	type AutomodeGitArgv,
+  build_ensure_integration_branch_commands,
+  build_land_slice_commands,
+  type AutomodeGitArgv,
 } from "./AutomodeLandingCommands.ts";
 
 export const AutomodeLandingLive = Layer.effect(
-	AutomodeLanding,
-	Effect.gen(function* () {
-		const git = yield* GitVcsDriver;
+  AutomodeLanding,
+  Effect.gen(function* () {
+    const git = yield* GitVcsDriver;
 
-		const run = (repo: string, command: AutomodeGitArgv) =>
-			git
-				.execute({ operation: command.operation, cwd: repo, args: [...command.args] })
-				.pipe(
-					Effect.mapError(
-						(cause) =>
-							new AutomodeSupervisorError({
-								message: `git ${command.args.join(" ")} failed.`,
-								cause,
-							}),
-					),
-				);
+    const run = (repo: string, command: AutomodeGitArgv) =>
+      git.execute({ operation: command.operation, cwd: repo, args: [...command.args] }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AutomodeSupervisorError({
+              message: `git ${command.args.join(" ")} failed.`,
+              cause,
+            }),
+        ),
+      );
 
-		const land_slice: AutomodeLandingShape["land_slice"] = (input) =>
-			Effect.gen(function* () {
-				// 1) Ensure the integration branch exists on origin (create from baseRef if absent).
-				const exists = yield* git
-					.execute({
-						operation: "automode-ls-integration",
-						cwd: input.repo,
-						args: ["ls-remote", "--exit-code", "origin", `refs/heads/${input.integrationBranch}`],
-					})
-					.pipe(
-						Effect.map((result) => result.exitCode === 0),
-						Effect.mapError(
-							(cause) =>
-								new AutomodeSupervisorError({ message: "git ls-remote failed.", cause }),
-						),
-					);
+    const land_slice: AutomodeLandingShape["land_slice"] = (input) =>
+      Effect.gen(function* () {
+        // 1) Ensure the integration branch exists on origin (create from baseRef if absent).
+        const exists = yield* git
+          .execute({
+            operation: "automode-ls-integration",
+            cwd: input.repo,
+            args: ["ls-remote", "--exit-code", "origin", `refs/heads/${input.integrationBranch}`],
+          })
+          .pipe(
+            Effect.map((result) => result.exitCode === 0),
+            Effect.mapError(
+              (cause) => new AutomodeSupervisorError({ message: "git ls-remote failed.", cause }),
+            ),
+          );
 
-				if (!exists) {
-					for (const command of build_ensure_integration_branch_commands({
-						integrationBranch: input.integrationBranch,
-						baseRef: input.baseRef,
-					})) {
-						yield* run(input.repo, command);
-					}
-				}
+        if (!exists) {
+          for (const command of build_ensure_integration_branch_commands({
+            integrationBranch: input.integrationBranch,
+            baseRef: input.baseRef,
+          })) {
+            yield* run(input.repo, command);
+          }
+        }
 
-				// 2) Fast-forward the integration branch to the slice tip.
-				const commands = build_land_slice_commands({
-					sliceBranch: input.sliceBranch,
-					integrationBranch: input.integrationBranch,
-				});
-				yield* run(input.repo, commands[0]!); // fetch slice — a real failure throws
+        // 2) Fast-forward the integration branch to the slice tip.
+        const commands = build_land_slice_commands({
+          sliceBranch: input.sliceBranch,
+          integrationBranch: input.integrationBranch,
+        });
+        yield* run(input.repo, commands[0]!); // fetch slice — a real failure throws
 
-				const push = yield* git
-					.execute({
-						operation: commands[1]!.operation,
-						cwd: input.repo,
-						args: [...commands[1]!.args],
-					})
-					.pipe(
-						Effect.mapError(
-							(cause) => new AutomodeSupervisorError({ message: "git push failed.", cause }),
-						),
-					);
+        const push = yield* git
+          .execute({
+            operation: commands[1]!.operation,
+            cwd: input.repo,
+            args: [...commands[1]!.args],
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new AutomodeSupervisorError({ message: "git push failed.", cause }),
+            ),
+          );
 
-				if (push.exitCode !== 0) {
-					return {
-						status: "rejected" as const,
-						reason: `Integration branch could not fast-forward to ${input.sliceBranch} (non-fast-forward). ${push.stderr.trim()}`,
-					};
-				}
-				return { status: "landed" as const };
-			});
+        if (push.exitCode !== 0) {
+          return {
+            status: "rejected" as const,
+            reason: `Integration branch could not fast-forward to ${input.sliceBranch} (non-fast-forward). ${push.stderr.trim()}`,
+          };
+        }
+        return { status: "landed" as const };
+      });
 
-		return { land_slice } satisfies AutomodeLandingShape;
-	}),
+    return { land_slice } satisfies AutomodeLandingShape;
+  }),
 );
 ```
 
@@ -821,6 +837,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/gits/Services/Automode
 Replace the `TERMINAL_DONE_STATUSES` branch in `tickOnce`. The driver gains `GitsReviewPipeline` and `AutomodeLanding` dependencies.
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/AutomodeDriver.ts`
 - Modify: `apps/server/src/gits/Layers/AutomodeDriver.test.ts`
 
@@ -830,81 +847,81 @@ In `apps/server/src/gits/Layers/AutomodeDriver.test.ts`, extend `makeLayer` (or 
 
 ```typescript
 it.effect("on done: verifier passes → lands the slice → completes the goal", () =>
-	Effect.gen(function* () {
-		const driver = yield* AutomodeDriver;
-		yield* driver.tickOnce(); // dispatch
-		yield* driver.tickOnce(); // reconcile done → gate → land → complete
-		const supervisor = yield* AutomodeSupervisor;
-		const snapshot = yield* supervisor.getSnapshot();
-		assert.equal(snapshot.goals[0]?.status, "completed");
-	}).pipe(
-		Effect.provide(
-			makeDriverLayer({
-				policy: autonomousPolicyWithVerify,
-				peerStatus: "done",
-				review: passingReview,
-				landResult: { status: "landed" },
-			}),
-		),
-	),
+  Effect.gen(function* () {
+    const driver = yield* AutomodeDriver;
+    yield* driver.tickOnce(); // dispatch
+    yield* driver.tickOnce(); // reconcile done → gate → land → complete
+    const supervisor = yield* AutomodeSupervisor;
+    const snapshot = yield* supervisor.getSnapshot();
+    assert.equal(snapshot.goals[0]?.status, "completed");
+  }).pipe(
+    Effect.provide(
+      makeDriverLayer({
+        policy: autonomousPolicyWithVerify,
+        peerStatus: "done",
+        review: passingReview,
+        landResult: { status: "landed" },
+      }),
+    ),
+  ),
 );
 
 it.effect("on done: verifier fails → fails the goal and halts", () =>
-	Effect.gen(function* () {
-		const driver = yield* AutomodeDriver;
-		yield* driver.tickOnce();
-		yield* driver.tickOnce();
-		const snapshot = yield* (yield* AutomodeSupervisor).getSnapshot();
-		assert.equal(snapshot.goals[0]?.status, "failed");
-		assert.equal(snapshot.driverHalted, true);
-	}).pipe(
-		Effect.provide(
-			makeDriverLayer({
-				policy: autonomousPolicyWithVerify,
-				peerStatus: "done",
-				review: failingReview,
-			}),
-		),
-	),
+  Effect.gen(function* () {
+    const driver = yield* AutomodeDriver;
+    yield* driver.tickOnce();
+    yield* driver.tickOnce();
+    const snapshot = yield* (yield* AutomodeSupervisor).getSnapshot();
+    assert.equal(snapshot.goals[0]?.status, "failed");
+    assert.equal(snapshot.driverHalted, true);
+  }).pipe(
+    Effect.provide(
+      makeDriverLayer({
+        policy: autonomousPolicyWithVerify,
+        peerStatus: "done",
+        review: failingReview,
+      }),
+    ),
+  ),
 );
 
 it.effect("on done: non-fast-forward landing → halts without completing", () =>
-	Effect.gen(function* () {
-		const driver = yield* AutomodeDriver;
-		yield* driver.tickOnce();
-		yield* driver.tickOnce();
-		const snapshot = yield* (yield* AutomodeSupervisor).getSnapshot();
-		assert.equal(snapshot.driverHalted, true);
-		assert.notEqual(snapshot.goals[0]?.status, "completed");
-	}).pipe(
-		Effect.provide(
-			makeDriverLayer({
-				policy: autonomousPolicyWithVerify,
-				peerStatus: "done",
-				review: passingReview,
-				landResult: { status: "rejected", reason: "non-fast-forward" },
-			}),
-		),
-	),
+  Effect.gen(function* () {
+    const driver = yield* AutomodeDriver;
+    yield* driver.tickOnce();
+    yield* driver.tickOnce();
+    const snapshot = yield* (yield* AutomodeSupervisor).getSnapshot();
+    assert.equal(snapshot.driverHalted, true);
+    assert.notEqual(snapshot.goals[0]?.status, "completed");
+  }).pipe(
+    Effect.provide(
+      makeDriverLayer({
+        policy: autonomousPolicyWithVerify,
+        peerStatus: "done",
+        review: passingReview,
+        landResult: { status: "rejected", reason: "non-fast-forward" },
+      }),
+    ),
+  ),
 );
 
 it.effect("on done: empty verificationCommands → halts (fail-closed), no land", () =>
-	Effect.gen(function* () {
-		let landed = false;
-		const driver = yield* AutomodeDriver;
-		yield* driver.tickOnce();
-		yield* driver.tickOnce();
-		const snapshot = yield* (yield* AutomodeSupervisor).getSnapshot();
-		assert.equal(snapshot.driverHalted, true);
-	}).pipe(
-		Effect.provide(
-			makeDriverLayer({
-				policy: { ...autonomousPolicyWithVerify, verificationCommands: [] },
-				peerStatus: "done",
-				review: passingReview,
-			}),
-		),
-	),
+  Effect.gen(function* () {
+    let landed = false;
+    const driver = yield* AutomodeDriver;
+    yield* driver.tickOnce();
+    yield* driver.tickOnce();
+    const snapshot = yield* (yield* AutomodeSupervisor).getSnapshot();
+    assert.equal(snapshot.driverHalted, true);
+  }).pipe(
+    Effect.provide(
+      makeDriverLayer({
+        policy: { ...autonomousPolicyWithVerify, verificationCommands: [] },
+        peerStatus: "done",
+        review: passingReview,
+      }),
+    ),
+  ),
 );
 ```
 
@@ -922,8 +939,8 @@ In `apps/server/src/gits/Layers/AutomodeDriver.ts`:
 1. Acquire the new deps at the top of the layer effect (next to `AutomodeSupervisor`/`DelamainAdapter`):
 
 ```typescript
-		const reviewPipeline = yield* GitsReviewPipeline;
-		const landing = yield* AutomodeLanding;
+const reviewPipeline = yield * GitsReviewPipeline;
+const landing = yield * AutomodeLanding;
 ```
 
 with imports:
@@ -937,89 +954,100 @@ import { decide_automode_gate } from "./AutomodeReviewGate.ts";
 2. Replace the existing terminal-done block:
 
 ```typescript
-			if (TERMINAL_DONE_STATUSES.has(peer.status)) {
-				yield* supervisor.completeGoal({ goalId: running.id });
-				yield* Effect.logInfo("gits.automode.driver.goal-completed", {
-					goalId: running.id,
-					peerId: peer.id,
-				});
-				return;
-			}
+if (TERMINAL_DONE_STATUSES.has(peer.status)) {
+  yield * supervisor.completeGoal({ goalId: running.id });
+  yield *
+    Effect.logInfo("gits.automode.driver.goal-completed", {
+      goalId: running.id,
+      peerId: peer.id,
+    });
+  return;
+}
 ```
 
 with the gate → land → complete / fail → halt flow:
 
 ```typescript
-			if (TERMINAL_DONE_STATUSES.has(peer.status)) {
-				const policy = snapshot.policy;
+if (TERMINAL_DONE_STATUSES.has(peer.status)) {
+  const policy = snapshot.policy;
 
-				// Fail closed: never land work that was not verified, and never land without a target.
-				if (policy.integrationBranch === null) {
-					yield* supervisor.haltDriver({
-						reason: `Halted: ${running.title} finished but no integration branch is configured.`,
-					});
-					return;
-				}
-				if (policy.verificationCommands.length === 0) {
-					yield* supervisor.haltDriver({
-						reason: `Halted: ${running.title} finished but no verification commands are configured.`,
-					});
-					return;
-				}
-				if (peer.worktreePath === null || peer.branch === null) {
-					yield* supervisor.haltDriver({
-						reason: `Halted: peer ${peer.id} has no worktree/branch to verify and land.`,
-					});
-					return;
-				}
+  // Fail closed: never land work that was not verified, and never land without a target.
+  if (policy.integrationBranch === null) {
+    yield *
+      supervisor.haltDriver({
+        reason: `Halted: ${running.title} finished but no integration branch is configured.`,
+      });
+    return;
+  }
+  if (policy.verificationCommands.length === 0) {
+    yield *
+      supervisor.haltDriver({
+        reason: `Halted: ${running.title} finished but no verification commands are configured.`,
+      });
+    return;
+  }
+  if (peer.worktreePath === null || peer.branch === null) {
+    yield *
+      supervisor.haltDriver({
+        reason: `Halted: peer ${peer.id} has no worktree/branch to verify and land.`,
+      });
+    return;
+  }
 
-				const review = yield* reviewPipeline
-					.review({
-						worktree: peer.worktreePath,
-						baseRef: policy.integrationBranch,
-						sliceId: running.id,
-						verificationCommands: policy.verificationCommands,
-					})
-					.pipe(
-						Effect.mapError(
-							(cause) =>
-								new AutomodeSupervisorError({
-									message: `Verifier failed for ${running.title}.`,
-									cause,
-								}),
-						),
-					);
+  const review =
+    yield *
+    reviewPipeline
+      .review({
+        worktree: peer.worktreePath,
+        baseRef: policy.integrationBranch,
+        sliceId: running.id,
+        verificationCommands: policy.verificationCommands,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new AutomodeSupervisorError({
+              message: `Verifier failed for ${running.title}.`,
+              cause,
+            }),
+        ),
+      );
 
-				const decision = decide_automode_gate(review);
-				if (decision.action === "fail") {
-					yield* supervisor.failGoal({ goalId: running.id, reason: decision.reason });
-					yield* supervisor.haltDriver({
-						reason: `Halted: ${running.title} failed review — ${decision.reason}`,
-					});
-					return;
-				}
+  const decision = decide_automode_gate(review);
+  if (decision.action === "fail") {
+    yield * supervisor.failGoal({ goalId: running.id, reason: decision.reason });
+    yield *
+      supervisor.haltDriver({
+        reason: `Halted: ${running.title} failed review — ${decision.reason}`,
+      });
+    return;
+  }
 
-				const landResult = yield* landing.land_slice({
-					repo: running.repo,
-					integrationBranch: policy.integrationBranch,
-					baseRef: "gits",
-					sliceBranch: peer.branch,
-				});
-				if (landResult.status === "rejected") {
-					yield* supervisor.haltDriver({
-						reason: `Halted: ${running.title} passed review but could not land — ${landResult.reason}`,
-					});
-					return;
-				}
+  const landResult =
+    yield *
+    landing.land_slice({
+      repo: running.repo,
+      integrationBranch: policy.integrationBranch,
+      baseRef: "gits",
+      sliceBranch: peer.branch,
+    });
+  if (landResult.status === "rejected") {
+    yield *
+      supervisor.haltDriver({
+        reason: `Halted: ${running.title} passed review but could not land — ${landResult.reason}`,
+      });
+    return;
+  }
 
-				yield* supervisor.completeGoal({ goalId: running.id });
-				yield* Effect.logInfo("gits.automode.driver.goal-landed", {
-					goalId: running.id,
-					peerId: peer.id,
-					flagged: decision.flagged,
-				});
-				return;
-			}
+  yield * supervisor.completeGoal({ goalId: running.id });
+  yield *
+    Effect.logInfo("gits.automode.driver.goal-landed", {
+      goalId: running.id,
+      peerId: peer.id,
+      flagged: decision.flagged,
+    });
+  return;
+}
 ```
 
 3. Ensure `AutomodeSupervisorError` is imported (from `@t3tools/contracts`) and the layer dependency list / `Layer.effect` requirements now include `GitsReviewPipeline` and `AutomodeLanding`.
@@ -1044,6 +1072,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/gits/Layers/AutomodeDr
 `AutomodeDriverLayerLive` must now be provided `GitsReviewPipeline`, `AutomodeLanding`, and (transitively) `GitVcsDriver`.
 
 **Files:**
+
 - Modify: `apps/server/src/server.ts` (`AutomodeDriverLayerLive` ~241-245)
 
 - [ ] **Step 1: Provide the new layers**
@@ -1060,9 +1089,7 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
 Extend it to satisfy the two new requirements. `GitsReviewPipelineLive` already exists and is composed in `GitsLayerLive`; build a self-contained instance for the driver (Effect memoizes by reference, so sharing the same underlying layers is fine), and provide `AutomodeLandingLive` over `GitVcsDriver.layer`:
 
 ```typescript
-const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(
-  Layer.provide(GitVcsDriver.layer),
-);
+const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(Layer.provide(GitVcsDriver.layer));
 
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),

@@ -2,10 +2,7 @@ import type { WsRpcClient } from "@t3tools/client-runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { getPrimaryKnownEnvironment } from "./environments/primary";
-import {
-  getPrimaryEnvironmentConnection,
-  readEnvironmentConnection,
-} from "./environments/runtime";
+import { getPrimaryEnvironmentConnection, readEnvironmentConnection } from "./environments/runtime";
 
 export type GitsEnvironmentClient = WsRpcClient["gits"];
 
