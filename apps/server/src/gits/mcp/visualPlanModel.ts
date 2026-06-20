@@ -75,7 +75,7 @@ function applyPlanPatch(content: PlanContent, patch: PlanContentPatch): PlanCont
             ...(patch.patch.summary !== undefined ? { summary: patch.patch.summary } : {}),
             ...(patch.patch.editable !== undefined ? { editable: patch.patch.editable } : {}),
             ...(patch.patch.data !== undefined
-              ? { data: { ...(block as { data: unknown }).data as object, ...patch.patch.data } }
+              ? { data: { ...((block as { data: unknown }).data as object), ...patch.patch.data } }
               : {}),
           };
           return merged as PlanBlock;
@@ -85,7 +85,10 @@ function applyPlanPatch(content: PlanContent, patch: PlanContentPatch): PlanCont
 }
 
 /** Serialize a plan + reviewer comments to a single markdown document. */
-export function exportPlanToMarkdown(content: PlanContent, comments: ReadonlyArray<PlanComment>): string {
+export function exportPlanToMarkdown(
+  content: PlanContent,
+  comments: ReadonlyArray<PlanComment>,
+): string {
   const lines: string[] = [];
   if (content.title) {
     lines.push(`# ${content.title}`, "");
@@ -134,12 +137,16 @@ function blockToMarkdown(block: PlanBlock): string[] {
     case "rich-text":
       return [...heading, block.data.markdown];
     case "callout":
-      return [...heading, `> ${block.data.tone ? `**${block.data.tone.toUpperCase()}** ` : ""}${block.data.body}`];
+      return [
+        ...heading,
+        `> ${block.data.tone ? `**${block.data.tone.toUpperCase()}** ` : ""}${block.data.body}`,
+      ];
     case "checklist":
       return [
         ...heading,
         ...block.data.items.map(
-          (item) => `- [${item.checked ? "x" : " "}] ${item.label}${item.note ? ` — ${item.note}` : ""}`,
+          (item) =>
+            `- [${item.checked ? "x" : " "}] ${item.label}${item.note ? ` — ${item.note}` : ""}`,
         ),
       ];
     case "table":
@@ -158,20 +165,39 @@ function blockToMarkdown(block: PlanBlock): string[] {
         "```" + (block.data.language ?? ""),
         block.data.code,
         "```",
-        ...(block.data.annotations ?? []).map((a) => `- lines ${a.lines}: ${a.label ? `**${a.label}** ` : ""}${a.note}`),
+        ...(block.data.annotations ?? []).map(
+          (a) => `- lines ${a.lines}: ${a.label ? `**${a.label}** ` : ""}${a.note}`,
+        ),
       ].filter((line) => line !== "");
     case "file-tree":
-      return [...heading, ...block.data.entries.map((e) => `- ${e.change ? `[${e.change}] ` : ""}\`${e.path}\`${e.note ? ` — ${e.note}` : ""}`)];
+      return [
+        ...heading,
+        ...block.data.entries.map(
+          (e) =>
+            `- ${e.change ? `[${e.change}] ` : ""}\`${e.path}\`${e.note ? ` — ${e.note}` : ""}`,
+        ),
+      ];
     case "implementation-map":
-      return [...heading, ...block.data.files.map((f) => `- \`${f.path}\`${f.title ? ` (${f.title})` : ""} — ${f.note}`)];
+      return [
+        ...heading,
+        ...block.data.files.map(
+          (f) => `- \`${f.path}\`${f.title ? ` (${f.title})` : ""} — ${f.note}`,
+        ),
+      ];
     case "api-endpoint":
-      return [...heading, `\`${block.data.method} ${block.data.path}\`${block.data.summary ? ` — ${block.data.summary}` : ""}`];
+      return [
+        ...heading,
+        `\`${block.data.method} ${block.data.path}\`${block.data.summary ? ` — ${block.data.summary}` : ""}`,
+      ];
     case "data-model":
       return [
         ...heading,
         ...block.data.entities.flatMap((entity) => [
           `**${entity.name}**`,
-          ...entity.fields.map((field) => `- ${field.name}${field.type ? `: ${field.type}` : ""}${field.pk ? " (pk)" : ""}`),
+          ...entity.fields.map(
+            (field) =>
+              `- ${field.name}${field.type ? `: ${field.type}` : ""}${field.pk ? " (pk)" : ""}`,
+          ),
         ]),
       ];
     case "question-form":
@@ -186,9 +212,18 @@ function blockToMarkdown(block: PlanBlock): string[] {
     case "custom-html":
       return [...heading, block.data.caption ?? "_(visual block)_"];
     case "tabs":
-      return [...heading, ...block.data.tabs.flatMap((tab) => [`**${tab.label}**`, ...tab.blocks.flatMap(blockToMarkdown)])];
+      return [
+        ...heading,
+        ...block.data.tabs.flatMap((tab) => [
+          `**${tab.label}**`,
+          ...tab.blocks.flatMap(blockToMarkdown),
+        ]),
+      ];
     case "columns":
-      return [...heading, ...block.data.columns.flatMap((column) => column.blocks.flatMap(blockToMarkdown))];
+      return [
+        ...heading,
+        ...block.data.columns.flatMap((column) => column.blocks.flatMap(blockToMarkdown)),
+      ];
   }
 }
 
