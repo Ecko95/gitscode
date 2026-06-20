@@ -594,3 +594,19 @@ label:has(> select#reasoning-effort) select {
 .dark .model-picker-list::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+
+/* Visual plan wireframe tokens — alias the semantic theme so wireframe HTML
+   (Phase 3) themes for free in light/dark. */
+.visual-plan-surface {
+  --wf-ink: var(--foreground);
+  --wf-muted: var(--muted-foreground);
+  --wf-line: var(--border);
+  --wf-paper: var(--background);
+  --wf-card: var(--card);
+  --wf-accent: var(--primary);
+  --wf-accent-fg: var(--primary-foreground);
+  --wf-accent-soft: color-mix(in oklch, var(--primary) 12%, transparent);
+  --wf-warn: var(--warning);
+  --wf-ok: var(--success);
+  --wf-radius: var(--radius);
+}
