@@ -13,6 +13,7 @@ import type {
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_ACTIVITIES: Thread["activities"] = [];
 const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
+const EMPTY_VISUAL_PLANS: Thread["visualPlans"] = [];
 const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
 const EMPTY_MESSAGE_MAP: Record<MessageId, ChatMessage> = {};
 const EMPTY_ACTIVITY_MAP: Record<string, Thread["activities"][number]> = {};
@@ -28,6 +29,7 @@ const threadCache = new WeakMap<
     messages: Thread["messages"];
     activities: Thread["activities"];
     proposedPlans: Thread["proposedPlans"];
+    visualPlans: Thread["visualPlans"];
     turnDiffSummaries: Thread["turnDiffSummaries"];
     thread: Thread;
   }
@@ -87,6 +89,13 @@ function selectThreadProposedPlans(
   );
 }
 
+function selectThreadVisualPlans(
+  state: EnvironmentState,
+  threadId: ThreadId,
+): Thread["visualPlans"] {
+  return state.visualPlanByThreadId[threadId] ?? EMPTY_VISUAL_PLANS;
+}
+
 function selectThreadTurnDiffSummaries(
   state: EnvironmentState,
   threadId: ThreadId,
@@ -112,6 +121,7 @@ export function getThreadFromEnvironmentState(
   const messages = selectThreadMessages(state, threadId);
   const activities = selectThreadActivities(state, threadId);
   const proposedPlans = selectThreadProposedPlans(state, threadId);
+  const visualPlans = selectThreadVisualPlans(state, threadId);
   const turnDiffSummaries = selectThreadTurnDiffSummaries(state, threadId);
   const cached = threadCache.get(shell);
 
@@ -122,6 +132,7 @@ export function getThreadFromEnvironmentState(
     cached.messages === messages &&
     cached.activities === activities &&
     cached.proposedPlans === proposedPlans &&
+    cached.visualPlans === visualPlans &&
     cached.turnDiffSummaries === turnDiffSummaries
   ) {
     return cached.thread;
@@ -135,6 +146,7 @@ export function getThreadFromEnvironmentState(
     messages,
     activities,
     proposedPlans,
+    visualPlans,
     turnDiffSummaries,
   };
 
@@ -144,6 +156,7 @@ export function getThreadFromEnvironmentState(
     messages,
     activities,
     proposedPlans,
+    visualPlans,
     turnDiffSummaries,
     thread,
   });
