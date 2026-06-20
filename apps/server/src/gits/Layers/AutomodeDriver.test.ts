@@ -20,6 +20,7 @@ import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { AutomodeLanding, type AutomodeLandResult } from "../Services/AutomodeLanding.ts";
+import { AutomodeHeldPr, type AutomodeOpenHeldPrResult } from "../Services/AutomodeHeldPr.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
 import { AutomodeDriverLive } from "./AutomodeDriver.ts";
 
@@ -94,6 +95,9 @@ const emptyList: Omit<DelamainPeerListResult, "peers"> = {
 interface MakeLayerOptions {
   readonly review?: GitsReviewResult;
   readonly landResult?: AutomodeLandResult;
+  readonly openResult?: AutomodeOpenHeldPrResult;
+  readonly onOpenHeldPr?: () => void;
+  readonly mergeResults?: boolean[];
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -137,6 +141,21 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
   const landing = Layer.mock(AutomodeLanding)({
     land_slice: () => Effect.succeed(options?.landResult ?? { status: "landed" }),
   });
+  const mergeQueue = [...(options?.mergeResults ?? [])];
+  const heldPr = Layer.mock(AutomodeHeldPr)({
+    open_held_pr: () =>
+      Effect.sync(() => {
+        options?.onOpenHeldPr?.();
+        return (
+          options?.openResult ?? {
+            status: "opened",
+            url: "https://github.com/o/r/pull/30",
+            number: 30,
+          }
+        );
+      }),
+    detect_merge: () => Effect.succeed({ merged: mergeQueue.shift() ?? false }),
+  });
   const config = ServerConfig.layerTest(process.cwd(), {
     prefix: "gits-automode-driver-test-",
   }).pipe(Layer.provide(NodeServices.layer));
@@ -151,6 +170,7 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
     Layer.provide(delamain),
     Layer.provide(reviewPipeline),
     Layer.provide(landing),
+    Layer.provide(heldPr),
   );
 }
 
@@ -384,5 +404,91 @@ describe("AutomodeDriver", () => {
       assert.notEqual(snapshot.goals.find((g) => g.title === "Unverified")?.status, "completed");
       assert.equal(snapshot.driverHalted, true);
     }).pipe(Effect.provide(makeLayer(peerStatus)));
+  });
+
+  it.effect("opens a held PR when the queue drains with a landed goal", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let openCalls = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "One", repo: "/tmp/source-repo", prompt: "x" });
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // gate → land → complete
+      peerStatus.current = "absent";
+      yield* driver.tickOnce(); // queue drained → open held PR
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.heldPrNumber, 30);
+      assert.equal(openCalls, 1);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          onOpenHeldPr: () => {
+            openCalls += 1;
+          },
+          openResult: {
+            status: "opened",
+            url: "https://github.com/o/r/pull/30",
+            number: 30,
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("polls the held PR and marks the run merged when GitHub reports merged", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "One", repo: "/tmp/source-repo", prompt: "x" });
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // land + complete
+      peerStatus.current = "absent";
+      yield* driver.tickOnce(); // open held PR
+      yield* driver.tickOnce(); // poll → not merged
+      yield* driver.tickOnce(); // poll → merged
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.runMerged, true);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          openResult: {
+            status: "opened",
+            url: "https://github.com/o/r/pull/30",
+            number: 30,
+          },
+          mergeResults: [false, true],
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not open a held PR when nothing landed (empty arm)", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let openCalls = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor); // no goals enqueued
+      yield* driver.tickOnce(); // drained, nothing landed
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.heldPrUrl, null);
+      assert.equal(openCalls, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          onOpenHeldPr: () => {
+            openCalls += 1;
+          },
+        }),
+      ),
+    );
   });
 });
