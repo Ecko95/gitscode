@@ -70,26 +70,47 @@ jobs:
         run: bun run test
 
       - name: Install browser test runtime
-        # Chromium downloads from cdn.playwright.dev stall intermittently from the
-        # hosted runner — observed both stalling at 0% and hanging right after 100%
-        # on different runs. playwright never times out a stalled-but-open connection,
-        # so it hangs until the cap. Wrap each attempt in `timeout` and retry: a fresh
-        # connection gets past it. Binary only (no `--with-deps`; ubuntu-24.04 has the
-        # libs) and cacheable, so once any run succeeds, warm runs skip the download.
-        timeout-minutes: 13
+        # cdn.playwright.dev (a 307-redirector to Google's chrome-for-testing GCS
+        # bucket) stalls intermittently from the hosted runner, and playwright never
+        # times out a stalled-but-open connection, so its own installer hangs until
+        # the cap. Fetch the browser zips ourselves with curl (retry + stall-abort
+        # via --speed-time), pulling the Chrome-for-Testing artifacts straight from
+        # GCS, into playwright's cache layout; then `playwright install` is a no-op
+        # that just validates. Version-proof: locations + urls come from --dry-run.
+        # Cacheable, so warm runs skip the fetch entirely.
+        timeout-minutes: 15
         run: |
-          for attempt in 1 2 3 4 5; do
-            echo "::group::playwright install chromium (attempt ${attempt})"
-            if timeout 120 node apps/web/node_modules/playwright/cli.js install chromium; then
-              echo "::endgroup::"
-              exit 0
+          set -euo pipefail
+          cd apps/web
+          PW="node node_modules/playwright/cli.js"
+          plan="$(mktemp)"
+          $PW install --dry-run chromium \
+            | awk '/Install location:/{loc=$3} /Download url:/&&loc!=""{print loc"\t"$3;loc=""}' \
+            | sort -u > "$plan"
+          while IFS=$'\t' read -r loc url; do
+            if [ -f "$loc/INSTALLATION_COMPLETE" ]; then
+              echo "cached: $loc"
+              continue
             fi
+            case "$url" in
+              *cdn.playwright.dev/builds/cft/*)
+                url="https://storage.googleapis.com/chrome-for-testing-public/${url#*cdn.playwright.dev/builds/cft/}" ;;
+            esac
+            echo "::group::fetch $loc"
+            echo "$url"
+            mkdir -p "$loc"
+            tmp="$(mktemp --suffix=.zip)"
+            curl -fSL --retry 8 --retry-all-errors --retry-delay 3 \
+                 --connect-timeout 20 --speed-limit 1024 --speed-time 20 \
+                 -o "$tmp" "$url"
+            unzip -q -o "$tmp" -d "$loc"
+            rm -f "$tmp"
+            : > "$loc/INSTALLATION_COMPLETE"
+            : > "$loc/DEPENDENCIES_VALIDATED"
             echo "::endgroup::"
-            echo "attempt ${attempt} stalled/failed; retrying after 5s"
-            sleep 5
-          done
-          echo "playwright install failed after 5 attempts"
-          exit 1
+          done < "$plan"
+          # Validate: a no-op when the prefetch is complete, otherwise fills any gap.
+          $PW install chromium
 
       - name: Browser test
         run: bun run --cwd apps/web test:browser
