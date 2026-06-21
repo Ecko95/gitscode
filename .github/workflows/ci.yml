@@ -10,10 +10,10 @@ jobs:
   quality:
     name: Format, Lint, Typecheck, Test, Browser Test, Build
     runs-on: ubuntu-24.04
-    # 20m headroom so a cold run (no warm Bun/Turbo/Playwright caches) can finish
-    # and seed the caches; warm runs land well under it. The real fix for the
-    # never-completing job is in the browser-install step below (the apt hang).
-    timeout-minutes: 20
+    # 30m headroom so a cold run (no warm Bun/Turbo/Playwright caches) can finish
+    # and seed the caches even if the browser download needs a few retries; warm
+    # runs land well under it. See the browser-install step for the retry rationale.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -70,15 +70,26 @@ jobs:
         run: bun run test
 
       - name: Install browser test runtime
-        # Drive the install with node, not bun: under the pinned bun (1.3.11) this
-        # step hangs in playwright's post-download extraction (download hits 100% in
-        # ~2s, then the process sits idle until killed) — the same hang the old
-        # `--with-deps` variant showed. node drives the identical install cleanly.
-        # Binary only (no `--with-deps`): ubuntu-24.04 ships the libs headless
-        # chromium needs, and the binary is cacheable (~20s cold, instant warm).
-        # Step-bounded so any regression fails fast instead of eating the job budget.
-        timeout-minutes: 5
-        run: node apps/web/node_modules/playwright/cli.js install chromium
+        # Chromium downloads from cdn.playwright.dev stall intermittently from the
+        # hosted runner — observed both stalling at 0% and hanging right after 100%
+        # on different runs. playwright never times out a stalled-but-open connection,
+        # so it hangs until the cap. Wrap each attempt in `timeout` and retry: a fresh
+        # connection gets past it. Binary only (no `--with-deps`; ubuntu-24.04 has the
+        # libs) and cacheable, so once any run succeeds, warm runs skip the download.
+        timeout-minutes: 13
+        run: |
+          for attempt in 1 2 3 4 5; do
+            echo "::group::playwright install chromium (attempt ${attempt})"
+            if timeout 120 node apps/web/node_modules/playwright/cli.js install chromium; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "attempt ${attempt} stalled/failed; retrying after 5s"
+            sleep 5
+          done
+          echo "playwright install failed after 5 attempts"
+          exit 1
 
       - name: Browser test
         run: bun run --cwd apps/web test:browser
