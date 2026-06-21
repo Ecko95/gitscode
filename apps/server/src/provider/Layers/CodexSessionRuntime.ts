@@ -284,7 +284,7 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
-function buildThreadStartParams(input: {
+export function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
@@ -306,7 +306,10 @@ function buildThreadStartParams(input: {
             mcp_servers: {
               "gits-visual-plan": {
                 url: input.visualPlanMcp.url,
-                bearer_token: input.visualPlanMcp.token,
+                // codex rejects inline `bearer_token` for streamable_http; send the
+                // token as an Authorization header instead (wire-identical, and what
+                // the cursor adapter already does).
+                http_headers: { Authorization: `Bearer ${input.visualPlanMcp.token}` },
               },
             },
           },
