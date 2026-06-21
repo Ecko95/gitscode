@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript, Effect (Layer/Effect/Schema), `effect/unstable/sql` (`SqlClient`, `SqlSchema`, `Migrator`), `@t3tools/contracts`, `@effect/vitest` (`it.layer` + in-memory `SqlitePersistenceMemory`), vitest. RTK prefix. Conventions: repo style is 2-space (oxfmt normalizes); double quotes, semicolons, snake_case functions, PascalCase types, kebab-case-ish file names follow the existing `PascalCase.ts` persistence convention (e.g. `AutomodeEpisodeLedger.ts`). Gate each task on `bun fmt` (targeted), `bun lint`, direct `tsgo --noEmit` per package (turbo caches stale success — `[[gitscode-no-ci-verify-locally]]`), and `bun run test`. Commit after each task.
 
 **Design decisions locked (2026-06-21 checkpoint):**
+
 1. **Shared `state.sqlite`** via migration **032** (031 is taken by visual-plan), table `automode_episodes` with a `repo` column for per-project queries now and Plan-7 partitioning later. No separate DB file (no precedent; `stateDir` is global).
 2. **Write + read-back**: `record_episode` (driver writes on each landed slice) + `list_episodes({ repo? })` (newest-first) for rehydrate.
 3. **One row per landed slice** (the design's "per-peer summary"). Episodes are recorded only on the success path (after `completeGoal`); failed/halted goals are not episodes in v1. PR url is NOT on the episode (it's per-run, opened later in 3b); rehydrate joins on `repo` + run state if needed.
@@ -19,23 +20,24 @@
 
 ## File Structure
 
-| File | Responsibility | Change |
-|---|---|---|
-| `apps/server/src/persistence/Services/AutomodeEpisodeLedger.ts` | Record schema + `AutomodeEpisodeLedgerShape` + `Context.Service` tag + input schemas. | Create |
-| `apps/server/src/persistence/Layers/AutomodeEpisodeLedger.ts` | `AutomodeEpisodeLedgerLive` — `SqlSchema` insert + list, JSON column mapping, decode. | Create |
-| `apps/server/src/persistence/Layers/AutomodeEpisodeLedger.test.ts` | In-memory SQLite repo tests (write + list + JSON round-trip + repo filter). | Create |
-| `apps/server/src/persistence/Migrations/032_AutomodeEpisodeLedger.ts` | `CREATE TABLE IF NOT EXISTS automode_episodes` + indexes. | Create |
-| `apps/server/src/persistence/Migrations.ts` | Register migration 032 (import + `migrationEntries`). | Modify |
-| `apps/server/src/persistence/Errors.ts` | `AutomodeEpisodeLedgerRepositoryError` union alias. | Modify |
-| `apps/server/src/gits/Layers/AutomodeDriver.ts` | Inject `AutomodeEpisodeLedger`; record an episode after `completeGoal`. | Modify |
-| `apps/server/src/gits/Layers/AutomodeDriver.test.ts` | Assert an episode is recorded on the landed-slice path. | Modify |
-| `apps/server/src/server.ts` | Provide `AutomodeEpisodeLedgerLive` (over `PersistenceLayerLive`) to `AutomodeDriverLayerLive`. | Modify |
+| File                                                                  | Responsibility                                                                                  | Change |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------ |
+| `apps/server/src/persistence/Services/AutomodeEpisodeLedger.ts`       | Record schema + `AutomodeEpisodeLedgerShape` + `Context.Service` tag + input schemas.           | Create |
+| `apps/server/src/persistence/Layers/AutomodeEpisodeLedger.ts`         | `AutomodeEpisodeLedgerLive` — `SqlSchema` insert + list, JSON column mapping, decode.           | Create |
+| `apps/server/src/persistence/Layers/AutomodeEpisodeLedger.test.ts`    | In-memory SQLite repo tests (write + list + JSON round-trip + repo filter).                     | Create |
+| `apps/server/src/persistence/Migrations/032_AutomodeEpisodeLedger.ts` | `CREATE TABLE IF NOT EXISTS automode_episodes` + indexes.                                       | Create |
+| `apps/server/src/persistence/Migrations.ts`                           | Register migration 032 (import + `migrationEntries`).                                           | Modify |
+| `apps/server/src/persistence/Errors.ts`                               | `AutomodeEpisodeLedgerRepositoryError` union alias.                                             | Modify |
+| `apps/server/src/gits/Layers/AutomodeDriver.ts`                       | Inject `AutomodeEpisodeLedger`; record an episode after `completeGoal`.                         | Modify |
+| `apps/server/src/gits/Layers/AutomodeDriver.test.ts`                  | Assert an episode is recorded on the landed-slice path.                                         | Modify |
+| `apps/server/src/server.ts`                                           | Provide `AutomodeEpisodeLedgerLive` (over `PersistenceLayerLive`) to `AutomodeDriverLayerLive`. | Modify |
 
 ---
 
 ## Task 1: Migration 032 — `automode_episodes` table
 
 **Files:**
+
 - Create: `apps/server/src/persistence/Migrations/032_AutomodeEpisodeLedger.ts`
 - Modify: `apps/server/src/persistence/Migrations.ts`
 
@@ -109,6 +111,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/persistence/Migrations
 ## Task 2: Error type alias
 
 **Files:**
+
 - Modify: `apps/server/src/persistence/Errors.ts`
 
 - [ ] **Step 1: Add the union alias**
@@ -130,6 +133,7 @@ PATH="$HOME/.local/bin:$PATH" rtk git add apps/server/src/persistence/Errors.ts 
 ## Task 3: Ledger service tag + record schema
 
 **Files:**
+
 - Create: `apps/server/src/persistence/Services/AutomodeEpisodeLedger.ts`
 
 - [ ] **Step 1: Define the record, inputs, shape, and tag** (mirror `Services/ProviderSessionRuntime.ts`)
@@ -201,17 +205,14 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/persistence/Services/A
 ## Task 4: Ledger layer — insert + list
 
 **Files:**
+
 - Create: `apps/server/src/persistence/Layers/AutomodeEpisodeLedger.ts`
 - Test: `apps/server/src/persistence/Layers/AutomodeEpisodeLedger.test.ts`
 
 - [ ] **Step 1: Write the failing test** (mirror `ProjectionThreadMessages.test.ts` harness)
 
 ```typescript
-import {
-  IsoDateTime,
-  type AutomodeEpisode,
-  type GitsReviewResult,
-} from "@t3tools/contracts";
+import { IsoDateTime, type AutomodeEpisode, type GitsReviewResult } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -265,9 +266,7 @@ function episode(overrides: Partial<AutomodeEpisode>): AutomodeEpisode {
   };
 }
 
-const layer = it.layer(
-  AutomodeEpisodeLedgerLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
-);
+const layer = it.layer(AutomodeEpisodeLedgerLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)));
 
 layer("AutomodeEpisodeLedger", (it) => {
   it.effect("records an episode and lists it back with the review round-tripped", () =>
@@ -459,6 +458,7 @@ export const AutomodeEpisodeLedgerLive = Layer.effect(
 ```
 
 > Two things to verify against the installed Effect version while implementing:
+>
 > - **`sql.unsafe(...)` for the shared column list.** The neighbor repo inlines the `SELECT` columns literally in each query rather than interpolating. If `sql.unsafe` isn't available/idiomatic here, inline the `SELECT … AS "camelField"` column list directly in both queries (copy it verbatim into each), exactly like `Layers/ProviderSessionRuntime.ts` does. Prefer matching the neighbor: **inline the columns** if there's any doubt.
 > - **`Schema.transform` signature** (positional vs `{ decode, encode }`). Match the form used elsewhere in `packages/contracts`/persistence. If `mapFields`+`transform` for `flagged` fights the row decode, fall back to storing/reading `flagged` as a plain `Schema.Number` column and converting in `record_episode`/after decode (keep the public `AutomodeEpisode.flagged` boolean).
 > - The unused `AutomodeEpisodeSchema`/`ListAutomodeEpisodesInput` imports: drop any that lint flags as unused.
@@ -479,6 +479,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/persistence/Layers/Aut
 ## Task 5: Driver records an episode on the landed-slice path
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/AutomodeDriver.ts`
 - Modify: `apps/server/src/gits/Layers/AutomodeDriver.test.ts`
 
@@ -544,44 +545,46 @@ import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisod
 ```
 
 ```typescript
-    const heldPr = yield* AutomodeHeldPr;
-    const ledger = yield* AutomodeEpisodeLedger;
+const heldPr = yield * AutomodeHeldPr;
+const ledger = yield * AutomodeEpisodeLedger;
 ```
 
 After the successful `completeGoal` + `logInfo("gits.automode.driver.goal-landed", …)` (driver done-path, before its `return`), record the episode. Build it from the in-scope `running` goal, `review`, and `decision`:
 
 ```typescript
-            yield* supervisor.completeGoal({ goalId: running.id });
-            const recordedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-            yield* ledger
-              .record_episode({
-                id: `ep-${running.id}-${recordedAt}`,
-                repo: running.repo,
-                goalId: running.id,
-                goalTitle: running.title,
-                sliceBranch: peer.branch,
-                verdict: review.semantic?.verdict ?? "uncertain",
-                confidence: review.semantic?.confidence ?? null,
-                recommendation: review.recommendation,
-                flagged: decision.flagged,
-                summary: review.summary,
-                review,
-                createdAt: recordedAt,
-              })
-              .pipe(
-                Effect.catch((error) =>
-                  Effect.logWarning("gits.automode.ledger.record-failed", {
-                    goalId: running.id,
-                    error: error.message,
-                  }),
-                ),
-              );
-            yield* Effect.logInfo("gits.automode.driver.goal-landed", {
-              goalId: running.id,
-              peerId: peer.id,
-              flagged: decision.flagged,
-            });
-            return;
+yield * supervisor.completeGoal({ goalId: running.id });
+const recordedAt = yield * DateTime.now.pipe(Effect.map(DateTime.formatIso));
+yield *
+  ledger
+    .record_episode({
+      id: `ep-${running.id}-${recordedAt}`,
+      repo: running.repo,
+      goalId: running.id,
+      goalTitle: running.title,
+      sliceBranch: peer.branch,
+      verdict: review.semantic?.verdict ?? "uncertain",
+      confidence: review.semantic?.confidence ?? null,
+      recommendation: review.recommendation,
+      flagged: decision.flagged,
+      summary: review.summary,
+      review,
+      createdAt: recordedAt,
+    })
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("gits.automode.ledger.record-failed", {
+          goalId: running.id,
+          error: error.message,
+        }),
+      ),
+    );
+yield *
+  Effect.logInfo("gits.automode.driver.goal-landed", {
+    goalId: running.id,
+    peerId: peer.id,
+    flagged: decision.flagged,
+  });
+return;
 ```
 
 Add `import * as DateTime from "effect/DateTime";` if not already imported in the driver. **Ledger-write failure must not halt the run** — it's wrapped in `Effect.catch` → `logWarning` (the slice already landed and the goal is complete; a ledger hiccup is non-fatal). `peer.branch` is `string | null` which matches `sliceBranch: Schema.NullOr(...)`.
@@ -602,6 +605,7 @@ PATH="$HOME/.local/bin:$PATH" rtk bun fmt apps/server/src/gits/Layers/AutomodeDr
 ## Task 6: Server layer wiring
 
 **Files:**
+
 - Modify: `apps/server/src/server.ts` (`AutomodeDriverLayerLive` block)
 
 - [ ] **Step 1: Provide the ledger to the driver**
