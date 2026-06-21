@@ -283,6 +283,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         providerInstanceId: ProviderInstanceId.make("codex"),
         serviceTier: "fast",
         threadId: asThreadId("thread-1"),
+        visualPlanMcpUrl: "http://127.0.0.1:0/api/gits/visual-plan/mcp",
         runtimeMode: "full-access",
       });
     }),
