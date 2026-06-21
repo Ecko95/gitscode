@@ -12,6 +12,7 @@ import {
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
 import {
+  buildThreadStartParams,
   buildTurnStartParams,
   isRecoverableThreadResumeError,
   openCodexThread,
@@ -294,5 +295,35 @@ describe("openCodexThread", () => {
         isCodexAppServerRequestError(error) &&
         error.errorMessage === "timed out waiting for server",
     );
+  });
+});
+
+describe("buildThreadStartParams visual-plan MCP", () => {
+  it("registers the visual-plan MCP via an Authorization header, not inline bearer_token", () => {
+    const params = buildThreadStartParams({
+      cwd: "/tmp/project",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
+      serviceTier: undefined,
+      visualPlanMcp: { url: "http://127.0.0.1:13773/api/gits/mcp/visual-plan", token: "tok-123" },
+    });
+    const server = (params.config as { mcp_servers: Record<string, unknown> }).mcp_servers[
+      "gits-visual-plan"
+    ] as { url: string; http_headers?: Record<string, string>; bearer_token?: string };
+    assert.equal(server.url, "http://127.0.0.1:13773/api/gits/mcp/visual-plan");
+    // codex rejects inline bearer_token for streamable_http — must use a header.
+    assert.equal(server.bearer_token, undefined);
+    assert.deepEqual(server.http_headers, { Authorization: "Bearer tok-123" });
+  });
+
+  it("omits config entirely when no visual-plan MCP is provided", () => {
+    const params = buildThreadStartParams({
+      cwd: "/tmp/project",
+      runtimeMode: "full-access",
+      model: undefined,
+      serviceTier: undefined,
+      visualPlanMcp: undefined,
+    });
+    assert.equal(params.config, undefined);
   });
 });
