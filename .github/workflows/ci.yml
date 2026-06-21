@@ -10,12 +10,10 @@ jobs:
   quality:
     name: Format, Lint, Typecheck, Test, Browser Test, Build
     runs-on: ubuntu-24.04
-    # 25m headroom so a cold run (no warm Bun/Turbo/Playwright caches) can finish.
-    # A 10m cap cancelled the job mid `playwright install`, so the Playwright cache
-    # was never saved on the post step -> chromium re-downloaded cold every run,
-    # which kept re-tripping the cap. One completed run now seeds the caches and
-    # warm runs land well under this cap.
-    timeout-minutes: 25
+    # 20m headroom so a cold run (no warm Bun/Turbo/Playwright caches) can finish
+    # and seed the caches; warm runs land well under it. The real fix for the
+    # never-completing job is in the browser-install step below (the apt hang).
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -72,9 +70,16 @@ jobs:
         run: bun run test
 
       - name: Install browser test runtime
+        # `--with-deps` shells out to apt; on the hosted runner that apt phase hangs
+        # (~18m observed) and the job is cancelled before the Playwright cache saves,
+        # so chromium re-downloads cold forever. ubuntu-24.04 ships the libs headless
+        # chromium needs, so install the (cacheable) binary only — ~20s cold, instant
+        # warm. Step-bounded so any future regression fails fast instead of eating the
+        # whole job budget.
+        timeout-minutes: 5
         run: |
           cd apps/web
-          bunx playwright install --with-deps chromium
+          bunx playwright install chromium
 
       - name: Browser test
         run: bun run --cwd apps/web test:browser
