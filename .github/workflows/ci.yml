@@ -10,7 +10,12 @@ jobs:
   quality:
     name: Format, Lint, Typecheck, Test, Browser Test, Build
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # 25m headroom so a cold run (no warm Bun/Turbo/Playwright caches) can finish.
+    # A 10m cap cancelled the job mid `playwright install`, so the Playwright cache
+    # was never saved on the post step -> chromium re-downloaded cold every run,
+    # which kept re-tripping the cap. One completed run now seeds the caches and
+    # warm runs land well under this cap.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v6
