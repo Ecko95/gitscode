@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,6 +11,7 @@ import { AutomodeDriver, type AutomodeDriverShape } from "../Services/AutomodeDr
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
+import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { decide_automode_gate } from "./AutomodeReviewGate.ts";
 
 const TICK_INTERVAL_MS = (() => {
@@ -39,6 +41,7 @@ export const AutomodeDriverLive = Layer.effect(
     const reviewPipeline = yield* GitsReviewPipeline;
     const landing = yield* AutomodeLanding;
     const heldPr = yield* AutomodeHeldPr;
+    const ledger = yield* AutomodeEpisodeLedger;
 
     const tickOnce: AutomodeDriverShape["tickOnce"] = () =>
       Effect.gen(function* () {
@@ -149,6 +152,33 @@ export const AutomodeDriverLive = Layer.effect(
             }
 
             yield* supervisor.completeGoal({ goalId: running.id });
+
+            // Record the episode (verifier output) for rehydrate. A ledger hiccup
+            // must not halt the run — the slice already landed and the goal is done.
+            const recordedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+            yield* ledger
+              .record_episode({
+                id: `ep-${running.id}-${recordedAt}`,
+                repo: running.repo,
+                goalId: running.id,
+                goalTitle: running.title,
+                sliceBranch: peer.branch,
+                verdict: review.semantic?.verdict ?? "uncertain",
+                confidence: review.semantic?.confidence ?? null,
+                recommendation: review.recommendation,
+                flagged: decision.flagged,
+                summary: review.summary,
+                review,
+                createdAt: recordedAt,
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("gits.automode.ledger.record-failed", {
+                    goalId: running.id,
+                    error: error.message,
+                  }),
+                ),
+              );
             yield* Effect.logInfo("gits.automode.driver.goal-landed", {
               goalId: running.id,
               peerId: peer.id,

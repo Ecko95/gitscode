@@ -21,6 +21,10 @@ import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { AutomodeLanding, type AutomodeLandResult } from "../Services/AutomodeLanding.ts";
 import { AutomodeHeldPr, type AutomodeOpenHeldPrResult } from "../Services/AutomodeHeldPr.ts";
+import {
+  AutomodeEpisodeLedger,
+  type AutomodeEpisode,
+} from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
 import { AutomodeDriverLive } from "./AutomodeDriver.ts";
 
@@ -98,6 +102,7 @@ interface MakeLayerOptions {
   readonly openResult?: AutomodeOpenHeldPrResult;
   readonly onOpenHeldPr?: () => void;
   readonly mergeResults?: boolean[];
+  readonly onRecordEpisode?: (episode: AutomodeEpisode) => void;
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -156,6 +161,13 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
       }),
     detect_merge: () => Effect.succeed({ merged: mergeQueue.shift() ?? false }),
   });
+  const ledger = Layer.mock(AutomodeEpisodeLedger)({
+    record_episode: (episode) =>
+      Effect.sync(() => {
+        options?.onRecordEpisode?.(episode);
+      }),
+    list_episodes: () => Effect.succeed([]),
+  });
   const config = ServerConfig.layerTest(process.cwd(), {
     prefix: "gits-automode-driver-test-",
   }).pipe(Layer.provide(NodeServices.layer));
@@ -171,6 +183,7 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
     Layer.provide(reviewPipeline),
     Layer.provide(landing),
     Layer.provide(heldPr),
+    Layer.provide(ledger),
   );
 }
 
@@ -487,6 +500,32 @@ describe("AutomodeDriver", () => {
           onOpenHeldPr: () => {
             openCalls += 1;
           },
+        }),
+      ),
+    );
+  });
+
+  it.effect("records an episode after a slice lands", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const episodes: AutomodeEpisode[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Ledger me", repo: "/tmp/source-repo", prompt: "x" });
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // gate → land → complete → record episode
+
+      assert.equal(episodes.length, 1);
+      assert.equal(episodes[0]?.goalTitle, "Ledger me");
+      assert.equal(episodes[0]?.verdict, "pass");
+      assert.equal(episodes[0]?.repo, "/tmp/source-repo");
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          review: passingReview,
+          onRecordEpisode: (episode) => episodes.push(episode),
         }),
       ),
     );
