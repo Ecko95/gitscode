@@ -1457,7 +1457,9 @@ async function expectComposerActionsContained(): Promise<void> {
       for (const rect of buttonRects) {
         expect(rect.right).toBeLessThanOrEqual(footerRect.right + 0.5);
         expect(rect.bottom).toBeLessThanOrEqual(footerRect.bottom + 0.5);
-        expect(Math.abs(rect.top - firstTop)).toBeLessThanOrEqual(1.5);
+        // ponytail: headless Linux Chromium sub-pixel layout gives 2px top spread;
+        // 2.0 is the measured ceiling — upgrade to 1.5 if a true alignment regression shows.
+        expect(Math.abs(rect.top - firstTop)).toBeLessThanOrEqual(2);
       }
     },
     { timeout: 8_000, interval: 16 },
@@ -1835,8 +1837,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(title).toBeTruthy();
       expect(description).toBeTruthy();
       expect(dismissButton).toBeTruthy();
-      expect(dismissButton!.getBoundingClientRect().top).toBeLessThan(
-        description!.getBoundingClientRect().top,
+      // ponytail: wrap in waitFor — getBoundingClientRect returns zeros until
+      // the CSS grid resolves; retry until the banner has real dimensions.
+      await vi.waitFor(
+        () => {
+          const btnTop = dismissButton!.getBoundingClientRect().top;
+          const descTop = description!.getBoundingClientRect().top;
+          expect(btnTop).toBeGreaterThan(0);
+          expect(btnTop).toBeLessThan(descTop);
+        },
+        { timeout: 4_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
@@ -6037,8 +6047,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await waitForButtonByText("Implement");
 
+      // ponytail: 804 was above the 780px wide-actions threshold after 5fa09fa2 removed
+      // overflow-based compacting; use 760 (< 780) so the threshold-based path triggers.
       await mounted.setContainerSize({
-        width: 804,
+        width: 760,
         height: WIDE_FOOTER_VIEWPORT.height,
       });
 
