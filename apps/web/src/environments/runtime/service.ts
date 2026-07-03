@@ -99,6 +99,9 @@ type ThreadDetailSubscriptionEntry = {
   // ponytail: tracks the snapshotSequence from the most recent detail snapshot so
   // stale events replayed after a resubscribe are discarded (W3.1).
   lastDetailSnapshotSequence: number;
+  // W4.4b: true while a server-failure-triggered resubscribe is in progress;
+  // gates further incoming events so a burst can't loop into a refetch storm.
+  gapRefetchPending: boolean;
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
@@ -394,6 +397,8 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
     (item) => {
       if (item.kind === "snapshot") {
         entry.lastDetailSnapshotSequence = item.snapshot.snapshotSequence;
+        // W4.4b: gate resets once fresh snapshot arrives.
+        entry.gapRefetchPending = false;
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId);
         return;
       }
@@ -401,7 +406,21 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
       if (item.event.sequence <= entry.lastDetailSnapshotSequence) {
         return;
       }
+      // W4.4b: if a server-failure-triggered resubscribe is already in flight,
+      // discard further events — the fresh snapshot will reseed state.
+      if (entry.gapRefetchPending) {
+        return;
+      }
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
+    },
+    {
+      // W4.4b: on server-side subscription failure (e.g. buffer overflow), resubscribe
+      // to get a fresh snapshot. gapRefetchPending gates until the snapshot arrives.
+      onEnd: () => {
+        entry.gapRefetchPending = true;
+        entry.unsubscribe = NOOP;
+        attachThreadDetailSubscription(entry);
+      },
     },
   );
   return true;
@@ -588,6 +607,7 @@ export function retainThreadDetailSubscription(
     lastAccessedAt: Date.now(),
     evictionTimeoutId: null,
     lastDetailSnapshotSequence: -1,
+    gapRefetchPending: false,
   };
   threadDetailSubscriptions.set(key, entry);
   if (!attachThreadDetailSubscription(entry)) {
