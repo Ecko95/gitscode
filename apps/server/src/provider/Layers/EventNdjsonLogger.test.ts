@@ -7,7 +7,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { makeEventNdjsonLogger, redactSecrets } from "./EventNdjsonLogger.ts";
 
 function parseLogLine(line: string) {
   const match = /^\[([^\]]+)\] ([A-Z]+): (.+)$/.exec(line);
@@ -207,4 +207,77 @@ describe("EventNdjsonLogger", () => {
       }
     }),
   );
+});
+
+describe("redactSecrets", () => {
+  it("redacts Bearer tokens", () => {
+    const input = '{"authorization":"Bearer sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ"}';
+    const result = redactSecrets(input);
+    assert.include(result, "Bearer [REDACTED]");
+    assert.notInclude(result, "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+  });
+
+  it("redacts Anthropic API keys", () => {
+    const input = '{"key":"sk-ant-api03-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"}';
+    const result = redactSecrets(input);
+    assert.notInclude(result, "sk-ant-api03-");
+  });
+
+  it("redacts OpenAI-style sk- keys", () => {
+    const input = '{"payload":"sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"}';
+    const result = redactSecrets(input);
+    assert.notInclude(result, "sk-proj-");
+    assert.include(result, "sk-[REDACTED]");
+  });
+
+  it("redacts GitHub tokens", () => {
+    assert.include(redactSecrets('{"t":"ghp_aBcDeFgHiJkLmNoPqRsT"}'), "ghp_[REDACTED]");
+    assert.include(redactSecrets('{"t":"ghs_aBcDeFgHiJkLmNoPqRsT"}'), "ghs_[REDACTED]");
+    assert.include(
+      redactSecrets('{"t":"github_pat_aBcDeFgHiJkLmNoPqRsT"}'),
+      "github_pat_[REDACTED]",
+    );
+  });
+
+  it("redacts JSON credential fields", () => {
+    const input = '{"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdef","other":"value"}';
+    const result = redactSecrets(input);
+    assert.include(result, '"[REDACTED]"');
+    assert.notInclude(result, "eyJhbGciOi");
+    // field name preserved
+    assert.include(result, '"token"');
+    // unrelated field passes through byte-identical
+    assert.include(result, '"other":"value"');
+  });
+
+  it("passes clean events through byte-identical", () => {
+    const clean = '{"type":"turn.completed","threadId":"t-123","payload":{"state":"completed"}}';
+    assert.equal(redactSecrets(clean), clean);
+  });
+
+  it("redacted event reaches logger output when token is present in payload", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-redact-test-"));
+      const basePath = path.join(tempDir, "provider-native.ndjson");
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
+        assert.notEqual(logger, undefined);
+        if (!logger) return;
+        yield* logger.write(
+          {
+            type: "mcp.oauth.completed",
+            token: "sk-ant-api03-REDACTME1234567890ABCDEFGHIJKLMNOPQR",
+          },
+          ThreadId.make("thread-redact"),
+        );
+        yield* logger.close();
+        const logPath = path.join(tempDir, "thread-redact.log");
+        assert.equal(fs.existsSync(logPath), true);
+        const contents = fs.readFileSync(logPath, "utf8");
+        assert.notInclude(contents, "sk-ant-api03-REDACTME");
+        assert.include(contents, "sk-ant-[REDACTED]");
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }));
 });
