@@ -34,6 +34,10 @@ const setup = Layer.effectDiscard(
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
+    // ponytail: fixed values — busy_timeout/wal_autocheckpoint/synchronous tuned for target concurrency (audit fix #10)
+    yield* sql`PRAGMA busy_timeout = 30000;`;
+    yield* sql`PRAGMA wal_autocheckpoint = 1000;`;
+    yield* sql`PRAGMA synchronous = NORMAL;`;
     yield* runMigrations();
   }),
 );
