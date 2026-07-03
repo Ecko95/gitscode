@@ -45,6 +45,13 @@ export interface GitWorkflowServiceShape {
   readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
   readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
   readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+  /**
+   * Returns the git common directory (shared .git dir for the repo family) for
+   * `cwd`, or `null` when `cwd` is not inside a git repository. Used by the
+   * VCS status broadcaster to group worktrees of the same repo under one
+   * polling key so the remote fetch runs once per repo per interval.
+   */
+  readonly resolveRepoKey: (cwd: string) => Effect.Effect<string | null, never>;
   readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
   readonly runStackedAction: (
     input: GitRunStackedActionInput,
@@ -309,6 +316,11 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     renameBranch: (input) =>
       ensureGit("GitWorkflowService.renameBranch", input.cwd).pipe(
         Effect.andThen(git.renameBranch(input)),
+      ),
+    resolveRepoKey: (cwd) =>
+      registry.detect({ cwd }).pipe(
+        Effect.map((handle) => handle?.repository.metadataPath ?? null),
+        Effect.orElseSucceed(() => null),
       ),
   });
 });
