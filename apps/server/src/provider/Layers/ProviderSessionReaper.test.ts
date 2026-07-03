@@ -210,6 +210,7 @@ describe("ProviderSessionReaper", () => {
                 : Option.none(),
             ),
           getThreadDetailById: () => Effect.die("unused"),
+          getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
         }),
       ),
       Layer.provideMerge(NodeServices.layer),
