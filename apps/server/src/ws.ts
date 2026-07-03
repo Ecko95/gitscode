@@ -184,6 +184,16 @@ export function logSequenceGap(
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+// ponytail: per-WS-subscriber event buffer cap for UI push streams.
+// With PubSub.unbounded, each subscriber holds a node in the PubSub linked list.
+// A slow WS client (throttled browser tab) would grow that list without bound.
+// Stream.buffer(dropping) decouples the subscriber: a fork fiber drains PubSub at
+// full speed into this bounded queue; the WS serialiser consumes at WS speed.
+// Dropped events are detectable via sequence gaps (existing snapshotSequence contract).
+// ponytail: 512 covers ~1s of burst at typical shell/thread event rates; raise if
+// fast-typing sessions emit >512 events/s and gap-on-reconnect becomes frequent.
+const WS_PUSH_SUBSCRIBER_BUFFER = 512;
+
 function toAuthAccessStreamEvent(
   change: BootstrapCredentialChange | SessionCredentialChange,
   revision: number,
@@ -876,6 +886,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               );
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                // Bound the per-subscriber queue so a slow WS client doesn't grow the
+                // PubSub linked list without bound. The fork fiber drains PubSub at
+                // full speed; the WS serialiser consumes the bounded queue at WS speed.
+                // Dropped events are detectable via sequence gaps (snapshotSequence contract).
+                Stream.buffer({ capacity: WS_PUSH_SUBSCRIBER_BUFFER, strategy: "dropping" }),
                 // ponytail: gap check on raw stream before toShellStreamEvent filters
                 // may drop the event.
                 Stream.mapAccumEffect(
@@ -956,6 +971,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               }
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                // Bound the per-subscriber queue (same rationale as subscribeShell above).
+                Stream.buffer({ capacity: WS_PUSH_SUBSCRIBER_BUFFER, strategy: "dropping" }),
                 // ponytail: gap check on raw stream before thread filter so the first
                 // event arriving after snapshot-read (even for other aggregates) sets
                 // the checked flag — the sequence space is global, not per-thread.
