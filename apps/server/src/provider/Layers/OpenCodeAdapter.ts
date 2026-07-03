@@ -105,6 +105,11 @@ export interface OpenCodeAdapterLiveOptions {
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+// ponytail: 1024 — OpenCode emits SSE events via HTTP stream; at normal API latency
+// ~50 events/turn is typical. Bounded queue suspends the SSE pump fiber when the caller
+// hasn't read, propagating backpressure to the HTTP read. Consumer is Stream.fromQueue
+// (caller's drain fiber). No cycle with producer. Add env knob if burst profiling shows hits.
+const RUNTIME_EVENT_QUEUE_CAPACITY = 1024;
 
 /**
  * Map a tagged OpenCodeRuntimeError produced by {@link runOpenCodeSdk} into
@@ -443,7 +448,7 @@ export function makeOpenCodeAdapter(
     // `options.nativeEventLogger`, they own its lifecycle.
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-    const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    const runtimeEvents = yield* Queue.bounded<ProviderRuntimeEvent>(RUNTIME_EVENT_QUEUE_CAPACITY);
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
