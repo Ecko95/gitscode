@@ -4,6 +4,7 @@ import {
   getWsConnectionStatus,
   getWsReconnectDelayMsForRetry,
   getWsConnectionUiState,
+  recordWsAuthRejected,
   recordWsConnectionAttempt,
   recordWsConnectionClosed,
   recordWsConnectionErrored,
@@ -117,5 +118,30 @@ describe("wsConnectionState", () => {
 
     expect(getWsConnectionStatus()).toMatchObject({ phase: "disconnected" });
     expect(getWsConnectionUiState(getWsConnectionStatus())).toBe("reconnecting");
+  });
+
+  // W3.4: 401 during reconnect → auth-rejected phase; retry machinery must not overwrite it.
+  it("transitions to auth-rejected and holds that phase through subsequent retry attempts", () => {
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+    recordWsConnectionClosed({ code: 1006, reason: "" });
+
+    recordWsAuthRejected();
+
+    expect(getWsConnectionStatus()).toMatchObject({
+      phase: "disconnected",
+      reconnectPhase: "auth-rejected",
+      nextRetryAt: null,
+    });
+
+    // Simulate the internal Effect retry loop continuing to fire — must not overwrite.
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    expect(getWsConnectionStatus()).toMatchObject({ reconnectPhase: "auth-rejected" });
+
+    recordWsConnectionErrored("Unable to connect to the GITS server WebSocket.");
+    expect(getWsConnectionStatus()).toMatchObject({ reconnectPhase: "auth-rejected" });
+
+    recordWsConnectionClosed({ code: 1006, reason: "" });
+    expect(getWsConnectionStatus()).toMatchObject({ reconnectPhase: "auth-rejected" });
   });
 });
