@@ -41,6 +41,8 @@ export interface WsTransportOptions {
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
   readonly onResubscribe?: () => void;
+  /** Called when the subscription loop terminates due to a non-transport error (e.g. server-side overflow). */
+  readonly onEnd?: (error: unknown) => void;
   readonly tag?: string;
 }
 
@@ -190,6 +192,11 @@ export class WsTransport {
           const formattedError = formatErrorMessage(error);
           if (!isTransportConnectionErrorMessage(formattedError)) {
             this.logWarning("WebSocket RPC subscription failed", { error: formattedError });
+            try {
+              options?.onEnd?.(error);
+            } catch {
+              // Ignore onEnd hook failures.
+            }
             return;
           }
 

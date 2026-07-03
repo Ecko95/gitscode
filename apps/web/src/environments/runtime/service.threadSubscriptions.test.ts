@@ -807,19 +807,21 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  // W4.4b: contiguous events (no gap) apply normally; no resubscribe triggered.
-  it("applies contiguous detail events without triggering a refetch", async () => {
+  // W4.4b: events apply normally after snapshot; no resubscribe triggered.
+  it("applies detail events after snapshot without triggering a resubscribe", async () => {
     const environmentId = EnvironmentId.make("env-1");
-    const threadId = ThreadId.make("thread-contiguous");
+    const threadId = ThreadId.make("thread-apply");
 
     type StreamItem = Parameters<typeof mockSubscribeThread>[1] extends (item: infer I) => void
       ? I
       : never;
     let capturedCallback: ((item: StreamItem) => void) | null = null;
-    mockSubscribeThread.mockImplementation((_input: unknown, cb: (item: StreamItem) => void) => {
-      capturedCallback = cb;
-      return mockThreadUnsubscribe;
-    });
+    mockSubscribeThread.mockImplementation(
+      (_input: unknown, cb: (item: StreamItem) => void, _options?: unknown) => {
+        capturedCallback = cb;
+        return mockThreadUnsubscribe;
+      },
+    );
 
     const { useStore } = await import("~/store");
     const applyEventsSpy = vi.spyOn(useStore.getState(), "applyOrchestrationEvents");
@@ -856,18 +858,12 @@ describe("retainThreadDetailSubscription", () => {
       checkpoints: [],
     });
 
-    // Snapshot at sequence 10.
-    capturedCallback!({
-      kind: "snapshot",
-      snapshot: { snapshotSequence: 10, thread: makeThread() },
-    } as StreamItem);
-
-    const makeEvent = (sequence: number) => ({
+    const makeEvent = (sequence: number, title = "t") => ({
       kind: "event" as const,
       event: {
         sequence,
         type: "thread.meta-updated" as const,
-        payload: { threadId, title: "t", updatedAt: "2026-01-01T00:00:00.000Z" },
+        payload: { threadId, title, updatedAt: "2026-01-01T00:00:00.000Z" },
         occurredAt: "2026-01-01T00:00:00.000Z",
         eventId: `e-${sequence}`,
         aggregateKind: "thread" as const,
@@ -879,12 +875,18 @@ describe("retainThreadDetailSubscription", () => {
       },
     });
 
-    // Contiguous events: 11, 12, 13.
-    capturedCallback!(makeEvent(11) as StreamItem);
-    capturedCallback!(makeEvent(12) as StreamItem);
-    capturedCallback!(makeEvent(13) as StreamItem);
+    // Snapshot at sequence 10.
+    capturedCallback!({
+      kind: "snapshot",
+      snapshot: { snapshotSequence: 10, thread: makeThread() },
+    } as StreamItem);
 
-    // All three events applied; no resubscribe (subscribeThread called once).
+    // Events at 11, 15, 20 (non-contiguous — server filters global sequence space).
+    capturedCallback!(makeEvent(11) as StreamItem);
+    capturedCallback!(makeEvent(15) as StreamItem);
+    capturedCallback!(makeEvent(20) as StreamItem);
+
+    // All three applied; subscribeThread called once (no resubscribe).
     expect(applyEventsSpy).toHaveBeenCalledTimes(3);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
 
@@ -892,20 +894,26 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  // W4.4b: a single gapped event triggers exactly one resubscribe, not a storm.
-  it("triggers exactly one refetch on a forward sequence gap and does not loop", async () => {
+  // W4.4b: server-side subscription failure (onEnd) triggers exactly one resubscribe, not a storm.
+  it("triggers exactly one resubscribe on subscription failure and does not loop", async () => {
     const environmentId = EnvironmentId.make("env-1");
-    const threadId = ThreadId.make("thread-gap");
+    const threadId = ThreadId.make("thread-failure");
 
     type StreamItem = Parameters<typeof mockSubscribeThread>[1] extends (item: infer I) => void
       ? I
       : never;
-    // Track all callbacks across subscribeThread calls (initial + resubscribe).
+    type SubscribeOptions = Parameters<typeof mockSubscribeThread>[2];
+
+    // Track callbacks and options across all subscribeThread calls.
     const capturedCallbacks: Array<(item: StreamItem) => void> = [];
-    mockSubscribeThread.mockImplementation((_input: unknown, cb: (item: StreamItem) => void) => {
-      capturedCallbacks.push(cb);
-      return mockThreadUnsubscribe;
-    });
+    const capturedOptions: Array<SubscribeOptions> = [];
+    mockSubscribeThread.mockImplementation(
+      (_input: unknown, cb: (item: StreamItem) => void, options?: SubscribeOptions) => {
+        capturedCallbacks.push(cb);
+        capturedOptions.push(options);
+        return mockThreadUnsubscribe;
+      },
+    );
 
     const { useStore } = await import("~/store");
     const applyEventsSpy = vi.spyOn(useStore.getState(), "applyOrchestrationEvents");
@@ -941,7 +949,25 @@ describe("retainThreadDetailSubscription", () => {
       checkpoints: [],
     });
 
+    const makeEvent = (sequence: number, title = "t") => ({
+      kind: "event" as const,
+      event: {
+        sequence,
+        type: "thread.meta-updated" as const,
+        payload: { threadId, title, updatedAt: "2026-01-01T00:00:00.000Z" },
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        eventId: `e-${sequence}`,
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    });
+
     const firstCallback = capturedCallbacks[0]!;
+    const firstOptions = capturedOptions[0];
 
     // Seed snapshot at sequence 5.
     firstCallback({
@@ -950,94 +976,32 @@ describe("retainThreadDetailSubscription", () => {
     } as StreamItem);
     applyEventsSpy.mockClear();
 
-    // Apply a contiguous event at sequence 6 (no gap).
-    firstCallback({
-      kind: "event",
-      event: {
-        sequence: 6,
-        type: "thread.meta-updated" as const,
-        payload: { threadId, title: "t", updatedAt: "2026-01-01T00:00:00.000Z" },
-        occurredAt: "2026-01-01T00:00:00.000Z",
-        eventId: "e6",
-        aggregateKind: "thread" as const,
-        aggregateId: threadId,
-        commandId: null,
-        causationEventId: null,
-        correlationId: null,
-        metadata: {},
-      },
-    } as StreamItem);
+    // Apply an event normally.
+    firstCallback(makeEvent(6) as StreamItem);
     expect(applyEventsSpy).toHaveBeenCalledTimes(1);
-
-    // Now deliver a gapped event (sequence 9, last applied was 6 → gap of 2).
     applyEventsSpy.mockClear();
-    firstCallback({
-      kind: "event",
-      event: {
-        sequence: 9,
-        type: "thread.meta-updated" as const,
-        payload: { threadId, title: "gapped", updatedAt: "2026-01-01T00:01:00.000Z" },
-        occurredAt: "2026-01-01T00:01:00.000Z",
-        eventId: "e9",
-        aggregateKind: "thread" as const,
-        aggregateId: threadId,
-        commandId: null,
-        causationEventId: null,
-        correlationId: null,
-        metadata: {},
-      },
-    } as StreamItem);
 
-    // Gapped event must NOT be applied — refetch triggered instead.
-    expect(applyEventsSpy).not.toHaveBeenCalled();
+    // Simulate server-side subscription failure (e.g. buffer overflow).
+    firstOptions?.onEnd?.(new Error("subscriber buffer overflow — resubscribe for fresh snapshot"));
+
     // A resubscribe must have been issued (subscribeThread called twice: initial + refetch).
     expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
 
-    // Further events on the OLD callback while refetch is in flight are dropped (no storm).
-    firstCallback({
-      kind: "event",
-      event: {
-        sequence: 10,
-        type: "thread.meta-updated" as const,
-        payload: { threadId, title: "during-refetch", updatedAt: "2026-01-01T00:02:00.000Z" },
-        occurredAt: "2026-01-01T00:02:00.000Z",
-        eventId: "e10",
-        aggregateKind: "thread" as const,
-        aggregateId: threadId,
-        commandId: null,
-        causationEventId: null,
-        correlationId: null,
-        metadata: {},
-      },
-    } as StreamItem);
-    // No additional apply and no additional resubscribe.
+    // Events delivered to the OLD callback while resubscribe is in flight are dropped.
+    firstCallback(makeEvent(7, "during-failure") as StreamItem);
     expect(applyEventsSpy).not.toHaveBeenCalled();
+    // No additional resubscribe triggered (no storm).
     expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
 
-    // The new subscription (from refetch) delivers a fresh snapshot — gate resets.
+    // The new subscription delivers a fresh snapshot — gate resets.
     const refetchCallback = capturedCallbacks[1]!;
     refetchCallback({
       kind: "snapshot",
-      snapshot: { snapshotSequence: 10, thread: makeThread() },
+      snapshot: { snapshotSequence: 8, thread: makeThread() },
     } as StreamItem);
 
-    // Events after the refetch snapshot apply normally.
-    refetchCallback({
-      kind: "event",
-      event: {
-        sequence: 11,
-        type: "thread.meta-updated" as const,
-        payload: { threadId, title: "post-refetch", updatedAt: "2026-01-01T00:03:00.000Z" },
-        occurredAt: "2026-01-01T00:03:00.000Z",
-        eventId: "e11",
-        aggregateKind: "thread" as const,
-        aggregateId: threadId,
-        commandId: null,
-        causationEventId: null,
-        correlationId: null,
-        metadata: {},
-      },
-    } as StreamItem);
+    // Events on the new subscription apply normally.
+    refetchCallback(makeEvent(9, "post-refetch") as StreamItem);
     expect(applyEventsSpy).toHaveBeenCalledTimes(1);
 
     stop();

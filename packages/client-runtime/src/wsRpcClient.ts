@@ -22,6 +22,8 @@ type RpcInput<TTag extends RpcTag> = Parameters<RpcMethod<TTag>>[0];
 
 interface StreamSubscriptionOptions {
   readonly onResubscribe?: () => void;
+  /** Called when the subscription loop terminates due to a non-transport error (e.g. server-side overflow). */
+  readonly onEnd?: (error: unknown) => void;
 }
 
 function subscriptionOptions(
