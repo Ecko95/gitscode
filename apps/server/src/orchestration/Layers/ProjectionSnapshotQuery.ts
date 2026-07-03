@@ -2149,6 +2149,46 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  // Graveyard: reads worktree_path + branch even for deleted threads (plan 21 W2.2)
+  const WorktreeInfoRowSchema = Schema.Struct({
+    worktreePath: Schema.NullOr(Schema.String),
+    branch: Schema.NullOr(Schema.String),
+    workspaceRoot: Schema.NullOr(Schema.String),
+  });
+
+  const getWorktreeInfoByThreadId = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId }),
+    Result: WorktreeInfoRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          t.worktree_path AS "worktreePath",
+          t.branch        AS "branch",
+          p.workspace_root AS "workspaceRoot"
+        FROM projection_threads t
+        LEFT JOIN projection_projects p ON p.project_id = t.project_id
+        WHERE t.thread_id = ${threadId}
+        LIMIT 1
+      `,
+  });
+
+  const getThreadWorktreeInfo: ProjectionSnapshotQueryShape["getThreadWorktreeInfo"] = (threadId) =>
+    getWorktreeInfoByThreadId({ threadId }).pipe(
+      Effect.map(
+        Option.map((row) => ({
+          worktreePath: row.worktreePath,
+          branch: row.branch,
+          projectWorkspaceRoot: row.workspaceRoot,
+        })),
+      ),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadWorktreeInfo:query",
+          "ProjectionSnapshotQuery.getThreadWorktreeInfo:decode",
+        ),
+      ),
+    );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2163,6 +2203,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getThreadWorktreeInfo,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

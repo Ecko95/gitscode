@@ -157,6 +157,19 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read worktree path and branch for a thread regardless of deleted/archived state.
+   * Used by the graveyard retirement handler after thread.deleted fires (plan 21 W2.2).
+   */
+  readonly getThreadWorktreeInfo: (threadId: ThreadId) => Effect.Effect<
+    Option.Option<{
+      readonly worktreePath: string | null;
+      readonly branch: string | null;
+      readonly projectWorkspaceRoot: string | null;
+    }>,
+    ProjectionRepositoryError
+  >;
 }
 
 /**

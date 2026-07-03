@@ -3,6 +3,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type WorktreePath,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -770,6 +771,45 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           activity: command.activity,
+        },
+      };
+    }
+
+    case "worktree.retire.start": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "worktree",
+          aggregateId: command.worktreePath as WorktreePath,
+          occurredAt: command.initiatedAt,
+          commandId: command.commandId,
+        })),
+        type: "worktree.retiring-started",
+        payload: {
+          threadId: command.threadId,
+          worktreePath: command.worktreePath,
+          branch: command.branch,
+          trigger: command.trigger,
+          initiatedAt: command.initiatedAt,
+        },
+      };
+    }
+
+    case "worktree.bury": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "worktree",
+          aggregateId: command.worktreePath as WorktreePath,
+          occurredAt: command.buriedAt,
+          commandId: command.commandId,
+        })),
+        type: "worktree.buried",
+        payload: {
+          threadId: command.threadId,
+          worktreePath: command.worktreePath,
+          branch: command.branch,
+          trigger: command.trigger,
+          finalCheckpointRef: command.finalCheckpointRef,
+          buriedAt: command.buriedAt,
         },
       };
     }

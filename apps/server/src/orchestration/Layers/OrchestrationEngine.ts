@@ -3,6 +3,7 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
+  WorktreePath,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -57,8 +58,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "project" | "thread" | "worktree";
+  readonly aggregateId: ProjectId | ThreadId | WorktreePath;
 } {
   switch (command.type) {
     case "project.create":
@@ -67,6 +68,13 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
+      };
+    case "worktree.retire.start":
+    case "worktree.bury":
+      return {
+        aggregateKind: "worktree",
+        // ponytail: worktree path is the aggregate id per plan 21
+        aggregateId: command.worktreePath as WorktreePath,
       };
     default:
       return {
