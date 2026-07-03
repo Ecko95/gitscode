@@ -10,7 +10,7 @@ usage() {
 Usage: deploy-gits-tailnet-hosted.sh [options]
 
 Create or refresh the clean hosted GITS deploy worktree, build it with Bun,
-write build provenance metadata, and restart the WSL user service.
+write build provenance metadata, and restart the systemd user service.
 
 Options:
   --repo PATH                    Source repo that owns the git worktree.
@@ -18,8 +18,8 @@ Options:
   --remote NAME                  Git remote to fetch. Default: origin
   --branch NAME                  Branch to deploy. Default: gits
   --service NAME                 User service name. Default: gits-cockpit.service
-  --host HOST                    Hosted HTTP bind host inside WSL. Default: 127.0.0.1
-  --port PORT                    Hosted HTTP port inside WSL. Default: 13773
+  --host HOST                    Hosted HTTP bind host. Default: 127.0.0.1
+  --port PORT                    Hosted HTTP port. Default: 13773
   --t3code-home PATH             T3 Code state directory. Default: $HOME/.t3
   --metadata-relative-path PATH  Metadata JSON path inside the deploy worktree.
   --skip-install                 Skip bun install --frozen-lockfile.
@@ -66,7 +66,7 @@ gits_hosting_assert_git_repo
 
 service_unit_path="$(gits_hosting_service_unit_path)"
 [[ -f "$service_unit_path" ]] || \
-  gits_hosting_die "Missing user service unit at $service_unit_path. Run install-wsl-user-service.sh first."
+  gits_hosting_die "Missing user service unit at $service_unit_path. Run install-gits-user-service.sh first."
 
 gits_hosting_log "Fetching ${gits_hosting_remote}/${gits_hosting_branch} from ${gits_hosting_repo}"
 git -C "$gits_hosting_repo" fetch --prune "$gits_hosting_remote" \
