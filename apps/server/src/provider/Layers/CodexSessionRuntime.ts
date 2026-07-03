@@ -55,6 +55,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const PROVIDER_EVENT_QUEUE_CAPACITY = 1024;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -727,7 +728,13 @@ export const makeCodexSessionRuntime = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
-    const events = yield* Queue.unbounded<ProviderEvent>();
+    // ponytail: 1024 cap — codex emits ~1 notification per streamed chunk; even a very
+    // large turn (10k tokens, ~50 chunks) fits in << 1024 at normal API latency. The
+    // consumer (CodexAdapter eventFiber) drains independently in a forked fiber, so
+    // the only time the producer (handleRawNotification) suspends is when the
+    // downstream TCP/websocket write is slower than codex's stdio output — i.e., the
+    // desired backpressure. Raise to env knob if workloads with burst > 1024 appear.
+    const events = yield* Queue.bounded<ProviderEvent>(PROVIDER_EVENT_QUEUE_CAPACITY);
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
@@ -769,7 +776,14 @@ export const makeCodexSessionRuntime = (
     const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
       Effect.provide(clientContext),
     );
-    const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
+    // ponytail: same 1024 cap — serverNotifications is drained by a dedicated fiber
+    // (forkIn runtimeScope) that calls handleRawNotification, which offers to `events`.
+    // Because `events` is also bounded, the serverNotifications consumer can suspend
+    // waiting for space in `events`; bounding serverNotifications propagates that
+    // suspension back to the ACP client callback, which is the actual pipe reader.
+    const serverNotifications = yield* Queue.bounded<CodexServerNotification>(
+      PROVIDER_EVENT_QUEUE_CAPACITY,
+    );
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
