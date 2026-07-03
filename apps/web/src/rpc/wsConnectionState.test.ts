@@ -8,6 +8,7 @@ import {
   recordWsConnectionClosed,
   recordWsConnectionErrored,
   recordWsConnectionOpened,
+  recordWsHeartbeatTimeout,
   resetWsConnectionStateForTests,
   setBrowserOnlineStatus,
   WS_RECONNECT_MAX_ATTEMPTS,
@@ -103,5 +104,18 @@ describe("wsConnectionState", () => {
       reconnectAttemptCount: WS_RECONNECT_MAX_ATTEMPTS,
       reconnectPhase: "exhausted",
     });
+  });
+
+  // W3.3: heartbeat timeout must flip phase to disconnected so the reconnect banner fires.
+  it("transitions phase to disconnected on heartbeat timeout", () => {
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+
+    expect(getWsConnectionStatus()).toMatchObject({ phase: "connected" });
+
+    recordWsHeartbeatTimeout();
+
+    expect(getWsConnectionStatus()).toMatchObject({ phase: "disconnected" });
+    expect(getWsConnectionUiState(getWsConnectionStatus())).toBe("reconnecting");
   });
 });
