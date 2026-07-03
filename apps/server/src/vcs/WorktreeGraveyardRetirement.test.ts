@@ -8,7 +8,7 @@
  *   - retireWorktree: removeWorktree failure → no buried event
  *   - Schema replay gate: pre-widening aggregateKind values decode through widened schema
  */
-import { OrchestrationAggregateKind, ThreadId } from "@t3tools/contracts";
+import { OrchestrationAggregateKind, ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,9 +16,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vitest";
 
-import { CheckpointStore } from "../checkpointing/Services/CheckpointStore.ts";
+import {
+  CheckpointStore,
+  type CaptureCheckpointInput,
+} from "../checkpointing/Services/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { RuntimeReceiptBus } from "../orchestration/Services/RuntimeReceiptBus.ts";
+import {
+  RuntimeReceiptBus,
+  type OrchestrationRuntimeReceipt,
+} from "../orchestration/Services/RuntimeReceiptBus.ts";
 import { GitVcsDriver } from "./GitVcsDriver.ts";
 import { graveyardCheckpointRef, retireWorktree } from "./WorktreeGraveyardRetirement.ts";
 
@@ -36,8 +42,8 @@ function makeEngineLayer(): {
           dispatched.push(command.type);
           return { sequence: dispatched.length };
         }),
-      readEvents: () => Effect.die("unused"),
-      streamDomainEvents: Stream.empty,
+      readEvents: () => Stream.die("unused"),
+      streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
     }),
     dispatched,
   };
@@ -51,7 +57,7 @@ function makeReceiptLayer(): { layer: Layer.Layer<RuntimeReceiptBus>; published:
         Effect.sync(() => {
           published.push(receipt.type);
         }),
-      streamEventsForTest: Stream.empty,
+      streamEventsForTest: Stream.empty as Stream.Stream<OrchestrationRuntimeReceipt>,
     }),
     published,
   };
@@ -60,7 +66,7 @@ function makeReceiptLayer(): { layer: Layer.Layer<RuntimeReceiptBus>; published:
 const makeCheckpointLayer = (fail: boolean) =>
   Layer.succeed(CheckpointStore, {
     isGitRepository: () => Effect.succeed(true),
-    captureCheckpoint: (_input) =>
+    captureCheckpoint: (_input: CaptureCheckpointInput) =>
       fail
         ? Effect.fail(Object.assign(new Error("cp-fail"), { _tag: "CheckpointStoreError" }))
         : Effect.void,
