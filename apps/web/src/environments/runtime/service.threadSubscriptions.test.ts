@@ -696,4 +696,114 @@ describe("retainThreadDetailSubscription", () => {
 
     stop();
   });
+
+  // W3.1: stale detail events (sequence ≤ snapshotSequence) arriving after a
+  // resubscribe must be discarded; events with sequence > snapshotSequence apply.
+  it("discards detail events whose sequence is at or below the latest snapshot sequence", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-seq");
+
+    // Capture the raw callback injected by subscribeThread so we can drive it directly.
+    type StreamItem = Parameters<typeof mockSubscribeThread>[1] extends (item: infer I) => void
+      ? I
+      : never;
+    let capturedCallback: ((item: StreamItem) => void) | null = null;
+    mockSubscribeThread.mockImplementation((_input: unknown, cb: (item: StreamItem) => void) => {
+      capturedCallback = cb;
+      return mockThreadUnsubscribe;
+    });
+
+    // Spy on applyEnvironmentThreadDetailEvent to count how many events pass the gate.
+    // We do this by wrapping the exported function — but since the module is mocked,
+    // we instead spy on the store method that would be called for applied events.
+    const { useStore } = await import("~/store");
+    const applyEventsSpy = vi.spyOn(useStore.getState(), "applyOrchestrationEvents");
+
+    const {
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    retainThreadDetailSubscription(environmentId, threadId);
+    expect(capturedCallback).not.toBeNull();
+
+    // Reset spy counts after subscription setup.
+    applyEventsSpy.mockClear();
+
+    // Deliver a snapshot with snapshotSequence=5.
+    capturedCallback!({
+      kind: "snapshot",
+      snapshot: {
+        snapshotSequence: 5,
+        thread: {
+          id: threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "t",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          archivedAt: null,
+          deletedAt: null,
+          session: null,
+          messages: [],
+          proposedPlans: [],
+          visualPlans: [],
+          activities: [],
+          checkpoints: [],
+        },
+      },
+    } as StreamItem);
+
+    // Stale event (sequence=3 ≤ snapshotSequence=5) — must be discarded.
+    capturedCallback!({
+      kind: "event",
+      event: {
+        sequence: 3,
+        type: "thread.meta-updated",
+        payload: { threadId, title: "stale-title", updatedAt: "2026-01-01T00:00:00.000Z" },
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        eventId: "event-1",
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    } as StreamItem);
+
+    // applyOrchestrationEvents must NOT have been called for the stale event.
+    expect(applyEventsSpy).not.toHaveBeenCalled();
+
+    // Fresh event (sequence=6 > snapshotSequence=5) — must be applied.
+    capturedCallback!({
+      kind: "event",
+      event: {
+        sequence: 6,
+        type: "thread.meta-updated",
+        payload: { threadId, title: "fresh-title", updatedAt: "2026-01-01T00:01:00.000Z" },
+        occurredAt: "2026-01-01T00:01:00.000Z",
+        eventId: "event-2",
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    } as StreamItem);
+
+    // The fresh event must have reached applyOrchestrationEvents.
+    expect(applyEventsSpy).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
 });
