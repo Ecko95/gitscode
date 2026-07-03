@@ -9,6 +9,7 @@
 **Tech Stack:** React, TanStack Router (`useNavigate` + route search params), Vitest (`apps/web` config with the `~` alias), TailwindCSS, the existing `Button` component.
 
 **Repo gotchas (MUST follow):**
+
 - Prefix shell with `PATH="$HOME/.local/bin:$PATH" rtk …`. Format only changed files: `rtk npx oxfmt <paths>` (NEVER `bun fmt`).
 - **Web tests run from inside `apps/web`:** `cd apps/web && ../../node_modules/.bin/vitest run src/<path>` (the root config lacks the `~` → `apps/web/src` alias).
 - **Web typecheck:** `cd apps/web && bun run typecheck` (NOT `./node_modules/.bin/tsgo`, which does not exist and silently exits 0). Grep for your own files.
@@ -32,6 +33,7 @@
 ## Task 1: Extend the `diff` search param to support `"crit"`
 
 **Files:**
+
 - Modify: `apps/web/src/diffRouteSearch.ts`
 - Test: `apps/web/src/diffRouteSearch.test.ts` (create)
 
@@ -45,30 +47,30 @@ import { describe, expect, it } from "vitest";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
-	it("parses the native diff value", () => {
-		expect(parseDiffRouteSearch({ diff: "1" }).diff).toBe("1");
-	});
+  it("parses the native diff value", () => {
+    expect(parseDiffRouteSearch({ diff: "1" }).diff).toBe("1");
+  });
 
-	it("parses the crit value", () => {
-		expect(parseDiffRouteSearch({ diff: "crit" }).diff).toBe("crit");
-	});
+  it("parses the crit value", () => {
+    expect(parseDiffRouteSearch({ diff: "crit" }).diff).toBe("crit");
+  });
 
-	it("drops unknown diff values", () => {
-		expect(parseDiffRouteSearch({ diff: "bogus" }).diff).toBeUndefined();
-	});
+  it("drops unknown diff values", () => {
+    expect(parseDiffRouteSearch({ diff: "bogus" }).diff).toBeUndefined();
+  });
 
-	it("keeps diffTurnId/diffFilePath for native diff but not for crit", () => {
-		const native = parseDiffRouteSearch({ diff: "1", diffTurnId: "turn-1", diffFilePath: "a.ts" });
-		expect(native.diffTurnId).toBe("turn-1");
-		expect(native.diffFilePath).toBe("a.ts");
-		const crit = parseDiffRouteSearch({ diff: "crit", diffTurnId: "turn-1", diffFilePath: "a.ts" });
-		expect(crit.diffTurnId).toBeUndefined();
-		expect(crit.diffFilePath).toBeUndefined();
-	});
+  it("keeps diffTurnId/diffFilePath for native diff but not for crit", () => {
+    const native = parseDiffRouteSearch({ diff: "1", diffTurnId: "turn-1", diffFilePath: "a.ts" });
+    expect(native.diffTurnId).toBe("turn-1");
+    expect(native.diffFilePath).toBe("a.ts");
+    const crit = parseDiffRouteSearch({ diff: "crit", diffTurnId: "turn-1", diffFilePath: "a.ts" });
+    expect(crit.diffTurnId).toBeUndefined();
+    expect(crit.diffFilePath).toBeUndefined();
+  });
 
-	it("strips all diff params", () => {
-		expect(stripDiffSearchParams({ diff: "crit", other: "keep" })).toEqual({ other: "keep" });
-	});
+  it("strips all diff params", () => {
+    expect(stripDiffSearchParams({ diff: "crit", other: "keep" })).toEqual({ other: "keep" });
+  });
 });
 ```
 
@@ -83,21 +85,21 @@ In `apps/web/src/diffRouteSearch.ts`, replace the interface and the `diff` deriv
 
 ```ts
 export interface DiffRouteSearch {
-	diff?: "1" | "crit" | undefined;
-	diffTurnId?: TurnId | undefined;
-	diffFilePath?: string | undefined;
+  diff?: "1" | "crit" | undefined;
+  diffTurnId?: TurnId | undefined;
+  diffFilePath?: string | undefined;
 }
 ```
 
 Then in `parseDiffRouteSearch`, replace the first three lines of the body:
 
 ```ts
-	const diff = isDiffOpenValue(search.diff) ? "1" : search.diff === "crit" ? "crit" : undefined;
-	// diffTurnId/diffFilePath only apply to the native per-turn diff, not crit.
-	const diffTurnIdRaw = diff === "1" ? normalizeSearchString(search.diffTurnId) : undefined;
-	const diffTurnId = diffTurnIdRaw ? TurnId.make(diffTurnIdRaw) : undefined;
-	const diffFilePath =
-		diff === "1" && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
+const diff = isDiffOpenValue(search.diff) ? "1" : search.diff === "crit" ? "crit" : undefined;
+// diffTurnId/diffFilePath only apply to the native per-turn diff, not crit.
+const diffTurnIdRaw = diff === "1" ? normalizeSearchString(search.diffTurnId) : undefined;
+const diffTurnId = diffTurnIdRaw ? TurnId.make(diffTurnIdRaw) : undefined;
+const diffFilePath =
+  diff === "1" && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
 ```
 
 (`stripDiffSearchParams` is unchanged — it already strips `diff`/`diffTurnId`/`diffFilePath`.)
@@ -122,6 +124,7 @@ git commit -m "feat(web): support diff=crit route search value"
 ## Task 2: Drive the panel from the param + add `openCritReview` (route)
 
 **Files:**
+
 - Modify: `apps/web/src/routes/_chat.$environmentId.$threadId.tsx`
 
 Context: `diffOpen` is derived at line 179 (`search.diff === "1"`). The auto-swap lives at lines ~181–227 (`critReviewEnabled`, `critReviewDisabled`, `shouldUseCritReview`, `critPanel`). `openDiff`/`closeDiff` are at lines ~249–272. `DiffPanelInlineSidebar` (lines 60–148) renders `renderDiffContent ? (critPanel ?? <LazyDiffPanel mode="sidebar" />) : null` at line 143.
@@ -131,8 +134,8 @@ Context: `diffOpen` is derived at line 179 (`search.diff === "1"`). The auto-swa
 Replace line 179 (`const diffOpen = search.diff === "1";`) with:
 
 ```ts
-	const critMode = search.diff === "crit";
-	const diffOpen = search.diff === "1" || critMode;
+const critMode = search.diff === "crit";
+const diffOpen = search.diff === "1" || critMode;
 ```
 
 - [ ] **Step 2: Remove the auto-swap; compute `critPanel` from the mode**
@@ -207,6 +210,7 @@ git commit -m "feat(web): drive review panel from diff=crit, remove crit auto-sw
 ## Task 3: CritReviewPanel inline "unavailable" state
 
 **Files:**
+
 - Modify: `apps/web/src/components/CritReviewPanel.tsx`
 - Test: `apps/web/src/components/CritReviewPanel.test.tsx`
 
@@ -216,21 +220,21 @@ Read the existing `CritReviewPanel.test.tsx` first to reuse its render/mocking h
 
 ```tsx
 it("shows an unavailable state with a native-diff fallback when the sidecar fails", async () => {
-	const onSwitchToNativeDiff = vi.fn();
-	// Arrange the mocked environment api so crit.ensureSidecar rejects.
-	// (Mirror the existing test's readEnvironmentApi mock; make ensureSidecar throw.)
-	render(
-		<CritReviewPanel
-			environmentId={"env-1" as EnvironmentId}
-			workspaceRoot="/repo"
-			branch="feature"
-			threadId={"thread-1" as ThreadId}
-			onSwitchToNativeDiff={onSwitchToNativeDiff}
-		/>,
-	);
-	const fallback = await screen.findByRole("button", { name: /native diff/i });
-	fallback.click();
-	expect(onSwitchToNativeDiff).toHaveBeenCalledTimes(1);
+  const onSwitchToNativeDiff = vi.fn();
+  // Arrange the mocked environment api so crit.ensureSidecar rejects.
+  // (Mirror the existing test's readEnvironmentApi mock; make ensureSidecar throw.)
+  render(
+    <CritReviewPanel
+      environmentId={"env-1" as EnvironmentId}
+      workspaceRoot="/repo"
+      branch="feature"
+      threadId={"thread-1" as ThreadId}
+      onSwitchToNativeDiff={onSwitchToNativeDiff}
+    />,
+  );
+  const fallback = await screen.findByRole("button", { name: /native diff/i });
+  fallback.click();
+  expect(onSwitchToNativeDiff).toHaveBeenCalledTimes(1);
 });
 ```
 
@@ -244,14 +248,14 @@ Expected: FAIL — `onSwitchToNativeDiff` is not a prop and no fallback button r
 In `CritReviewPanel.tsx`: replace the `onUnavailable: () => void` prop with `onSwitchToNativeDiff: () => void`. Add an `"unavailable"` status. On `ensureSidecar` reject or a `crashed`/`stopped` result, set `setReviewState({ status: "unavailable", url: null })` instead of calling `onUnavailable`. Render, when `reviewState.status === "unavailable"`:
 
 ```tsx
-		<DiffPanelShell mode={CRIT_REVIEW_PANEL_MODE} header={null}>
-			<div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
-				<p>Crit review is unavailable for this thread.</p>
-				<Button type="button" size="sm" variant="outline" onClick={onSwitchToNativeDiff}>
-					View native diff
-				</Button>
-			</div>
-		</DiffPanelShell>
+<DiffPanelShell mode={CRIT_REVIEW_PANEL_MODE} header={null}>
+  <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
+    <p>Crit review is unavailable for this thread.</p>
+    <Button type="button" size="sm" variant="outline" onClick={onSwitchToNativeDiff}>
+      View native diff
+    </Button>
+  </div>
+</DiffPanelShell>
 ```
 
 (Import `Button` from the same path `MessagesTimeline.tsx` uses; keep the `starting` → `DiffPanelLoadingState` and `ready` → iframe branches.)
@@ -276,6 +280,7 @@ git commit -m "feat(web): CritReviewPanel inline unavailable state with native-d
 ## Task 4: "Crit review" button in the changed-files card
 
 **Files:**
+
 - Modify: `apps/web/src/components/chat/MessagesTimeline.tsx`
 
 Context: `TimelineRowSharedState` (interface ~line 88, carries `onOpenTurnDiff` at line 99) is the context value (`TimelineRowCtx`, line 107) consumed by the changed-files card. The card's "View diff" button is at lines 727–734. `MessagesTimelineProps` (line 117) carries `onOpenTurnDiff` (line 128); the `sharedState` object is assembled around lines 233–245.
@@ -300,16 +305,13 @@ In the `MessagesTimeline` destructure (around line 157) add `critReviewAvailable
 In the card's button row (immediately after the "View diff" `Button` closing tag, line 734), read the context where the row renders (the card component uses `use(TimelineRowCtx)`; add `const { critReviewAvailable, onOpenCritReview } = use(TimelineRowCtx);` near the existing `onOpenTurnDiff` access in that component) and add:
 
 ```tsx
-					{critReviewAvailable ? (
-						<Button
-							type="button"
-							size="xs"
-							variant="outline"
-							onClick={onOpenCritReview}
-						>
-							Crit review
-						</Button>
-					) : null}
+{
+  critReviewAvailable ? (
+    <Button type="button" size="xs" variant="outline" onClick={onOpenCritReview}>
+      Crit review
+    </Button>
+  ) : null;
+}
 ```
 
 - [ ] **Step 4: Typecheck**
@@ -331,6 +333,7 @@ git commit -m "feat(web): add gated Crit review button to changed-files card"
 ## Task 5: Wire flag + PR + navigation in ChatView
 
 **Files:**
+
 - Modify: `apps/web/src/components/ChatView.tsx`
 
 Context: `useVcsStatus` is imported (line 43), `useSettings` (line 123). `onOpenTurnDiff` (lines 3713–3734) is the template for `onOpenCritReview` (same `navigate` + `stripDiffSearchParams`). `<MessagesTimeline … onOpenTurnDiff={onOpenTurnDiff} />` is rendered around line 3824. ChatView already has `environmentId`, `threadId`, `isServerThread`, `navigate`, and a `workspaceRoot` value (passed to `MessagesTimeline`).
@@ -340,31 +343,31 @@ Context: `useVcsStatus` is imported (line 43), `useSettings` (line 123). `onOpen
 Near `onOpenTurnDiff` (after line 3734) add:
 
 ```ts
-	const critReviewEnabled = useSettings((settings) => settings.critReviewEnabled);
-	const critVcsStatus = useVcsStatus({
-		environmentId,
-		cwd: workspaceRoot ?? null,
-	}).data;
-	const critReviewAvailable =
-		critReviewEnabled &&
-		isServerThread &&
-		Boolean(workspaceRoot) &&
-		critVcsStatus?.pr != null &&
-		Boolean(critVcsStatus?.refName);
-	const onOpenCritReview = useCallback(() => {
-		if (!isServerThread) {
-			return;
-		}
-		onDiffPanelOpen?.();
-		void navigate({
-			to: "/$environmentId/$threadId",
-			params: { environmentId, threadId },
-			search: (previous) => {
-				const rest = stripDiffSearchParams(previous);
-				return { ...rest, diff: "crit" };
-			},
-		});
-	}, [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+const critReviewEnabled = useSettings((settings) => settings.critReviewEnabled);
+const critVcsStatus = useVcsStatus({
+  environmentId,
+  cwd: workspaceRoot ?? null,
+}).data;
+const critReviewAvailable =
+  critReviewEnabled &&
+  isServerThread &&
+  Boolean(workspaceRoot) &&
+  critVcsStatus?.pr != null &&
+  Boolean(critVcsStatus?.refName);
+const onOpenCritReview = useCallback(() => {
+  if (!isServerThread) {
+    return;
+  }
+  onDiffPanelOpen?.();
+  void navigate({
+    to: "/$environmentId/$threadId",
+    params: { environmentId, threadId },
+    search: (previous) => {
+      const rest = stripDiffSearchParams(previous);
+      return { ...rest, diff: "crit" };
+    },
+  });
+}, [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
 ```
 
 Use the exact local variable name ChatView already uses for the workspace root (grep `workspaceRoot` in ChatView; reuse it — do not introduce a new source). If `useSettings`/`useVcsStatus` are not yet called in this scope, the imports already exist (lines 43, 123).
@@ -374,8 +377,8 @@ Use the exact local variable name ChatView already uses for the workspace root (
 At the `<MessagesTimeline … />` render (≈line 3824), add:
 
 ```tsx
-							critReviewAvailable={critReviewAvailable}
-							onOpenCritReview={onOpenCritReview}
+critReviewAvailable = { critReviewAvailable };
+onOpenCritReview = { onOpenCritReview };
 ```
 
 - [ ] **Step 3: Typecheck the web app end-to-end**
@@ -386,9 +389,11 @@ Expected: empty (all crit-touched web files clean). Investigate any hit; do not 
 - [ ] **Step 4: Run the crit-related web tests**
 
 Run:
+
 ```bash
 cd apps/web && ../../node_modules/.bin/vitest run src/diffRouteSearch.test.ts src/components/CritReviewPanel.test.tsx
 ```
+
 Expected: PASS (Task 1 + Task 3 suites).
 
 - [ ] **Step 5: Format + commit**
@@ -430,6 +435,7 @@ git status --short   # confirm only crit-button files are staged/changed
 ---
 
 ## Notes / non-goals
+
 - Server-side and the crit binary are **out of scope** (track #2). The button is intentionally inert (shows the unavailable state) until a `crit` binary exists.
 - No panel-header `Native | Crit` toggle (we chose the sibling button).
 - The button appears on each turn's changed-files card (mirrors "View diff"); it always opens the thread's Crit panel.
