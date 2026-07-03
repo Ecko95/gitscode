@@ -1624,7 +1624,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("serves public GITS build info without requiring auth", () =>
+  it.effect("serves authenticated GITS build info", () =>
     Effect.gen(function* () {
       const expectedBuildInfo: GitsBuildInfo = {
         branch: "feat/gits-tailnet-hosting-refresh",
@@ -1645,6 +1645,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/api/gits/build-info", {
         headers: {
           origin: crossOriginClientOrigin,
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
       });
       const body = (yield* response.json) as GitsBuildInfo;
@@ -1655,7 +1656,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("serves public GITS skills inventory without requiring auth", () =>
+  it.effect("rejects unauthenticated GITS build info requests with 401", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const response = yield* HttpClient.get("/api/gits/build-info");
+      assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves authenticated GITS skills inventory", () =>
     Effect.gen(function* () {
       const expectedSnapshot: GitsSkillInventorySnapshot = {
         scannedAt: "2026-06-02T10:00:00.000Z",
@@ -1711,6 +1720,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/api/gits/skills", {
         headers: {
           origin: crossOriginClientOrigin,
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
       });
       const body = (yield* response.json) as GitsSkillInventorySnapshot;
@@ -1721,7 +1731,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("serves public GITS MCP inventory without requiring auth", () =>
+  it.effect("rejects unauthenticated GITS skills inventory requests with 401", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const response = yield* HttpClient.get("/api/gits/skills");
+      assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves authenticated GITS MCP inventory", () =>
     Effect.gen(function* () {
       const expectedSnapshot: GitsMcpInventorySnapshot = {
         scannedAt: "2026-06-02T10:00:00.000Z",
@@ -1773,6 +1791,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/api/gits/mcp", {
         headers: {
           origin: crossOriginClientOrigin,
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
       });
       const body = (yield* response.json) as GitsMcpInventorySnapshot;
@@ -1780,6 +1799,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assertBrowserApiCorsHeaders(response.headers);
       assert.deepEqual(body, expectedSnapshot);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects unauthenticated GITS MCP inventory requests with 401", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const response = yield* HttpClient.get("/api/gits/mcp");
+      assert.equal(response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
