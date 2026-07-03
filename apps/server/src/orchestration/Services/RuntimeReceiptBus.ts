@@ -14,7 +14,14 @@
  *
  * @module RuntimeReceiptBus
  */
-import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  IsoDateTime,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TurnId,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -49,10 +56,31 @@ export const TurnProcessingQuiescedReceipt = Schema.Struct({
 });
 export type TurnProcessingQuiescedReceipt = typeof TurnProcessingQuiescedReceipt.Type;
 
+// Worktree graveyard receipts (plan 21, W2.2)
+export const WorktreeRetiringStartedReceipt = Schema.Struct({
+  type: Schema.Literal("worktree.retiring.started"),
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type WorktreeRetiringStartedReceipt = typeof WorktreeRetiringStartedReceipt.Type;
+
+export const WorktreeBuriedReceipt = Schema.Struct({
+  type: Schema.Literal("worktree.buried"),
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  trigger: Schema.Literals(["retirement", "reaper"]),
+  finalCheckpointRef: Schema.NullOr(CheckpointRef),
+  createdAt: IsoDateTime,
+});
+export type WorktreeBuriedReceipt = typeof WorktreeBuriedReceipt.Type;
+
 export const OrchestrationRuntimeReceipt = Schema.Union([
   CheckpointBaselineCapturedReceipt,
   CheckpointDiffFinalizedReceipt,
   TurnProcessingQuiescedReceipt,
+  WorktreeRetiringStartedReceipt,
+  WorktreeBuriedReceipt,
 ]);
 export type OrchestrationRuntimeReceipt = typeof OrchestrationRuntimeReceipt.Type;
 

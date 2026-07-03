@@ -3,15 +3,18 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ThreadDeletionReactor,
   type ThreadDeletionReactorShape,
 } from "../Services/ThreadDeletionReactor.ts";
+import { retireWorktree } from "../../vcs/WorktreeGraveyardRetirement.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
 
@@ -40,6 +43,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -55,12 +59,39 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  const retireWorktreeForThread = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    Effect.gen(function* () {
+      const worktreeInfo = yield* projectionSnapshotQuery
+        .getThreadWorktreeInfo(threadId)
+        .pipe(Effect.map(Option.getOrUndefined));
+      if (!worktreeInfo?.worktreePath) {
+        return; // non-worktree thread — skip
+      }
+      const repoRoot = worktreeInfo.projectWorkspaceRoot ?? worktreeInfo.worktreePath;
+      yield* retireWorktree({
+        threadId,
+        worktreePath: worktreeInfo.worktreePath,
+        branch: worktreeInfo.branch,
+        repoRoot,
+        trigger: "thread-deleted",
+      });
+    }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+        return Effect.logWarning("thread deletion reactor skipped worktree retirement", {
+          threadId,
+          cause: Cause.pretty(cause),
+        });
+      }),
+    );
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* retireWorktreeForThread(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

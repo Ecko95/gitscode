@@ -58,3 +58,7 @@ export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;
 export const CheckpointRef = makeEntityId("CheckpointRef");
 export type CheckpointRef = typeof CheckpointRef.Type;
+
+// ponytail: branded path string for worktree aggregate ids
+export const WorktreePath = makeEntityId("WorktreePath");
+export type WorktreePath = typeof WorktreePath.Type;

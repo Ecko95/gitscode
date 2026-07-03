@@ -1434,6 +1434,52 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(shellSnapshot.threads.length, 0);
     }),
   );
+
+  it.effect(
+    "getThreadWorktreeInfo returns worktree path and branch even after thread is deleted (plan 21 W2.2)",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, default_model_selection_json, scripts_json, created_at, updated_at, deleted_at
+          ) VALUES (
+            'wt-project-1', 'WtProject', '/workspace/wt-proj',
+            '{"provider":"codex","model":"gpt-5"}', '[]',
+            '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:01.000Z', NULL
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+            branch, worktree_path, latest_turn_id, latest_user_message_at,
+            pending_approval_count, pending_user_input_count, has_actionable_proposed_plan,
+            created_at, updated_at, deleted_at
+          ) VALUES (
+            'wt-thread-1', 'wt-project-1', 'Worktree Thread',
+            '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            'feat/wt-branch', '/workspace/wt-proj/.worktrees/wt-thread-1',
+            NULL, NULL, 0, 0, 0,
+            '2026-06-01T00:00:02.000Z', '2026-06-01T00:00:03.000Z',
+            '2026-06-01T00:01:00.000Z'
+          )
+        `;
+
+        const info = yield* snapshotQuery.getThreadWorktreeInfo(ThreadId.make("wt-thread-1"));
+        assert.isTrue(info._tag === "Some");
+        if (info._tag === "Some") {
+          assert.equal(info.value.worktreePath, "/workspace/wt-proj/.worktrees/wt-thread-1");
+          assert.equal(info.value.branch, "feat/wt-branch");
+          assert.equal(info.value.projectWorkspaceRoot, "/workspace/wt-proj");
+        }
+
+        const noWorktree = yield* snapshotQuery.getThreadWorktreeInfo(ThreadId.make("nonexistent"));
+        assert.isTrue(noWorktree._tag === "None");
+      }),
+  );
 });
 
 it.effect(
