@@ -1,4 +1,4 @@
-# Plan 21 — Event Retention + Projection Rebuild (W4.5 Design)
+# Plan 22 — Event Retention + Projection Rebuild (W4.5 Design)
 
 **Status: PENDING OPERATOR APPROVAL** — involves a persistence migration and a
 cold-rebuild command that truncates projection tables. Do not implement until
