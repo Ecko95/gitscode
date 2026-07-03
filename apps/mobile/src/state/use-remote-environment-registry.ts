@@ -208,10 +208,26 @@ export async function disconnectEnvironment(
   }
 }
 
+// ponytail: one Alert per process lifetime is enough signal; per-connection
+// de-dup would need a Set — add if multiple environments are common in dev.
+let _httpWarnShown = false;
+
 export async function connectSavedEnvironment(
   connection: SavedRemoteConnection,
   options?: { readonly persist?: boolean },
 ) {
+  // Warn in dev builds when traffic will ride plain HTTP (outside Tailscale).
+  if (typeof __DEV__ !== "undefined" && __DEV__ && connection.httpBaseUrl.startsWith("http:")) {
+    console.warn("[security] Connecting over plain HTTP:", connection.httpBaseUrl);
+    if (!_httpWarnShown) {
+      _httpWarnShown = true;
+      Alert.alert(
+        "Unencrypted connection",
+        `This environment uses plain HTTP (${connection.httpBaseUrl}). Credentials may be exposed if traffic leaves Tailscale.`,
+      );
+    }
+  }
+
   const connectionAttempt = environmentConnectionAttempts.begin(connection.environmentId);
   const isCurrentAttempt = connectionAttempt.isCurrent;
 
