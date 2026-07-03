@@ -458,6 +458,9 @@ export const openCodexThread = (input: {
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
   readonly visualPlanMcpUrl: string | undefined;
+  // ponytail: optional hook so callers can surface resume-failure on existing event/receipt streams
+  // without requiring a contracts change; pass emitSessionEvent("session/resume-failed", ...) here.
+  readonly onResumeFallback?: (error: CodexErrors.CodexAppServerError) => Effect.Effect<void>;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -487,7 +490,10 @@ export const openCodexThread = (input: {
           resumeThreadId,
           recoverable: true,
           cause: error.message,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+        }).pipe(
+          Effect.andThen(input.onResumeFallback ? input.onResumeFallback(error) : Effect.void),
+          Effect.andThen(input.client.request("thread/start", startParams)),
+        ),
       ),
     );
 };
@@ -1227,6 +1233,11 @@ export const makeCodexSessionRuntime = (
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
         visualPlanMcpUrl: options.visualPlanMcpUrl,
+        onResumeFallback: (error) =>
+          emitSessionEvent(
+            "session/resume-failed",
+            `Thread resume failed; starting fresh. Reason: ${error.message}`,
+          ).pipe(Effect.orDie),
       });
 
       const providerThreadId = opened.thread.id;

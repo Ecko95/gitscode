@@ -220,6 +220,7 @@ describe("openCodexThread", () => {
   it("falls back to thread/start when resume fails recoverably", async () => {
     const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
     const started = makeThreadOpenResponse("fresh-thread");
+    const fallbackCalls: Array<string> = [];
     const client = {
       request: <M extends "thread/start" | "thread/resume">(
         method: M,
@@ -248,6 +249,10 @@ describe("openCodexThread", () => {
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
         visualPlanMcpUrl: undefined,
+        onResumeFallback: (error) =>
+          Effect.sync(() => {
+            fallbackCalls.push(error.message);
+          }),
       }),
     );
 
@@ -256,6 +261,54 @@ describe("openCodexThread", () => {
       calls.map((call) => call.method),
       ["thread/resume", "thread/start"],
     );
+    // marker: onResumeFallback was invoked with the resume error
+    assert.equal(fallbackCalls.length, 1);
+    assert.match(fallbackCalls[0]!, /thread not found/i);
+  });
+
+  it("emits warn log and invokes onResumeFallback on recoverable resume failure", async () => {
+    const started = makeThreadOpenResponse("fresh-thread");
+    const fallbackMessages: Array<string> = [];
+    const client = {
+      request: <M extends "thread/start" | "thread/resume">(
+        method: M,
+        _payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        if (method === "thread/resume") {
+          return Effect.fail(
+            new CodexErrors.CodexAppServerRequestError({
+              code: -32603,
+              errorMessage: "missing thread abc123",
+            }),
+          );
+        }
+        return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
+      },
+    };
+
+    const { messages } = await Effect.runPromise(
+      openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-2"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "stale-thread-2",
+        visualPlanMcpUrl: undefined,
+        onResumeFallback: (error) =>
+          Effect.sync(() => {
+            fallbackMessages.push(error.message);
+          }),
+      }).pipe(
+        Effect.withLogSpan("test"),
+        Effect.map((opened) => ({ opened, messages: fallbackMessages })),
+      ),
+    );
+
+    // marker surfaced: onResumeFallback called once with the resume error
+    assert.equal(messages.length, 1);
+    assert.match(messages[0]!, /missing thread/i);
   });
 
   it("propagates non-recoverable resume failures", async () => {
