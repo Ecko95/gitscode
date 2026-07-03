@@ -14,6 +14,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
+import { buildChildEnv } from "../ProviderInstanceEnvironment.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -210,7 +211,8 @@ const makeAcpSessionRuntime = (
       .spawn(
         ChildProcess.make(options.spawn.command, [...options.spawn.args], {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(options.spawn.env ? { env: { ...process.env, ...options.spawn.env } } : {}),
+          // ponytail: W5.2b — use allowlisted base instead of raw process.env
+          ...(options.spawn.env ? { env: { ...buildChildEnv(), ...options.spawn.env } } : {}),
           shell: process.platform === "win32",
         }),
       )
