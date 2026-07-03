@@ -36,7 +36,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
-import { issueVisualPlanToken } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
+import type { VisualPlanMcpServiceShape } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
@@ -105,6 +105,8 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly visualPlanMcpUrl?: string;
+  /** Visual-plan MCP token service. When absent the session skips token issuance. */
+  readonly visualPlanMcpSvc?: VisualPlanMcpServiceShape;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -458,6 +460,7 @@ export const openCodexThread = (input: {
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
   readonly visualPlanMcpUrl: string | undefined;
+  readonly visualPlanMcpToken?: string;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -465,9 +468,10 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
-    visualPlanMcp: input.visualPlanMcpUrl
-      ? { url: input.visualPlanMcpUrl, token: issueVisualPlanToken(input.threadId) }
-      : undefined,
+    visualPlanMcp:
+      input.visualPlanMcpUrl && input.visualPlanMcpToken
+        ? { url: input.visualPlanMcpUrl, token: input.visualPlanMcpToken }
+        : undefined,
   });
 
   if (resumeThreadId === undefined) {
@@ -727,6 +731,8 @@ export const makeCodexSessionRuntime = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
+    // ponytail: service injected via options; caller (CodexAdapter) passes it from context
+    const visualPlanMcpSvc = options.visualPlanMcpSvc;
     const events = yield* Queue.unbounded<ProviderEvent>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
@@ -1217,6 +1223,10 @@ export const makeCodexSessionRuntime = (
       yield* client.notify("initialized", undefined);
 
       const requestedModel = normalizeCodexModelSlug(options.model);
+      const visualPlanMcpToken =
+        visualPlanMcpSvc && options.visualPlanMcpUrl
+          ? yield* visualPlanMcpSvc.issueToken(options.threadId)
+          : undefined;
 
       const opened = yield* openCodexThread({
         client,
@@ -1227,6 +1237,7 @@ export const makeCodexSessionRuntime = (
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
         visualPlanMcpUrl: options.visualPlanMcpUrl,
+        ...(visualPlanMcpToken ? { visualPlanMcpToken } : {}),
       });
 
       const providerThreadId = opened.thread.id;

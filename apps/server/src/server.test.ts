@@ -52,6 +52,7 @@ import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -125,7 +126,7 @@ import {
   type GitsCapacityMonitorShape,
 } from "./gits/Services/GitsCapacityMonitor.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
-import { issueVisualPlanToken, setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
+import { setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import {
@@ -172,6 +173,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { AuthControlPlane } from "./auth/Services/AuthControlPlane.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -629,6 +631,23 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 
 const makeAuthTestLayer = () =>
   ServerAuthLive.pipe(Layer.provide(SqlitePersistenceMemory), Layer.provide(ServerSecretStoreLive));
+
+// ponytail: issues a thread-scoped bearer token straight from AuthControlPlane for VP MCP tests
+const getVpTestToken = (
+  appContext: Context.Context<AuthControlPlane>,
+  threadId: ThreadId,
+): Effect.Effect<string> =>
+  Context.get(appContext, AuthControlPlane)
+    .issueSession({
+      role: "thread-scoped",
+      subject: threadId,
+      label: `vp-test ${threadId}`,
+      ttl: Duration.hours(1),
+    })
+    .pipe(
+      Effect.map((s) => s.token),
+      Effect.orDie,
+    );
 
 const makeBrowserOtlpPayload = (spanName: string) =>
   Effect.gen(function* () {
@@ -1320,8 +1339,8 @@ const buildAppUnderTest = (options?: {
       Layer.provide(layerConfig),
     );
 
-    yield* Layer.build(appLayer);
-    return config;
+    const appContext = yield* Layer.build(appLayer);
+    return { config, appContext };
   });
 
 const parseSessionCookieFromWsUrl = (
@@ -1785,10 +1804,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("visual-plan MCP completes the connect handshake for an authenticated client", () =>
     Effect.gen(function* () {
-      yield* buildAppUnderTest();
+      const { appContext } = yield* buildAppUnderTest();
 
       // A provider session would mint this token; drive it directly here.
-      const token = issueVisualPlanToken(ThreadId.make("vp-handshake-thread"));
+      const token = yield* getVpTestToken(appContext, ThreadId.make("vp-handshake-thread"));
       const authHeaders = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 
       const postMcp = (payload: unknown) =>
@@ -1869,7 +1888,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         });
 
         const dispatched: Array<OrchestrationCommand> = [];
-        yield* buildAppUnderTest({
+        const { appContext } = yield* buildAppUnderTest({
           layers: {
             orchestrationEngine: {
               dispatch: (command) =>
@@ -1921,7 +1940,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
 
         // 3. The agent's MCP read path sees the new comment (cache coherence).
-        const token = issueVisualPlanToken(threadId);
+        const token = yield* getVpTestToken(appContext, threadId);
         const authHeaders = {
           authorization: `Bearer ${token}`,
           "content-type": "application/json",
@@ -2558,7 +2577,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const path = yield* Path.Path;
       const attachmentId = "thread-11111111-1111-4111-8111-111111111111";
 
-      const config = yield* buildAppUnderTest();
+      const { config } = yield* buildAppUnderTest();
       const attachmentPath = resolveAttachmentRelativePath({
         attachmentsDir: config.attachmentsDir,
         relativePath: `${attachmentId}.bin`,
@@ -2583,7 +2602,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
-      const config = yield* buildAppUnderTest();
+      const { config } = yield* buildAppUnderTest();
       const attachmentPath = resolveAttachmentRelativePath({
         attachmentsDir: config.attachmentsDir,
         relativePath: "thread%20folder/message%20folder/file%20name.png",

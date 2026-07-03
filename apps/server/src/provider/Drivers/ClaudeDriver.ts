@@ -18,6 +18,7 @@ import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -28,6 +29,7 @@ import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGenerat
 import { ServerConfig } from "../../config.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
+import { VisualPlanMcpService } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
@@ -133,10 +135,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         continuationGroupKey,
       });
 
+      // ponytail: optional service — absent in tests that don't exercise visual-plan tokens
+      const visualPlanMcpSvc = Option.getOrUndefined(
+        yield* Effect.serviceOption(VisualPlanMcpService),
+      );
       const adapterOptions = {
         instanceId,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        ...(visualPlanMcpSvc ? { visualPlanMcpSvc } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);

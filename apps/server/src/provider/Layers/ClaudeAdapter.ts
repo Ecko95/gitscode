@@ -68,8 +68,8 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
-  issueVisualPlanToken,
   VISUAL_PLAN_MCP_PATH,
+  type VisualPlanMcpServiceShape,
 } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -209,6 +209,8 @@ export interface ClaudeAdapterLiveOptions {
   readonly rtkRewriteRunner?: ClaudeRtkRewriteRunner;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Visual-plan MCP token service. When absent the adapter skips token issuance. */
+  readonly visualPlanMcpSvc?: VisualPlanMcpServiceShape;
 }
 
 function isUuid(value: string): boolean {
@@ -1015,6 +1017,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
+  // ponytail: service injected via options; caller (ClaudeDriver) yields it from context
+  const visualPlanMcpSvc: VisualPlanMcpServiceShape | undefined = options?.visualPlanMcpSvc;
   const crypto = yield* Crypto.Crypto;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
@@ -2939,14 +2943,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "full-access": "bypassPermissions",
       };
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
-      const visualPlanToken = issueVisualPlanToken(threadId);
-      const visualPlanMcpServers = {
-        "gits-visual-plan": {
-          type: "http" as const,
-          url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
-          headers: { Authorization: `Bearer ${visualPlanToken}` },
-        },
-      };
+      const visualPlanToken = visualPlanMcpSvc
+        ? yield* visualPlanMcpSvc.issueToken(threadId)
+        : undefined;
+      const visualPlanMcpServers = visualPlanToken
+        ? {
+            "gits-visual-plan": {
+              type: "http" as const,
+              url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
+              headers: { Authorization: `Bearer ${visualPlanToken}` },
+            },
+          }
+        : undefined;
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -2974,7 +2982,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        mcpServers: visualPlanMcpServers,
+        ...(visualPlanMcpServers ? { mcpServers: visualPlanMcpServers } : {}),
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),

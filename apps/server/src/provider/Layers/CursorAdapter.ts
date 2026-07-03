@@ -43,8 +43,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
-  issueVisualPlanToken,
   VISUAL_PLAN_MCP_PATH,
+  type VisualPlanMcpServiceShape,
 } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import {
   ProviderAdapterProcessError,
@@ -114,6 +114,8 @@ export interface CursorAdapterLiveOptions {
    * the latest snapshot so the closure isn't stale.
    */
   readonly resolveSettings?: Effect.Effect<CursorSettings>;
+  /** Visual-plan MCP token service. When absent the adapter skips token issuance. */
+  readonly visualPlanMcpSvc?: VisualPlanMcpServiceShape;
 }
 
 interface PendingApproval {
@@ -319,6 +321,8 @@ export function makeCursorAdapter(
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
+    // ponytail: service injected via options; caller (CursorDriver) yields it from context
+    const visualPlanMcpSvc: VisualPlanMcpServiceShape | undefined = options?.visualPlanMcpSvc;
     const crypto = yield* Crypto.Crypto;
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -530,7 +534,9 @@ export function makeCursorAdapter(
             ? yield* options.resolveSettings
             : cursorSettings;
 
-          const visualPlanMcpToken = issueVisualPlanToken(input.threadId);
+          const visualPlanMcpToken = visualPlanMcpSvc
+            ? yield* visualPlanMcpSvc.issueToken(input.threadId)
+            : undefined;
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
@@ -538,14 +544,18 @@ export function makeCursorAdapter(
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            mcpServers: [
-              {
-                type: "http",
-                name: "gits-visual-plan",
-                url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
-                headers: [{ name: "Authorization", value: `Bearer ${visualPlanMcpToken}` }],
-              },
-            ],
+            ...(visualPlanMcpToken
+              ? {
+                  mcpServers: [
+                    {
+                      type: "http",
+                      name: "gits-visual-plan",
+                      url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
+                      headers: [{ name: "Authorization", value: `Bearer ${visualPlanMcpToken}` }],
+                    },
+                  ],
+                }
+              : {}),
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Scope.Scope, sessionScope),

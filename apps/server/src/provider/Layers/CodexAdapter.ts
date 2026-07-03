@@ -53,7 +53,10 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { VISUAL_PLAN_MCP_PATH } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
+import {
+  VISUAL_PLAN_MCP_PATH,
+  type VisualPlanMcpServiceShape,
+} from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -84,6 +87,8 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Visual-plan MCP token service. When absent the adapter skips token issuance. */
+  readonly visualPlanMcpSvc?: VisualPlanMcpServiceShape;
 }
 
 interface CodexAdapterSessionContext {
@@ -1353,6 +1358,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
+  // ponytail: service injected via options; caller (CodexDriver) yields it from context
+  const visualPlanMcpSvc = options?.visualPlanMcpSvc;
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -1400,6 +1407,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode") === true
             ? { serviceTier: "fast" }
             : {}),
+          ...(visualPlanMcpSvc ? { visualPlanMcpSvc } : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
