@@ -19,6 +19,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
+  WorktreePath,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
@@ -784,6 +785,28 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Worktree graveyard internal commands (plan 21, W2.2)
+const WorktreeRetireStartCommand = Schema.Struct({
+  type: Schema.Literal("worktree.retire.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  trigger: Schema.Literals(["thread-deleted", "inactivity-reap"]),
+  initiatedAt: IsoDateTime,
+});
+
+const WorktreeBuryCommand = Schema.Struct({
+  type: Schema.Literal("worktree.bury"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  trigger: Schema.Literals(["retirement", "reaper"]),
+  finalCheckpointRef: Schema.NullOr(CheckpointRef),
+  buriedAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -793,6 +816,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  WorktreeRetireStartCommand,
+  WorktreeBuryCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -826,10 +851,14 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.visual-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "worktree.retiring-started",
+  "worktree.buried",
+  "worktree.adopted",
+  "worktree.owner-recorded",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "worktree"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1005,6 +1034,46 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+// --- Worktree graveyard payload schemas (plan 21, W2.2) ---
+
+export const WorktreeRetiringStartedPayload = Schema.Struct({
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  trigger: Schema.Literals(["thread-deleted", "inactivity-reap"]),
+  initiatedAt: IsoDateTime,
+});
+export type WorktreeRetiringStartedPayload = typeof WorktreeRetiringStartedPayload.Type;
+
+export const WorktreeBuriedPayload = Schema.Struct({
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  trigger: Schema.Literals(["retirement", "reaper"]),
+  finalCheckpointRef: Schema.NullOr(CheckpointRef),
+  buriedAt: IsoDateTime,
+});
+export type WorktreeBuriedPayload = typeof WorktreeBuriedPayload.Type;
+
+export const WorktreeAdoptedPayload = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  orphanReason: Schema.Literal("no-event-binding"),
+  adoptedAt: IsoDateTime,
+});
+export type WorktreeAdoptedPayload = typeof WorktreeAdoptedPayload.Type;
+
+export const WorktreeOwnerRecordedPayload = Schema.Struct({
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  projectId: ProjectId,
+  recordedAt: IsoDateTime,
+});
+export type WorktreeOwnerRecordedPayload = typeof WorktreeOwnerRecordedPayload.Type;
+
+// --- end worktree graveyard payloads ---
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1018,7 +1087,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, WorktreePath]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1141,6 +1210,27 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  // Worktree graveyard events (plan 21, W2.2)
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("worktree.retiring-started"),
+    payload: WorktreeRetiringStartedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("worktree.buried"),
+    payload: WorktreeBuriedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("worktree.adopted"),
+    payload: WorktreeAdoptedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("worktree.owner-recorded"),
+    payload: WorktreeOwnerRecordedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
