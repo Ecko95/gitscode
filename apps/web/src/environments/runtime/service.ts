@@ -99,6 +99,15 @@ type ThreadDetailSubscriptionEntry = {
   // ponytail: tracks the snapshotSequence from the most recent detail snapshot so
   // stale events replayed after a resubscribe are discarded (W3.1).
   lastDetailSnapshotSequence: number;
+  // W4.4b: last global sequence applied via a live event (initialised to
+  // lastDetailSnapshotSequence on each (re)attach). Used for forward gap
+  // detection — a jump > 1 in the received sequence means the server's push
+  // buffer dropped events for this thread (global sequence space, not
+  // per-thread, so filter-induced skips are also caught conservatively).
+  lastAppliedEventSequence: number;
+  // W4.4b: true while a gap-triggered resubscribe is in progress; gates
+  // further incoming events so a burst can't loop into a refetch storm.
+  gapRefetchPending: boolean;
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
@@ -388,12 +397,20 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
   // Reset sequence gate on each (re)subscribe so the fresh snapshot's sequence
   // becomes the new floor — events with sequence ≤ that value are stale (W3.1).
   entry.lastDetailSnapshotSequence = -1;
+  // W4.4b: reset event-sequence floor; gapRefetchPending intentionally NOT reset
+  // here — it stays true until the fresh snapshot arrives, preventing the old
+  // callback from applying events that slip through after the resubscribe fires.
+  entry.lastAppliedEventSequence = -1;
 
   entry.unsubscribe = connection.client.orchestration.subscribeThread(
     { threadId: entry.threadId },
     (item) => {
       if (item.kind === "snapshot") {
         entry.lastDetailSnapshotSequence = item.snapshot.snapshotSequence;
+        // W4.4b: seed forward-gap floor from the snapshot sequence so the
+        // first post-snapshot event is compared against the right baseline.
+        entry.lastAppliedEventSequence = item.snapshot.snapshotSequence;
+        entry.gapRefetchPending = false;
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId);
         return;
       }
@@ -401,6 +418,30 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
       if (item.event.sequence <= entry.lastDetailSnapshotSequence) {
         return;
       }
+      // W4.4b: if a gap-triggered resubscribe is already in flight, discard
+      // further events — the fresh snapshot will reseed state.
+      if (entry.gapRefetchPending) {
+        return;
+      }
+      // W4.4b: forward gap detection. The sequence space is global (not
+      // per-thread); the server filters this stream to isThreadDetailEvent
+      // events for this thread, so received sequences will often skip numbers
+      // (filter-induced skips). A jump > 1 is therefore treated conservatively
+      // — it MAY mean the push buffer dropped an event for this thread.
+      // ponytail: false-positive rate is bounded by filter sparsity; the cost
+      // is an extra snapshot fetch, which is idempotent.
+      if (
+        entry.lastAppliedEventSequence !== -1 &&
+        item.event.sequence > entry.lastAppliedEventSequence + 1
+      ) {
+        entry.gapRefetchPending = true;
+        // Resubscribe: tear down and reattach to get a fresh snapshot.
+        entry.unsubscribe();
+        entry.unsubscribe = NOOP;
+        attachThreadDetailSubscription(entry);
+        return;
+      }
+      entry.lastAppliedEventSequence = item.event.sequence;
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
     },
   );
@@ -588,6 +629,8 @@ export function retainThreadDetailSubscription(
     lastAccessedAt: Date.now(),
     evictionTimeoutId: null,
     lastDetailSnapshotSequence: -1,
+    lastAppliedEventSequence: -1,
+    gapRefetchPending: false,
   };
   threadDetailSubscriptions.set(key, entry);
   if (!attachThreadDetailSubscription(entry)) {

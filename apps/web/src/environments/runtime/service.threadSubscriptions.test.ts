@@ -806,4 +806,241 @@ describe("retainThreadDetailSubscription", () => {
     stop();
     await resetEnvironmentServiceForTests();
   });
+
+  // W4.4b: contiguous events (no gap) apply normally; no resubscribe triggered.
+  it("applies contiguous detail events without triggering a refetch", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-contiguous");
+
+    type StreamItem = Parameters<typeof mockSubscribeThread>[1] extends (item: infer I) => void
+      ? I
+      : never;
+    let capturedCallback: ((item: StreamItem) => void) | null = null;
+    mockSubscribeThread.mockImplementation((_input: unknown, cb: (item: StreamItem) => void) => {
+      capturedCallback = cb;
+      return mockThreadUnsubscribe;
+    });
+
+    const { useStore } = await import("~/store");
+    const applyEventsSpy = vi.spyOn(useStore.getState(), "applyOrchestrationEvents");
+
+    const {
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    retainThreadDetailSubscription(environmentId, threadId);
+    applyEventsSpy.mockClear();
+
+    const makeThread = () => ({
+      id: threadId,
+      projectId: ProjectId.make("project-1"),
+      title: "t",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      session: null,
+      messages: [],
+      proposedPlans: [],
+      visualPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+
+    // Snapshot at sequence 10.
+    capturedCallback!({
+      kind: "snapshot",
+      snapshot: { snapshotSequence: 10, thread: makeThread() },
+    } as StreamItem);
+
+    const makeEvent = (sequence: number) => ({
+      kind: "event" as const,
+      event: {
+        sequence,
+        type: "thread.meta-updated" as const,
+        payload: { threadId, title: "t", updatedAt: "2026-01-01T00:00:00.000Z" },
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        eventId: `e-${sequence}`,
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    });
+
+    // Contiguous events: 11, 12, 13.
+    capturedCallback!(makeEvent(11) as StreamItem);
+    capturedCallback!(makeEvent(12) as StreamItem);
+    capturedCallback!(makeEvent(13) as StreamItem);
+
+    // All three events applied; no resubscribe (subscribeThread called once).
+    expect(applyEventsSpy).toHaveBeenCalledTimes(3);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  // W4.4b: a single gapped event triggers exactly one resubscribe, not a storm.
+  it("triggers exactly one refetch on a forward sequence gap and does not loop", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-gap");
+
+    type StreamItem = Parameters<typeof mockSubscribeThread>[1] extends (item: infer I) => void
+      ? I
+      : never;
+    // Track all callbacks across subscribeThread calls (initial + resubscribe).
+    const capturedCallbacks: Array<(item: StreamItem) => void> = [];
+    mockSubscribeThread.mockImplementation((_input: unknown, cb: (item: StreamItem) => void) => {
+      capturedCallbacks.push(cb);
+      return mockThreadUnsubscribe;
+    });
+
+    const { useStore } = await import("~/store");
+    const applyEventsSpy = vi.spyOn(useStore.getState(), "applyOrchestrationEvents");
+
+    const {
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    retainThreadDetailSubscription(environmentId, threadId);
+
+    const makeThread = () => ({
+      id: threadId,
+      projectId: ProjectId.make("project-1"),
+      title: "t",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      session: null,
+      messages: [],
+      proposedPlans: [],
+      visualPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+
+    const firstCallback = capturedCallbacks[0]!;
+
+    // Seed snapshot at sequence 5.
+    firstCallback({
+      kind: "snapshot",
+      snapshot: { snapshotSequence: 5, thread: makeThread() },
+    } as StreamItem);
+    applyEventsSpy.mockClear();
+
+    // Apply a contiguous event at sequence 6 (no gap).
+    firstCallback({
+      kind: "event",
+      event: {
+        sequence: 6,
+        type: "thread.meta-updated" as const,
+        payload: { threadId, title: "t", updatedAt: "2026-01-01T00:00:00.000Z" },
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        eventId: "e6",
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    } as StreamItem);
+    expect(applyEventsSpy).toHaveBeenCalledTimes(1);
+
+    // Now deliver a gapped event (sequence 9, last applied was 6 → gap of 2).
+    applyEventsSpy.mockClear();
+    firstCallback({
+      kind: "event",
+      event: {
+        sequence: 9,
+        type: "thread.meta-updated" as const,
+        payload: { threadId, title: "gapped", updatedAt: "2026-01-01T00:01:00.000Z" },
+        occurredAt: "2026-01-01T00:01:00.000Z",
+        eventId: "e9",
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    } as StreamItem);
+
+    // Gapped event must NOT be applied — refetch triggered instead.
+    expect(applyEventsSpy).not.toHaveBeenCalled();
+    // A resubscribe must have been issued (subscribeThread called twice: initial + refetch).
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+
+    // Further events on the OLD callback while refetch is in flight are dropped (no storm).
+    firstCallback({
+      kind: "event",
+      event: {
+        sequence: 10,
+        type: "thread.meta-updated" as const,
+        payload: { threadId, title: "during-refetch", updatedAt: "2026-01-01T00:02:00.000Z" },
+        occurredAt: "2026-01-01T00:02:00.000Z",
+        eventId: "e10",
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    } as StreamItem);
+    // No additional apply and no additional resubscribe.
+    expect(applyEventsSpy).not.toHaveBeenCalled();
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+
+    // The new subscription (from refetch) delivers a fresh snapshot — gate resets.
+    const refetchCallback = capturedCallbacks[1]!;
+    refetchCallback({
+      kind: "snapshot",
+      snapshot: { snapshotSequence: 10, thread: makeThread() },
+    } as StreamItem);
+
+    // Events after the refetch snapshot apply normally.
+    refetchCallback({
+      kind: "event",
+      event: {
+        sequence: 11,
+        type: "thread.meta-updated" as const,
+        payload: { threadId, title: "post-refetch", updatedAt: "2026-01-01T00:03:00.000Z" },
+        occurredAt: "2026-01-01T00:03:00.000Z",
+        eventId: "e11",
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      },
+    } as StreamItem);
+    expect(applyEventsSpy).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
 });
