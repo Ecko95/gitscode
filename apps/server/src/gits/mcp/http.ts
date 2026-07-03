@@ -7,7 +7,7 @@
  * dispatched into the orchestration engine as `thread.visual-plan.upsert`
  * commands, so the plan renders live in the GITS visual plan panel.
  */
-import { PlanContent, PlanContentPatch, type ThreadId } from "@t3tools/contracts";
+import { PlanContent, PlanContentPatch, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -15,11 +15,8 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { browserApiCorsHeaders } from "../../httpCors.ts";
-import {
-  resolveVisualPlanThread,
-  VISUAL_PLAN_MCP_PATH,
-  type VisualPlanState,
-} from "./VisualPlanMcpRegistry.ts";
+import { ServerAuth } from "../../auth/Services/ServerAuth.ts";
+import { VISUAL_PLAN_MCP_PATH, type VisualPlanState } from "./VisualPlanMcpRegistry.ts";
 import {
   applyPlanPatches,
   buildBlockCatalog,
@@ -59,16 +56,6 @@ function jsonRpcError(id: string | number | null, code: number, message: string)
 function toolText(text: string, isError = false) {
   return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) };
 }
-
-const bearerFromRequest = (request: HttpServerRequest.HttpServerRequest): Option.Option<string> => {
-  const header = request.headers["authorization"] ?? request.headers["Authorization"];
-  if (!header) {
-    return Option.none();
-  }
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  const value = match?.[1];
-  return value ? Option.some(value.trim()) : Option.none();
-};
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -141,21 +128,27 @@ export const visualPlanMcpRouteLayer = HttpRouter.add(
   VISUAL_PLAN_MCP_PATH,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* ServerAuth;
 
-    const token = bearerFromRequest(request);
-    if (Option.isNone(token)) {
+    const sessionOpt = yield* Effect.option(serverAuth.authenticateHttpRequest(request));
+    if (Option.isNone(sessionOpt)) {
       return HttpServerResponse.jsonUnsafe(
-        { jsonrpc: "2.0", id: null, error: { code: -32001, message: "Missing bearer token" } },
+        {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32001, message: "Missing or invalid bearer token" },
+        },
         { status: 401, headers: browserApiCorsHeaders },
       );
     }
-    const threadId = resolveVisualPlanThread(token.value);
-    if (!threadId) {
+    const session = sessionOpt.value;
+    if (session.role !== "thread-scoped") {
       return HttpServerResponse.jsonUnsafe(
         { jsonrpc: "2.0", id: null, error: { code: -32001, message: "Invalid session token" } },
         { status: 401, headers: browserApiCorsHeaders },
       );
     }
+    const threadId = ThreadId.make(session.subject);
 
     const body = yield* Effect.option(HttpServerRequest.schemaBodyJson(Schema.Unknown));
     const message = (Option.getOrElse(body, () => ({})) ?? {}) as JsonRpcMessage;

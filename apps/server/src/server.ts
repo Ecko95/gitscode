@@ -119,6 +119,7 @@ import {
   gitsSkillInventoryRouteLayer,
 } from "./gits/http.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
+import { VisualPlanMcpServiceLive } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -409,7 +410,12 @@ const RuntimeDependenciesBaseLive = RuntimeCoreDependenciesLive.pipe(
 // leaves the AuthControlPlane requirement unsatisfied (it leaks to bin.ts and the
 // server crashes at boot). The base's outputs are merged through, so
 // `yield* CritSidecarManager` still resolves in ws.ts.
-const RuntimeDependenciesLive = CritSidecarManagerLive.pipe(
+//
+// VisualPlanMcpServiceLive follows the same pattern: it needs AuthControlPlane
+// (from AuthLayerLive) + OrchestrationEngineService (from OrchestrationLayerLive),
+// both exposed by RuntimeDependenciesBaseLive. Wired here so its R leaks no
+// further than this module.
+const RuntimeDependenciesLive = Layer.merge(CritSidecarManagerLive, VisualPlanMcpServiceLive).pipe(
   Layer.provideMerge(RuntimeDependenciesBaseLive),
 );
 
