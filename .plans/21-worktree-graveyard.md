@@ -41,7 +41,7 @@ active ──[trigger]──► retiring ──[receipt]──► buried
 
 - Trigger: retirement handler completes — checkpoint captured, worktree
   removed via `GitVcsDriver.removeWorktree`.
-- Emits: `worktree.buried`.
+- Emits: `worktree.buried` (trigger: `"retirement"`).
 - Receipt published: `WorktreeBuriedReceipt`.
 
 **Orphan adoption (no prior `active` state in event store)**
@@ -51,6 +51,16 @@ active ──[trigger]──► retiring ──[receipt]──► buried
 - Emits: `worktree.adopted` (carries `orphanReason: "no-event-binding"`).
   Adoption counts as entering the `buried` age clock — no `active` state is
   synthesised.
+
+**`adopted → buried` (reaper prune)**
+
+- Trigger: `GraveyardReaper` sweep finds an adopted orphan aged past the
+  retention knob.
+- Emits: `worktree.buried` (trigger: `"reaper"`, `finalCheckpointRef` set
+  from the capture step — see W2.4 detail). The burial event IS the disk-
+  removal record for this path; no silent disk reclaim occurs.
+- Receipt: reuses `WorktreeBuriedReceipt` (no separate adopted-path receipt
+  needed — same payload shape, same receipt type).
 
 ---
 
@@ -75,7 +85,8 @@ export const WorktreeBuriedPayload = Schema.Struct({
   threadId: ThreadId,
   worktreePath: TrimmedNonEmptyString,
   branch: Schema.NullOr(TrimmedNonEmptyString),
-  finalCheckpointRef: Schema.NullOr(CheckpointRef), // null when capture failed
+  trigger: Schema.Literals(["retirement", "reaper"]),
+  finalCheckpointRef: Schema.NullOr(CheckpointRef), // null only when capture failed
   buriedAt: IsoDateTime,
 });
 export type WorktreeBuriedPayload = typeof WorktreeBuriedPayload.Type;
@@ -127,6 +138,7 @@ export const WorktreeBuriedReceipt = Schema.Struct({
   type: Schema.Literal("worktree.buried"),
   threadId: ThreadId,
   worktreePath: TrimmedNonEmptyString,
+  trigger: Schema.Literals(["retirement", "reaper"]),
   finalCheckpointRef: Schema.NullOr(CheckpointRef),
   createdAt: IsoDateTime,
 });
@@ -139,9 +151,19 @@ joining.
 
 **NOTE — aggregate kind extension**: `OrchestrationAggregateKind` is currently
 `Schema.Literals(["project", "thread"])`. Adding `"worktree"` is a non-breaking
-addition to the literals union but requires a migration guard for old event
-replays that do not carry this kind. Operator must approve before schema is
-applied.
+addition to the literals union but requires two implementation-gate steps
+(W2.2 gate, must complete before the schema PR merges):
+
+(a) Run `grep -rn "aggregateKind" apps/server/src packages/contracts/src` and
+    enumerate every projector or switch on `aggregateKind`. Confirm each
+    tolerates an unknown kind value (i.e. has a `default` case or equivalent
+    exhaustive-check guard). Add a `default` case to any that lack one.
+
+(b) The schema-widening PR must include a decode test that replays a
+    pre-widening event log fixture (containing only `"project"` and `"thread"`
+    kinds) through the widened schema and asserts it decodes without error.
+
+Operator must approve before schema is applied.
 
 ---
 
@@ -199,10 +221,12 @@ Files touched:
 - New service `apps/server/src/vcs/Services/GraveyardReaper.ts` — periodic
   sweep (same `Schedule.spaced` pattern as `ProviderSessionReaper`). Reads
   all `worktree.buried` and `worktree.adopted` events from the projection.
-  For each entry where `now - buriedAt > GITS_GRAVEYARD_MAX_AGE_MS`: call
-  `GitVcsDriver.removeWorktree`. No event emitted on prune (the
-  `worktree.buried` event already documents the burial; silent disk reclaim
-  is sufficient). Branch is never deleted.
+  For each adopted entry where `now - adoptedAt > GITS_GRAVEYARD_MAX_AGE_MS`:
+  capture a raw checkpoint ref (`checkpointStore.captureCheckpoint`) →
+  `GitVcsDriver.removeWorktree({ force: true })` → emit `worktree.buried`
+  (trigger: `"reaper"`, `finalCheckpointRef` from capture). Every disk
+  removal produces a burial event — no silent reclaim. Branch is never
+  deleted.
 - Does not duplicate the session-stop logic in `ProviderSessionReaper`.
 
 ### W2.5 — Worktree ownership
@@ -212,9 +236,10 @@ Files touched:
 - `packages/contracts/src/orchestration.ts` — add
   `worktree.owner-recorded` event (payload: `threadId`, `worktreePath`,
   `branch`, `projectId`, `recordedAt`) emitted by the server immediately
-  after a successful `git worktree add` in `ThreadDeletionReactor` or the
-  existing bootstrap path. This event is the event-store binding that W2.3
-  checks for.
+  after a successful `git worktree add` in the existing bootstrap path
+  (worktree creation lives in `GitVcsDriverCore.createWorktree:2059`, not
+  in `ThreadDeletionReactor` — see Contradiction #3). This event is the
+  event-store binding that W2.3 checks for.
 - `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts` or the
   bootstrap handler — emit `worktree.owner-recorded` after worktree creation
   succeeds.
@@ -264,10 +289,18 @@ Sweep semantics:
 1. Project all `worktree.buried` + `worktree.adopted` events from the
    projection (in-memory read model, no extra DB query).
 2. For each entry: if `now - buriedAt (or adoptedAt) > knob` AND the path
-   still exists on disk, call `removeWorktree({ cwd: repoRoot, path, force: false })`.
-3. Log `graveyard.reaper.pruned` at info level; log
-   `graveyard.reaper.prune-failed` at warning and continue (no receipt emitted
-   on prune failure — the sweep will retry next interval).
+   still exists on disk:
+   a. Call `checkpointStore.captureCheckpoint` to capture a raw git ref of
+      the orphan's current state. Store the ref (or null if capture fails).
+   b. Call `removeWorktree({ cwd: repoRoot, path, force: true })` (adopted
+      orphans are likely dirty; `force: false` will fail permanently and
+      cause an hourly warn-loop with no progress).
+   c. Emit `worktree.buried` (trigger: `"reaper"`, `finalCheckpointRef`
+      from step 2a — null only if capture failed). This is the disk-removal
+      record for the path.
+3. If `removeWorktree` fails (rare — e.g. path already gone), log
+   `graveyard.reaper.prune-failed` at warning and continue (no burial
+   event emitted — sweep retries next interval).
 4. Default sweep interval: 1 hour (hard-coded, not a knob — YAGNI).
 
 ---
@@ -279,13 +312,16 @@ Sweep semantics:
 If the process crashes after `worktree.retiring-started` is emitted but
 before `worktree.buried`:
 
-- On next startup W2.3 orphan adopter sees the path on disk, finds a
+- On next startup W2.3 orphan adopter sees the path on disk and finds a
   `worktree.retiring-started` event but no `worktree.buried` event →
-  dispatches `worktree.adopted` (recovery path).
-- The reaper then handles it normally.
-- No retry of the checkpoint capture (lost turn state; the raw `captureCheckpoint`
-  call in the retirement path must be idempotent — git stash ref create is
-  idempotent).
+  **re-runs the retirement handler** directly: call
+  `checkpointStore.captureCheckpoint` (idempotent raw git ref capture) →
+  `removeWorktree` → emit `worktree.buried` (trigger: `"retirement"`).
+- This is safe because the chosen capture path is a raw git ref requiring
+  no active turn state (see Contradiction #1 resolution).
+- `worktree.adopted` is NOT dispatched for paths that have a
+  `worktree.retiring-started` event. Adoption is reserved for paths with
+  NO prior retirement history.
 
 ### Checkpoint capture failure
 
@@ -340,9 +376,13 @@ W2.x tasks:
 
 2. **`aggregateKind` enum is closed** — `OrchestrationAggregateKind` only
    allows `"project"` and `"thread"`. Graveyard events need a `"worktree"`
-   kind. This requires operator approval before the schema is widened; a
-   replay migration guard may be needed for existing projectors that switch on
-   `aggregateKind`.
+   kind. This requires operator approval before the schema is widened. Two
+   implementation gates must pass before the schema PR merges: (a) enumerate
+   every projector/switch on `aggregateKind` via
+   `grep -rn "aggregateKind" apps/server/src packages/contracts/src` and
+   confirm each tolerates unknown kinds (add a `default` case where missing);
+   (b) include a decode test that replays a pre-widening event log fixture
+   through the widened schema without error. See NOTE above schema section.
 
 3. **`VcsProvisioningService` does not expose `createWorktree`** — worktree
    creation is accessed directly through `GitVcsDriver` in the bootstrap path
