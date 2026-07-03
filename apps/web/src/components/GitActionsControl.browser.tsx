@@ -205,6 +205,8 @@ vi.mock("~/store", () => ({
           activityByThreadId: {},
           proposedPlanIdsByThreadId: {},
           proposedPlanByThreadId: {},
+          // ponytail: visualPlanByThreadId added to EnvironmentState by e0c9c9ef; mock was stale
+          visualPlanByThreadId: {},
           turnDiffIdsByThreadId: {},
           turnDiffSummaryByThreadId: {},
         },
@@ -226,6 +228,8 @@ vi.mock("~/store", () => ({
           activityByThreadId: {},
           proposedPlanIdsByThreadId: {},
           proposedPlanByThreadId: {},
+          // ponytail: same stale-mock fix for environment B
+          visualPlanByThreadId: {},
           turnDiffIdsByThreadId: {},
           turnDiffSummaryByThreadId: {},
         },
