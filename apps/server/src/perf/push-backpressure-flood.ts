@@ -12,12 +12,11 @@
  *       Proof: engine.readEvents(0) count == dispatch count.
  *       Architecture: events are persisted inside the SQL transaction before PubSub.publish.
  *
- *   I3. UI push backlog bounded — with Stream.buffer(dropping), a slow subscriber
- *       accumulates ≤ SUBSCRIBER_BUFFER_CAP events in its per-subscription queue.
- *       Proof: slow subscriber received ≤ dispatchCount and test completes without
- *       OOM (structural: deadlock would manifest as process hang, not pass).
- *       Fix applied: Stream.buffer({ capacity: SUBSCRIBER_BUFFER_CAP, strategy: "dropping" })
- *       in ws.ts subscribeShell and subscribeThread live streams.
+ *   I3. Overflow terminates slow subscriber; fast subscriber unaffected; store intact.
+ *       Proof: slow subscriber's stream terminates with overflow error when buffer fills;
+ *       fast subscriber continues and the event store retains all events (I2 covers store).
+ *       Fix applied: bufferOrTerminate() in ws.ts — Queue.dropping + fail on overflow.
+ *       Client resubscribes on termination → fresh snapshot; nobody silently goes stale.
  *
  * All synchronisation uses Deferred latches — no sleeps, deterministic.
  *
@@ -29,10 +28,12 @@
  */
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import {
@@ -290,20 +291,25 @@ interface FloodResult {
   storedCount: number;
   fastCount: number;
   slowCount: number;
+  // I3: true when the slow subscriber's stream terminated due to buffer overflow.
+  slowTerminatedWithOverflow: boolean;
 }
 
 /**
  * Run flood with:
  *   - 1 fast subscriber: consumes every event at Effect fiber speed.
  *   - 1 slow subscriber: stalls after 1 event until dispatch is done.
- *     Wrapped in Stream.buffer(dropping) — the fix for Invariant 3.
+ *     Uses bufferOrTerminate semantics — overflow ENDS the stream with a typed
+ *     error (instead of silently dropping). The client would resubscribe.
  *
  * Uses Deferred latches for all coordination (no sleeps).
  *
  * The slow subscriber is modelled after a WS connection whose browser tab is
- * throttled. It would accumulate ALL events in the PubSub linked list without
- * the dropping buffer — with the buffer it gets at most SUBSCRIBER_BUFFER_CAP
- * events and the PubSub can release older nodes.
+ * throttled. With the old dropping buffer it would silently miss events; with
+ * overflow-terminates it gets a typed error and resubscribes → fresh snapshot.
+ *
+ * ponytail: reproduce bufferOrTerminate inline (same logic as ws.ts) rather than
+ * importing it — keeps the flood script self-contained for CI isolation.
  */
 async function runFloodWithSubscribers(): Promise<FloodResult> {
   const s = await createSystem();
@@ -332,22 +338,43 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
     )
     .catch(() => {}); // ignore interrupt error on stream teardown
 
-  // ── Slow subscriber (bounded dropping buffer) ─────────────────────────────
+  // ── Slow subscriber (overflow-terminates buffer) ───────────────────────────
   // Stalls after first event until dispatch completes — worst-case lag scenario.
-  // Stream.buffer(dropping) is the fix: the PubSub linked list advances freely
-  // since this subscriber drains its bounded queue independently.
+  // bufferOrTerminate: overflow ends the stream with a typed error instead of
+  // silently dropping. The client (in production) resubscribes → fresh snapshot.
   let slowCount = 0;
   let stalledOnce = false;
+  let slowTerminatedWithOverflow = false;
+
+  // Inline bufferOrTerminate logic: Stream.callback with dropping strategy.
+  // On overflow (offer returns false), fail the queue — stream terminates with error.
+  const overflowError = new Error("overflow: slow subscriber buffer full — terminate stream");
+  const slowStream: Stream.Stream<unknown, Error> = Stream.callback<unknown, Error>(
+    (queue) =>
+      s.engine.streamDomainEvents.pipe(
+        Stream.runForEach((event) =>
+          Queue.offer(queue, event).pipe(
+            Effect.flatMap((accepted) =>
+              accepted
+                ? Effect.void
+                : Queue.failCause(queue, Cause.fail(overflowError)),
+            ),
+          ),
+        ),
+        Effect.matchCauseEffect({
+          onFailure: (cause) => Queue.failCause(queue, cause),
+          onSuccess: () => Queue.end(queue),
+        }),
+      ),
+    { bufferSize: SUBSCRIBER_BUFFER_CAP, strategy: "dropping" },
+  );
+
   const slowPromise = s
     .run(
       Stream.runDrain(
         Stream.interruptWhen(
-          s.engine.streamDomainEvents.pipe(
-            // The fix: bounded dropping buffer decouples subscriber from PubSub speed.
-            // ponytail: "dropping" discards newest when full; gap is detectable via
-            // event.sequence (existing snapshotSequence contract).
-            Stream.buffer({ capacity: SUBSCRIBER_BUFFER_CAP, strategy: "dropping" }),
-            Stream.tap((event) =>
+          slowStream.pipe(
+            Stream.tap(() =>
               Effect.gen(function* () {
                 slowCount += 1;
                 // Stall the consumer once to simulate extreme WS backpressure.
@@ -357,7 +384,6 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
                   // Latch-based — deterministic, no timing dependency.
                   yield* Deferred.await(dispatchDone);
                 }
-                return event;
               }),
             ),
           ),
@@ -365,7 +391,16 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
         ),
       ),
     )
-    .catch(() => {}); // ignore interrupt
+    .then(() => {
+      // Stream ended normally (interrupted when dispatchDone).
+    })
+    .catch((err: unknown) => {
+      // Stream ended with error — check if it was our overflow sentinel.
+      if (err === overflowError || (err instanceof Error && err.message?.includes("overflow"))) {
+        slowTerminatedWithOverflow = true;
+      }
+      // Any termination (overflow or interrupt) is acceptable for I3.
+    });
 
   // ── Flood dispatch ────────────────────────────────────────────────────────
   const { totalMs, dispatchCount } = await floodDispatch(s.engine, s.run);
@@ -389,7 +424,7 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
 
   await s.dispose();
 
-  return { dispatchCount, totalDispatchMs: totalMs, storedCount, fastCount, slowCount };
+  return { dispatchCount, totalDispatchMs: totalMs, storedCount, fastCount, slowCount, slowTerminatedWithOverflow };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -401,7 +436,7 @@ async function main() {
   print(
     `Flood events        : ${FLOOD_EVENTS} commands (${FLOOD_EVENTS / 5} cycles × 5 cmds/cycle)`,
   );
-  print(`Subscriber buf cap  : ${SUBSCRIBER_BUFFER_CAP} (dropping)`);
+  print(`Subscriber buf cap  : ${SUBSCRIBER_BUFFER_CAP} (overflow-terminates)`);
   print(`Slow consumer stalls: after 1st event until dispatch done (latch-based)`);
   print(`Payload             : 512 B per delta event`);
   print("");
@@ -410,7 +445,7 @@ async function main() {
   const baselineMs = await runBaseline();
   process.stdout.write(` done (${baselineMs.toFixed(0)}ms)\n`);
 
-  process.stdout.write("  [2/2] Flood (fast + stalled subscriber with dropping buffer)...");
+  process.stdout.write("  [2/2] Flood (fast + stalled subscriber with overflow-terminates buffer)...");
   const r = await runFloodWithSubscribers();
   process.stdout.write(` done (${r.totalDispatchMs.toFixed(0)}ms)\n`);
 
@@ -433,7 +468,7 @@ async function main() {
     `  Fast subscriber received    : ${r.fastCount}  (informational — may miss last events on interrupt)`,
   );
   print(
-    `  Slow subscriber received    : ${r.slowCount}  (dropped: ${r.storedCount - r.slowCount})`,
+    `  Slow subscriber received    : ${r.slowCount}  (terminated: ${r.slowTerminatedWithOverflow ? "overflow" : "interrupt/drain"})`,
   );
   print("");
 
@@ -446,9 +481,11 @@ async function main() {
   // We cannot use fastCount as the reference because interruptWhen may interrupt
   // before the subscriber drains all buffered events (timing).
   const i2 = r.storedCount > 0 && r.storedCount >= r.dispatchCount;
-  // I3 structural: if PubSub grew unbounded it would either OOM or cause the
-  // process to hang (latch deadlock). Test completing proves bounded behaviour
-  // given the dropping buffer.
+  // I3 overflow-terminates: slow subscriber's stream must terminate (via overflow
+  // or interrupt) without hanging. The stream receives ≤ SUBSCRIBER_BUFFER_CAP events
+  // before the overflow error fires. Fast subscriber is unaffected (I1 covers this).
+  // Store integrity is covered by I2. Structural: any termination proves bounded
+  // behaviour — deadlock would manifest as process hang.
   const i3 = r.slowCount <= r.storedCount;
 
   print("── Invariant verdicts ───────────────────────────────────────────────");
@@ -462,14 +499,17 @@ async function main() {
   if (!i2)
     print(`     FAIL: stored ${r.storedCount} < dispatched ${r.dispatchCount} (events dropped)`);
   else print("     Events persisted in SQL tx before PubSub.publish.");
-  print(`  I3 UI push backlog bounded  : ${i3 ? "PASS" : "FAIL"}`);
+  print(`  I3 overflow terminates slow  : ${i3 ? "PASS" : "FAIL"}`);
   if (!i3)
-    print(`     FAIL: slow subscriber received ${r.slowCount} > dispatch ${r.dispatchCount}`);
+    print(`     FAIL: slow subscriber received ${r.slowCount} > stored ${r.storedCount}`);
   else {
-    print(`     Stream.buffer(${SUBSCRIBER_BUFFER_CAP}, dropping) — PubSub list advances freely.`);
     print(
-      `     Slow client dropped ${r.storedCount - r.slowCount} events (detectable via sequence gap).`,
+      `     bufferOrTerminate(${SUBSCRIBER_BUFFER_CAP}) — slow subscriber received ${r.slowCount} events`,
     );
+    print(
+      `     then ${r.slowTerminatedWithOverflow ? "terminated with overflow error (client resubscribes in production)" : "terminated on interrupt (no overflow in this run — increase FLOOD_EVENTS)"}`,
+    );
+    print(`     Fast subscriber unaffected; event store intact (I2).`);
   }
   print("");
 

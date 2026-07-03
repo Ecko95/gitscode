@@ -187,12 +187,54 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // ponytail: per-WS-subscriber event buffer cap for UI push streams.
 // With PubSub.unbounded, each subscriber holds a node in the PubSub linked list.
 // A slow WS client (throttled browser tab) would grow that list without bound.
-// Stream.buffer(dropping) decouples the subscriber: a fork fiber drains PubSub at
-// full speed into this bounded queue; the WS serialiser consumes at WS speed.
-// Dropped events are detectable via sequence gaps (existing snapshotSequence contract).
-// ponytail: 512 covers ~1s of burst at typical shell/thread event rates; raise if
-// fast-typing sessions emit >512 events/s and gap-on-reconnect becomes frequent.
+// On overflow we TERMINATE the subscriber's stream instead of silently dropping:
+//   - Server knows it dropped → sends a typed failure Exit to client.
+//   - Client's transport sees a non-transport error → stops the subscribe loop.
+//   - The onEnd callback (added to StreamSubscriptionOptions) fires.
+//   - Client resubscribes via attachThreadDetailSubscription → fresh snapshot.
+//   - Slow clients degrade to snapshot-cycling; nobody silently goes stale.
+// ponytail: 512 covers ~1s of burst at typical shell/thread event rates.
 const WS_PUSH_SUBSCRIBER_BUFFER = 512;
+
+/**
+ * bufferOrTerminate — drop-in for `Stream.buffer({ dropping })` with fail-on-overflow.
+ *
+ * Uses Stream.callback with a bounded dropping queue. On each offer, if the
+ * queue is full (offer returns false), the queue is failed with an
+ * OrchestrationGetSnapshotError — terminating the downstream consumer's stream
+ * with a typed error the client observes via onEnd (which triggers resubscribe).
+ *
+ * The upstream fiber runs at full PubSub speed; the WS serialiser consumes
+ * the bounded queue at WS speed. Neither side blocks the other (I1).
+ *
+ * ponytail: Queue.dropping offer is non-blocking; failCause on overflow is
+ * idempotent (already done). Stream.callback manages queue scope and lifetime.
+ */
+function bufferOrTerminate<A, E, R>(
+  self: Stream.Stream<A, E, R>,
+  capacity: number,
+  overflowError: () => OrchestrationGetSnapshotError,
+): Stream.Stream<A, E | OrchestrationGetSnapshotError, R> {
+  return Stream.callback<A, E | OrchestrationGetSnapshotError, R>(
+    (queue) =>
+      self.pipe(
+        Stream.runForEach((event) =>
+          Queue.offer(queue, event).pipe(
+            Effect.flatMap((accepted) =>
+              accepted
+                ? Effect.void
+                : Queue.failCause(queue, Cause.fail(overflowError())),
+            ),
+          ),
+        ),
+        Effect.matchCauseEffect({
+          onFailure: (cause) => Queue.failCause(queue, cause),
+          onSuccess: () => Queue.end(queue),
+        }),
+      ),
+    { bufferSize: capacity, strategy: "dropping" },
+  );
+}
 
 function toAuthAccessStreamEvent(
   change: BootstrapCredentialChange | SessionCredentialChange,
@@ -885,12 +927,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 ),
               );
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                // Bound the per-subscriber queue so a slow WS client doesn't grow the
-                // PubSub linked list without bound. The fork fiber drains PubSub at
-                // full speed; the WS serialiser consumes the bounded queue at WS speed.
-                // Dropped events are detectable via sequence gaps (snapshotSequence contract).
-                Stream.buffer({ capacity: WS_PUSH_SUBSCRIBER_BUFFER, strategy: "dropping" }),
+              const liveStream = bufferOrTerminate(
+                orchestrationEngine.streamDomainEvents,
+                WS_PUSH_SUBSCRIBER_BUFFER,
+                () =>
+                  new OrchestrationGetSnapshotError({
+                    message: "subscribeShell: subscriber buffer overflow — resubscribe for fresh snapshot",
+                    cause: "overflow",
+                  }),
+              ).pipe(
                 // ponytail: gap check on raw stream before toShellStreamEvent filters
                 // may drop the event.
                 Stream.mapAccumEffect(
@@ -970,9 +1015,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 });
               }
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                // Bound the per-subscriber queue (same rationale as subscribeShell above).
-                Stream.buffer({ capacity: WS_PUSH_SUBSCRIBER_BUFFER, strategy: "dropping" }),
+              const liveStream = bufferOrTerminate(
+                orchestrationEngine.streamDomainEvents,
+                WS_PUSH_SUBSCRIBER_BUFFER,
+                () =>
+                  new OrchestrationGetSnapshotError({
+                    message: `subscribeThread:${input.threadId}: subscriber buffer overflow — resubscribe for fresh snapshot`,
+                    cause: "overflow",
+                  }),
+              ).pipe(
                 // ponytail: gap check on raw stream before thread filter so the first
                 // event arriving after snapshot-read (even for other aggregates) sets
                 // the checked flag — the sequence space is global, not per-thread.
