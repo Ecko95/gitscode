@@ -15,6 +15,10 @@ readonly GITS_HOSTING_DEFAULT_PORT="13773"
 readonly GITS_HOSTING_DEFAULT_TAILNET_HTTPS_PORT="8443"
 readonly GITS_HOSTING_DEFAULT_T3CODE_HOME="${HOME}/.t3"
 readonly GITS_HOSTING_DEFAULT_METADATA_RELATIVE_PATH="apps/server/dist/gits-build-metadata.json"
+# Resource caps for the systemd unit. WSL host has ~20 GB; leave headroom for OS + MCP processes.
+# W6.3 (VPS scale-up) should override these via env vars rather than editing the defaults.
+readonly GITS_HOSTING_DEFAULT_MEMORY_MAX="6G"     # systemd MemoryMax= for the service cgroup
+readonly GITS_HOSTING_DEFAULT_NODE_HEAP_MB="4096" # node --max-old-space-size (must stay below MemoryMax)
 readonly GITS_HOSTING_MANAGED_SENTINEL=".gits-hosting-managed"
 readonly GITS_HOSTING_DEFAULT_TAILNET_URL="https://subject28.taild6d729.ts.net:8443"
 
@@ -29,6 +33,8 @@ gits_hosting_load_defaults() {
   gits_hosting_tailnet_https_port="${GITS_HOSTING_TAILNET_HTTPS_PORT:-$GITS_HOSTING_DEFAULT_TAILNET_HTTPS_PORT}"
   gits_hosting_t3code_home="${T3CODE_HOME:-$GITS_HOSTING_DEFAULT_T3CODE_HOME}"
   gits_hosting_metadata_relative_path="${GITS_HOSTING_METADATA_RELATIVE_PATH:-$GITS_HOSTING_DEFAULT_METADATA_RELATIVE_PATH}"
+  gits_hosting_memory_max="${GITS_HOSTING_MEMORY_MAX:-$GITS_HOSTING_DEFAULT_MEMORY_MAX}"
+  gits_hosting_node_heap_mb="${GITS_HOSTING_NODE_HEAP_MB:-$GITS_HOSTING_DEFAULT_NODE_HEAP_MB}"
   gits_hosting_help_requested=0
   gits_hosting_remaining_args=()
 }
@@ -105,6 +111,16 @@ gits_hosting_parse_common_args() {
       --metadata-relative-path)
         gits_hosting_require_option_value "$1" "${2:-}"
         gits_hosting_metadata_relative_path="$2"
+        shift 2
+        ;;
+      --memory-max)
+        gits_hosting_require_option_value "$1" "${2:-}"
+        gits_hosting_memory_max="$2"
+        shift 2
+        ;;
+      --node-heap-mb)
+        gits_hosting_require_option_value "$1" "${2:-}"
+        gits_hosting_node_heap_mb="$2"
         shift 2
         ;;
       --help|-h)
