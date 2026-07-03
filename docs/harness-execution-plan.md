@@ -51,11 +51,16 @@
 
 ## 4. Operating model — Fable plans, Sonnet executes
 
-All W-tasks run through the `/fable-5-orchestration` skill:
+All W-tasks run through the `/fable-5-orchestration` skill. Two skills define the harness:
 
-- **Fable 5 (orchestrator)** does recon, scoping, blast-radius drafts, task briefs, the pre-implementation critique gate, adversarial review of results, keep/change/drop decisions, and the plan-gate conversation with the operator. Fable never implements unless the operator explicitly asks.
-- **Execution agents** implement. Engine is selectable per dispatch (`--engine sonnet|codex`); **current default: Sonnet**, max **6 concurrent** agents, each with one bounded W-task, `isolation: worktree` whenever tasks mutate files in parallel.
-- **Per-task flow:** Fable brief (goal, read-first files, invariants, machine-checkable acceptance, verification commands) → agent implements → agent reports files read/changed, tests run, residual risks → Fable critique gate → PR. Anything touching auth, migrations, or the event schema additionally round-trips through the operator before execution (§3 rule 8).
+- **`/fable-5-orchestration`** — the dispatch loop. Every task batch is invoked through it (e.g. `/fable-5-orchestration W1.1 W1.2 W1.3 --engine sonnet`).
+- **`/ponytail:ponytail` (level: full)** — the code-quality discipline, applied at two points: Fable runs it as the **pre-implementation critique gate** on every task brief (kill speculative scope before an agent burns tokens on it), and every **Claude/Sonnet execution agent runs under it** while implementing — first rung of the ladder that holds, stdlib/platform before new code, shortest working diff, deliberate shortcuts marked `ponytail:` with the ceiling named. Codex-engine agents can't invoke Claude skills, so their briefs embed the same rules inline (the brief template's invariants section carries them).
+
+Roles:
+
+- **Fable 5 (orchestrator)** does everything high-level: recon, scoping, blast-radius drafts, task briefs, ponytail critique gates, adversarial review of results, audits, keep/change/drop and merge decisions, and the plan-gate conversation with the operator. Fable never implements unless the operator explicitly asks.
+- **Execution agents** implement. Engine is selectable per dispatch (`--engine sonnet|codex`); **current default: Sonnet**, max **6 concurrent** agents, each with one bounded W-task, `isolation: worktree` whenever tasks mutate files in parallel, ponytail-full active.
+- **Per-task flow:** Fable brief (goal, read-first files, invariants incl. ponytail rules, machine-checkable acceptance, verification commands) → Fable ponytail critique of its own brief → agent implements lazily → agent reports files read/changed, tests run, residual risks, `ponytail:` shortcuts taken → Fable adversarial review → PR. Anything touching auth, migrations, or the event schema additionally round-trips through the operator before execution (§3 rule 8).
 - **Escalation:** an agent blocked or failing acceptance twice on the same task returns it to Fable for re-scoping — agents never improvise around the brief.
 - The 6-agent cap sub-divides the spin-up map in §6: Wave 1's nine parallel-safe tasks run as 6 + 3, lanes A–D each hold at most one in-flight event-schema task.
 
