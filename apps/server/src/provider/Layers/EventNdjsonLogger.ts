@@ -27,6 +27,49 @@ const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
 
+/**
+ * Redact known-shape secrets from a serialized JSON string before writing to
+ * the event log. Operates as a string scan (no JSON re-parse) to stay cheap.
+ *
+ * Patterns covered:
+ *   - Bearer tokens in Authorization / auth headers (Bearer <token>)
+ *   - Anthropic API keys (sk-ant-*)
+ *   - OpenAI API keys (sk-*)
+ *   - GitHub tokens (ghp_*, ghs_*, github_pat_*)
+ *   - Generic "api_key"/"apiKey"/"token"/"secret" JSON fields whose value
+ *     looks like a credential (≥ 20 chars of word-chars / hyphens / dots)
+ *
+ * ponytail: string-scan, not a JSON walk — avoids a second parse of every
+ * event. Upgrade to structured redaction if payloads gain deeply-nested
+ * credential fields that don't surface in the flat JSON string.
+ */
+// ponytail: string-scan on serialized JSON — no re-parse. Each entry is
+// [regex, replacer]. The JSON_CREDENTIAL_FIELD pattern uses a function
+// replacer to preserve the field name while blanking only the value.
+const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string | ((match: string) => string)]> = [
+  [/Bearer\s+[A-Za-z0-9\-._~+/]+=*/g, "Bearer [REDACTED]"],
+  [/\bsk-ant-[A-Za-z0-9\-_]{8,}/g, "sk-ant-[REDACTED]"],
+  [/\bsk-[A-Za-z0-9\-_]{20,}/g, "sk-[REDACTED]"],
+  [/\bghp_[A-Za-z0-9]{10,}/g, "ghp_[REDACTED]"],
+  [/\bghs_[A-Za-z0-9]{10,}/g, "ghs_[REDACTED]"],
+  [/\bgithub_pat_[A-Za-z0-9_]{10,}/g, "github_pat_[REDACTED]"],
+  // JSON field: "api_key":"<cred>", "token":"<cred>", etc. — blank the value only
+  [
+    /"(?:api_?key|token|secret|access_token|refresh_token|auth_token|bearer_token|client_secret)"\s*:\s*"[A-Za-z0-9\-._~+/]{20,}=*"/gi,
+    (match: string) => match.replace(/"[A-Za-z0-9\-._~+/]{20,}=*"$/, '"[REDACTED]"'),
+  ],
+] as const;
+
+export function redactSecrets(json: string): string {
+  let result = json;
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    // TypeScript cannot narrow the overload from the union — cast is safe
+    // because each replacer type matches its paired regex's capture shape.
+    result = result.replace(pattern, replacement as string);
+  }
+  return result;
+}
+
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
 export interface EventNdjsonLogger {
@@ -90,6 +133,7 @@ const toLogMessage = Effect.fn("toLogMessage")(function* (
   event: unknown,
 ): Effect.fn.Return<string | undefined> {
   return yield* encodeUnknownJsonString(event).pipe(
+    Effect.map(redactSecrets),
     Effect.catch((error) =>
       logWarning("failed to serialize provider event log record", { error }).pipe(
         Effect.as(undefined),
