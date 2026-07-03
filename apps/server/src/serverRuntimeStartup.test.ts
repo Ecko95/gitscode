@@ -18,6 +18,7 @@ import {
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import {
+  checkBindAuthGuard,
   getAutoBootstrapDefaultModelSelection,
   launchStartupHeartbeat,
   makeCommandGate,
@@ -274,4 +275,44 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
     assert.strictEqual(error, uuidError);
     assert.deepStrictEqual(yield* Ref.get(dispatchCalls), []);
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// ---------------------------------------------------------------------------
+// checkBindAuthGuard
+// ---------------------------------------------------------------------------
+
+it.effect("checkBindAuthGuard passes on loopback host regardless of bootstrap methods", () =>
+  Effect.gen(function* () {
+    yield* checkBindAuthGuard("127.0.0.1", []);
+    yield* checkBindAuthGuard("localhost", []);
+    yield* checkBindAuthGuard("::1", []);
+    // loopback with methods also passes
+    yield* checkBindAuthGuard("127.0.0.1", ["one-time-token"]);
+  }),
+);
+
+it.effect("checkBindAuthGuard passes on non-loopback host when bootstrap methods are present", () =>
+  Effect.gen(function* () {
+    yield* checkBindAuthGuard("0.0.0.0", ["one-time-token"]);
+    yield* checkBindAuthGuard("::", ["one-time-token"]);
+    yield* checkBindAuthGuard("192.168.1.10", ["one-time-token"]);
+  }),
+);
+
+it.effect("checkBindAuthGuard fails on wildcard host with empty bootstrap methods", () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(checkBindAuthGuard("0.0.0.0", []));
+    assert.instanceOf(error, ServerRuntimeStartupError);
+    assert.include(error.message, "no configured bootstrap methods");
+  }),
+);
+
+it.effect(
+  "checkBindAuthGuard fails on non-loopback non-wildcard host with empty bootstrap methods",
+  () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(checkBindAuthGuard("192.168.1.10", []));
+      assert.instanceOf(error, ServerRuntimeStartupError);
+      assert.include(error.message, "Refusing to start");
+    }),
 );

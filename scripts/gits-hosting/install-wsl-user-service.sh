@@ -20,6 +20,8 @@ Options:
   --host HOST                 Hosted HTTP bind host inside WSL. Default: 127.0.0.1
   --port PORT                 Hosted HTTP port inside WSL. Default: 13773
   --t3code-home PATH          T3 Code state directory. Default: $HOME/.t3
+  --memory-max VALUE          systemd MemoryMax= for the service cgroup. Default: 6G
+  --node-heap-mb MB           Node --max-old-space-size in MiB. Default: 4096
   --start                     Restart the service after installing the unit.
   --help                      Show this message.
 EOF
@@ -77,9 +79,10 @@ Environment=NODE_ENV=production
 Environment=T3CODE_HOME=${gits_hosting_t3code_home}
 Environment=GITS_BUILD_INFO_PATH=${metadata_path}
 Environment=PATH=${service_path}
-ExecStart=${node_path} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}
+ExecStart=${node_path} --max-old-space-size=${gits_hosting_node_heap_mb} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}
 Restart=on-failure
 RestartSec=3
+MemoryMax=${gits_hosting_memory_max}
 
 [Install]
 WantedBy=default.target
@@ -93,7 +96,7 @@ if ((start_service)); then
 fi
 
 gits_hosting_log "Installed user service: $unit_path"
-gits_hosting_log "Service command: ${node_path} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}"
+gits_hosting_log "Service command: ${node_path} --max-old-space-size=${gits_hosting_node_heap_mb} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}"
 gits_hosting_log "Build metadata path: $metadata_path"
 
 if command -v loginctl >/dev/null 2>&1; then

@@ -152,6 +152,36 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   );
 }
 
+/**
+ * logSequenceGap - detects and logs a gap between the snapshot boundary and
+ * the first live event on a subscriber's hot stream.
+ *
+ * Called once per subscription at the point where the live stream is wired in.
+ * A gap (firstLiveSequence > snapshotSequence + 1) means events were emitted
+ * between snapshot-read and stream-subscription and will never be delivered to
+ * this subscriber — silent event loss on reconnect.
+ *
+ * Recovery chosen: log structured warning and continue. Crashing the socket
+ * or forcibly refetching the snapshot here would require redesigning the
+ * stream contract; the warn gives the operator enough context to detect
+ * and address this at the architectural level (e.g. subscribe-then-snapshot).
+ *
+ * ponytail: first-event check only — per-event monotonicity is a separate concern.
+ */
+export function logSequenceGap(
+  label: string,
+  snapshotSequence: number,
+  firstLiveSequence: number,
+): Effect.Effect<void> {
+  if (firstLiveSequence <= snapshotSequence + 1) return Effect.void;
+  return Effect.logWarning("subscribe-sequence-gap: live stream skips past snapshot boundary", {
+    label,
+    snapshotSequence,
+    firstLiveSequence,
+    gapSize: firstLiveSequence - snapshotSequence - 1,
+  });
+}
+
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 function toAuthAccessStreamEvent(
@@ -846,6 +876,19 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               );
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                // ponytail: gap check on raw stream before toShellStreamEvent filters
+                // may drop the event.
+                Stream.mapAccumEffect(
+                  () => false as boolean,
+                  (checked, event: OrchestrationEvent) =>
+                    checked
+                      ? Effect.succeed([true, [event]] as const)
+                      : logSequenceGap(
+                          "subscribeShell",
+                          snapshot.snapshotSequence,
+                          event.sequence,
+                        ).pipe(Effect.as([true, [event]] as const)),
+                ),
                 Stream.mapEffect(toShellStreamEvent),
                 Stream.flatMap((event) =>
                   Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
@@ -913,6 +956,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               }
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                // ponytail: gap check on raw stream before thread filter so the first
+                // event arriving after snapshot-read (even for other aggregates) sets
+                // the checked flag — the sequence space is global, not per-thread.
+                Stream.mapAccumEffect(
+                  () => false as boolean,
+                  (checked, event: OrchestrationEvent) =>
+                    checked
+                      ? Effect.succeed([true, [event]] as const)
+                      : logSequenceGap(
+                          `subscribeThread:${input.threadId}`,
+                          snapshotSequence,
+                          event.sequence,
+                        ).pipe(Effect.as([true, [event]] as const)),
+                ),
                 Stream.filter(
                   (event) =>
                     event.aggregateKind === "thread" &&

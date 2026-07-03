@@ -177,6 +177,14 @@ export function recordWsConnectionClosed(
   );
 }
 
+/**
+ * Called when the heartbeat monitor detects a dead-but-open socket (W3.3).
+ * Transitions phase to disconnected so the reconnect banner renders.
+ */
+export function recordWsHeartbeatTimeout(): WsConnectionStatus {
+  return updateWsConnectionStatus((current) => applyDisconnectState(current, {}));
+}
+
 export function setBrowserOnlineStatus(online: boolean): WsConnectionStatus {
   return updateWsConnectionStatus((current) => ({
     ...current,

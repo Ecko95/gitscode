@@ -96,6 +96,9 @@ type ThreadDetailSubscriptionEntry = {
   refCount: number;
   lastAccessedAt: number;
   evictionTimeoutId: ReturnType<typeof setTimeout> | null;
+  // ponytail: tracks the snapshotSequence from the most recent detail snapshot so
+  // stale events replayed after a resubscribe are discarded (W3.1).
+  lastDetailSnapshotSequence: number;
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
@@ -382,11 +385,20 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
     return false;
   }
 
+  // Reset sequence gate on each (re)subscribe so the fresh snapshot's sequence
+  // becomes the new floor — events with sequence ≤ that value are stale (W3.1).
+  entry.lastDetailSnapshotSequence = -1;
+
   entry.unsubscribe = connection.client.orchestration.subscribeThread(
     { threadId: entry.threadId },
     (item) => {
       if (item.kind === "snapshot") {
+        entry.lastDetailSnapshotSequence = item.snapshot.snapshotSequence;
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId);
+        return;
+      }
+      // Discard detail events that predate the most recent snapshot (W3.1).
+      if (item.event.sequence <= entry.lastDetailSnapshotSequence) {
         return;
       }
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
@@ -575,6 +587,7 @@ export function retainThreadDetailSubscription(
     refCount: 1,
     lastAccessedAt: Date.now(),
     evictionTimeoutId: null,
+    lastDetailSnapshotSequence: -1,
   };
   threadDetailSubscriptions.set(key, entry);
   if (!attachThreadDetailSubscription(entry)) {

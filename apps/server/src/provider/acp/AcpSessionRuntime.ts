@@ -30,6 +30,14 @@ function formatConfigOptionValue(value: string | boolean): string {
   return JSON.stringify(value);
 }
 
+// ponytail: 1024 — ACP session events arrive via stdio JSON-RPC from the child process.
+// Typical sessions emit <100 events/turn (tool calls, text deltas, status updates).
+// Bounded queue suspends the ACP notification handler (which runs on the JSON-RPC reader
+// fiber), naturally backpressuring the child process stdio pipe. Consumer is
+// Stream.fromQueue (getEvents(), drained by the adapter). No producer↔consumer cycle.
+// Raise to env knob if real workloads with verbose tool output hit this ceiling.
+const ACP_EVENT_QUEUE_CAPACITY = 1024;
+
 export interface AcpSpawnInput {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -160,7 +168,7 @@ const makeAcpSessionRuntime = (
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
-    const eventQueue = yield* Queue.unbounded<AcpParsedSessionEvent>();
+    const eventQueue = yield* Queue.bounded<AcpParsedSessionEvent>(ACP_EVENT_QUEUE_CAPACITY);
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });

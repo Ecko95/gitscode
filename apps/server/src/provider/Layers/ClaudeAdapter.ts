@@ -97,6 +97,10 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJ
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+// ponytail: 1024 — Claude SDK emits ~1 SDKMessage per streamed token group; large context
+// windows produce up to ~200 events/turn. 1024 gives >5x headroom. Consumer is
+// Stream.fromQueue (caller's drain fiber, no cycle with producer). Add env knob on profiling.
+const RUNTIME_EVENT_QUEUE_CAPACITY = 1024;
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -1043,7 +1047,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* Queue.bounded<ProviderRuntimeEvent>(
+    RUNTIME_EVENT_QUEUE_CAPACITY,
+  );
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(

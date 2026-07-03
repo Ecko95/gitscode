@@ -74,6 +74,13 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+// ponytail: 1024 — runtimeEventQueue is the fan-in point for all Codex sessions' events.
+// Each session's events are already bounded at 1024 (CodexSessionRuntime); this queue
+// multiplexes N sessions → one stream. A single session at peak produces ~50 events/turn
+// and turns don't run concurrently within a session, so 1024 fits >20 concurrent sessions
+// with headroom. Consumer is Stream.fromQueue (caller owns the drain fiber). No cycle.
+// Add env knob if profiling shows sustained backpressure under real load.
+const RUNTIME_EVENT_QUEUE_CAPACITY = 1024;
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -1369,7 +1376,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* Queue.bounded<ProviderRuntimeEvent>(
+    RUNTIME_EVENT_QUEUE_CAPACITY,
+  );
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>

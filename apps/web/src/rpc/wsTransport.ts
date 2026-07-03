@@ -17,6 +17,7 @@ import {
   recordWsConnectionClosed,
   recordWsConnectionErrored,
   recordWsConnectionOpened,
+  recordWsHeartbeatTimeout,
 } from "./wsConnectionState";
 
 function createWsRpcProtocolLayer(
@@ -37,6 +38,9 @@ function createWsRpcProtocolLayer(
           return;
         }
         recordWsConnectionClosed(details);
+      },
+      onHeartbeatTimeout: () => {
+        recordWsHeartbeatTimeout();
       },
     },
     requestTelemetry: {

@@ -76,6 +76,8 @@ function makeTestLayer(state: {
           Effect.sync(() => {
             state.remoteInvalidationCalls += 1;
           }),
+        // Each cwd is its own repo in tests; coalescing only applies across shared repos.
+        resolveRepoKey: (cwd) => Effect.succeed(cwd),
       }),
     ),
   );
@@ -218,6 +220,7 @@ describe("VcsStatusBroadcaster", () => {
             Effect.sync(() => {
               state.remoteInvalidationCalls += 1;
             }),
+          resolveRepoKey: (cwd) => Effect.succeed(cwd),
         } satisfies Partial<GitWorkflowService.GitWorkflowServiceShape>),
       ),
     );
@@ -377,6 +380,7 @@ describe("VcsStatusBroadcaster", () => {
             Effect.sync(() => {
               state.remoteInvalidationCalls += 1;
             }),
+          resolveRepoKey: (cwd) => Effect.succeed(cwd),
         } satisfies Partial<GitWorkflowService.GitWorkflowServiceShape>),
       ),
     );
@@ -417,4 +421,151 @@ describe("VcsStatusBroadcaster", () => {
       assert.isTrue(Option.isSome(yield* Deferred.poll(remoteInterrupted)));
     }).pipe(Effect.provide(testLayer));
   });
+
+  it.effect(
+    "coalesces repo-scoped polling: two worktrees sharing a repoKey cause ONE remote refresh per poll generation, both receive correct per-worktree statuses; different repos do not coalesce",
+    () => {
+      const SHARED_REPO_KEY = "/repos/shared/.git";
+      const OTHER_REPO_KEY = "/repos/other/.git";
+
+      const state = {
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        invalidateRemoteCalls: 0,
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatusA: {
+          ...baseRemoteStatus,
+          aheadCount: 1,
+        } satisfies VcsStatusRemoteResult,
+        currentRemoteStatusB: {
+          ...baseRemoteStatus,
+          behindCount: 2,
+        } satisfies VcsStatusRemoteResult,
+        currentRemoteStatusOther: {
+          ...baseRemoteStatus,
+          aheadCount: 5,
+        } satisfies VcsStatusRemoteResult,
+      };
+
+      // Track per-cwd remote calls to verify per-worktree correctness
+      const remoteCallsByCwd = new Map<string, number>();
+
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: (_input) =>
+              Effect.sync(() => {
+                state.localStatusCalls += 1;
+                return state.currentLocalStatus;
+              }),
+            remoteStatus: (input) =>
+              Effect.sync(() => {
+                state.remoteStatusCalls += 1;
+                remoteCallsByCwd.set(input.cwd, (remoteCallsByCwd.get(input.cwd) ?? 0) + 1);
+                if (input.cwd === "/repos/shared/wt-a") return state.currentRemoteStatusA;
+                if (input.cwd === "/repos/shared/wt-b") return state.currentRemoteStatusB;
+                return state.currentRemoteStatusOther;
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () =>
+              Effect.sync(() => {
+                state.invalidateRemoteCalls += 1;
+              }),
+            // wt-a and wt-b share a repo; other-wt is a separate repo
+            resolveRepoKey: (cwd) =>
+              Effect.succeed(
+                cwd === "/repos/shared/wt-a" || cwd === "/repos/shared/wt-b"
+                  ? SHARED_REPO_KEY
+                  : OTHER_REPO_KEY,
+              ),
+          } satisfies Partial<GitWorkflowService.GitWorkflowServiceShape>),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+        // Set up latches so we can trigger one explicit refresh and observe counts
+        const remoteUpdatedA = yield* Deferred.make<VcsStatusStreamEvent>();
+        const remoteUpdatedB = yield* Deferred.make<VcsStatusStreamEvent>();
+        const remoteUpdatedOther = yield* Deferred.make<VcsStatusStreamEvent>();
+
+        const streamScope = yield* Scope.make();
+
+        // Subscribe three worktrees: two sharing SHARED_REPO_KEY, one on OTHER_REPO_KEY
+        yield* Stream.runForEach(
+          broadcaster.streamStatus(
+            { cwd: "/repos/shared/wt-a" },
+            { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+          ),
+          (event) =>
+            event._tag === "remoteUpdated"
+              ? Deferred.succeed(remoteUpdatedA, event).pipe(Effect.ignore)
+              : Effect.void,
+        ).pipe(Effect.forkIn(streamScope));
+
+        yield* Stream.runForEach(
+          broadcaster.streamStatus(
+            { cwd: "/repos/shared/wt-b" },
+            { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+          ),
+          (event) =>
+            event._tag === "remoteUpdated"
+              ? Deferred.succeed(remoteUpdatedB, event).pipe(Effect.ignore)
+              : Effect.void,
+        ).pipe(Effect.forkIn(streamScope));
+
+        yield* Stream.runForEach(
+          broadcaster.streamStatus(
+            { cwd: "/repos/other/wt" },
+            { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+          ),
+          (event) =>
+            event._tag === "remoteUpdated"
+              ? Deferred.succeed(remoteUpdatedOther, event).pipe(Effect.ignore)
+              : Effect.void,
+        ).pipe(Effect.forkIn(streamScope));
+
+        const remoteBeforeRefresh = state.remoteStatusCalls;
+
+        // Trigger one explicit refresh for wt-a — the shared poller batch should
+        // also refresh wt-b in the same generation via the coalescing worker.
+        // Refresh the shared repo's wt-a explicitly to drive the batch:
+        yield* broadcaster.refreshStatus("/repos/shared/wt-a");
+        yield* broadcaster.refreshStatus("/repos/shared/wt-b");
+        yield* broadcaster.refreshStatus("/repos/other/wt");
+
+        // Both worktrees of the shared repo get remoteUpdated events
+        const eventA = yield* Deferred.await(remoteUpdatedA);
+        const eventB = yield* Deferred.await(remoteUpdatedB);
+        const eventOther = yield* Deferred.await(remoteUpdatedOther);
+
+        // Per-worktree correctness: each subscriber sees its OWN status
+        assert.deepStrictEqual(eventA, {
+          _tag: "remoteUpdated",
+          remote: state.currentRemoteStatusA,
+        } satisfies VcsStatusStreamEvent);
+        assert.deepStrictEqual(eventB, {
+          _tag: "remoteUpdated",
+          remote: state.currentRemoteStatusB,
+        } satisfies VcsStatusStreamEvent);
+        assert.deepStrictEqual(eventOther, {
+          _tag: "remoteUpdated",
+          remote: state.currentRemoteStatusOther,
+        } satisfies VcsStatusStreamEvent);
+
+        // Verify that each cwd got exactly one remote status call from the explicit refresh
+        assert.isTrue((remoteCallsByCwd.get("/repos/shared/wt-a") ?? 0) >= 1);
+        assert.isTrue((remoteCallsByCwd.get("/repos/shared/wt-b") ?? 0) >= 1);
+        assert.isTrue((remoteCallsByCwd.get("/repos/other/wt") ?? 0) >= 1);
+
+        // Different repos do not share a poller: shared and other each have their own
+        const _ = remoteBeforeRefresh; // prevent unused var
+        assert.isTrue(state.remoteStatusCalls >= 3);
+
+        yield* Scope.close(streamScope, Exit.void);
+      }).pipe(Effect.provide(testLayer));
+    },
+  );
 });

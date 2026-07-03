@@ -91,6 +91,37 @@ export const migrationEntries = [
   [32, "AutomodeEpisodeLedger", Migration0032],
 ] as const;
 
+/**
+ * Asserts that migration numbers are unique and contiguous (no gaps).
+ * Throws at module load time so any boot with a broken migration set fails hard.
+ *
+ * ponytail: throws synchronously — import-time guard, no Effect overhead needed here.
+ */
+export function assertMigrationIntegrity(
+  entries: ReadonlyArray<readonly [number, string, unknown]>,
+): void {
+  const sorted = [...entries].sort(([a], [b]) => a - b);
+
+  const seen = new Map<number, string>();
+  for (const [id, name] of sorted) {
+    const prior = seen.get(id);
+    if (prior !== undefined) {
+      throw new Error(`duplicate migration number ${id} (${prior}, ${name})`);
+    }
+    seen.set(id, name);
+  }
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1]![0];
+    const curr = sorted[i]![0];
+    if (curr !== prev + 1) {
+      throw new Error(`non-contiguous migration numbers: ${prev} → ${curr}`);
+    }
+  }
+}
+
+assertMigrationIntegrity(migrationEntries);
+
 export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
