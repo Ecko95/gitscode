@@ -5,7 +5,8 @@ import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "./atomRegistry";
 
 export type WsConnectionUiState = "connected" | "connecting" | "error" | "offline" | "reconnecting";
-export type WsReconnectPhase = "attempting" | "exhausted" | "idle" | "waiting";
+// ponytail: "auth-rejected" is a terminal phase — no retry, re-pair required.
+export type WsReconnectPhase = "attempting" | "auth-rejected" | "exhausted" | "idle" | "waiting";
 
 export const WS_RECONNECT_INITIAL_DELAY_MS = DEFAULT_RECONNECT_BACKOFF.initialDelayMs;
 export const WS_RECONNECT_BACKOFF_FACTOR = DEFAULT_RECONNECT_BACKOFF.backoffFactor;
@@ -110,7 +111,8 @@ export function recordWsConnectionAttempt(
     nextRetryAt: null,
     phase: "connecting",
     reconnectAttemptCount: current.phase === "connected" ? 1 : current.reconnectAttemptCount + 1,
-    reconnectPhase: "attempting",
+    // ponytail: preserve auth-rejected so internal Effect retries don't reset it (W3.4).
+    reconnectPhase: current.reconnectPhase === "auth-rejected" ? "auth-rejected" : "attempting",
     socketUrl,
   }));
 }
@@ -192,6 +194,21 @@ export function setBrowserOnlineStatus(online: boolean): WsConnectionStatus {
   }));
 }
 
+/**
+ * Called when a WS reconnect attempt is rejected with an auth error (W3.4).
+ * Transitions reconnectPhase to "auth-rejected" so the UI can surface the
+ * re-pair flow instead of retrying forever. Once set, applyDisconnectState
+ * will not overwrite this phase.
+ */
+export function recordWsAuthRejected(): WsConnectionStatus {
+  return updateWsConnectionStatus((current) => ({
+    ...current,
+    nextRetryAt: null,
+    phase: "disconnected",
+    reconnectPhase: "auth-rejected",
+  }));
+}
+
 export function resetWsReconnectBackoff(): WsConnectionStatus {
   return updateWsConnectionStatus((current) => ({
     ...current,
@@ -220,6 +237,11 @@ function applyDisconnectState(
   >,
   metadata?: WsConnectionMetadata,
 ): WsConnectionStatus {
+  // ponytail: auth-rejected is terminal — do not let retry machinery overwrite it (W3.4).
+  if (current.reconnectPhase === "auth-rejected") {
+    return { ...current, ...updates, phase: "disconnected" };
+  }
+
   const disconnectedAt = current.disconnectedAt ?? isoNow();
   const nextRetryDelayMs =
     current.nextRetryAt !== null || current.reconnectPhase === "exhausted"

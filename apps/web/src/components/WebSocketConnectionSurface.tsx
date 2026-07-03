@@ -1,9 +1,11 @@
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import {
   getWsConnectionStatus,
   getWsConnectionUiState,
+  recordWsAuthRejected,
   setBrowserOnlineStatus,
   type WsConnectionStatus,
   type WsConnectionUiState,
@@ -12,6 +14,7 @@ import {
 } from "../rpc/wsConnectionState";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
+import { fetchSessionState } from "../environments/primary/auth";
 
 const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
 type WsAutoReconnectTrigger = "focus" | "online";
@@ -115,6 +118,11 @@ export function shouldAutoReconnect(
   status: WsConnectionStatus,
   trigger: WsAutoReconnectTrigger,
 ): boolean {
+  // ponytail: auth-rejected requires re-pair, not reconnect (W3.4).
+  if (status.reconnectPhase === "auth-rejected") {
+    return false;
+  }
+
   const uiState = getWsConnectionUiState(status);
 
   if (trigger === "online") {
@@ -133,6 +141,22 @@ export function shouldAutoReconnect(
   );
 }
 
+/**
+ * Returns true when a WS close event during reconnect should trigger an auth probe
+ * to detect 401 vs transient failure (W3.4).
+ *
+ * Conditions: close code 1006 (abnormal — HTTP upgrade rejection) during a reconnect
+ * attempt after a previously successful connection, and not already detected as auth-rejected.
+ */
+export function shouldTriggerAuthRejectedProbe(status: WsConnectionStatus): boolean {
+  return (
+    status.reconnectPhase !== "auth-rejected" &&
+    status.hasConnected &&
+    status.closeCode === 1006 &&
+    (status.reconnectPhase === "waiting" || status.reconnectPhase === "exhausted")
+  );
+}
+
 export function shouldRestartStalledReconnect(
   status: WsConnectionStatus,
   expectedNextRetryAt: string,
@@ -147,12 +171,14 @@ export function shouldRestartStalledReconnect(
 
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
+  const navigate = useNavigate();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const lastForcedReconnectAtRef = useRef(0);
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const toastResetTimerRef = useRef<number | null>(null);
   const previousUiStateRef = useRef<WsConnectionUiState>(getWsConnectionUiState(status));
   const previousDisconnectedAtRef = useRef<string | null>(status.disconnectedAt);
+  const authProbeInFlightRef = useRef(false);
 
   const runReconnect = useEffectEvent((showFailureToast: boolean) => {
     if (toastResetTimerRef.current !== null) {
@@ -266,6 +292,33 @@ export function WebSocketConnectionCoordinator() {
     status.reconnectAttemptCount,
     status.reconnectPhase,
   ]);
+
+  // ponytail: probe session on 1006-close during reconnect; navigate to /pair on auth rejection (W3.4).
+  const handleAuthRejected = useEffectEvent(() => {
+    void navigate({ to: "/pair", replace: true });
+  });
+  const { closeCode, hasConnected, reconnectPhase, reconnectAttemptCount } = status;
+  useEffect(() => {
+    const probeStatus = getWsConnectionStatus();
+    if (!shouldTriggerAuthRejectedProbe(probeStatus) || authProbeInFlightRef.current) {
+      return;
+    }
+
+    authProbeInFlightRef.current = true;
+    void fetchSessionState()
+      .then((session) => {
+        if (!session.authenticated) {
+          recordWsAuthRejected();
+          handleAuthRejected();
+        }
+      })
+      .catch(() => {
+        // Network error — treat as transient, not auth rejection. Probe clears so it can retry.
+      })
+      .finally(() => {
+        authProbeInFlightRef.current = false;
+      });
+  }, [closeCode, hasConnected, reconnectPhase, reconnectAttemptCount]);
 
   useEffect(() => {
     const uiState = getWsConnectionUiState(status);
