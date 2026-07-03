@@ -221,9 +221,7 @@ function bufferOrTerminate<A, E, R>(
         Stream.runForEach((event) =>
           Queue.offer(queue, event).pipe(
             Effect.flatMap((accepted) =>
-              accepted
-                ? Effect.void
-                : Queue.failCause(queue, Cause.fail(overflowError())),
+              accepted ? Effect.void : Queue.failCause(queue, Cause.fail(overflowError())),
             ),
           ),
         ),
@@ -932,7 +930,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 WS_PUSH_SUBSCRIBER_BUFFER,
                 () =>
                   new OrchestrationGetSnapshotError({
-                    message: "subscribeShell: subscriber buffer overflow — resubscribe for fresh snapshot",
+                    message:
+                      "subscribeShell: subscriber buffer overflow — resubscribe for fresh snapshot",
                     cause: "overflow",
                   }),
               ).pipe(

@@ -355,9 +355,7 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
         Stream.runForEach((event) =>
           Queue.offer(queue, event).pipe(
             Effect.flatMap((accepted) =>
-              accepted
-                ? Effect.void
-                : Queue.failCause(queue, Cause.fail(overflowError)),
+              accepted ? Effect.void : Queue.failCause(queue, Cause.fail(overflowError)),
             ),
           ),
         ),
@@ -424,7 +422,14 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
 
   await s.dispose();
 
-  return { dispatchCount, totalDispatchMs: totalMs, storedCount, fastCount, slowCount, slowTerminatedWithOverflow };
+  return {
+    dispatchCount,
+    totalDispatchMs: totalMs,
+    storedCount,
+    fastCount,
+    slowCount,
+    slowTerminatedWithOverflow,
+  };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -445,7 +450,9 @@ async function main() {
   const baselineMs = await runBaseline();
   process.stdout.write(` done (${baselineMs.toFixed(0)}ms)\n`);
 
-  process.stdout.write("  [2/2] Flood (fast + stalled subscriber with overflow-terminates buffer)...");
+  process.stdout.write(
+    "  [2/2] Flood (fast + stalled subscriber with overflow-terminates buffer)...",
+  );
   const r = await runFloodWithSubscribers();
   process.stdout.write(` done (${r.totalDispatchMs.toFixed(0)}ms)\n`);
 
@@ -500,8 +507,7 @@ async function main() {
     print(`     FAIL: stored ${r.storedCount} < dispatched ${r.dispatchCount} (events dropped)`);
   else print("     Events persisted in SQL tx before PubSub.publish.");
   print(`  I3 overflow terminates slow  : ${i3 ? "PASS" : "FAIL"}`);
-  if (!i3)
-    print(`     FAIL: slow subscriber received ${r.slowCount} > stored ${r.storedCount}`);
+  if (!i3) print(`     FAIL: slow subscriber received ${r.slowCount} > stored ${r.storedCount}`);
   else {
     print(
       `     bufferOrTerminate(${SUBSCRIBER_BUFFER_CAP}) — slow subscriber received ${r.slowCount} events`,
