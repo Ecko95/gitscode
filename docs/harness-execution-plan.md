@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-03
 **Sources reconciled:** `docs/performance-optimization-plan.md` (perf tiers), `docs/audit-2026-07.md` (9-category audit), and the Fable harness engineering prompt (4 workstreams: orchestration perf, worktree lifecycle/Graveyard, security hardening, deployment topologies).
-**Purpose:** one task-by-task plan, wave-ordered and file-scoped, so peers (Delamain/Codex/Claude) can be spun up in parallel without collisions.
+**Purpose:** one task-by-task plan, wave-ordered and file-scoped, so execution agents can be spun up in parallel without collisions. Operating model: Fable orchestrates, Sonnet agents execute (Codex selectable per task) — see §4.
 
 ---
 
@@ -49,7 +49,17 @@
 
 ---
 
-## 4. Task-by-task plan
+## 4. Operating model — Fable plans, Sonnet executes
+
+All W-tasks run through the `/fable-5-orchestration` skill:
+
+- **Fable 5 (orchestrator)** does recon, scoping, blast-radius drafts, task briefs, the pre-implementation critique gate, adversarial review of results, keep/change/drop decisions, and the plan-gate conversation with the operator. Fable never implements unless the operator explicitly asks.
+- **Execution agents** implement. Engine is selectable per dispatch (`--engine sonnet|codex`); **current default: Sonnet**, max **6 concurrent** agents, each with one bounded W-task, `isolation: worktree` whenever tasks mutate files in parallel.
+- **Per-task flow:** Fable brief (goal, read-first files, invariants, machine-checkable acceptance, verification commands) → agent implements → agent reports files read/changed, tests run, residual risks → Fable critique gate → PR. Anything touching auth, migrations, or the event schema additionally round-trips through the operator before execution (§3 rule 8).
+- **Escalation:** an agent blocked or failing acceptance twice on the same task returns it to Fable for re-scoping — agents never improvise around the brief.
+- The 6-agent cap sub-divides the spin-up map in §6: Wave 1's nine parallel-safe tasks run as 6 + 3, lanes A–D each hold at most one in-flight event-schema task.
+
+## 5. Task-by-task plan
 
 Waves order execution; tasks within a wave are parallel-safe (disjoint files). `dep:` marks hard dependencies. Effort: XS ≤1h, S ≤half-day, M ≤2 days.
 
@@ -74,21 +84,23 @@ Waves order execution; tasks within a wave are parallel-safe (disjoint files). `
 | W1.5 | SQLite pragmas: `busy_timeout=30000`, `wal_autocheckpoint=1000`, `synchronous=NORMAL` | `persistence/Layers/Sqlite.ts:35` | XS |
 | W1.6 | Surface Codex `thread/resume` failure (WARN + session-receipt marker, no silent fresh session) | `provider/Layers/CodexSessionRuntime.ts:476-490` | XS |
 | W1.7 | `fork:` Android cleartext gated to dev variant + http: warning banner | `apps/mobile/plugins/withAndroidCleartextTraffic.cjs` | XS |
-| W1.8 | Env gates: ProcessResourceMonitor, SessionReaper (+ interval envs), Hermes stub layer, VCS refresh interval env | `server.ts`, `serverRuntimeStartup.ts`, respective layers | S |
-| W1.9 | systemd unit: `MemoryMax=` + `--max-old-space-size` params | `scripts/gits-hosting/install-wsl-user-service.sh:67-86` | XS |
-| W1.10 | Ponytail cuts (−142 lines: adapter Shape markers, unused runtimeLayer exports) | `provider/Services/*`, `orchestration/runtimeLayer.ts` | S |
+| W1.8 | systemd unit: `MemoryMax=` + `--max-old-space-size` params | `scripts/gits-hosting/install-wsl-user-service.sh:67-86` | XS |
+| W1.9 | Ponytail cuts (−142 lines: adapter Shape markers, unused runtimeLayer exports) | `provider/Services/*`, `orchestration/runtimeLayer.ts` | S |
+
+> Cut (ponytail audit of this plan): env gates for ProcessResourceMonitor / SessionReaper / Hermes stub — measured idle cost is one `ps` per 5s + one DB query per 5min + zero; flags nobody would flip. The one interval with real O(worktrees) cost is fixed structurally by W4.6.
 
 ### Wave 2 — Graveyard (Workstream 2; serialized spine W2.1→W2.2, then parallel)
 
 | ID | Task | Depends | Files | Effort |
 |---|---|---|---|---|
-| W2.1 | **Design + contracts:** graveyard states (`active → retiring → buried → resurrected`), orchestration events + receipts for every transition, retention policy schema (window, disk budget, branch policy). Operator approval required (event schema) | — | `packages/contracts`, `.plans/` note | M |
+| W2.1 | **Design + contracts:** graveyard states (`active → retiring → buried`), orchestration events + receipts for every transition, one retention knob: `GITS_GRAVEYARD_MAX_AGE_MS` (default 7d); branches always kept (they're ~free). Operator approval required (event schema) | — | `packages/contracts`, `.plans/` note | M |
 | W2.2 | Retirement path: on session reap / thread delete, capture final diff as checkpoint → await receipt → `git worktree remove` → branch preserved → emit graveyard event. Replaces naive delete; extends `ProviderSessionReaper` + `ThreadDeletionReactor` (never a new duplicate reaper) | W2.1 | `ThreadDeletionReactor.ts:58-64`, `ProviderSessionReaper.ts`, `vcs/` | M |
 | W2.3 | Orphan adoption on startup: worktrees on disk with no event-store binding → adopted into graveyard, never silently deleted | W2.1 | `vcs/VcsProvisioningService.ts`, startup | S |
-| W2.4 | Graveyard policy reaper: retention window + max disk budget enforcement, receipts emitted | W2.2 | new layer beside ProviderSessionReaper | S |
-| W2.5 | Deterministic spawn: worktree layout `<repo>-worktrees/<thread-slug>/`, branch-per-agent, ownership recorded as orchestration events | W2.1 | `vcs/GitVcsDriverCore.ts:2059-2080` | S |
+| W2.4 | Graveyard reaper: age-based prune of buried worktrees past the retention knob, receipts emitted | W2.2 | new layer beside ProviderSessionReaper | S |
+| W2.5 | Record worktree ownership as orchestration events (layout already exists: `createWorktree` computes `worktreesDir/<repo>/<branch>`) | W2.1 | `vcs/GitVcsDriverCore.ts:2059-2080` | S |
 | W2.6 | Driver-level guardrails: session-scoped VcsDriver refuses ops outside assigned worktree root, refuses force-push to protected branches, routes merge/integration to supervisor commands | W2.1 | `vcs/VcsDriver.ts`, `GitVcsDriver.ts` | M |
-| W2.7 | Graveyard listing + resurrect RPC (UI later) | W2.2 | server RPC, contracts | S |
+
+> Cut (ponytail audit): graveyard listing + resurrect RPC and the `resurrected` state — the preserved branch IS the listing (`git branch`), and resurrection IS the existing `createWorktree` on that branch. Revisit only if the manual flow proves painful in practice.
 
 ### Wave 3 — Reconnect resilience (Workstream: offline; parallel after design note)
 
@@ -98,8 +110,7 @@ Waves order execution; tasks within a wave are parallel-safe (disjoint files). `
 | W3.2 | Server: assert `live.sequence > snapshotSequence` on subscribe, log gaps | `apps/server/src/ws.ts:886-906` | S |
 | W3.3 | Heartbeat timeout → `disconnected` phase (reconnect banner) | `apps/web/src/rpc/wsConnectionState.ts:171-176` | XS |
 | W3.4 | 401 during reconnect → re-pair flow (no infinite retry) | `wsConnectionState.ts`, pairing flow | S |
-| W3.5 | In-flight turn recovery: on reconnect, resume turn subscription / query outstanding turns so server-completed work surfaces | `packages/client-runtime/src/wsTransport.ts:126-212` + server | M |
-| W3.6 | Integration test: subscribe → kill socket mid-turn → reconnect → client state ≡ server projection (receipt-awaited, no sleeps) | new test | S |
+| W3.5 | In-flight turn recovery: on reconnect, resume turn subscription / query outstanding turns so server-completed work surfaces. **Acceptance includes the integration test:** subscribe → kill socket mid-turn → reconnect → client state ≡ server projection (receipt-awaited, no sleeps) | `packages/client-runtime/src/wsTransport.ts:126-212` + server | M |
 
 ### Wave 4 — Orchestration performance (Workstream 1; **measure before optimizing**)
 
@@ -121,7 +132,7 @@ Waves order execution; tasks within a wave are parallel-safe (disjoint files). `
 | W5.2 | Secrets hygiene: audit `provider/Drivers/CodexHomeLayout.ts` + adapter env handling — Delamain sessions must not read each other's or the server's credentials; add redaction at ingestion boundary if provider events can carry token/env material (incl. `EventNdjsonLogger`) | — | provider Drivers/adapters, ingestion | M |
 | W5.3 | Actor identity in command envelope (operator / supervisor / delamain), checked by `commandInvariants`; delamains deny-by-default for server-mutating commands (spawn, delete, config, auth). Operator approval (event schema) | W5.1 | `orchestration/commandInvariants.ts`, contracts | M |
 | W5.4 | Audit-trail verification: every privileged action (session spawn, worktree op, auth change, endpoint change) emits an event; fix silent paths | W5.1 | orchestration | S |
-| W5.5 | Migration test harness batches 010–020 and 021–032 (two tasks; pattern: `016_CanonicalizeModelSelections.test.ts`) | W1.2 | `persistence/Migrations/` | M |
+| W5.5 | One all-migrations fixture test: run 001→latest against a seeded DB, assert final schema + key invariants (pattern: `016_CanonicalizeModelSelections.test.ts` generalized). Per-migration tests are required only for *future* data-mutating migrations, enforced by the review checklist — shipped migrations already ran on every live DB, so retro per-migration tests mostly re-prove the past | W1.2 | `persistence/Migrations/` | S |
 
 ### Wave 6 — Topologies & docs (Workstream 4)
 
@@ -129,25 +140,25 @@ Waves order execution; tasks within a wave are parallel-safe (disjoint files). `
 |---|---|---|---|
 | W6.1 | Deploy script portability: skip Windows portproxy when `WSL_DISTRO_NAME` unset; native systemd + `tailscale serve` path for VPS; document both topologies in `REMOTE.md` style | `scripts/gits-hosting/*` | S |
 | W6.2 | Recommended `.wslconfig` + localhost-forwarding vs `networkingMode=mirrored` guidance; repos-on-ext4 requirement documented | docs | XS |
-| W6.3 | VPS scale profile: invert hosted defaults (short ticks, high MemoryMax) — pure config after W1.8/W1.9 | deploy env | XS |
+| W6.3 | VPS scale profile: invert hosted defaults (short ticks, high MemoryMax) — pure config after W1.8 | deploy env | XS |
 
-**Explicitly ignored (unchanged from audit):** service worker/offline cache, multi-worker orchestration engine redesign (W4.1 must justify anything beyond keyed reactors), localStorage→cookies on tailnet, changesets automation, P2 UX batch (draft debounce, IPv6, Expo splash).
+**Explicitly ignored (audit + ponytail pass):** service worker/offline cache, multi-worker orchestration engine redesign (W4.1 must justify anything beyond keyed reactors), localStorage→cookies on tailnet, changesets automation, P2 UX batch (draft debounce, IPv6, Expo splash), idle-service env gates (measured cost ≈ zero), graveyard resurrect RPC (manual `createWorktree` on the preserved branch covers it), multi-knob graveyard policy (one age knob), retroactive per-migration test batches (one all-migrations fixture test instead).
 
 ---
 
-## 5. Peer spin-up map
+## 6. Peer spin-up map
 
-Maximum safe initial parallelism (after Wave 0): **W1.1–W1.10 = up to 10 peers, zero file overlap.** Then:
+Maximum safe initial parallelism (after Wave 0): **W1.1–W1.9 = up to 9 peers, zero file overlap.** Then:
 
-- **Peer lane A (Graveyard spine):** W2.1 → W2.2 → {W2.3, W2.4, W2.7} parallel; W2.5/W2.6 parallel after W2.1.
-- **Peer lane B (Reconnect):** W3.1+W3.3 (web) ∥ W3.2 (server) → W3.4 → W3.5 → W3.6.
+- **Peer lane A (Graveyard spine):** W2.1 → W2.2 → {W2.3, W2.4} parallel; W2.5/W2.6 parallel after W2.1.
+- **Peer lane B (Reconnect):** W3.1+W3.3 (web) ∥ W3.2 (server) → W3.4 → W3.5 (test included).
 - **Peer lane C (Perf):** W4.1 first (sole owner of instrumentation), W4.2/W4.5/W4.6 parallel meanwhile; W4.3/W4.4/W4.7 only after W4.1's numbers.
 - **Peer lane D (Security):** W5.1 first; W5.2 and W5.5 parallel anytime; W5.3/W5.4 after W5.1.
 - Wave 6 anytime, one peer.
 
 Collision rules: one peer per file cluster; `contracts` + event-schema changes serialize through lane A/D approvals; migrations serialize through W1.2's guard (contiguous numbering — coordinate next number via PR order).
 
-## 6. Definition of done (every task) + reviewer checklist
+## 7. Definition of done (every task) + reviewer checklist
 
 Per task: fmt/lint/typecheck/`bun run test` green · receipts-not-sleeps tests · events+receipts for anything the operator/supervisor must observe · no new network exposure without auth · no secrets in logs or event store · summary noting rebase risk vs upstream (`fork:` prefix where upstream files changed).
 

@@ -1,5 +1,7 @@
 # GITS Performance Optimization Plan
 
+> **Superseded as a task source by `docs/harness-execution-plan.md`** — pick tasks only from there (Tier 0 → W0, Tier 1/2 → W1/W4, Tier 3 → W6; the T1.1–T1.3 env gates were cut after measurement). The measurements, baselines, and VPS sizing in this doc remain valid reference.
+
 **Date:** 2026-07-03
 **Baseline host:** WSL2 (Windows host ~32GB RAM), 16 cores, 15.5GB visible to WSL, ext4.
 **Goal:** run as many parallel agent lanes (worktree + CLI agent + optional dev server) as the host allows, smoothly — first on WSL2, then on a dedicated VPS where GITS should scale to consume all available resources.
