@@ -37,6 +37,7 @@ import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
+  isLoopbackHost,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
@@ -45,6 +46,28 @@ export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeSt
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+/**
+ * Fails with `ServerRuntimeStartupError` when the server is bound to a
+ * non-loopback address but the auth descriptor reports no bootstrap methods.
+ * Extracted for testability; called at the top of the `startup` Effect.
+ */
+export const checkBindAuthGuard = (
+  host: string | undefined,
+  bootstrapMethods: ReadonlyArray<string>,
+): Effect.Effect<void, ServerRuntimeStartupError> => {
+  const isRemoteReachable = isWildcardHost(host) || !isLoopbackHost(host);
+  if (isRemoteReachable && bootstrapMethods.length === 0) {
+    return Effect.fail(
+      new ServerRuntimeStartupError({
+        message:
+          "Server is bound to a non-loopback address but has no configured bootstrap methods. " +
+          "Refusing to start to prevent unauthenticated remote access.",
+      }),
+    );
+  }
+  return Effect.void;
+};
 
 export interface ServerRuntimeStartupShape {
   readonly awaitCommandReady: Effect.Effect<void, ServerRuntimeStartupError>;
@@ -297,6 +320,12 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
 
   const startup = Effect.gen(function* () {
+    // ponytail: guard fires only when a future policy regression sets bootstrapMethods=[]
+    // on a non-loopback bind; today remote-reachable always populates at least one method.
+    const serverAuth = yield* ServerAuth;
+    const descriptor = yield* serverAuth.getDescriptor();
+    yield* checkBindAuthGuard(serverConfig.host, descriptor.bootstrapMethods);
+
     yield* Effect.logDebug("startup phase: starting keybindings runtime");
     yield* runStartupPhase(
       "keybindings.start",
