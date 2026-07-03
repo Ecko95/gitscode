@@ -9,7 +9,7 @@
 
 ## What the branch built
 
-A `t3 remote` CLI subcommand group that lets one headless GITS host act as a **control plane** provisioning GITS onto *other* machines over SSH:
+A `t3 remote` CLI subcommand group that lets one headless GITS host act as a **control plane** provisioning GITS onto _other_ machines over SSH:
 
 - `RemoteAgentRegistry` — persists saved remote agents to `userdata/remote-agents.json` (no secrets stored, atomic writes, Effect service)
 - `cli/remote.ts` — `t3 remote add/list/status/remove`; `add` SSHes into a target, launches/reuses a remote `t3` server, issues a one-time pairing token, saves the record
@@ -51,6 +51,7 @@ GITS already has a complete WSL hosting stack in `scripts/gits-hosting/`:
 3. **`externalLauncher.ts`** — server-side WSL detection (`WSL_DISTRO_NAME`/`WSL_INTEROP`): opens the app URL in the **Windows browser** via PowerShell automatically; gracefully degrades when no Linux terminal emulator exists
 
 Full flow:
+
 ```
 WSL gits-cockpit.service → 127.0.0.1:13773 → netsh portproxy → tailscale serve → tailnet HTTPS
 ```
@@ -59,11 +60,11 @@ Reachable from any device on the tailnet — browser or the Windows Electron app
 
 ## Accessing GITS remotely — current options
 
-| Client | Platform | How |
-|--------|----------|-----|
-| Web browser | Any (including Windows) | `t3 serve --host <tailscale-ip>` → open URL |
+| Client                 | Platform                  | How                                                                                                      |
+| ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Web browser            | Any (including Windows)   | `t3 serve --host <tailscale-ip>` → open URL                                                              |
 | Desktop app (Electron) | macOS, Linux, **Windows** | Install the `.exe`/`.dmg`/`.AppImage` build; point it at the remote server URL in Settings → Connections |
-| Mobile PWA | iOS, Android | Open the web URL in Safari/Chrome, "Add to Home Screen" |
+| Mobile PWA             | iOS, Android              | Open the web URL in Safari/Chrome, "Add to Home Screen"                                                  |
 
 The desktop app has explicit Windows support: `pwsh.exe`/`powershell.exe` shell detection, `.ico` icons, win32 path delimiters. A Windows installer (NSIS/Squirrel) is part of the release artifact pipeline.
 
