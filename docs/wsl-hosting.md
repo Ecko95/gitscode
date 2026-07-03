@@ -3,6 +3,9 @@
 Checklist-style reference for running the GITS cockpit service inside WSL2 on a Windows host.
 Covers `.wslconfig`, networking modes, and filesystem placement.
 
+For running GITS on a native Linux VPS (no Windows involved) see
+[`docs/vps-hosting.md`](vps-hosting.md).
+
 For Linux-native performance benchmarks (ext4 vs APFS, worktree speed, CPU overhead) see
 [`docs/linux-remote-dev-performance.md`](linux-remote-dev-performance.md).
 
