@@ -14,10 +14,10 @@ gits is the tool that enables the remote-dev workflow Theo describes. The file s
 
 Theo's benchmark: `git clean` + `pnpm install` from cache on a multi-package repo.
 
-| Setup | `git clean` | `pnpm install` |
-|-------|------------|----------------|
-| Linux (ext4, Framework desktop) | ~2.5s | ~7.3s |
-| macOS (APFS, M5 Max MacBook Pro) | ~20–35s | ~35s |
+| Setup                            | `git clean` | `pnpm install` |
+| -------------------------------- | ----------- | -------------- |
+| Linux (ext4, Framework desktop)  | ~2.5s       | ~7.3s          |
+| macOS (APFS, M5 Max MacBook Pro) | ~20–35s     | ~35s           |
 
 ext4 is **10–30× faster** for small-file-heavy operations — worktree creation, cache restores, PNPM installs — exactly the pattern sub-agent workflows use constantly.
 
@@ -30,6 +30,7 @@ On Linux this process-tracking overhead doesn't exist, so multi-agent runs use a
 ### 3. Remote Session UX
 
 Theo's solution: SSH → auto-attach tmux + T3 Code (gits) served over Tailscale. This gives:
+
 - Session persistence across disconnects
 - Image paste support (blocked over plain SSH)
 - Full terminal + GUI in one interface
@@ -68,6 +69,7 @@ btop
 ```
 
 Watch for:
+
 - Any core sustained >50%
 - `syspolicyd` appearing in top processes (macOS only — signals the process-spawn tax)
 
@@ -101,14 +103,14 @@ If empty, add to `~/.bashrc` on the remote:
 
 ## Quick Verdict Table
 
-| Metric | Healthy | Action if failing |
-|--------|---------|-------------------|
-| `git clean` time | < 10s | Move work to Linux box |
-| `pnpm install` (cold) | < 10s | Move work to Linux box |
-| Worktree add + install | < 15s | Move work to Linux box |
-| `syspolicyd` CPU | < 5% | Move sub-agent work off Mac |
-| Tailscale ping | < 10ms LAN / < 30ms remote | Check Tailscale exit node / routing |
-| tmux sessions on remote | persistent | Add auto-attach to `.bashrc` |
+| Metric                  | Healthy                    | Action if failing                   |
+| ----------------------- | -------------------------- | ----------------------------------- |
+| `git clean` time        | < 10s                      | Move work to Linux box              |
+| `pnpm install` (cold)   | < 10s                      | Move work to Linux box              |
+| Worktree add + install  | < 15s                      | Move work to Linux box              |
+| `syspolicyd` CPU        | < 5%                       | Move sub-agent work off Mac         |
+| Tailscale ping          | < 10ms LAN / < 30ms remote | Check Tailscale exit node / routing |
+| tmux sessions on remote | persistent                 | Add auto-attach to `.bashrc`        |
 
 ---
 
