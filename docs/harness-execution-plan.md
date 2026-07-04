@@ -1,5 +1,11 @@
 # GITS Harness Execution Plan — Final Audit Consolidation
 
+> **Execution outcome (2026-07-04):** Waves 0–6 executed.
+>
+> **W4.3 DEFERRED.** W4.1 baseline showed the latency amplification is the engine's single command fiber, not the reactors. Keyed reactors (`KeyedCoalescingWorker`) would not fix the measured pain; the root cause is the engine's serialization boundary. Engine redesign remains explicitly out of scope. Revisit at VPS scale.
+>
+> **W4.7 DEFERRED.** Cold-start replay measurement requires an on-disk event log >500 events to produce meaningful numbers. Trigger and prerequisites are documented in the plan 22 context; execute when that threshold is reached.
+
 **Date:** 2026-07-03
 **Sources reconciled:** `docs/performance-optimization-plan.md` (perf tiers), `docs/audit-2026-07.md` (9-category audit), and the Fable harness engineering prompt (4 workstreams: orchestration perf, worktree lifecycle/Graveyard, security hardening, deployment topologies).
 **Purpose:** one task-by-task plan, wave-ordered and file-scoped, so execution agents can be spun up in parallel without collisions. Operating model: Fable orchestrates, Sonnet agents execute (Codex selectable per task) — see §4.
