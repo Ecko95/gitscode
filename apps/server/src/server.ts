@@ -71,6 +71,7 @@ import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { GraveyardOrphanAdopterLive } from "./vcs/GraveyardOrphanAdopter.ts";
+import { GraveyardReaperLive } from "./vcs/GraveyardReaper.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -417,10 +418,13 @@ const RuntimeDependenciesBaseLive = RuntimeCoreDependenciesLive.pipe(
 // be merged as siblings — otherwise their requirements leak to the server launch layer.
 // GraveyardOrphanAdopterLive additionally needs PlatformServicesLive (FileSystem, Path,
 // Crypto) which is provided at the outermost layer; provide it explicitly here.
+// GraveyardReaperLive follows the same pattern as GraveyardOrphanAdopterLive (needs
+// PlatformServicesLive for FileSystem + Crypto).
 const RuntimeDependenciesLive = Layer.mergeAll(
   CritSidecarManagerLive,
   VisualPlanMcpServiceLive,
   GraveyardOrphanAdopterLive,
+  GraveyardReaperLive,
 ).pipe(Layer.provideMerge(RuntimeDependenciesBaseLive), Layer.provideMerge(PlatformServicesLive));
 
 const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
