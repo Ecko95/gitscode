@@ -155,7 +155,7 @@ export const critTurnRouteLayer = HttpRouter.add(
       ),
     );
 
-    yield* authorize(body.threadId);
+    const session = yield* authorize(body.threadId);
 
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
@@ -199,7 +199,7 @@ export const critTurnRouteLayer = HttpRouter.add(
           }),
       ),
     );
-    yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
+    yield* orchestrationEngine.dispatch(normalizedCommand, "delamain", session.role).pipe(
       Effect.mapError(
         (cause) =>
           new CritHttpError({

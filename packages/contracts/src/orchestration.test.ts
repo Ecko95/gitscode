@@ -741,3 +741,70 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
     assert.strictEqual(result._tag, "Failure");
   }),
 );
+
+// ── Plan 23 (W5.3): actor identity + command.denied replay fixtures ────────
+//
+// These tests verify backward-compat decode of the widened OrchestrationActorKind
+// schema and the new command.denied event type.
+
+it.effect("decodes pre-actor event with legacy 'client' actor_kind without error", () =>
+  Effect.gen(function* () {
+    // Simulate a row persisted before plan 23 where actor_kind was 'client'
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 99,
+      eventId: "evt-legacy-client",
+      aggregateKind: "thread",
+      aggregateId: "thread-legacy-1",
+      type: "thread.created",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-legacy-1",
+      causationEventId: null,
+      correlationId: "cmd-legacy-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-legacy-1",
+        projectId: "project-1",
+        title: "Legacy thread",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "thread.created");
+  }),
+);
+
+it.effect("decodes command.denied event (plan 23 actor authorization receipt)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 100,
+      eventId: "evt-denied-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "command.denied",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-denied-1",
+      causationEventId: null,
+      correlationId: "cmd-denied-1",
+      metadata: {},
+      payload: {
+        commandType: "thread.turn.start",
+        commandId: "cmd-denied-1",
+        actorKind: "delamain",
+        reason: "Actor 'delamain' is not authorized for command 'thread.turn.start'.",
+        deniedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    if (parsed.type !== "command.denied") {
+      assert.fail(`Expected command.denied event, received ${parsed.type}.`);
+    }
+    assert.strictEqual(parsed.payload.actorKind, "delamain");
+    assert.strictEqual(parsed.payload.commandType, "thread.turn.start");
+  }),
+);

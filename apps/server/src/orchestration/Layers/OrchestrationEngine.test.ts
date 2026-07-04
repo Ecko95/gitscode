@@ -223,12 +223,15 @@ describe("OrchestrationEngine", () => {
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const result = await runtime.runPromise(
-      engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-bootstrap-thread-update"),
-        threadId: ThreadId.make("thread-bootstrap"),
-        title: "Updated Bootstrap Thread",
-      }),
+      engine.dispatch(
+        {
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-bootstrap-thread-update"),
+          threadId: ThreadId.make("thread-bootstrap"),
+          title: "Updated Bootstrap Thread",
+        },
+        "server",
+      ),
     );
 
     expect(result.sequence).toBe(8);
@@ -243,52 +246,61 @@ describe("OrchestrationEngine", () => {
     const { engine } = system;
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-1-create"),
-        projectId: asProjectId("project-1"),
-        title: "Project 1",
-        workspaceRoot: "/tmp/project-1",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-1-create"),
+          projectId: asProjectId("project-1"),
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-1-create"),
-        threadId: ThreadId.make("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-1-create"),
+          threadId: ThreadId.make("thread-1"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await system.run(
-      engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-1"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("msg-1"),
-          role: "user",
-          text: "hello",
-          attachments: [],
+      engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-1"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("msg-1"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     const readModelA = await system.readModel();
@@ -303,44 +315,53 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-archive-create"),
-        projectId: asProjectId("project-archive"),
-        title: "Project Archive",
-        workspaceRoot: "/tmp/project-archive",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-archive-create"),
+          projectId: asProjectId("project-archive"),
+          title: "Project Archive",
+          workspaceRoot: "/tmp/project-archive",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-archive-create"),
-        threadId: ThreadId.make("thread-archive"),
-        projectId: asProjectId("project-archive"),
-        title: "Archive me",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-archive-create"),
+          threadId: ThreadId.make("thread-archive"),
+          projectId: asProjectId("project-archive"),
+          title: "Archive me",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "full-access",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     await system.run(
-      engine.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("cmd-thread-archive"),
-        threadId: ThreadId.make("thread-archive"),
-      }),
+      engine.dispatch(
+        {
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-thread-archive"),
+          threadId: ThreadId.make("thread-archive"),
+        },
+        "server",
+      ),
     );
     expect(
       (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
@@ -348,11 +369,14 @@ describe("OrchestrationEngine", () => {
     ).not.toBeNull();
 
     await system.run(
-      engine.dispatch({
-        type: "thread.unarchive",
-        commandId: CommandId.make("cmd-thread-unarchive"),
-        threadId: ThreadId.make("thread-archive"),
-      }),
+      engine.dispatch(
+        {
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-thread-unarchive"),
+          threadId: ThreadId.make("thread-archive"),
+        },
+        "server",
+      ),
     );
     expect(
       (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
@@ -368,43 +392,52 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-replay-create"),
-        projectId: asProjectId("project-replay"),
-        title: "Replay Project",
-        workspaceRoot: "/tmp/project-replay",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-replay-create"),
+          projectId: asProjectId("project-replay"),
+          title: "Replay Project",
+          workspaceRoot: "/tmp/project-replay",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-replay-create"),
-        threadId: ThreadId.make("thread-replay"),
-        projectId: asProjectId("project-replay"),
-        title: "replay",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-replay-create"),
+          threadId: ThreadId.make("thread-replay"),
+          projectId: asProjectId("project-replay"),
+          title: "replay",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await system.run(
-      engine.dispatch({
-        type: "thread.delete",
-        commandId: CommandId.make("cmd-thread-replay-delete"),
-        threadId: ThreadId.make("thread-replay"),
-      }),
+      engine.dispatch(
+        {
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-thread-replay-delete"),
+          threadId: ThreadId.make("thread-replay"),
+        },
+        "server",
+      ),
     );
 
     const events = await system.run(
@@ -426,18 +459,21 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-stream-create"),
-        projectId: asProjectId("project-stream"),
-        title: "Stream Project",
-        workspaceRoot: "/tmp/project-stream",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-stream-create"),
+          projectId: asProjectId("project-stream"),
+          title: "Stream Project",
+          workspaceRoot: "/tmp/project-stream",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     const eventTypes: string[] = [];
@@ -450,28 +486,34 @@ describe("OrchestrationEngine", () => {
           ),
         );
         yield* Effect.sleep("10 millis");
-        yield* engine.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("cmd-stream-thread-create"),
-          threadId: ThreadId.make("thread-stream"),
-          projectId: asProjectId("project-stream"),
-          title: "domain-stream",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5-codex",
+        yield* engine.dispatch(
+          {
+            type: "thread.create",
+            commandId: CommandId.make("cmd-stream-thread-create"),
+            threadId: ThreadId.make("thread-stream"),
+            projectId: asProjectId("project-stream"),
+            title: "domain-stream",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt,
           },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          branch: null,
-          worktreePath: null,
-          createdAt,
-        });
-        yield* engine.dispatch({
-          type: "thread.meta.update",
-          commandId: CommandId.make("cmd-stream-thread-update"),
-          threadId: ThreadId.make("thread-stream"),
-          title: "domain-stream-updated",
-        });
+          "server",
+        );
+        yield* engine.dispatch(
+          {
+            type: "thread.meta.update",
+            commandId: CommandId.make("cmd-stream-thread-update"),
+            threadId: ThreadId.make("thread-stream"),
+            title: "domain-stream-updated",
+          },
+          "server",
+        );
         eventTypes.push((yield* Queue.take(eventQueue)).type);
         eventTypes.push((yield* Queue.take(eventQueue)).type);
       }).pipe(Effect.scoped),
@@ -487,37 +529,43 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-ack-create"),
-        projectId: asProjectId("project-ack"),
-        title: "Ack Project",
-        workspaceRoot: "/tmp/project-ack",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-ack-create"),
+          projectId: asProjectId("project-ack"),
+          title: "Ack Project",
+          workspaceRoot: "/tmp/project-ack",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-ack-create"),
-        threadId: ThreadId.make("thread-ack"),
-        projectId: asProjectId("project-ack"),
-        title: "Ack Thread",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-ack-create"),
+          threadId: ThreadId.make("thread-ack"),
+          projectId: asProjectId("project-ack"),
+          title: "Ack Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "full-access",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     const snapshots = await system.run(Metric.snapshot);
@@ -539,22 +587,25 @@ describe("OrchestrationEngine", () => {
 
     await expect(
       system.run(
-        engine.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("cmd-thread-missing-project"),
-          threadId: ThreadId.make("thread-missing-project"),
-          projectId: asProjectId("project-missing"),
-          title: "Missing Project Thread",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5-codex",
+        engine.dispatch(
+          {
+            type: "thread.create",
+            commandId: CommandId.make("cmd-thread-missing-project"),
+            threadId: ThreadId.make("thread-missing-project"),
+            projectId: asProjectId("project-missing"),
+            title: "Missing Project Thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
           },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "full-access",
-          branch: null,
-          worktreePath: null,
-          createdAt,
-        }),
+          "server",
+        ),
       ),
     ).rejects.toThrow("does not exist");
 
@@ -576,50 +627,59 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-turn-diff-create"),
-        projectId: asProjectId("project-turn-diff"),
-        title: "Turn Diff Project",
-        workspaceRoot: "/tmp/project-turn-diff",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-turn-diff-create"),
+          projectId: asProjectId("project-turn-diff"),
+          title: "Turn Diff Project",
+          workspaceRoot: "/tmp/project-turn-diff",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-turn-diff-create"),
-        threadId: ThreadId.make("thread-turn-diff"),
-        projectId: asProjectId("project-turn-diff"),
-        title: "Turn diff thread",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-turn-diff-create"),
+          threadId: ThreadId.make("thread-turn-diff"),
+          projectId: asProjectId("project-turn-diff"),
+          title: "Turn diff thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await system.run(
-      engine.dispatch({
-        type: "thread.turn.diff.complete",
-        commandId: CommandId.make("cmd-turn-diff-complete"),
-        threadId: ThreadId.make("thread-turn-diff"),
-        turnId: asTurnId("turn-1"),
-        completedAt: createdAt,
-        checkpointRef: asCheckpointRef("refs/t3/checkpoints/thread-turn-diff/turn/1"),
-        status: "ready",
-        files: [],
-        checkpointTurnCount: 1,
-        createdAt,
-      }),
+      engine.dispatch(
+        {
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make("cmd-turn-diff-complete"),
+          threadId: ThreadId.make("thread-turn-diff"),
+          turnId: asTurnId("turn-1"),
+          completedAt: createdAt,
+          checkpointRef: asCheckpointRef("refs/t3/checkpoints/thread-turn-diff/turn/1"),
+          status: "ready",
+          files: [],
+          checkpointTurnCount: 1,
+          createdAt,
+        },
+        "server",
+      ),
     );
 
     const thread = (await system.readModel()).threads.find(
@@ -699,28 +759,55 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await runtime.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-flaky-create"),
-        projectId: asProjectId("project-flaky"),
-        title: "Flaky Project",
-        workspaceRoot: "/tmp/project-flaky",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-flaky-create"),
+          projectId: asProjectId("project-flaky"),
+          title: "Flaky Project",
+          workspaceRoot: "/tmp/project-flaky",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     await expect(
       runtime.runPromise(
-        engine.dispatch({
+        engine.dispatch(
+          {
+            type: "thread.create",
+            commandId: CommandId.make("cmd-flaky-1"),
+            threadId: ThreadId.make("thread-flaky-fail"),
+            projectId: asProjectId("project-flaky"),
+            title: "flaky-fail",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          },
+          "server",
+        ),
+      ),
+    ).rejects.toThrow("append failed");
+
+    const result = await runtime.runPromise(
+      engine.dispatch(
+        {
           type: "thread.create",
-          commandId: CommandId.make("cmd-flaky-1"),
-          threadId: ThreadId.make("thread-flaky-fail"),
+          commandId: CommandId.make("cmd-flaky-2"),
+          threadId: ThreadId.make("thread-flaky-ok"),
           projectId: asProjectId("project-flaky"),
-          title: "flaky-fail",
+          title: "flaky-ok",
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -730,27 +817,9 @@ describe("OrchestrationEngine", () => {
           branch: null,
           worktreePath: null,
           createdAt,
-        }),
-      ),
-    ).rejects.toThrow("append failed");
-
-    const result = await runtime.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-flaky-2"),
-        threadId: ThreadId.make("thread-flaky-ok"),
-        projectId: asProjectId("project-flaky"),
-        title: "flaky-ok",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     expect(result.sequence).toBe(2);
@@ -803,36 +872,42 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await runtime.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-atomic-create"),
-        projectId: asProjectId("project-atomic"),
-        title: "Atomic Project",
-        workspaceRoot: "/tmp/project-atomic",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-atomic-create"),
+          projectId: asProjectId("project-atomic"),
+          title: "Atomic Project",
+          workspaceRoot: "/tmp/project-atomic",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await runtime.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-atomic-create"),
-        threadId: ThreadId.make("thread-atomic"),
-        projectId: asProjectId("project-atomic"),
-        title: "atomic",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-atomic-create"),
+          threadId: ThreadId.make("thread-atomic"),
+          projectId: asProjectId("project-atomic"),
+          title: "atomic",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     const turnStartCommand = {
@@ -850,7 +925,7 @@ describe("OrchestrationEngine", () => {
       createdAt,
     };
 
-    await expect(runtime.runPromise(engine.dispatch(turnStartCommand))).rejects.toThrow(
+    await expect(runtime.runPromise(engine.dispatch(turnStartCommand, "server"))).rejects.toThrow(
       "projection failed",
     );
 
@@ -864,7 +939,7 @@ describe("OrchestrationEngine", () => {
       "thread.created",
     ]);
 
-    const retryResult = await runtime.runPromise(engine.dispatch(turnStartCommand));
+    const retryResult = await runtime.runPromise(engine.dispatch(turnStartCommand, "server"));
     expect(retryResult.sequence).toBe(4);
 
     const eventsAfterRetry = await runtime.runPromise(
@@ -950,55 +1025,67 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await runtime.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-sync-create"),
-        projectId: asProjectId("project-sync"),
-        title: "Sync Project",
-        workspaceRoot: "/tmp/project-sync",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-sync-create"),
+          projectId: asProjectId("project-sync"),
+          title: "Sync Project",
+          workspaceRoot: "/tmp/project-sync",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
     await runtime.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-sync-create"),
-        threadId: ThreadId.make("thread-sync"),
-        projectId: asProjectId("project-sync"),
-        title: "sync-before",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-sync-create"),
+          threadId: ThreadId.make("thread-sync"),
+          projectId: asProjectId("project-sync"),
+          title: "sync-before",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     await expect(
       runtime.runPromise(
-        engine.dispatch({
-          type: "thread.archive",
-          commandId: CommandId.make("cmd-thread-archive-sync-fail"),
-          threadId: ThreadId.make("thread-sync"),
-        }),
+        engine.dispatch(
+          {
+            type: "thread.archive",
+            commandId: CommandId.make("cmd-thread-archive-sync-fail"),
+            threadId: ThreadId.make("thread-sync"),
+          },
+          "server",
+        ),
       ),
     ).rejects.toThrow("projection failed");
 
     await expect(
       runtime.runPromise(
-        engine.dispatch({
-          type: "thread.archive",
-          commandId: CommandId.make("cmd-thread-archive-sync-retry"),
-          threadId: ThreadId.make("thread-sync"),
-        }),
+        engine.dispatch(
+          {
+            type: "thread.archive",
+            commandId: CommandId.make("cmd-thread-archive-sync-retry"),
+            threadId: ThreadId.make("thread-sync"),
+          },
+          "server",
+        ),
       ),
     ).rejects.toThrow("already archived");
 
@@ -1011,20 +1098,23 @@ describe("OrchestrationEngine", () => {
 
     await expect(
       system.run(
-        engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make("cmd-invariant-missing-thread"),
-          threadId: ThreadId.make("thread-missing"),
-          message: {
-            messageId: asMessageId("msg-missing"),
-            role: "user",
-            text: "hello",
-            attachments: [],
+        engine.dispatch(
+          {
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-invariant-missing-thread"),
+            threadId: ThreadId.make("thread-missing"),
+            message: {
+              messageId: asMessageId("msg-missing"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: now(),
           },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          createdAt: now(),
-        }),
+          "server",
+        ),
       ),
     ).rejects.toThrow("Thread 'thread-missing' does not exist");
 
@@ -1037,44 +1127,28 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-duplicate-create"),
-        projectId: asProjectId("project-duplicate"),
-        title: "Duplicate Project",
-        workspaceRoot: "/tmp/project-duplicate",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-duplicate-create"),
+          projectId: asProjectId("project-duplicate"),
+          title: "Duplicate Project",
+          workspaceRoot: "/tmp/project-duplicate",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
         },
-        createdAt,
-      }),
+        "server",
+      ),
     );
 
     await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-duplicate-1"),
-        threadId: ThreadId.make("thread-duplicate"),
-        projectId: asProjectId("project-duplicate"),
-        title: "duplicate",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
-    );
-
-    await expect(
-      system.run(
-        engine.dispatch({
+      engine.dispatch(
+        {
           type: "thread.create",
-          commandId: CommandId.make("cmd-thread-duplicate-2"),
+          commandId: CommandId.make("cmd-thread-duplicate-1"),
           threadId: ThreadId.make("thread-duplicate"),
           projectId: asProjectId("project-duplicate"),
           title: "duplicate",
@@ -1087,7 +1161,32 @@ describe("OrchestrationEngine", () => {
           branch: null,
           worktreePath: null,
           createdAt,
-        }),
+        },
+        "server",
+      ),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch(
+          {
+            type: "thread.create",
+            commandId: CommandId.make("cmd-thread-duplicate-2"),
+            threadId: ThreadId.make("thread-duplicate"),
+            projectId: asProjectId("project-duplicate"),
+            title: "duplicate",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          },
+          "server",
+        ),
       ),
     ).rejects.toThrow("already exists");
 
