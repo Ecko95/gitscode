@@ -47,11 +47,39 @@ export interface OrchestrationEventStoreShape {
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
   /**
-   * Read all events from the beginning of the stream.
+   * Read all events from the beginning of the hot table stream.
    *
    * @returns Stream containing all stored events.
    */
   readonly readAll: () => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+
+  /**
+   * Read all events from both hot table and archive table, ordered by sequence ASC.
+   *
+   * Used by the projection rebuild CLI when --include-archive is passed.
+   *
+   * @returns Stream of all events across both tables in sequence order.
+   */
+  readonly readAllWithArchive: () => Stream.Stream<
+    OrchestrationEvent,
+    OrchestrationEventStoreError
+  >;
+
+  /**
+   * Move eligible closed-thread events to orchestration_events_archive.
+   *
+   * Events are eligible when:
+   * - The thread is fully deleted (projection_threads.deleted_at IS NOT NULL)
+   * - The thread was deleted more than retentionDays ago
+   * - No in-flight worktree.retiring-started (without a matching worktree.buried) exists
+   * - aggregate_kind = 'thread' (project events are never archived)
+   *
+   * @param retentionDays - Age threshold in days. 0 = disabled.
+   * @returns Count of archived events.
+   */
+  readonly archiveEligibleEvents: (
+    retentionDays: number,
+  ) => Effect.Effect<number, OrchestrationEventStoreError>;
 }
 
 /**
