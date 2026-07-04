@@ -381,11 +381,13 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         yield* graveyardReaper.start().pipe(Scope.provide(reactorScope));
         yield* inactivityReapRetirementReactor.start().pipe(Scope.provide(reactorScope));
         // Sweep orphaned shim dirs left by crashed sessions (once + every 24h).
-        yield* gitShimManager.sweepStale().pipe(
-          Effect.repeat(Schedule.spaced(Duration.hours(24))),
-          Effect.forkScoped,
-          Scope.provide(reactorScope),
-        );
+        yield* gitShimManager
+          .sweepStale()
+          .pipe(
+            Effect.repeat(Schedule.spaced(Duration.hours(24))),
+            Effect.forkScoped,
+            Scope.provide(reactorScope),
+          );
       }),
     );
 

@@ -1058,10 +1058,7 @@ export function makeOpenCodeAdapter(
         const started = yield* Effect.gen(function* () {
           const sessionScope = yield* Scope.make();
           if (options?.gitShimManager && Object.keys(openCodeShimEnv).length > 0) {
-            yield* Scope.addFinalizer(
-              sessionScope,
-              options.gitShimManager.release(input.threadId),
-            );
+            yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
           }
           const startedExit = yield* Effect.exit(
             Effect.gen(function* () {

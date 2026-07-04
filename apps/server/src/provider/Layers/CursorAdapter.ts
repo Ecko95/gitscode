@@ -547,10 +547,7 @@ export function makeCursorAdapter(
             ? (yield* options.gitShimManager.allocate(input.threadId, cwd)).vars
             : {};
           if (options?.gitShimManager && Object.keys(cursorShimEnv).length > 0) {
-            yield* Scope.addFinalizer(
-              sessionScope,
-              options.gitShimManager.release(input.threadId),
-            );
+            yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
           }
           const cursorSessionEnv: NodeJS.ProcessEnv | undefined =
             options?.environment != null || Object.keys(cursorShimEnv).length > 0

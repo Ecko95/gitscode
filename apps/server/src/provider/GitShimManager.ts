@@ -23,8 +23,6 @@
  *
  * @module provider/GitShimManager
  */
-import * as NodePath from "node:path";
-
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -53,179 +51,165 @@ const STALE_THRESHOLD_MS = Duration.toMillis(Duration.hours(24));
 // ── Service shape ─────────────────────────────────────────────────────────────
 
 export interface GitShimEnv {
-	/** Env vars to merge into the provider child's processEnv before spawn. */
-	readonly vars: Record<string, string>;
+  /** Env vars to merge into the provider child's processEnv before spawn. */
+  readonly vars: Record<string, string>;
 }
 
 export interface GitShimManagerShape {
-	/**
-	 * Create a shim dir for `sessionId`, write the `git` script that enforces
-	 * `allowedRoot` containment, and return the env vars to inject.
-	 *
-	 * Callers are responsible for calling `release(sessionId)` when the session
-	 * ends. Codex/Cursor/OpenCode adapters do this via a Scope finalizer;
-	 * ClaudeAdapter calls release explicitly in stopSessionInternal.
-	 */
-	readonly allocate: (sessionId: string, allowedRoot: string) => Effect.Effect<GitShimEnv>;
+  /**
+   * Create a shim dir for `sessionId`, write the `git` script that enforces
+   * `allowedRoot` containment, and return the env vars to inject.
+   *
+   * Callers are responsible for calling `release(sessionId)` when the session
+   * ends. Codex/Cursor/OpenCode adapters do this via a Scope finalizer;
+   * ClaudeAdapter calls release explicitly in stopSessionInternal.
+   */
+  readonly allocate: (sessionId: string, allowedRoot: string) => Effect.Effect<GitShimEnv>;
 
-	/**
-	 * Remove the shim dir for `sessionId` immediately.
-	 * No-op if the dir does not exist.
-	 */
-	readonly release: (sessionId: string) => Effect.Effect<void>;
+  /**
+   * Remove the shim dir for `sessionId` immediately.
+   * No-op if the dir does not exist.
+   */
+  readonly release: (sessionId: string) => Effect.Effect<void>;
 
-	/**
-	 * Sweep shim dirs older than 24 h. Called once at server startup.
-	 * Fire-and-forget safe (errors are logged, never propagated).
-	 */
-	readonly sweepStale: () => Effect.Effect<void>;
+  /**
+   * Sweep shim dirs older than 24 h. Called once at server startup.
+   * Fire-and-forget safe (errors are logged, never propagated).
+   */
+  readonly sweepStale: () => Effect.Effect<void>;
 }
 
 // ── Context tag ───────────────────────────────────────────────────────────────
 
 export class GitShimManager extends Context.Service<GitShimManager, GitShimManagerShape>()(
-	"t3/provider/GitShimManager",
+  "t3/provider/GitShimManager",
 ) {}
 
 // ── Service implementation ─────────────────────────────────────────────────────
 
 const makeGitShimManager: Effect.Effect<
-	GitShimManagerShape,
-	never,
-	FileSystem.FileSystem | Path.Path | ServerConfig
+  GitShimManagerShape,
+  never,
+  FileSystem.FileSystem | Path.Path | ServerConfig
 > = Effect.gen(function* () {
-	const fs = yield* FileSystem.FileSystem;
-	const path = yield* Path.Path;
-	const serverConfig = yield* ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig;
 
-	// Shim dir root: under baseDir (ext4, user-controlled, never noexec).
-	// /tmp may be mounted noexec — the shim executable would silently fall
-	// through to the real git binary, defeating the entire confinement.
-	const shimsRoot = path.join(serverConfig.baseDir, SHIMS_SUBDIR);
+  // Shim dir root: under baseDir (ext4, user-controlled, never noexec).
+  // /tmp may be mounted noexec — the shim executable would silently fall
+  // through to the real git binary, defeating the entire confinement.
+  const shimsRoot = path.join(serverConfig.baseDir, SHIMS_SUBDIR);
 
-	// Resolve the real git binary from the server's own PATH once at
-	// startup. The shim child env gets GITS_REAL_GIT pointing here.
-	// ponytail: resolve once — git path never changes at runtime for us.
-	const realGit = yield* Effect.sync(() => {
-		// Walk the server's PATH entries to find the first `git` binary.
-		// Cannot use `which` here (no shell); replicate it manually.
-		const pathDirs = (process.env["PATH"] ?? "").split(NodePath.delimiter);
-		for (const dir of pathDirs) {
-			if (!dir) continue;
-			const candidate = NodePath.join(dir, "git");
-			// Return the first non-shims-root candidate to avoid self-reference.
-			if (!candidate.startsWith(shimsRoot)) return candidate;
-		}
-		return "/usr/bin/git"; // safe fallback
-	});
+  // Resolve the real git binary from the server's own PATH once at
+  // startup. The shim child env gets GITS_REAL_GIT pointing here.
+  // ponytail: resolve once — git path never changes at runtime for us.
+  const realGit = yield* Effect.sync(() => {
+    // Walk the server's PATH entries to find the first `git` binary.
+    // Cannot use `which` here (no shell); replicate it manually.
+    const pathDirs = (process.env["PATH"] ?? "").split(":");
+    for (const dir of pathDirs) {
+      if (!dir) continue;
+      const candidate = path.join(dir, "git");
+      // Return the first non-shims-root candidate to avoid self-reference.
+      if (!candidate.startsWith(shimsRoot)) return candidate;
+    }
+    return "/usr/bin/git"; // safe fallback
+  });
 
-	const shimScript = gitShimScript;
+  const shimScript = gitShimScript;
 
-	function shimDirFor(sessionId: string): string {
-		return path.join(shimsRoot, sessionId);
-	}
+  function shimDirFor(sessionId: string): string {
+    return path.join(shimsRoot, sessionId);
+  }
 
-	function shimPathFor(sessionId: string): string {
-		return path.join(shimDirFor(sessionId), "git");
-	}
+  function shimPathFor(sessionId: string): string {
+    return path.join(shimDirFor(sessionId), "git");
+  }
 
-	const allocate = (
-		sessionId: string,
-		allowedRoot: string,
-	): Effect.Effect<GitShimEnv> =>
-		Effect.gen(function* () {
-			const shimDir = shimDirFor(sessionId);
-			const shimPath = shimPathFor(sessionId);
+  const allocate = (sessionId: string, allowedRoot: string): Effect.Effect<GitShimEnv> =>
+    Effect.gen(function* () {
+      const shimDir = shimDirFor(sessionId);
+      const shimPath = shimPathFor(sessionId);
 
-			yield* fs.makeDirectory(shimDir, { recursive: true });
-			yield* fs.writeFileString(shimPath, shimScript);
-			// chmod 755: owner rwx, group rx, other rx — executable by child process.
-			yield* fs.chmod(shimPath, 0o755);
+      yield* fs.makeDirectory(shimDir, { recursive: true });
+      yield* fs.writeFileString(shimPath, shimScript);
+      // chmod 755: owner rwx, group rx, other rx — executable by child process.
+      yield* fs.chmod(shimPath, 0o755);
 
-			const vars: Record<string, string> = {
-				// Prepend shim dir to PATH so bare `git` resolves to our script.
-				PATH: `${shimDir}${NodePath.delimiter}${process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"}`,
-				GITS_REAL_GIT: realGit,
-				GITS_ALLOWED_ROOT: allowedRoot,
-				GITS_PROTECTED_BRANCHES: PROTECTED_BRANCHES,
-			};
+      const vars: Record<string, string> = {
+        // Prepend shim dir to PATH so bare `git` resolves to our script.
+        PATH: `${shimDir}:${process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"}`,
+        GITS_REAL_GIT: realGit,
+        GITS_ALLOWED_ROOT: allowedRoot,
+        GITS_PROTECTED_BRANCHES: PROTECTED_BRANCHES,
+      };
 
-			yield* Effect.logDebug("git-shim.allocated", {
-				sessionId,
-				shimDir,
-				allowedRoot,
-			});
+      yield* Effect.logDebug("git-shim.allocated", {
+        sessionId,
+        shimDir,
+        allowedRoot,
+      });
 
-			return { vars } satisfies GitShimEnv;
-		}).pipe(
-			Effect.catch((err) => {
-				// Shim creation failure must not break session startup.
-				// Log and return an empty env (no confinement, but sessions proceed).
-				return Effect.logWarning("git-shim.allocate-failed", { sessionId, err }).pipe(
-					Effect.as({ vars: {} } satisfies GitShimEnv),
-				);
-			}),
-		);
+      return { vars } satisfies GitShimEnv;
+    }).pipe(
+      Effect.catch((err) => {
+        // Shim creation failure must not break session startup.
+        // Log and return an empty env (no confinement, but sessions proceed).
+        return Effect.logWarning("git-shim.allocate-failed", { sessionId, err }).pipe(
+          Effect.as({ vars: {} } satisfies GitShimEnv),
+        );
+      }),
+    );
 
-	const release = (sessionId: string): Effect.Effect<void> =>
-		fs.remove(shimDirFor(sessionId), { recursive: true, force: true }).pipe(
-			Effect.tap(() =>
-				Effect.logDebug("git-shim.released", { sessionId }),
-			),
-			Effect.catch((err) =>
-				Effect.logWarning("git-shim.release-failed", { sessionId, err }),
-			),
-		);
+  const release = (sessionId: string): Effect.Effect<void> =>
+    fs.remove(shimDirFor(sessionId), { recursive: true, force: true }).pipe(
+      Effect.tap(() => Effect.logDebug("git-shim.released", { sessionId })),
+      Effect.catch((err) => Effect.logWarning("git-shim.release-failed", { sessionId, err })),
+    );
 
-	const sweepStale = (): Effect.Effect<void> =>
-		Effect.gen(function* () {
-			const now = yield* DateTime.now;
-			const nowMs = DateTime.toEpochMillis(now);
+  const sweepStale = (): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const nowMs = DateTime.toEpochMillis(now);
 
-			const exists = yield* fs
-				.stat(shimsRoot)
-				.pipe(Effect.map(() => true), Effect.catch(() => Effect.succeed(false)));
-			if (!exists) return;
+      const exists = yield* fs.stat(shimsRoot).pipe(
+        Effect.map(() => true),
+        Effect.catch(() => Effect.succeed(false)),
+      );
+      if (!exists) return;
 
-			const entries = yield* fs
-				.readDirectory(shimsRoot, { recursive: false })
-				.pipe(Effect.catch(() => Effect.succeed([] as string[])));
+      const entries = yield* fs
+        .readDirectory(shimsRoot, { recursive: false })
+        .pipe(Effect.catch(() => Effect.succeed([] as string[])));
 
-			for (const entryName of entries) {
-				const entryPath = path.join(shimsRoot, entryName);
-				const stat = yield* fs
-					.stat(entryPath)
-					.pipe(Effect.catch(() => Effect.succeed(null)));
-				if (!stat) continue;
+      for (const entryName of entries) {
+        const entryPath = path.join(shimsRoot, entryName);
+        const stat = yield* fs.stat(entryPath).pipe(Effect.catch(() => Effect.succeed(null)));
+        if (!stat) continue;
 
-				// Use mtime to determine age. Effect FileSystem.File.Info.mtime is Option<Date>.
-				const mtimeMs = Option.isSome(stat.mtime) ? stat.mtime.value.getTime() : 0;
-				if (nowMs - mtimeMs > STALE_THRESHOLD_MS) {
-					yield* fs.remove(entryPath, { recursive: true, force: true }).pipe(
-						Effect.tap(() =>
-							Effect.logInfo("git-shim.swept-stale", { entry: entryName }),
-						),
-						Effect.catch((err) =>
-							Effect.logWarning("git-shim.sweep-failed", { entry: entryName, err }),
-						),
-					);
-				}
-			}
-		}).pipe(
-			Effect.catch((err) =>
-				Effect.logWarning("git-shim.sweep-error", { err }),
-			),
-		);
+        // Use mtime to determine age. Effect FileSystem.File.Info.mtime is Option<Date>.
+        const mtimeMs = Option.isSome(stat.mtime) ? stat.mtime.value.getTime() : 0;
+        if (nowMs - mtimeMs > STALE_THRESHOLD_MS) {
+          yield* fs.remove(entryPath, { recursive: true, force: true }).pipe(
+            Effect.tap(() => Effect.logInfo("git-shim.swept-stale", { entry: entryName })),
+            Effect.catch((err) =>
+              Effect.logWarning("git-shim.sweep-failed", { entry: entryName, err }),
+            ),
+          );
+        }
+      }
+    }).pipe(Effect.catch((err) => Effect.logWarning("git-shim.sweep-error", { err })));
 
-	return { allocate, release, sweepStale } satisfies GitShimManagerShape;
+  return { allocate, release, sweepStale } satisfies GitShimManagerShape;
 });
 
 // ── Live layer ────────────────────────────────────────────────────────────────
 
 export const GitShimManagerLive: Layer.Layer<
-	GitShimManager,
-	never,
-	FileSystem.FileSystem | Path.Path | ServerConfig
+  GitShimManager,
+  never,
+  FileSystem.FileSystem | Path.Path | ServerConfig
 > = Layer.effect(GitShimManager, makeGitShimManager);
 
 // ── Startup sweep ─────────────────────────────────────────────────────────────
@@ -235,15 +219,15 @@ export const GitShimManagerLive: Layer.Layer<
  * Fire-and-forget — errors are logged inside sweepStale.
  */
 export const gitShimStartupSweep: Effect.Effect<void, never, GitShimManager | Scope.Scope> =
-	Effect.gen(function* () {
-		const mgr = yield* GitShimManager;
-		yield* Effect.forkScoped(
-			mgr.sweepStale().pipe(
-				Effect.repeat(Schedule.spaced(Duration.hours(24))),
-				Effect.catch(() => Effect.void),
-			),
-		);
-	});
+  Effect.gen(function* () {
+    const mgr = yield* GitShimManager;
+    yield* Effect.forkScoped(
+      mgr.sweepStale().pipe(
+        Effect.repeat(Schedule.spaced(Duration.hours(24))),
+        Effect.catch(() => Effect.void),
+      ),
+    );
+  });
 
 // ── Inline shim script ────────────────────────────────────────────────────────
 // The shell script is embedded here so the server module is self-contained —

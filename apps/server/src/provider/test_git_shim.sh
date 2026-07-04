@@ -5,7 +5,7 @@
 
 set -eu
 
-SHIM="$(dirname "$0")/assets/git-shim.sh"
+SHIM="$(cd "$(dirname "$0")" && pwd)/assets/git-shim.sh"
 if [ ! -f "$SHIM" ]; then
 	echo "FAIL: shim not found at $SHIM" >&2
 	exit 1
