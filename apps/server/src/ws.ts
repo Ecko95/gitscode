@@ -621,6 +621,28 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
               });
+              // W2.5 (plan 21): record ownership so the orphan adopter can distinguish
+              // live-bound worktrees from leaks. Requires projectId from createThread —
+              // if absent (worktree added to an existing thread) log a warning and
+              // skip; the orphan adopter will adopt it at next startup.
+              if (targetProjectId !== undefined) {
+                yield* orchestrationEngine
+                  .dispatch({
+                    type: "worktree.record-owner",
+                    commandId: yield* serverCommandId("bootstrap-worktree-record-owner"),
+                    threadId: command.threadId,
+                    worktreePath: targetWorktreePath,
+                    branch: worktree.worktree.refName ?? null,
+                    projectId: targetProjectId,
+                    recordedAt: yield* nowIso,
+                  })
+                  .pipe(Effect.ignoreCause({ log: true }));
+              } else {
+                yield* Effect.logWarning(
+                  "worktree.record-owner skipped: no projectId available at bootstrap (orphan adopter will bind at startup)",
+                  { threadId: command.threadId, worktreePath: targetWorktreePath },
+                );
+              }
               yield* refreshGitStatus(targetWorktreePath);
             }
 
