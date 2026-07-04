@@ -291,17 +291,26 @@ export const runSweepOnce = Effect.gen(function* () {
       ownerThreadId !== null ? ThreadId.make(ownerThreadId) : ORPHAN_REAPER_THREAD_ID;
 
     yield* engine
-      .dispatch({
-        type: "worktree.bury",
-        commandId,
-        threadId,
-        worktreePath,
-        branch,
-        trigger: "reaper",
-        finalCheckpointRef: capturedRef,
-        buriedAt,
-      })
-      .pipe(Effect.catch(() => Effect.void));
+      .dispatch(
+        {
+          type: "worktree.bury",
+          commandId,
+          threadId,
+          worktreePath,
+          branch,
+          trigger: "reaper",
+          finalCheckpointRef: capturedRef,
+          buriedAt,
+        },
+        "server",
+      )
+      .pipe(
+        // The worktree is already removed at this point — a lost burial event is a
+        // silent disk removal, which the graveyard design forbids. Never swallow it.
+        Effect.catch((error) =>
+          Effect.logWarning("graveyard.reaper.bury-dispatch-failed", { worktreePath, error }),
+        ),
+      );
 
     yield* Effect.logInfo("graveyard.reaper.buried", {
       worktreePath,
