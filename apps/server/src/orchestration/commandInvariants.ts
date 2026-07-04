@@ -168,6 +168,20 @@ function isInternalCommand(command: OrchestrationCommand): boolean {
   return t === "worktree.retire.start" || t === "worktree.bury";
 }
 
+// Provider ingestion commands: only the "provider" actor (or server for back-compat) may dispatch.
+// These are emitted by ProviderRuntimeIngestion on behalf of a running provider session.
+function isProviderCommand(command: OrchestrationCommand): boolean {
+  const t = command.type;
+  return (
+    t === "thread.message.assistant.delta" ||
+    t === "thread.message.assistant.complete" ||
+    t === "thread.proposed-plan.upsert" ||
+    t === "thread.session.set" ||
+    t === "thread.turn.diff.complete" ||
+    t === "thread.activity.append"
+  );
+}
+
 function isStructuralCommand(command: OrchestrationCommand): boolean {
   const t = command.type;
   return (
@@ -225,6 +239,14 @@ export function checkActorAuthorization(
       `Actor '${actor}' is not authorized to dispatch internal command '${command.type}'.`,
     );
   }
+  // Provider ingestion commands: only provider (or server for internal back-compat)
+  if (isProviderCommand(command)) {
+    if (actor === "provider" || actor === "server") return null;
+    return invariantError(
+      command.type,
+      `Actor '${actor}' is not authorized to dispatch provider command '${command.type}'.`,
+    );
+  }
   // Structural commands (create/delete thread/project): only operator or server
   if (isStructuralCommand(command)) {
     if (actor === "operator" || actor === "server") return null;
@@ -249,9 +271,16 @@ export function checkActorAuthorization(
       `Actor '${actor}' is not authorized for command '${command.type}'.`,
     );
   }
-  // Config commands: operator + supervisor; delamain denied
+  // Config commands: operator + supervisor + provider allowed; delamain denied
+  // ponytail: provider allowed for thread.meta.update — ProviderRuntimeIngestion patches metadata
   if (isConfigCommand(command)) {
-    if (actor === "operator" || actor === "supervisor" || actor === "server") return null;
+    if (
+      actor === "operator" ||
+      actor === "supervisor" ||
+      actor === "server" ||
+      actor === "provider"
+    )
+      return null;
     return invariantError(
       command.type,
       `Actor '${actor}' is not authorized for command '${command.type}'.`,

@@ -196,7 +196,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           // Store denial event (audit-only, not projected) — fire-and-forget on store failure
           yield* eventStore.append(denialEvent, "server").pipe(
             Effect.flatMap((stored) => PubSub.publish(eventPubSub, stored)),
-            Effect.catchAll(() =>
+            Effect.catch(() =>
               Effect.logWarning("failed to persist command.denied event", {
                 commandId: envelope.command.commandId,
                 actorKind: envelope.actorKind,

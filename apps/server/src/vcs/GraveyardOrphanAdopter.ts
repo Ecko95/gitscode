@@ -231,13 +231,16 @@ export const GraveyardOrphanAdopterLive: Layer.Layer<
         const adoptedAt = DateTime.formatIso(yield* DateTime.now);
         const uuid = yield* crypto.randomUUIDv4;
         const commandId = CommandId.make(`server:worktree-adopt:${uuid}`);
-        yield* engine.dispatch({
-          type: "worktree.adopt",
-          commandId,
-          worktreePath: info.fullPath,
-          branch: info.branch,
-          adoptedAt,
-        });
+        yield* engine.dispatch(
+          {
+            type: "worktree.adopt",
+            commandId,
+            worktreePath: info.fullPath,
+            branch: info.branch,
+            adoptedAt,
+          },
+          "server",
+        );
       });
 
     // ponytail: ignoreCause on processPath — typed + untyped errors from retirement/dispatch
