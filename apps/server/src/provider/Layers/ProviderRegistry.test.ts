@@ -1131,6 +1131,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             const initialCheckedAt = initialCodex?.checkedAt;
             assert.notStrictEqual(initialCheckedAt, undefined);
 
+            // Advance the TestClock before triggering the settings change so
+            // the second probe's `DateTime.now` call (which fires on the
+            // first fiber yield *inside* updateSettings, before the poll
+            // loop gets to call TestClock.adjust itself) sees a strictly
+            // later instant than `initialCheckedAt`.
+            yield* TestClock.adjust("10 millis");
+
             // Drive a settings change. The Hydration layer's
             // `SettingsWatcherLive` consumes this via `streamChanges`,
             // calls `reconcile`, which rebuilds the codex instance (the

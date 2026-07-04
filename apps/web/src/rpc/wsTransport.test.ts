@@ -256,7 +256,10 @@ describe("WsTransport (web instrumentation)", () => {
         closeReason: "service restart",
         phase: "connecting",
       });
-    }, 2_000);
+      // Needs 5 s: DEFAULT_RECONNECT_BACKOFF.initialDelayMs is 1 000 ms,
+      // so the transport won't reconnect until ~1 s after close, and CI
+      // runners add scheduling jitter on top.
+    }, 5_000);
 
     await transport.dispose();
   });
