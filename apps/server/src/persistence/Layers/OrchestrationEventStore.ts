@@ -262,10 +262,158 @@ const makeEventStore = Effect.gen(function* () {
     return readPage(sequenceExclusive, normalizedLimit);
   };
 
+  const readAllEventRowsFromUnion = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: OrchestrationEventPersistedRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          sequence,
+          event_id AS "eventId",
+          event_type AS "type",
+          aggregate_kind AS "aggregateKind",
+          stream_id AS "aggregateId",
+          occurred_at AS "occurredAt",
+          command_id AS "commandId",
+          causation_event_id AS "causationEventId",
+          correlation_id AS "correlationId",
+          payload_json AS "payload",
+          metadata_json AS "metadata"
+        FROM orchestration_events
+        UNION ALL
+        SELECT
+          sequence,
+          event_id AS "eventId",
+          event_type AS "type",
+          aggregate_kind AS "aggregateKind",
+          stream_id AS "aggregateId",
+          occurred_at AS "occurredAt",
+          command_id AS "commandId",
+          causation_event_id AS "causationEventId",
+          correlation_id AS "correlationId",
+          payload_json AS "payload",
+          metadata_json AS "metadata"
+        FROM orchestration_events_archive
+        ORDER BY sequence ASC
+      `,
+  });
+
+  const readAllWithArchive: OrchestrationEventStoreShape["readAllWithArchive"] = () =>
+    Stream.fromEffect(
+      readAllEventRowsFromUnion(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "OrchestrationEventStore.readAllWithArchive:query",
+            "OrchestrationEventStore.readAllWithArchive:decodeRows",
+          ),
+        ),
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) =>
+            decodeEvent(row).pipe(
+              Effect.mapError(
+                toPersistenceDecodeError("OrchestrationEventStore.readAllWithArchive:rowToEvent"),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ).pipe(Stream.flatMap(Stream.fromIterable));
+
+  const archiveEligibleEvents: OrchestrationEventStoreShape["archiveEligibleEvents"] = (
+    retentionDays,
+  ) =>
+    Effect.gen(function* () {
+      if (retentionDays <= 0) {
+        return 0;
+      }
+
+      // Find eligible stream_ids: thread-scoped, fully deleted, past retention window,
+      // no in-flight worktree.retiring-started without a matching worktree.buried.
+      const eligible = yield* sql<{ readonly stream_id: string }>`
+        SELECT e.stream_id
+        FROM orchestration_events e
+        INNER JOIN projection_threads t ON t.thread_id = e.stream_id
+        WHERE t.deleted_at IS NOT NULL
+          AND t.deleted_at < datetime('now', ${`-${retentionDays} days`})
+          AND e.aggregate_kind = 'thread'
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_events g
+            WHERE g.stream_id = e.stream_id
+              AND g.event_type = 'worktree.retiring-started'
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_events b
+                WHERE b.stream_id = g.stream_id
+                  AND b.event_type = 'worktree.buried'
+              )
+          )
+        GROUP BY e.stream_id
+      `.pipe(
+        Effect.mapError(
+          toPersistenceSqlError("OrchestrationEventStore.archiveEligibleEvents:findEligible"),
+        ),
+      );
+
+      if (eligible.length === 0) {
+        return 0;
+      }
+
+      const streamIds = eligible.map((r) => r.stream_id);
+
+      // Atomic move: INSERT ... SELECT then DELETE, one stream at a time to avoid
+      // complex IN-clause generation across dialects.
+      // ponytail: loop over streamIds — N is bounded by eligible closed threads per run;
+      // in practice single-digit on a normal instance. Upgrade to bulk IN if needed.
+      let totalArchived = 0;
+      for (const streamId of streamIds) {
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const countBefore = yield* sql<{ readonly n: number }>`
+              SELECT COUNT(*) AS n FROM orchestration_events WHERE stream_id = ${streamId}
+            `.pipe(
+                Effect.mapError(
+                  toPersistenceSqlError(
+                    "OrchestrationEventStore.archiveEligibleEvents:countBefore",
+                  ),
+                ),
+              );
+              const n = countBefore[0]?.n ?? 0;
+              if (n === 0) return;
+
+              yield* sql`
+              INSERT INTO orchestration_events_archive
+              SELECT * FROM orchestration_events WHERE stream_id = ${streamId}
+            `.pipe(
+                Effect.mapError(
+                  toPersistenceSqlError("OrchestrationEventStore.archiveEligibleEvents:insert"),
+                ),
+              );
+              yield* sql`
+              DELETE FROM orchestration_events WHERE stream_id = ${streamId}
+            `.pipe(
+                Effect.mapError(
+                  toPersistenceSqlError("OrchestrationEventStore.archiveEligibleEvents:delete"),
+                ),
+              );
+              totalArchived += n;
+            }),
+          )
+          .pipe(
+            Effect.mapError(
+              toPersistenceSqlError("OrchestrationEventStore.archiveEligibleEvents:transaction"),
+            ),
+          );
+      }
+
+      return totalArchived;
+    });
+
   return {
     append,
     readFromSequence,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
+    readAllWithArchive,
+    archiveEligibleEvents,
   } satisfies OrchestrationEventStoreShape;
 });
 

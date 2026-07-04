@@ -807,6 +807,26 @@ const WorktreeBuryCommand = Schema.Struct({
   buriedAt: IsoDateTime,
 });
 
+// Worktree ownership binding (plan 21, W2.5)
+const WorktreeRecordOwnerCommand = Schema.Struct({
+  type: Schema.Literal("worktree.record-owner"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  projectId: ProjectId,
+  recordedAt: IsoDateTime,
+});
+
+// Orphan adoption command (plan 21, W2.3) — no threadId: orphans have no owner record
+const WorktreeAdoptCommand = Schema.Struct({
+  type: Schema.Literal("worktree.adopt"),
+  commandId: CommandId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  adoptedAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -818,6 +838,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadRevertCompleteCommand,
   WorktreeRetireStartCommand,
   WorktreeBuryCommand,
+  WorktreeRecordOwnerCommand,
+  WorktreeAdoptCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 

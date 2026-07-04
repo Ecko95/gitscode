@@ -814,6 +814,43 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "worktree.record-owner": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "worktree",
+          aggregateId: command.worktreePath as WorktreePath,
+          occurredAt: command.recordedAt,
+          commandId: command.commandId,
+        })),
+        type: "worktree.owner-recorded",
+        payload: {
+          threadId: command.threadId,
+          worktreePath: command.worktreePath,
+          branch: command.branch,
+          projectId: command.projectId,
+          recordedAt: command.recordedAt,
+        },
+      };
+    }
+
+    case "worktree.adopt": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "worktree",
+          aggregateId: command.worktreePath as WorktreePath,
+          occurredAt: command.adoptedAt,
+          commandId: command.commandId,
+        })),
+        type: "worktree.adopted",
+        payload: {
+          worktreePath: command.worktreePath,
+          branch: command.branch,
+          orphanReason: "no-event-binding" as const,
+          adoptedAt: command.adoptedAt,
+        },
+      };
+    }
+
     default: {
       command satisfies never;
       const fallback = command as never as { type: string };

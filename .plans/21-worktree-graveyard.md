@@ -263,12 +263,22 @@ Files touched:
 
 ## Orphan Adoption Semantics (W2.3 Detail)
 
+> **Correction 2026-07-04 (PR #82 fix round):** The original clause below was
+> wrong and destructive. A worktree with a `worktree.owner-recorded` event and
+> a live thread is **healthy and bound** — adopting it would interrupt an active
+> session. The implementation (PR #82 fix round) enforces the corrected
+> classification below.
+
 Detection query: for each `path` found under `worktreesDir`, check the
-projection snapshot for any event with `payload.worktreePath === path`. If
-the only match is a `worktree.owner-recorded` event and no
-`worktree.retiring-started` exists, the worktree is considered leaked
-(process crash between creation and first use, or pre-W2.5 worktree with no
-ownership record). These are also adopted.
+projection snapshot for events with `payload.worktreePath === path`. Classify
+as follows:
+
+| Event state | Thread state | Classification |
+| --- | --- | --- |
+| `owner-recorded` present | Thread alive in projections | **Bound — do not touch** |
+| `owner-recorded` present | Thread deleted or absent | **Adopt** (process crashed after creation, before first retirement event) |
+| No events at all | — | **Adopt** (pre-W2.5 worktree with no ownership record) |
+| `retiring-started` present, `buried` absent | — | **Resume retirement** (crashed mid-retirement; see Failure Modes above) |
 
 Never silently delete: adoption always emits `worktree.adopted` before any
 state change so the operator can see what was found.

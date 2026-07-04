@@ -34,6 +34,7 @@ import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
+import { GraveyardOrphanAdopter } from "./vcs/GraveyardOrphanAdopter.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -315,6 +316,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
   const providerSessionReaper = yield* ProviderSessionReaper;
+  const graveyardOrphanAdopter = yield* GraveyardOrphanAdopter;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -369,6 +371,12 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
       }),
+    );
+
+    yield* Effect.logDebug("startup phase: graveyard orphan adoption scan");
+    yield* runStartupPhase(
+      "graveyard.orphan.scan",
+      graveyardOrphanAdopter.run.pipe(Effect.forkScoped),
     );
 
     const welcomeBase = yield* resolveWelcomeBase;

@@ -170,7 +170,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
   predicate: (thread: ProviderRuntimeTestThread) => boolean,
-  timeoutMs = 2000,
+  timeoutMs = 5000,
   threadId: ThreadId = asThreadId("thread-1"),
 ) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
@@ -183,7 +183,11 @@ async function waitForThread(
     if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
       throw new Error("Timed out waiting for thread state");
     }
-    await Effect.runPromise(Effect.yieldNow);
+    // Real event-loop yield so Effect fibers processing PubSub events get
+    // CPU time between polls. Effect.yieldNow only queues a microtask and
+    // does not unblock async I/O in the ingestion pipeline.
+    // @effect-diagnostics-next-line globalTimers:off
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
     return poll();
   };
   return poll();

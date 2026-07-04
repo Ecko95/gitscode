@@ -90,7 +90,7 @@ layer("AllMigrations.fixture", (it) => {
 				`;
       }
 
-      // ── Phase 3: run to latest (migration 032) ─────────────────────────────
+      // ── Phase 3: run to latest (migration 033) ─────────────────────────────
       const executed = yield* runMigrations();
 
       // ── Assertion 1: all migrations ran ────────────────────────────────────
@@ -127,6 +127,7 @@ layer("AllMigrations.fixture", (it) => {
         "auth_sessions",
         "projection_thread_visual_plans",
         "automode_episodes",
+        "orchestration_events_archive",
         "effect_sql_migrations",
       ]) {
         assert.ok(tableNames.has(expected), `Table ${expected} missing after full migration chain`);
@@ -272,7 +273,7 @@ layer("AllMigrations.fixture", (it) => {
       assert.strictEqual(sessions[1]!.revokedAt, "2026-06-01T00:00:00.000Z");
 
       // ── Assertion 8: executed return value is non-empty on incremental run ──
-      // (The last runMigrations() ran from 021→032 — must have applied migrations)
+      // (The last runMigrations() ran from 021→033 — must have applied migrations)
       assert.ok(
         executed.length > 0,
         "Final runMigrations() should have applied migrations 021→032",
