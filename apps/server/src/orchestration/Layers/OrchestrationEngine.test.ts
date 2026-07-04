@@ -1192,4 +1192,81 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  it("persists command.denied event to the store when actor authorization fails (W5.4)", async () => {
+    // ponytail: tripwire — verifies command.denied reaches eventStore.append, not just throws
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    // Create a project + thread so the command invariant check is reached (not "thread not found")
+    await system.run(
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-denied-project-create"),
+          projectId: asProjectId("project-denied"),
+          title: "Denied Project",
+          workspaceRoot: "/tmp/project-denied",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        },
+        "server",
+      ),
+    );
+    await system.run(
+      engine.dispatch(
+        {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-denied-thread-create"),
+          threadId: ThreadId.make("thread-denied"),
+          projectId: asProjectId("project-denied"),
+          title: "Denied Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        },
+        "server",
+      ),
+    );
+
+    // Delamain dispatching thread.delete is denied by the authorization matrix (plan 23 W5.3)
+    await expect(
+      system.run(
+        engine.dispatch(
+          {
+            type: "thread.delete",
+            commandId: CommandId.make("cmd-denied-thread-delete"),
+            threadId: ThreadId.make("thread-denied"),
+          },
+          "delamain",
+        ),
+      ),
+    ).rejects.toThrow();
+
+    // The command.denied event must be durably persisted in the event store
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    const denialEvent = events.find((ev) => ev.type === "command.denied");
+    expect(denialEvent).toBeDefined();
+    expect(denialEvent?.payload).toMatchObject({
+      commandType: "thread.delete",
+      commandId: "cmd-denied-thread-delete",
+      actorKind: "delamain",
+    });
+
+    await system.dispose();
+  });
 });
