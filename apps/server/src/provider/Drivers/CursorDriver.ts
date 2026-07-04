@@ -43,6 +43,7 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { GitShimManager } from "../GitShimManager.ts";
 import {
   makeProviderMaintenanceCapabilities,
   makeStaticProviderMaintenanceResolver,
@@ -66,6 +67,7 @@ export type CursorDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | GitShimManager
   | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers
@@ -102,6 +104,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
+      const gitShimManager = yield* GitShimManager;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -128,6 +131,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
         ...(visualPlanMcpSvc ? { visualPlanMcpSvc } : {}),
+        gitShimManager,
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 

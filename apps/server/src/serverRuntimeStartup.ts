@@ -21,6 +21,8 @@ import * as Context from "effect/Context";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Schedule from "effect/Schedule";
 
 import { ServerConfig } from "./config.ts";
 import { Keybindings } from "./keybindings.ts";
@@ -36,6 +38,7 @@ import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import { GraveyardOrphanAdopter } from "./vcs/GraveyardOrphanAdopter.ts";
 import { GraveyardReaper } from "./vcs/GraveyardReaper.ts";
+import { GitShimManager } from "./provider/GitShimManager.ts";
 import { InactivityReapRetirementReactor } from "./vcs/InactivityReapRetirementReactor.ts";
 import {
   formatHeadlessServeOutput,
@@ -320,6 +323,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const providerSessionReaper = yield* ProviderSessionReaper;
   const graveyardOrphanAdopter = yield* GraveyardOrphanAdopter;
   const graveyardReaper = yield* GraveyardReaper;
+  const gitShimManager = yield* GitShimManager;
   const inactivityReapRetirementReactor = yield* InactivityReapRetirementReactor;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
@@ -376,6 +380,12 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
         yield* graveyardReaper.start().pipe(Scope.provide(reactorScope));
         yield* inactivityReapRetirementReactor.start().pipe(Scope.provide(reactorScope));
+        // Sweep orphaned shim dirs left by crashed sessions (once + every 24h).
+        yield* gitShimManager.sweepStale().pipe(
+          Effect.repeat(Schedule.spaced(Duration.hours(24))),
+          Effect.forkScoped,
+          Scope.provide(reactorScope),
+        );
       }),
     );
 

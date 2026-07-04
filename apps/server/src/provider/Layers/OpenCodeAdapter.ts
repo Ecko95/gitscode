@@ -27,6 +27,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type GitShimManagerShape } from "../GitShimManager.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -102,6 +103,8 @@ export interface OpenCodeAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Git command confinement shim manager. When present, injects the shim into each session's env. */
+  readonly gitShimManager?: GitShimManagerShape;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1041,8 +1044,25 @@ export function makeOpenCodeAdapter(
           sessions.delete(input.threadId);
         }
 
+        // Inject git confinement shim for this session.
+        // CONFINEMENT LINE: only openCodeSessionEnv is modified; options.environment (the
+        // instance-level env) is never mutated, and server process.env is untouched.
+        const openCodeShimEnv = options?.gitShimManager
+          ? (yield* options.gitShimManager.allocate(input.threadId, directory)).vars
+          : {};
+        const openCodeSessionEnv: NodeJS.ProcessEnv | undefined =
+          options?.environment != null || Object.keys(openCodeShimEnv).length > 0
+            ? { ...(options?.environment ?? {}), ...openCodeShimEnv }
+            : undefined;
+
         const started = yield* Effect.gen(function* () {
           const sessionScope = yield* Scope.make();
+          if (options?.gitShimManager && Object.keys(openCodeShimEnv).length > 0) {
+            yield* Scope.addFinalizer(
+              sessionScope,
+              options.gitShimManager.release(input.threadId),
+            );
+          }
           const startedExit = yield* Effect.exit(
             Effect.gen(function* () {
               // The runtime binds the server's lifetime to the Scope.Scope
@@ -1051,7 +1071,7 @@ export function makeOpenCodeAdapter(
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
                 serverUrl,
-                ...(options?.environment ? { environment: options.environment } : {}),
+                ...(openCodeSessionEnv != null ? { environment: openCodeSessionEnv } : {}),
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
