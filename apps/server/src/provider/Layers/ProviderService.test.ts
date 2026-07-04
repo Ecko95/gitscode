@@ -295,6 +295,8 @@ function makeProviderServiceLayer() {
         Layer.provide(defaultServerSettingsLayer),
         Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+        // W5.4b: makeProviderService now yields Crypto for audit emit
+        Layer.provide(NodeServices.layer),
       ),
       directoryLayer,
 
@@ -338,6 +340,8 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
         Layer.provide(defaultServerSettingsLayer),
         Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+        // W5.4b: makeProviderService now yields Crypto for audit emit
+        Layer.provide(NodeServices.layer),
       ),
       directoryLayer,
       runtimeRepositoryLayer,

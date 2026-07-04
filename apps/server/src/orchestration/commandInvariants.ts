@@ -165,7 +165,20 @@ export function requireNonNegativeInteger(input: {
 // ponytail: narrow type guards over command.type — no abstraction layer needed
 function isInternalCommand(command: OrchestrationCommand): boolean {
   const t = command.type;
-  return t === "worktree.retire.start" || t === "worktree.bury";
+  return (
+    t === "worktree.retire.start" ||
+    t === "worktree.bury" ||
+    // W5.4b audit-only commands: emitted by server-internal services
+    t === "provider.session.spawn" ||
+    t === "provider.session.stop" ||
+    t === "auth.session.issue" ||
+    t === "auth.session.revoke" ||
+    t === "auth.pairing-link.issue" ||
+    t === "auth.pairing-link.revoke" ||
+    t === "settings.record-change" ||
+    t === "vcs.worktree.record-created" ||
+    t === "vcs.worktree.record-removed"
+  );
 }
 
 // Provider ingestion commands: only the "provider" actor (or server for back-compat) may dispatch.

@@ -1,4 +1,4 @@
-import type { AuthPairingLink } from "@t3tools/contracts";
+import { CommandId, type AuthPairingLink } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
 import { ServerConfig } from "../../config.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { AuthPairingLinkRepositoryLive } from "../../persistence/Layers/AuthPairingLinks.ts";
 import { AuthPairingLinkRepository } from "../../persistence/Services/AuthPairingLinks.ts";
 import {
@@ -52,6 +53,8 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
   const pairingLinks = yield* AuthPairingLinkRepository;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
+  // W5.4b: optional — absent in CLI contexts without orchestration engine
+  const engineOption = yield* Effect.serviceOption(OrchestrationEngineService);
 
   const invalidBootstrapCredentialError = (message: string) =>
     new BootstrapCredentialError({
@@ -137,6 +140,20 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
       });
       if (revoked) {
         yield* emitRemoved(id);
+        // W5.4b: audit pairing link revoke
+        if (Option.isSome(engineOption)) {
+          yield* engineOption.value
+            .dispatch(
+              {
+                type: "auth.pairing-link.revoke",
+                commandId: CommandId.make(yield* crypto.randomUUIDv4),
+                linkId: id,
+                revokedAt: DateTime.formatIso(revokedAt),
+              },
+              "server",
+            )
+            .pipe(Effect.ignoreCause({ log: true }));
+        }
       }
       return revoked;
     }).pipe(Effect.mapError(toBootstrapCredentialError("Failed to revoke pairing link.")));
@@ -173,6 +190,22 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         createdAt: now,
         expiresAt,
       });
+      // W5.4b: audit pairing link issue — opaque linkId only, no credential
+      if (Option.isSome(engineOption)) {
+        yield* engineOption.value
+          .dispatch(
+            {
+              type: "auth.pairing-link.issue",
+              commandId: CommandId.make(yield* crypto.randomUUIDv4),
+              linkId: id,
+              role: input?.role ?? "client",
+              subject: input?.subject ?? "one-time-token",
+              issuedAt: DateTime.formatIso(now),
+            },
+            "server",
+          )
+          .pipe(Effect.ignoreCause({ log: true }));
+      }
       return issued;
     }).pipe(Effect.mapError(toBootstrapCredentialError("Failed to issue pairing credential.")));
 

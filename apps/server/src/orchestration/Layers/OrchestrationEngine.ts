@@ -1,11 +1,15 @@
 import type {
   OrchestrationEvent,
   OrchestrationReadModel,
-  ProjectId,
   ThreadId,
   WorktreePath,
 } from "@t3tools/contracts";
-import { EventId, OrchestrationActorKind, OrchestrationCommand } from "@t3tools/contracts";
+import {
+  EventId,
+  OrchestrationActorKind,
+  OrchestrationCommand,
+  ProjectId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -79,10 +83,22 @@ function commandToAggregateRef(command: OrchestrationCommand): {
     case "worktree.bury":
     case "worktree.adopt":
     case "worktree.record-owner":
+    case "vcs.worktree.record-created":
+    case "vcs.worktree.record-removed":
       return {
         aggregateKind: "worktree",
         // ponytail: worktree path is the aggregate id per plan 21
         aggregateId: command.worktreePath as WorktreePath,
+      };
+    case "auth.session.issue":
+    case "auth.session.revoke":
+    case "auth.pairing-link.issue":
+    case "auth.pairing-link.revoke":
+    case "settings.record-change":
+      return {
+        aggregateKind: "project",
+        // ponytail: sentinel "server" aggregate — no natural project scope for auth/settings
+        aggregateId: ProjectId.make("server"),
       };
     default:
       return {
