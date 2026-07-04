@@ -180,7 +180,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       const orchestrationEngine = yield* OrchestrationEngineService;
       const output = yield* run({
         snapshot,
-        dispatch: (command) => orchestrationEngine.dispatch(command),
+        dispatch: (command) => orchestrationEngine.dispatch(command, "operator"),
         mode: "offline",
       });
       yield* Console.log(output);

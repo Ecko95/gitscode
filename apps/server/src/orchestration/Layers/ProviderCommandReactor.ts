@@ -221,24 +221,27 @@ const make = Effect.gen(function* () {
       eventId: serverEventId(),
     }).pipe(
       Effect.flatMap(({ commandId, eventId }) =>
-        orchestrationEngine.dispatch({
-          type: "thread.activity.append",
-          commandId,
-          threadId: input.threadId,
-          activity: {
-            id: eventId,
-            tone: "error",
-            kind: input.kind,
-            summary: input.summary,
-            payload: {
-              detail: input.detail,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
+        orchestrationEngine.dispatch(
+          {
+            type: "thread.activity.append",
+            commandId,
+            threadId: input.threadId,
+            activity: {
+              id: eventId,
+              tone: "error",
+              kind: input.kind,
+              summary: input.summary,
+              payload: {
+                detail: input.detail,
+                ...(input.requestId ? { requestId: input.requestId } : {}),
+              },
+              turnId: input.turnId,
+              createdAt: input.createdAt,
             },
-            turnId: input.turnId,
             createdAt: input.createdAt,
           },
-          createdAt: input.createdAt,
-        }),
+          "server",
+        ),
       ),
     );
 
@@ -260,13 +263,16 @@ const make = Effect.gen(function* () {
   }) =>
     serverCommandId("provider-session-set").pipe(
       Effect.flatMap((commandId) =>
-        orchestrationEngine.dispatch({
-          type: "thread.session.set",
-          commandId,
-          threadId: input.threadId,
-          session: input.session,
-          createdAt: input.createdAt,
-        }),
+        orchestrationEngine.dispatch(
+          {
+            type: "thread.session.set",
+            commandId,
+            threadId: input.threadId,
+            session: input.session,
+            createdAt: input.createdAt,
+          },
+          "server",
+        ),
       ),
     );
 
@@ -621,13 +627,16 @@ const make = Effect.gen(function* () {
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
-      yield* orchestrationEngine.dispatch({
-        type: "thread.meta.update",
-        commandId: yield* serverCommandId("worktree-branch-rename"),
-        threadId: input.threadId,
-        branch: renamed.branch,
-        worktreePath: cwd,
-      });
+      yield* orchestrationEngine.dispatch(
+        {
+          type: "thread.meta.update",
+          commandId: yield* serverCommandId("worktree-branch-rename"),
+          threadId: input.threadId,
+          branch: renamed.branch,
+          worktreePath: cwd,
+        },
+        "server",
+      );
       yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
     }).pipe(
       Effect.catchCause((cause) =>
@@ -668,12 +677,15 @@ const make = Effect.gen(function* () {
           return;
         }
 
-        yield* orchestrationEngine.dispatch({
-          type: "thread.meta.update",
-          commandId: yield* serverCommandId("thread-title-rename"),
-          threadId: input.threadId,
-          title: generated.title,
-        });
+        yield* orchestrationEngine.dispatch(
+          {
+            type: "thread.meta.update",
+            commandId: yield* serverCommandId("thread-title-rename"),
+            threadId: input.threadId,
+            title: generated.title,
+          },
+          "server",
+        );
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("provider command reactor failed to generate or rename thread title", {

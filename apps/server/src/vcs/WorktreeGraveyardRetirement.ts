@@ -76,15 +76,18 @@ export const retireWorktree = Effect.fn("retireWorktree")(function* (input: Reti
 
   // Step 1: emit retiring-started
   const retireCommandId = yield* serverCommandId("worktree-retire-start");
-  yield* orchestrationEngine.dispatch({
-    type: "worktree.retire.start",
-    commandId: retireCommandId,
-    threadId: input.threadId,
-    worktreePath: input.worktreePath,
-    branch: input.branch,
-    trigger: input.trigger,
-    initiatedAt,
-  });
+  yield* orchestrationEngine.dispatch(
+    {
+      type: "worktree.retire.start",
+      commandId: retireCommandId,
+      threadId: input.threadId,
+      worktreePath: input.worktreePath,
+      branch: input.branch,
+      trigger: input.trigger,
+      initiatedAt,
+    },
+    "server",
+  );
 
   // Step 2: publish receipt so tests can synchronize
   yield* receiptBus.publish({
@@ -135,16 +138,19 @@ export const retireWorktree = Effect.fn("retireWorktree")(function* (input: Reti
   // Step 5: emit buried
   const buriedAt = yield* nowIso();
   const buryCommandId = yield* serverCommandId("worktree-bury");
-  yield* orchestrationEngine.dispatch({
-    type: "worktree.bury",
-    commandId: buryCommandId,
-    threadId: input.threadId,
-    worktreePath: input.worktreePath,
-    branch: input.branch,
-    trigger: "retirement",
-    finalCheckpointRef: capturedRef,
-    buriedAt,
-  });
+  yield* orchestrationEngine.dispatch(
+    {
+      type: "worktree.bury",
+      commandId: buryCommandId,
+      threadId: input.threadId,
+      worktreePath: input.worktreePath,
+      branch: input.branch,
+      trigger: "retirement",
+      finalCheckpointRef: capturedRef,
+      buriedAt,
+    },
+    "server",
+  );
 
   // Step 6: publish buried receipt
   yield* receiptBus.publish({
