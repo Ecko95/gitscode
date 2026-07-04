@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
@@ -35,6 +36,7 @@ export const makeSessionScopedVcsDriver = Effect.fn("makeSessionScopedVcsDriver"
   options: SessionScopedVcsDriverOptions,
 ) {
   const pathService = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
   const supervisorOverride = options.supervisorOverride ?? false;
 
   // Normalize allowedRoot once: strip trailing slash so startsWith checks are exact.
@@ -46,18 +48,36 @@ export const makeSessionScopedVcsDriver = Effect.fn("makeSessionScopedVcsDriver"
     operation: string,
     cwd: string,
   ): Effect.Effect<void, VcsUnsupportedOperationError> {
-    // Resolve `..` segments via Effect's Path service (wraps node:path.resolve — same semantics).
-    // Symlink escapes require async FileSystem.realPath; that upgrade path is noted below.
-    // ponytail: path.resolve handles ../traversal; symlink escape requires FileSystem.realPath —
-    //           add that pre-check if symlink attacks become a threat surface
+    // Fast-path: resolve `..` segments synchronously (handles ../traversal attacks).
     const resolved = pathService.resolve(cwd);
-    const ok = resolved === root || resolved.startsWith(root + "/");
-    if (ok) return Effect.void;
-    return Effect.fail(
-      new VcsUnsupportedOperationError({
-        operation: `session-guard.path-check:${operation}`,
-        kind: underlying.capabilities.kind,
-        detail: `cwd '${cwd}' (resolved: '${resolved}') is outside allowed root '${root}'`,
+    const fastOk = resolved === root || resolved.startsWith(root + "/");
+    if (!fastOk) {
+      return Effect.fail(
+        new VcsUnsupportedOperationError({
+          operation: `session-guard.path-check:${operation}`,
+          kind: underlying.capabilities.kind,
+          detail: `cwd '${cwd}' (resolved: '${resolved}') is outside allowed root '${root}'`,
+        }),
+      );
+    }
+    // Symlink-escape check: resolve real path to catch symlinks inside the worktree
+    // that point outside it. Falls back to cwd on ENOENT (path doesn't exist yet —
+    // e.g. a new file about to be created); if the path doesn't exist there's no
+    // symlink to escape through, so the fast-path check is sufficient.
+    // ponytail: realPath check catches symlink escapes; ceiling is TOCTOU on very fast
+    //           concurrent symlink swaps — acceptable for session-scoped confinement.
+    return fs.realPath(cwd).pipe(
+      Effect.orElseSucceed(() => cwd), // ENOENT/ENOTDIR — path doesn't exist, no symlink
+      Effect.flatMap((real) => {
+        const realOk = real === root || real.startsWith(root + "/");
+        if (realOk) return Effect.void;
+        return Effect.fail(
+          new VcsUnsupportedOperationError({
+            operation: `session-guard.symlink-escape:${operation}`,
+            kind: underlying.capabilities.kind,
+            detail: `cwd '${cwd}' resolves via symlink to '${real}' which is outside allowed root '${root}'`,
+          }),
+        );
       }),
     );
   }
@@ -75,14 +95,46 @@ export const makeSessionScopedVcsDriver = Effect.fn("makeSessionScopedVcsDriver"
     );
     if (!hasForce) return Effect.void;
 
-    // Check refspec args: bare branch name or `<local>:<remote>` — inspect the remote side.
+    // Collect explicit refspec args (non-flag, non-remote positional args).
+    // Skip the remote name (first non-flag after "push") — remaining are refspecs.
+    const refspecs: string[] = [];
+    let remoteSkipped = false;
     for (const arg of args) {
-      if (arg.startsWith("-")) continue;
       if (arg === "push") continue;
-      const colonIdx = arg.indexOf(":");
-      const branchPart = colonIdx !== -1 ? arg.slice(colonIdx + 1) : arg;
-      const bare = branchPart.replace(/^refs\/heads\//, "");
-      if (PROTECTED_BRANCHES.has(bare)) {
+      if (arg.startsWith("-")) continue;
+      if (!remoteSkipped) {
+        remoteSkipped = true; // first non-flag positional = remote name
+        continue;
+      }
+      refspecs.push(arg);
+    }
+
+    if (refspecs.length === 0) {
+      // Implicit upstream push with --force: we cannot cheaply resolve the tracking branch here.
+      // Reject outright — confined sessions have no business force-pushing implicitly.
+      // ponytail: blanket reject implicit --force push; upgrade to tracking-branch resolution
+      //           if a session legitimately needs implicit force-push (none today).
+      return Effect.fail(
+        new VcsUnsupportedOperationError({
+          operation: "session-guard.force-push",
+          kind: underlying.capabilities.kind,
+          detail:
+            "implicit force-push (no explicit refspec) is not allowed from a session-scoped driver; specify the branch explicitly",
+        }),
+      );
+    }
+
+    // Check each refspec. Handles:
+    //   <branch>              → remote ref = <branch>
+    //   <local>:<remote>      → remote ref = <remote>
+    //   HEAD:<remote>         → remote ref = <remote>
+    //   refs/heads/<branch>   → normalized
+    for (const refspec of refspecs) {
+      const colonIdx = refspec.indexOf(":");
+      const remotePart = colonIdx !== -1 ? refspec.slice(colonIdx + 1) : refspec;
+      // Strip refs/heads/ prefix and empty (delete) refspec ":<branch>"
+      const bare = remotePart.replace(/^refs\/heads\//, "");
+      if (bare.length > 0 && PROTECTED_BRANCHES.has(bare)) {
         return Effect.fail(
           new VcsUnsupportedOperationError({
             operation: "session-guard.force-push",

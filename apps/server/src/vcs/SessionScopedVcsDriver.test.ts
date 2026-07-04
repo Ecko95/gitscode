@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFs from "node:fs/promises";
+import * as Os from "node:os";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -59,8 +65,8 @@ const makeStubDriver = (): VcsDriverShape => ({
 
 const ALLOWED = "/workspace/session-abc";
 
-// Layer that provides Path for the session driver factory
-const testLayer = Layer.mergeAll(Path.layer);
+// Layer that provides Path + FileSystem (via NodeServices) for the session driver factory
+const testLayer = Layer.mergeAll(Path.layer, NodeServices.layer);
 
 // Construct a session driver in Effect context
 const makeDriver = (options?: { root?: string; supervisorOverride?: boolean }) => {
@@ -268,6 +274,134 @@ describe("SessionScopedVcsDriver", () => {
           operation: "test-commit",
           cwd: ALLOWED,
           args: ["commit", "-m", "test"],
+        });
+        assert.strictEqual(result.stdout, `ok:${ALLOWED}`);
+      }),
+    );
+  });
+
+  describe("symlink escape hardening", () => {
+    it.effect("rejects cwd that resolves via symlink to outside allowedRoot", () =>
+      // Creates a real symlink on disk: <tmpdir>/session/escape-link -> <tmpdir>/outside
+      // Then verifies the guard catches it via fs.realPath.
+      Effect.gen(function* () {
+        const tmp = yield* Effect.tryPromise(() =>
+          NodeFs.mkdtemp(NodePath.join(Os.tmpdir(), "ssvd-")),
+        );
+        const sessionRoot = NodePath.join(tmp, "session");
+        const outside = NodePath.join(tmp, "outside");
+        const symlinkPath = NodePath.join(sessionRoot, "escape-link");
+        yield* Effect.tryPromise(async () => {
+          await NodeFs.mkdir(sessionRoot, { recursive: true });
+          await NodeFs.mkdir(outside, { recursive: true });
+          await NodeFs.symlink(outside, symlinkPath);
+        });
+        try {
+          const driver = yield* makeSessionScopedVcsDriver(makeStubDriver(), {
+            allowedRoot: sessionRoot,
+          }).pipe(Effect.provide(testLayer));
+          const err = yield* Effect.flip(driver.isInsideWorkTree(symlinkPath));
+          assert.instanceOf(err, VcsUnsupportedOperationError);
+          assert.include(err.operation, "session-guard.symlink-escape");
+        } finally {
+          yield* Effect.tryPromise(() => NodeFs.rm(tmp, { recursive: true, force: true })).pipe(
+            Effect.ignore,
+          );
+        }
+      }),
+    );
+
+    it.effect("allows cwd that is a real path inside allowedRoot (no symlink)", () =>
+      Effect.gen(function* () {
+        const tmp = yield* Effect.tryPromise(() =>
+          NodeFs.mkdtemp(NodePath.join(Os.tmpdir(), "ssvd-")),
+        );
+        const sessionRoot = NodePath.join(tmp, "session");
+        const subDir = NodePath.join(sessionRoot, "src");
+        yield* Effect.tryPromise(() => NodeFs.mkdir(subDir, { recursive: true }));
+        try {
+          const driver = yield* makeSessionScopedVcsDriver(makeStubDriver(), {
+            allowedRoot: sessionRoot,
+          }).pipe(Effect.provide(testLayer));
+          // Should pass — real path is inside the root
+          const result = yield* driver.isInsideWorkTree(subDir);
+          assert.isTrue(result);
+        } finally {
+          yield* Effect.tryPromise(() => NodeFs.rm(tmp, { recursive: true, force: true })).pipe(
+            Effect.ignore,
+          );
+        }
+      }),
+    );
+  });
+
+  describe("force-push refspec hardening", () => {
+    it.effect("rejects HEAD:main refspec with --force", () =>
+      Effect.gen(function* () {
+        const driver = yield* makeDriver();
+        const err = yield* Effect.flip(
+          driver.execute({
+            operation: "test-push",
+            cwd: ALLOWED,
+            args: ["push", "--force", "origin", "HEAD:main"],
+          }),
+        );
+        assert.instanceOf(err, VcsUnsupportedOperationError);
+        assert.include(err.operation, "session-guard.force-push");
+      }),
+    );
+
+    it.effect("rejects refs/heads/main refspec with --force", () =>
+      Effect.gen(function* () {
+        const driver = yield* makeDriver();
+        const err = yield* Effect.flip(
+          driver.execute({
+            operation: "test-push",
+            cwd: ALLOWED,
+            args: ["push", "--force", "origin", "refs/heads/main"],
+          }),
+        );
+        assert.instanceOf(err, VcsUnsupportedOperationError);
+        assert.include(err.operation, "session-guard.force-push");
+      }),
+    );
+
+    it.effect("rejects implicit --force push (no refspec)", () =>
+      Effect.gen(function* () {
+        const driver = yield* makeDriver();
+        const err = yield* Effect.flip(
+          driver.execute({
+            operation: "test-push",
+            cwd: ALLOWED,
+            // No refspec — implicit tracking push
+            args: ["push", "--force", "origin"],
+          }),
+        );
+        assert.instanceOf(err, VcsUnsupportedOperationError);
+        assert.include(err.operation, "session-guard.force-push");
+        assert.include(err.detail, "implicit force-push");
+      }),
+    );
+
+    it.effect("allows HEAD:feature-branch refspec with --force (non-protected)", () =>
+      Effect.gen(function* () {
+        const driver = yield* makeDriver();
+        const result = yield* driver.execute({
+          operation: "test-push",
+          cwd: ALLOWED,
+          args: ["push", "--force", "origin", "HEAD:feat/my-feature"],
+        });
+        assert.strictEqual(result.stdout, `ok:${ALLOWED}`);
+      }),
+    );
+
+    it.effect("supervisorOverride bypasses implicit force-push rejection", () =>
+      Effect.gen(function* () {
+        const driver = yield* makeDriver({ supervisorOverride: true });
+        const result = yield* driver.execute({
+          operation: "test-push",
+          cwd: ALLOWED,
+          args: ["push", "--force", "origin"],
         });
         assert.strictEqual(result.stdout, `ok:${ALLOWED}`);
       }),
