@@ -256,8 +256,21 @@ describe("checkActorAuthorization", () => {
     expect(err).not.toBeNull();
   });
 
-  // delamain allowed for respond commands
-  it("allows delamain + thread.approval.respond", () => {
+  // respond commands: operator allowed
+  it("allows operator + thread.approval.respond", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.approval.respond", {
+        requestId: "req-1",
+        decision: { type: "allow" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      "operator",
+    );
+    expect(err).toBeNull();
+  });
+
+  // delamain with crit/supervisor credential (non-thread-scoped) allowed for respond
+  it("allows delamain with owner credential + thread.approval.respond", () => {
     const err = checkActorAuthorization(
       cmd("thread.approval.respond", {
         requestId: "req-1",
@@ -265,6 +278,51 @@ describe("checkActorAuthorization", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
       }),
       "delamain",
+      "owner", // crit sidecar with supervisor credential
+    );
+    expect(err).toBeNull();
+  });
+
+  // delamain with thread-scoped credential (peer token) must be denied for respond
+  it("denies delamain with thread-scoped credential + thread.approval.respond", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.approval.respond", {
+        requestId: "req-1",
+        decision: { type: "allow" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      "delamain",
+      "thread-scoped", // peer token must not approve its own tool use
+    );
+    expect(err).not.toBeNull();
+    expect(err?.message).toMatch(/thread-scoped/);
+  });
+
+  // delamain with thread-scoped credential also denied for user-input.respond
+  it("denies delamain with thread-scoped credential + thread.user-input.respond", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.user-input.respond", {
+        requestId: "req-1",
+        answers: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      "delamain",
+      "thread-scoped",
+    );
+    expect(err).not.toBeNull();
+    expect(err?.message).toMatch(/thread-scoped/);
+  });
+
+  // delamain without sessionRole (internal server path, not HTTP) still allowed
+  it("allows delamain without sessionRole + thread.approval.respond (internal path)", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.approval.respond", {
+        requestId: "req-1",
+        decision: { type: "allow" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      "delamain",
+      // no sessionRole: undefined — internal dispatch, not HTTP-sourced
     );
     expect(err).toBeNull();
   });

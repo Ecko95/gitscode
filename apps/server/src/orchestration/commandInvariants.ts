@@ -10,6 +10,7 @@ import type {
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import type { SessionRole } from "../auth/Services/SessionCredentialService.ts";
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -205,10 +206,16 @@ function isRespondCommand(command: OrchestrationCommand): boolean {
  *
  * Runs before the decider so authorization cannot be bypassed by calling
  * `decideOrchestrationCommand` directly with wrong actor context.
+ *
+ * @param sessionRole - The credential role of the authenticated session, when
+ *   available (HTTP paths). Used to distinguish crit/supervisor-credentialed
+ *   delamain callers from thread-scoped peer tokens (plan 23 §4, operator decision).
+ *   A session must never approve its own tool use: delamain + thread-scoped is denied.
  */
 export function checkActorAuthorization(
   command: OrchestrationCommand,
   actor: OrchestrationActorKind,
+  sessionRole?: SessionRole,
 ): OrchestrationCommandInvariantError | null {
   // Internal commands (worktree lifecycle): only server/provider
   if (isInternalCommand(command)) {
@@ -250,9 +257,20 @@ export function checkActorAuthorization(
       `Actor '${actor}' is not authorized for command '${command.type}'.`,
     );
   }
-  // Respond commands: operator + delamain (intended crit control loop)
+  // Respond commands (thread.approval.respond, thread.user-input.respond):
+  // operator and server are always allowed.
+  // delamain is allowed ONLY when the session credential is NOT thread-scoped —
+  // a thread-scoped peer token must never approve its own tool use (plan 23 §4).
+  // ponytail: sessionRole is server-derived at the HTTP entry; client cannot forge it.
   if (isRespondCommand(command)) {
-    if (actor === "operator" || actor === "delamain" || actor === "server") return null;
+    if (actor === "operator" || actor === "server") return null;
+    if (actor === "delamain" && sessionRole !== "thread-scoped") return null;
+    if (actor === "delamain" && sessionRole === "thread-scoped") {
+      return invariantError(
+        command.type,
+        `Actor '${actor}' with thread-scoped credential is not authorized to respond to tool-use approvals. A session must not approve its own tool use.`,
+      );
+    }
     return invariantError(
       command.type,
       `Actor '${actor}' is not authorized to respond on behalf of this thread.`,

@@ -47,6 +47,8 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
+import type { SessionRole } from "../../auth/Services/SessionCredentialService.ts";
+
 const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
@@ -55,6 +57,8 @@ const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvar
 interface CommandEnvelope {
   command: OrchestrationCommand;
   actorKind: Schema.Schema.Type<typeof OrchestrationActorKind>;
+  // ponytail: server-derived session role for credential-aware invariant checks; undefined for internal dispatch paths
+  sessionRole?: SessionRole;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
 }
@@ -161,7 +165,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }
 
         // Actor authorization guard — runs before decider (plan 23, W5.3)
-        const authError = checkActorAuthorization(envelope.command, envelope.actorKind);
+        const authError = checkActorAuthorization(
+          envelope.command,
+          envelope.actorKind,
+          envelope.sessionRole,
+        );
         if (authError !== null) {
           const deniedAt = yield* nowIso;
           const denialEventId = EventId.make(yield* crypto.randomUUIDv4);
@@ -366,12 +374,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive) =>
     eventStore.readFromSequence(fromSequenceExclusive);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command, actor) =>
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command, actor, sessionRole) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, {
         command,
         actorKind: actor,
+        ...(sessionRole !== undefined ? { sessionRole } : {}),
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       });

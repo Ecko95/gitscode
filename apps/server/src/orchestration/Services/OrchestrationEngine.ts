@@ -21,6 +21,7 @@ import type * as Stream from "effect/Stream";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
+import type { SessionRole } from "../../auth/Services/SessionCredentialService.ts";
 
 /**
  * OrchestrationEngineShape - Service API for orchestration command and event flow.
@@ -49,6 +50,7 @@ export interface OrchestrationEngineShape {
   readonly dispatch: (
     command: OrchestrationCommand,
     actor: OrchestrationActorKind,
+    sessionRole?: SessionRole,
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
