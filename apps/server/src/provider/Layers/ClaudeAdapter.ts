@@ -93,6 +93,7 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type GitShimManagerShape } from "../GitShimManager.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -215,6 +216,8 @@ export interface ClaudeAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
   /** Visual-plan MCP token service. When absent the adapter skips token issuance. */
   readonly visualPlanMcpSvc?: VisualPlanMcpServiceShape;
+  /** Git command confinement shim manager. When present, injects the shim into each session's env. */
+  readonly gitShimManager?: GitShimManagerShape;
 }
 
 function isUuid(value: string): boolean {
@@ -1045,6 +1048,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         prompt: input.prompt,
         options: input.options,
       }) as ClaudeQueryRuntime);
+
+  // Git shim manager injected at construction; per-session shim env stored here.
+  // CONFINEMENT LINE: sessionShimEnvs are merged into queryOptions.env only —
+  // claudeEnvironment (instance-level) and server process.env are never mutated.
+  const gitShimManager: GitShimManagerShape | undefined = options?.gitShimManager;
+  const sessionShimEnvs = new Map<ThreadId, Record<string, string>>();
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.bounded<ProviderRuntimeEvent>(
@@ -2541,6 +2550,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     sessions.delete(context.session.threadId);
+    sessionShimEnvs.delete(context.session.threadId);
+    // Clean up the per-session shim dir when the session stops.
+    if (gitShimManager) yield* gitShimManager.release(context.session.threadId);
   });
 
   const requireSession = (
@@ -2989,7 +3001,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         includePartialMessages: true,
         canUseTool,
         ...(visualPlanMcpServers ? { mcpServers: visualPlanMcpServers } : {}),
-        env: claudeEnvironment,
+        // Merge per-session shim env vars (GITS_ALLOWED_ROOT, PATH prepend, etc.)
+        // into the claude env. claudeEnvironment is the instance-level base; shimVars
+        // add the per-session policy. Neither object is mutated.
+        env: Object.assign({}, claudeEnvironment, sessionShimEnvs.get(threadId) ?? {}),
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
@@ -3075,6 +3090,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
+
+      // Allocate git confinement shim for this session (non-supervisor sessions only).
+      // CONFINEMENT LINE: shimVars merged into claudeEnvironment copy per sendTurn only —
+      // claudeEnvironment (instance-level) and server process.env are never mutated.
+      // Cleanup happens in stopSessionInternal via gitShimManager.release().
+      // ponytail: shim denied/warn events log via Codex adapter's stderr pipeline;
+      //   Claude SDK stderr is not captured here — add stderr capture when needed.
+      if (gitShimManager) {
+        const shimResult = yield* gitShimManager.allocate(threadId, input.cwd ?? "");
+        sessionShimEnvs.set(threadId, shimResult.vars);
+      }
 
       const sessionStartedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({

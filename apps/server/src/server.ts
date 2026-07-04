@@ -24,6 +24,7 @@ import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
+import { GitShimManagerLive } from "./provider/GitShimManager.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -375,7 +376,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // the rewritten registry reads snapshots off the instance registry and
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
-  Layer.provideMerge(OpenCodeRuntimeLive),
+  // OpenCodeRuntimeLive + GitShimManagerLive merged to stay within pipe() arg limit.
+  // Git command confinement shim manager — creates per-session shim dirs under
+  // `${baseDir}/gits-shims/` and injects PATH+policy env vars into provider children.
+  Layer.provideMerge(Layer.merge(OpenCodeRuntimeLive, GitShimManagerLive)),
   // Voice transcription consumes ServerSettingsService (provided by
   // ServerSettingsLive below) + HttpClient (FetchHttpClient.layer, outermost)
   // and provides its own ServerSecretStore for the stored Whisper API key,

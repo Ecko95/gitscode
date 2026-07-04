@@ -80,6 +80,7 @@ import {
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type GitShimManagerShape } from "../GitShimManager.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -116,6 +117,8 @@ export interface CursorAdapterLiveOptions {
   readonly resolveSettings?: Effect.Effect<CursorSettings>;
   /** Visual-plan MCP token service. When absent the adapter skips token issuance. */
   readonly visualPlanMcpSvc?: VisualPlanMcpServiceShape;
+  /** Git command confinement shim manager. When present, injects the shim into each session's env. */
+  readonly gitShimManager?: GitShimManagerShape;
 }
 
 interface PendingApproval {
@@ -537,9 +540,23 @@ export function makeCursorAdapter(
           const visualPlanMcpToken = visualPlanMcpSvc
             ? yield* visualPlanMcpSvc.issueToken(input.threadId)
             : undefined;
+          // Inject git confinement shim for this session.
+          // CONFINEMENT LINE: only sessionEnv is modified; options.environment (the
+          // instance-level env) is never mutated, and server process.env is untouched.
+          const cursorShimEnv = options?.gitShimManager
+            ? (yield* options.gitShimManager.allocate(input.threadId, cwd)).vars
+            : {};
+          if (options?.gitShimManager && Object.keys(cursorShimEnv).length > 0) {
+            yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
+          }
+          const cursorSessionEnv: NodeJS.ProcessEnv | undefined =
+            options?.environment != null || Object.keys(cursorShimEnv).length > 0
+              ? { ...(options?.environment ?? {}), ...cursorShimEnv }
+              : undefined;
+
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(cursorSessionEnv != null ? { environment: cursorSessionEnv } : {}),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),

@@ -66,6 +66,7 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type GitShimManagerShape } from "../GitShimManager.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -96,6 +97,8 @@ export interface CodexAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
   /** Visual-plan MCP token service. When absent the adapter skips token issuance. */
   readonly visualPlanMcpSvc?: VisualPlanMcpServiceShape;
+  /** Git command confinement shim manager. When present, injects the shim into each session's env. */
+  readonly gitShimManager?: GitShimManagerShape;
 }
 
 interface CodexAdapterSessionContext {
@@ -165,6 +168,19 @@ const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
 function isFatalCodexProcessStderrMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return FATAL_CODEX_STDERR_SNIPPETS.some((snippet) => normalized.includes(snippet));
+}
+
+/** Parse a git-shim denied/warn JSON line; null if not a shim message. */
+function tryParseShimEvent(
+  message: string,
+): { gits_shim: string; subcmd?: string; reason?: string; cwd?: string } | null {
+  if (!message.includes("gits_shim")) return null;
+  try {
+    const parsed = JSON.parse(message.trim()) as Record<string, unknown>;
+    return typeof parsed["gits_shim"] === "string" ? (parsed as { gits_shim: string }) : null;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeCodexTokenUsage(
@@ -1397,13 +1413,35 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const sessionCwd = input.cwd ?? process.cwd();
+        const sessionScope = yield* Scope.make("sequential");
+        let sessionScopeTransferred = false;
+        yield* Effect.addFinalizer(() =>
+          sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+        );
+
+        // Inject git confinement shim for this session.
+        // CONFINEMENT LINE: only sessionEnv is modified; options.environment (the
+        // instance-level env) is never mutated, and server process.env is untouched.
+        // The shim dir is released when sessionScope closes (session teardown).
+        const shimEnv = options?.gitShimManager
+          ? (yield* options.gitShimManager.allocate(input.threadId, sessionCwd)).vars
+          : {};
+        if (options?.gitShimManager && Object.keys(shimEnv).length > 0) {
+          yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
+        }
+        const sessionEnv: NodeJS.ProcessEnv | undefined =
+          options?.environment != null || Object.keys(shimEnv).length > 0
+            ? { ...(options?.environment ?? {}), ...shimEnv }
+            : undefined;
+
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
+          cwd: sessionCwd,
           binaryPath: codexConfig.binaryPath,
           visualPlanMcpUrl: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
-          ...(options?.environment ? { environment: options.environment } : {}),
+          ...(sessionEnv != null ? { environment: sessionEnv } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
@@ -1418,11 +1456,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             : {}),
           ...(visualPlanMcpSvc ? { visualPlanMcpSvc } : {}),
         };
-        const sessionScope = yield* Scope.make("sequential");
-        let sessionScopeTransferred = false;
-        yield* Effect.addFinalizer(() =>
-          sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
-        );
         const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
         const runtime = yield* createRuntime(runtimeInput).pipe(
           Effect.provideService(Scope.Scope, sessionScope),
@@ -1442,6 +1475,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
+            if (event.method === "process/stderr") {
+              const shimEvent = tryParseShimEvent(event.message ?? "");
+              if (shimEvent?.gits_shim === "denied" || shimEvent?.gits_shim === "warn") {
+                yield* Effect.logWarning("git-shim.policy-event", {
+                  type: shimEvent.gits_shim,
+                  subcmd: shimEvent.subcmd,
+                  reason: shimEvent.reason,
+                  cwd: shimEvent.cwd,
+                  threadId: event.threadId,
+                });
+              }
+            }
             const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {

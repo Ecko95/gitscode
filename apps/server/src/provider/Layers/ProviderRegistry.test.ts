@@ -49,6 +49,15 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { GitShimManager } from "../GitShimManager.ts";
+// ponytail: no-op shim for tests — real shim requires FileSystem + ServerConfig,
+//   neither of which is relevant to provider registry integration tests.
+const NoOpGitShimManagerLive = Layer.succeed(GitShimManager, {
+  allocate: (_sessionId: string, _allowedRoot: string) => Effect.succeed({ vars: {} }),
+  release: (_sessionId: string) => Effect.void,
+  sweepStale: () => Effect.void,
+});
+
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
@@ -1029,6 +1038,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             Layer.provideMerge(TestHttpClientLive),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
+            Layer.provideMerge(NoOpGitShimManagerLive),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
             // outer `NodeServices.layer` on `it.layer(...)` and will
             // genuinely spawn a subprocess. The missing-binary ENOENT is
@@ -1104,6 +1114,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             Layer.provideMerge(TestHttpClientLive),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
+            Layer.provideMerge(NoOpGitShimManagerLive),
             // `it.live` does not inherit layers from the outer `it.layer`
             // wrapper, so provide `NodeServices.layer` inline. This is the
             // same real `ChildProcessSpawner` + `FileSystem` + `Path`
@@ -1214,6 +1225,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             Layer.provideMerge(TestHttpClientLive),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
+            Layer.provideMerge(NoOpGitShimManagerLive),
             Layer.provideMerge(NodeServices.layer),
           );
           const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
@@ -1265,6 +1277,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               Layer.provideMerge(TestHttpClientLive),
               Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
               Layer.provideMerge(OpenCodeRuntimeLive),
+              Layer.provideMerge(NoOpGitShimManagerLive),
               Layer.provideMerge(
                 mockCommandSpawnerLayer((command, args) => {
                   if (command === "agent") {
