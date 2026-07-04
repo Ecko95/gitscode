@@ -1,10 +1,32 @@
-import { memo, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import { BotIcon, GitBranchIcon, PanelRightCloseIcon } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+import {
+  BotIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ClipboardIcon,
+  ExternalLinkIcon,
+  GitBranchIcon,
+  GitMergeIcon,
+  MoreHorizontalIcon,
+  PanelRightCloseIcon,
+  ScrollTextIcon,
+  XCircleIcon,
+} from "lucide-react";
 import { cn } from "~/lib/utils";
 import {
   delamainStatusClassName,
@@ -13,6 +35,512 @@ import {
   sortDelamainPeers,
 } from "~/delamainPeers";
 import { readGitsEnvironmentClient } from "~/gitsClient";
+import type { DelamainPeer } from "@t3tools/contracts";
+
+// --- Transcript parser ---
+
+type LogEntryType =
+  | "system"
+  | "user"
+  | "assistant"
+  | "tool_call"
+  | "error"
+  | "turn.failed"
+  | string;
+
+interface ParsedLogEntry {
+  type: LogEntryType;
+  text: string | null;
+  tool: string | null;
+  raw: string;
+}
+
+function parse_log_line(raw: string): ParsedLogEntry {
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    const type = (obj["type"] as LogEntryType) ?? "unknown";
+    const text: string | null =
+      typeof obj["content"] === "string"
+        ? obj["content"]
+        : typeof obj["message"] === "string"
+          ? obj["message"]
+          : typeof obj["text"] === "string"
+            ? obj["text"]
+            : typeof obj["summary"] === "string"
+              ? obj["summary"]
+              : null;
+    const tool: string | null = typeof obj["name"] === "string" ? obj["name"] : null;
+    return { type, text, tool, raw };
+  } catch {
+    return { type: "unknown", text: raw.trim() || null, tool: null, raw };
+  }
+}
+
+function parse_log_text(text: string): ParsedLogEntry[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map(parse_log_line);
+}
+
+// --- Transcript renderer ---
+
+function LogEntryRow({ entry }: { entry: ParsedLogEntry }) {
+  const is_error = entry.type === "error" || entry.type === "turn.failed";
+  const is_tool = entry.type === "tool_call";
+  const is_assistant = entry.type === "assistant";
+  const is_user = entry.type === "user";
+  const is_system = entry.type === "system";
+
+  if (is_tool) {
+    return (
+      <div className="flex items-start gap-1.5 py-0.5">
+        <span className="mt-0.5 shrink-0 rounded bg-muted px-1 py-0 text-[10px] font-mono text-muted-foreground/60">
+          tool
+        </span>
+        <span className="truncate text-[11px] text-muted-foreground/55">
+          {entry.tool ?? entry.text ?? "—"}
+          {entry.tool && entry.text ? `: ${entry.text}` : ""}
+        </span>
+      </div>
+    );
+  }
+  if (is_error) {
+    return (
+      <div className="rounded border border-destructive/20 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
+        {entry.text ?? entry.raw}
+      </div>
+    );
+  }
+  if (is_assistant) {
+    return (
+      <div className="flex items-start gap-1.5 py-0.5">
+        <span className="mt-0.5 shrink-0 rounded bg-blue-500/10 px-1 py-0 text-[10px] font-semibold text-blue-400">
+          AI
+        </span>
+        <span className="text-[11px] text-foreground/75 whitespace-pre-wrap break-words">
+          {entry.text ?? entry.raw}
+        </span>
+      </div>
+    );
+  }
+  if (is_user) {
+    return (
+      <div className="flex items-start gap-1.5 py-0.5">
+        <span className="mt-0.5 shrink-0 rounded bg-muted px-1 py-0 text-[10px] font-semibold text-muted-foreground/70">
+          You
+        </span>
+        <span className="text-[11px] text-foreground/65 whitespace-pre-wrap break-words">
+          {entry.text ?? entry.raw}
+        </span>
+      </div>
+    );
+  }
+  if (is_system) {
+    return (
+      <div className="py-0.5 text-[10px] text-muted-foreground/35 italic">
+        {entry.text ?? entry.raw}
+      </div>
+    );
+  }
+  // unknown / raw fallback
+  return (
+    <div className="py-0.5 font-mono text-[10px] text-muted-foreground/30 break-all">
+      {entry.raw}
+    </div>
+  );
+}
+
+// --- Transcript panel ---
+
+const TAIL_LINES = 120;
+const FULL_LINES = 500;
+
+function PeerTranscript({
+  peerId,
+  environmentId,
+}: {
+  peerId: string;
+  environmentId: EnvironmentId;
+}) {
+  const [full, set_full] = useState(false);
+  const lines = full ? FULL_LINES : TAIL_LINES;
+
+  const log_query = useQuery({
+    queryKey: ["gits", "delamain", "peer-log", environmentId, peerId, lines],
+    queryFn: async () => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) return null;
+      return client.delamain.readPeerLog({ peerId, lines });
+    },
+    refetchInterval: 5_000,
+    retry: false,
+  });
+
+  const entries = useMemo(
+    () => (log_query.data?.text ? parse_log_text(log_query.data.text) : []),
+    [log_query.data?.text],
+  );
+
+  if (log_query.isPending) {
+    return <div className="py-2 text-center text-[11px] text-muted-foreground/40">Loading…</div>;
+  }
+  if (log_query.isError) {
+    return (
+      <div className="py-2 text-center text-[11px] text-destructive/60">Failed to load log.</div>
+    );
+  }
+  if (entries.length === 0) {
+    return <div className="py-2 text-center text-[11px] text-muted-foreground/35">No log yet.</div>;
+  }
+
+  return (
+    <div className="space-y-0.5">
+      <div className="max-h-56 overflow-y-auto pr-0.5">
+        {entries.map((entry, i) => (
+          /* ponytail: key by line-idx + type; JSONL has no stable id */
+          <LogEntryRow key={`${i}-${entry.type}`} entry={entry} />
+        ))}
+      </div>
+      {!full && (log_query.data?.lines ?? 0) > TAIL_LINES ? (
+        <button
+          className="mt-1 text-[10px] text-blue-400/70 hover:text-blue-400 underline-offset-2 hover:underline"
+          onClick={() => set_full(true)}
+          type="button"
+        >
+          Load more ({log_query.data!.lines} total lines)
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+// --- Kill dialog ---
+
+interface KillDialogState {
+  peer: DelamainPeer;
+}
+
+function KillPeerDialog({
+  state,
+  onClose,
+  onKill,
+  isPending,
+}: {
+  state: KillDialogState | null;
+  onClose: () => void;
+  onKill: (peerId: string, signal: "SIGTERM" | "SIGKILL") => void;
+  isPending: boolean;
+}) {
+  const [signal, set_signal] = useState<"SIGTERM" | "SIGKILL">("SIGTERM");
+  const open = state !== null;
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o && !isPending) onClose();
+      }}
+    >
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Kill peer?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {state ? (
+              <>
+                This will stop <strong>{state.peer.name ?? state.peer.id}</strong>
+                {state.peer.branch ? (
+                  <>
+                    {" "}
+                    on branch <strong>{state.peer.branch}</strong>
+                  </>
+                ) : null}
+                . Any unsaved work will be lost.
+              </>
+            ) : null}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {/* signal selector */}
+        <div className="flex gap-2 px-6 pb-2">
+          <Button
+            size="sm"
+            variant={signal === "SIGTERM" ? "default" : "outline"}
+            onClick={() => set_signal("SIGTERM")}
+            type="button"
+          >
+            Graceful (SIGTERM)
+          </Button>
+          <Button
+            size="sm"
+            variant={signal === "SIGKILL" ? "destructive" : "outline"}
+            onClick={() => set_signal("SIGKILL")}
+            type="button"
+          >
+            Force (SIGKILL)
+          </Button>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogClose
+            disabled={isPending}
+            render={<Button variant="outline" disabled={isPending} />}
+          >
+            Cancel
+          </AlertDialogClose>
+          <Button
+            variant="destructive"
+            disabled={isPending || !state}
+            onClick={() => state && onKill(state.peer.id, signal)}
+            type="button"
+          >
+            {isPending ? "Killing…" : "Kill peer"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+// --- Integrate confirm dialog ---
+
+interface IntegrateDialogState {
+  peer: DelamainPeer;
+}
+
+function IntegrateDialog({
+  state,
+  onClose,
+  onIntegrate,
+  isPending,
+}: {
+  state: IntegrateDialogState | null;
+  onClose: () => void;
+  onIntegrate: (peerId: string) => void;
+  isPending: boolean;
+}) {
+  return (
+    <AlertDialog
+      open={state !== null}
+      onOpenChange={(o) => {
+        if (!o && !isPending) onClose();
+      }}
+    >
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Integrate peer?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {state ? (
+              <>
+                Integrate <strong>{state.peer.name ?? state.peer.id}</strong> — this will open or
+                update a PR from <strong>{state.peer.branch ?? "the peer branch"}</strong> into{" "}
+                <strong>{state.peer.baseBranch ?? "base"}</strong>.
+              </>
+            ) : null}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogClose
+            disabled={isPending}
+            render={<Button variant="outline" disabled={isPending} />}
+          >
+            Cancel
+          </AlertDialogClose>
+          <Button
+            variant="default"
+            disabled={isPending || !state}
+            onClick={() => state && onIntegrate(state.peer.id)}
+            type="button"
+          >
+            {isPending ? "Integrating…" : "Integrate"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+// --- Active statuses ---
+
+const ACTIVE_STATUSES = new Set(["pending", "running", "blocked", "waiting", "frozen"]);
+const TERMINAL_STATUSES = new Set(["done", "completed", "failed", "killed", "halted"]);
+
+// --- Per-peer card ---
+
+function PeerCard({
+  peer,
+  environmentId,
+  onKill,
+  onIntegrate,
+}: {
+  peer: DelamainPeer;
+  environmentId: EnvironmentId;
+  onKill: (peer: DelamainPeer) => void;
+  onIntegrate: (peer: DelamainPeer) => void;
+}) {
+  const repoLabel = formatDelamainPathLabel(peer.sourceRepo ?? peer.worktreePath);
+  const title = peer.name ?? peer.id;
+  const [chat_open, set_chat_open] = useState(false);
+
+  const is_active = ACTIVE_STATUSES.has(peer.status);
+  const is_terminal = TERMINAL_STATUSES.has(peer.status);
+  const can_integrate = (peer.status === "done" || peer.status === "completed") && !peer.prUrl;
+
+  const copy_branch = useCallback(() => {
+    if (peer.branch) void navigator.clipboard.writeText(peer.branch);
+  }, [peer.branch]);
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-background/45">
+      {/* header row */}
+      <div className="flex min-w-0 items-center gap-1.5 px-2.5 pt-2 pb-1">
+        <BotIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
+        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground/85">
+          {title}
+        </span>
+        <span
+          className={cn(
+            "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium",
+            delamainStatusClassName(peer),
+          )}
+        >
+          {peer.rawStatus}
+        </span>
+        {/* overflow menu */}
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="shrink-0 text-muted-foreground/40 hover:text-foreground/60"
+                aria-label={`Actions for ${title}`}
+                title={`Actions for ${title}`}
+              />
+            }
+          >
+            <MoreHorizontalIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end" className="w-44">
+            <MenuItem onClick={() => set_chat_open((v) => !v)} className="text-sm">
+              <ScrollTextIcon className="size-4" />
+              {chat_open ? "Hide chat" : "View chat"}
+            </MenuItem>
+            {peer.branch ? (
+              <MenuItem onClick={copy_branch} className="text-sm">
+                <ClipboardIcon className="size-4" />
+                Copy branch
+              </MenuItem>
+            ) : null}
+            {peer.prUrl ? (
+              <MenuItem
+                render={<a href={peer.prUrl} target="_blank" rel="noopener noreferrer" />}
+                className="text-sm"
+              >
+                <ExternalLinkIcon className="size-4" />
+                Open PR
+              </MenuItem>
+            ) : null}
+            {can_integrate ? (
+              <MenuItem onClick={() => onIntegrate(peer)} className="text-sm">
+                <GitMergeIcon className="size-4" />
+                Integrate
+              </MenuItem>
+            ) : null}
+            {is_active ? (
+              <MenuItem onClick={() => onKill(peer)} variant="destructive" className="text-sm">
+                <XCircleIcon className="size-4" />
+                Kill peer
+              </MenuItem>
+            ) : null}
+          </MenuPopup>
+        </Menu>
+      </div>
+
+      {/* branch + repo row */}
+      <div className="flex min-w-0 items-center gap-1.5 px-2.5 pb-1.5 text-[11px] text-muted-foreground/55">
+        <GitBranchIcon className="size-3 shrink-0" />
+        <span className="truncate">{peer.branch ?? "no branch"}</span>
+        {repoLabel ? (
+          <>
+            <span className="shrink-0 text-muted-foreground/30">|</span>
+            <span className="truncate">{repoLabel}</span>
+          </>
+        ) : null}
+      </div>
+
+      {/* last event / task summary */}
+      {peer.lastEvent || peer.task ? (
+        <p className="truncate px-2.5 pb-1 text-[11px] text-muted-foreground/45">
+          {peer.lastEvent ?? peer.task}
+        </p>
+      ) : null}
+
+      {/* inline action buttons row (primary shortcuts) */}
+      <div className="flex items-center gap-1 px-2 pb-2">
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          className={cn(
+            "h-5 w-auto gap-1 px-1.5 text-[10px] text-muted-foreground/50 hover:text-foreground/70",
+            chat_open && "text-blue-400/80",
+          )}
+          onClick={() => set_chat_open((v) => !v)}
+          aria-label={chat_open ? "Hide chat transcript" : "View chat transcript"}
+          title={chat_open ? "Hide chat transcript" : "View chat transcript"}
+        >
+          <ScrollTextIcon className="size-3" />
+          {chat_open ? (
+            <ChevronDownIcon className="size-3" />
+          ) : (
+            <ChevronRightIcon className="size-3" />
+          )}
+        </Button>
+
+        {peer.prUrl ? (
+          <a
+            href={peer.prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open PR"
+            aria-label="Open pull request"
+            className="inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10px] text-muted-foreground/50 hover:bg-accent hover:text-foreground/70"
+          >
+            <ExternalLinkIcon className="size-3" />
+            PR
+          </a>
+        ) : null}
+
+        {is_active ? (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className="h-5 w-auto gap-1 px-1.5 text-[10px] text-destructive/50 hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => onKill(peer)}
+            aria-label={`Kill peer ${title}`}
+            title="Kill peer"
+          >
+            <XCircleIcon className="size-3" />
+            Kill
+          </Button>
+        ) : null}
+
+        {/* terminal status hint */}
+        {is_terminal && !peer.prUrl && !peer.integrationStatus ? (
+          <span className="text-[10px] text-muted-foreground/30">{peer.integrationStatus}</span>
+        ) : null}
+      </div>
+
+      {/* transcript (collapsible) */}
+      {chat_open ? (
+        <div className="border-t border-border/40 px-2.5 py-2">
+          <PeerTranscript peerId={peer.id} environmentId={environmentId} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// --- Main sidebar ---
 
 interface DelamainSidebarProps {
   environmentId: EnvironmentId;
@@ -27,8 +555,14 @@ const DelamainSidebar = memo(function DelamainSidebar({
   mode = "sidebar",
   onClose,
 }: DelamainSidebarProps) {
-  const delamainPeersQuery = useQuery({
-    queryKey: ["gits", "delamain", "peers", environmentId],
+  const queryClient = useQueryClient();
+  const [kill_state, set_kill_state] = useState<{ peer: DelamainPeer } | null>(null);
+  const [integrate_state, set_integrate_state] = useState<{ peer: DelamainPeer } | null>(null);
+
+  const peers_query_key = ["gits", "delamain", "peers", environmentId];
+
+  const delamain_peers_query = useQuery({
+    queryKey: peers_query_key,
     queryFn: async () => {
       const client = readGitsEnvironmentClient(environmentId);
       if (!client) return null;
@@ -37,15 +571,49 @@ const DelamainSidebar = memo(function DelamainSidebar({
     refetchInterval: 10_000,
     retry: false,
   });
-  const delamainPeers = useMemo(
+
+  const delamain_peers = useMemo(
     () =>
-      filterDelamainPeersForRepo(delamainPeersQuery.data?.peers ?? [], projectRepoRoot).sort(
+      filterDelamainPeersForRepo(delamain_peers_query.data?.peers ?? [], projectRepoRoot).sort(
         sortDelamainPeers,
       ),
-    [delamainPeersQuery.data?.peers, projectRepoRoot],
+    [delamain_peers_query.data?.peers, projectRepoRoot],
   );
-  const visibleDelamainPeers = delamainPeers.slice(0, 6);
-  const hiddenDelamainPeerCount = Math.max(0, delamainPeers.length - visibleDelamainPeers.length);
+
+  const visible_peers = delamain_peers.slice(0, 6);
+  const hidden_count = Math.max(0, delamain_peers.length - visible_peers.length);
+
+  const kill_mutation = useMutation({
+    mutationFn: async ({ peerId, signal }: { peerId: string; signal: "SIGTERM" | "SIGKILL" }) => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) throw new Error("No environment client");
+      return client.delamain.killPeer({ peerId, signal });
+    },
+    onSuccess: async () => {
+      set_kill_state(null);
+      await queryClient.invalidateQueries({ queryKey: peers_query_key });
+    },
+  });
+
+  const integrate_mutation = useMutation({
+    mutationFn: async (peerId: string) => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) throw new Error("No environment client");
+      return client.delamain.integratePeer({ peerId });
+    },
+    onSuccess: async () => {
+      set_integrate_state(null);
+      await queryClient.invalidateQueries({ queryKey: peers_query_key });
+    },
+  });
+
+  const handle_kill = useCallback((peer: DelamainPeer) => {
+    set_kill_state({ peer });
+  }, []);
+
+  const handle_integrate = useCallback((peer: DelamainPeer) => {
+    set_integrate_state({ peer });
+  }, []);
 
   return (
     <div
@@ -65,7 +633,7 @@ const DelamainSidebar = memo(function DelamainSidebar({
             Delamain
           </Badge>
           <span className="text-[11px] text-muted-foreground/60">
-            {delamainPeers.length} peer{delamainPeers.length === 1 ? "" : "s"}
+            {delamain_peers.length} peer{delamain_peers.length === 1 ? "" : "s"}
           </span>
         </div>
         <Button
@@ -81,53 +649,22 @@ const DelamainSidebar = memo(function DelamainSidebar({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-3 p-3">
-          {visibleDelamainPeers.length > 0 ? (
+          {visible_peers.length > 0 ? (
             <>
               <div className="space-y-1.5">
-                {visibleDelamainPeers.map((peer) => {
-                  const repoLabel = formatDelamainPathLabel(peer.sourceRepo ?? peer.worktreePath);
-                  const title = peer.name ?? peer.id;
-                  return (
-                    <div
-                      key={peer.id}
-                      className="rounded-lg border border-border/50 bg-background/45 px-2.5 py-2"
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <BotIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
-                        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground/85">
-                          {title}
-                        </span>
-                        <span
-                          className={cn(
-                            "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium",
-                            delamainStatusClassName(peer),
-                          )}
-                        >
-                          {peer.rawStatus}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground/55">
-                        <GitBranchIcon className="size-3 shrink-0" />
-                        <span className="truncate">{peer.branch ?? "no branch"}</span>
-                        {repoLabel ? (
-                          <>
-                            <span className="shrink-0 text-muted-foreground/30">|</span>
-                            <span className="truncate">{repoLabel}</span>
-                          </>
-                        ) : null}
-                      </div>
-                      {peer.lastEvent || peer.task ? (
-                        <p className="mt-1 truncate text-[11px] text-muted-foreground/45">
-                          {peer.lastEvent ?? peer.task}
-                        </p>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {visible_peers.map((peer) => (
+                  <PeerCard
+                    key={peer.id}
+                    peer={peer}
+                    environmentId={environmentId}
+                    onKill={handle_kill}
+                    onIntegrate={handle_integrate}
+                  />
+                ))}
               </div>
-              {hiddenDelamainPeerCount > 0 ? (
+              {hidden_count > 0 ? (
                 <p className="px-1 text-[11px] text-muted-foreground/40">
-                  +{hiddenDelamainPeerCount} more in Delamain.
+                  +{hidden_count} more in Delamain.
                 </p>
               ) : null}
             </>
@@ -143,6 +680,20 @@ const DelamainSidebar = memo(function DelamainSidebar({
           )}
         </div>
       </ScrollArea>
+
+      <KillPeerDialog
+        state={kill_state}
+        onClose={() => set_kill_state(null)}
+        onKill={(peerId, signal) => kill_mutation.mutate({ peerId, signal })}
+        isPending={kill_mutation.isPending}
+      />
+
+      <IntegrateDialog
+        state={integrate_state}
+        onClose={() => set_integrate_state(null)}
+        onIntegrate={(peerId) => integrate_mutation.mutate(peerId)}
+        isPending={integrate_mutation.isPending}
+      />
     </div>
   );
 });
