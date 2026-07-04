@@ -12,6 +12,12 @@
  *   2. Scan event store for worktree.retiring-started or worktree.buried for that
  *      path — if found, skip (already handled by ThreadDeletionReactor or a prior sweep).
  *   3. getThreadShellById — if absent/deleted (None), skip (ThreadDeletionReactor owns that).
+ *   3b. Inactivity-age guard: retire only if thread has been inactive longer than
+ *       INACTIVITY_AGE_THRESHOLD_MS (matches ProviderSessionReaper's threshold).
+ *       Activity anchor = latestUserMessageAt ?? createdAt (null latestUserMessageAt
+ *       means no user messages yet → treat thread age as inactivity age).
+ *       This protects sessions stopped via crash or manual stop from being retired
+ *       while the user is still active.
  *   4. retire with trigger "inactivity-reap".
  *
  * Failure modes follow retireWorktree's existing semantics (checkpoint fail → null ref,
@@ -21,6 +27,7 @@
  * GraveyardReaper) so all retirement service deps are available without cascading
  * ProviderRuntimeLayerLive's R type.
  */
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -46,6 +53,11 @@ import { retireWorktree } from "./WorktreeGraveyardRetirement.ts";
 
 // ponytail: same interval as ProviderSessionReaper's sweep — no config knob needed
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+// ponytail: mirrors ProviderSessionReaper's DEFAULT_INACTIVITY_THRESHOLD_MS (30 min).
+// That constant is private to its layer to avoid an R-type cascade; shared constant
+// here is the next-simplest option. Promote to a shared module if the value ever diverges.
+const INACTIVITY_AGE_THRESHOLD_MS = 30 * 60 * 1000;
 
 export interface InactivityReapRetirementReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
@@ -83,6 +95,7 @@ export const runSweepOnce = Effect.gen(function* () {
   const engine: OrchestrationEngineShape = yield* OrchestrationEngineService;
   const directory: ProviderSessionDirectoryShape = yield* ProviderSessionDirectory;
   const projectionQuery: ProjectionSnapshotQueryShape = yield* ProjectionSnapshotQuery;
+  const now: number = yield* Clock.currentTimeMillis;
 
   const bindings: ReadonlyArray<ProviderRuntimeBindingWithMetadata> = yield* directory
     .listBindings()
@@ -132,6 +145,27 @@ export const runSweepOnce = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(shell)) continue;
 
+    // Step 3b: inactivity-age guard — retire only if the thread has actually been
+    // inactive long enough. A "stopped" binding can result from a crash or manual
+    // stop, not just inactivity reaping; without this guard we'd retire worktrees
+    // for users who are still active.
+    //
+    // Activity anchor: latestUserMessageAt if present, else createdAt (no messages
+    // yet → the thread's own age is the best proxy for inactivity).
+    const { latestUserMessageAt, createdAt } = shell.value;
+    const activityAnchor = latestUserMessageAt ?? createdAt;
+    const anchorMs = Date.parse(activityAnchor);
+    const inactivityMs = now - anchorMs;
+    if (Number.isNaN(anchorMs) || inactivityMs < INACTIVITY_AGE_THRESHOLD_MS) {
+      yield* Effect.logDebug("inactivity-reap-retirement.skipped-recent-activity", {
+        threadId,
+        worktreePath,
+        inactivityMs,
+        thresholdMs: INACTIVITY_AGE_THRESHOLD_MS,
+      });
+      continue;
+    }
+
     // Step 4: retire
     yield* Effect.logInfo("inactivity-reap-retirement.retiring", {
       threadId,
@@ -173,6 +207,8 @@ export const InactivityReapRetirementReactorLive: Layer.Layer<
   Effect.gen(function* () {
     // Capture all service shapes at construction time (plan 21 W2.2b).
     // capturedLayer closes over captured shapes → start() R = never.
+    // Clock is NOT captured: Clock.currentTimeMillis is Effect<number, never, never>
+    // and uses the fiber's built-in clock — no explicit provision needed.
     const engine = yield* OrchestrationEngineService;
     const checkpointStore = yield* CheckpointStore;
     const gitDriver = yield* GitVcsDriver;

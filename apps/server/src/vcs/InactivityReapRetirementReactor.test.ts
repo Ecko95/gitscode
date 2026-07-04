@@ -2,8 +2,9 @@
  * Tests for InactivityReapRetirementReactor (plan 21, W2.2b).
  *
  * Coverage:
- *   - stopped session WITH worktree + no prior retirement events → retires with inactivity-reap
- *   - stopped session WITHOUT worktree → reaped, no graveyard events
+ *   - stopped session WITH worktree + stale activity + no prior retirement events → retires with inactivity-reap
+ *   - stopped session WITH worktree + RECENT activity → skipped (protects crashed/manual-stop sessions)
+ *   - stopped session WITHOUT worktree → skipped, no graveyard events
  *   - stopped session with worktree already retiring (retiring-started event) → skipped
  *   - stopped session with worktree already buried → skipped
  *   - stopped session whose thread is deleted (None from getThreadShellById) → skipped
@@ -44,6 +45,11 @@ type WorktreeInfo = {
   worktreePath: string | null;
   branch: string | null;
   projectWorkspaceRoot: string | null;
+};
+
+type MockShell = {
+  latestUserMessageAt: string | null;
+  createdAt: string;
 };
 
 function makeEngineLayer(domainEvents: OrchestrationEvent[] = []): {
@@ -133,7 +139,7 @@ function makeDirectoryLayer(bindings: MockBinding[]): Layer.Layer<ProviderSessio
 
 function makeProjectionLayer(
   worktreeInfoByThread: Map<ThreadId, WorktreeInfo>,
-  aliveThreadIds: Set<ThreadId>,
+  shellByThread: Map<ThreadId, MockShell>,
 ): Layer.Layer<ProjectionSnapshotQuery> {
   return Layer.succeed(ProjectionSnapshotQuery, {
     getCommandReadModel: () => Effect.die("unused"),
@@ -147,8 +153,10 @@ function makeProjectionLayer(
     getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
     getThreadCheckpointContext: () => Effect.die("unused"),
     getFullThreadDiffContext: () => Effect.die("unused"),
-    getThreadShellById: (threadId: ThreadId) =>
-      Effect.succeed(aliveThreadIds.has(threadId) ? Option.some({} as never) : Option.none()),
+    getThreadShellById: (threadId: ThreadId) => {
+      const shell = shellByThread.get(threadId);
+      return Effect.succeed(shell != null ? Option.some(shell as never) : Option.none());
+    },
     getThreadDetailById: () => Effect.die("unused"),
     getThreadWorktreeInfo: (threadId: ThreadId) => {
       const info = worktreeInfoByThread.get(threadId);
@@ -161,12 +169,12 @@ function makeProjectionLayer(
 async function runSweep({
   bindings,
   worktreeInfoByThread,
-  aliveThreadIds,
+  shellByThread,
   existingEvents = [],
 }: {
   bindings: MockBinding[];
   worktreeInfoByThread: Map<ThreadId, WorktreeInfo>;
-  aliveThreadIds: Set<ThreadId>;
+  shellByThread: Map<ThreadId, MockShell>;
   existingEvents?: OrchestrationEvent[];
 }) {
   const { layer: engineLayer, dispatched } = makeEngineLayer(existingEvents);
@@ -179,8 +187,8 @@ async function runSweep({
     makeCheckpointLayer(),
     gitLayer,
     makeDirectoryLayer(bindings),
-    makeProjectionLayer(worktreeInfoByThread, aliveThreadIds),
-    NodeServices.layer, // provides Crypto.Crypto
+    makeProjectionLayer(worktreeInfoByThread, shellByThread),
+    NodeServices.layer, // provides Crypto.Crypto + Clock.Clock
   );
 
   await Effect.runPromise(runSweepOnce.pipe(Effect.provide(layer)));
@@ -191,11 +199,15 @@ async function runSweep({
 // -- tests --
 
 describe("InactivityReapRetirementReactor.runSweepOnce", () => {
-  const staleLastSeen = "2026-04-14T00:00:00.000Z";
+  // staleActivity: well past the 30-min inactivity threshold
+  const staleActivity = "2026-04-14T00:00:00.000Z";
+  // recentActivity: far future — always "recent" relative to wall-clock (no new Date())
+  const recentActivity = "2099-01-01T00:00:00.000Z";
+  const staleLastSeen = staleActivity;
   const worktreePath = "/workspace/proj/.worktrees/thread-inactivity";
   const repoRoot = "/workspace/proj";
 
-  it("retires worktree for stopped session with no prior retirement events", async () => {
+  it("retires worktree for stopped session with stale activity and no prior retirement events", async () => {
     const threadId = ThreadId.make("thread-inactivity-reap-retire");
     const { dispatched, published, removeCalls } = await runSweep({
       bindings: [
@@ -204,7 +216,9 @@ describe("InactivityReapRetirementReactor.runSweepOnce", () => {
       worktreeInfoByThread: new Map([
         [threadId, { worktreePath, branch: "feat/graveyard", projectWorkspaceRoot: repoRoot }],
       ]),
-      aliveThreadIds: new Set([threadId]),
+      shellByThread: new Map([
+        [threadId, { latestUserMessageAt: staleActivity, createdAt: staleActivity }],
+      ]),
       existingEvents: [],
     });
 
@@ -215,6 +229,26 @@ describe("InactivityReapRetirementReactor.runSweepOnce", () => {
     expect(removeCalls).toContain(worktreePath);
   });
 
+  it("skips stopped session with recent activity (protects crashed/manual-stop sessions)", async () => {
+    const threadId = ThreadId.make("thread-inactivity-reap-recent-activity");
+    const { dispatched, published, removeCalls } = await runSweep({
+      bindings: [
+        { threadId, status: "stopped", lastSeenAt: staleLastSeen, provider: "claudeAgent" },
+      ],
+      worktreeInfoByThread: new Map([
+        [threadId, { worktreePath, branch: "feat/graveyard", projectWorkspaceRoot: repoRoot }],
+      ]),
+      shellByThread: new Map([
+        [threadId, { latestUserMessageAt: recentActivity, createdAt: staleActivity }],
+      ]),
+      existingEvents: [],
+    });
+
+    expect(dispatched).toHaveLength(0);
+    expect(published).toHaveLength(0);
+    expect(removeCalls).toHaveLength(0);
+  });
+
   it("skips stopped session without a worktree", async () => {
     const threadId = ThreadId.make("thread-inactivity-no-worktree");
     const { dispatched, published } = await runSweep({
@@ -222,7 +256,9 @@ describe("InactivityReapRetirementReactor.runSweepOnce", () => {
         { threadId, status: "stopped", lastSeenAt: staleLastSeen, provider: "claudeAgent" },
       ],
       worktreeInfoByThread: new Map(), // no worktree info → Option.none()
-      aliveThreadIds: new Set([threadId]),
+      shellByThread: new Map([
+        [threadId, { latestUserMessageAt: staleActivity, createdAt: staleActivity }],
+      ]),
       existingEvents: [],
     });
 
@@ -239,7 +275,9 @@ describe("InactivityReapRetirementReactor.runSweepOnce", () => {
       worktreeInfoByThread: new Map([
         [threadId, { worktreePath, branch: null, projectWorkspaceRoot: repoRoot }],
       ]),
-      aliveThreadIds: new Set([threadId]),
+      shellByThread: new Map([
+        [threadId, { latestUserMessageAt: staleActivity, createdAt: staleActivity }],
+      ]),
       existingEvents: [
         {
           type: "worktree.retiring-started",
@@ -275,7 +313,9 @@ describe("InactivityReapRetirementReactor.runSweepOnce", () => {
       worktreeInfoByThread: new Map([
         [threadId, { worktreePath, branch: null, projectWorkspaceRoot: repoRoot }],
       ]),
-      aliveThreadIds: new Set([threadId]),
+      shellByThread: new Map([
+        [threadId, { latestUserMessageAt: staleActivity, createdAt: staleActivity }],
+      ]),
       existingEvents: [
         {
           type: "worktree.buried",
@@ -312,7 +352,7 @@ describe("InactivityReapRetirementReactor.runSweepOnce", () => {
       worktreeInfoByThread: new Map([
         [threadId, { worktreePath, branch: null, projectWorkspaceRoot: repoRoot }],
       ]),
-      aliveThreadIds: new Set(), // thread not alive → None from getThreadShellById
+      shellByThread: new Map(), // thread not in map → Option.none() from getThreadShellById
       existingEvents: [],
     });
 
