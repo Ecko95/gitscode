@@ -808,3 +808,216 @@ it.effect("decodes command.denied event (plan 23 actor authorization receipt)", 
     assert.strictEqual(parsed.payload.commandType, "thread.turn.start");
   }),
 );
+
+// ── W5.4b audit event fixture decode tests ────────────────────────────────────
+
+it.effect("decodes provider.session.spawned event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 200,
+      eventId: "evt-ps-spawned-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "provider.session.spawned",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-ps-spawn-1",
+      causationEventId: null,
+      correlationId: "cmd-ps-spawn-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        providerId: "codex",
+        sessionId: "sess-abc-123",
+        spawnedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "provider.session.spawned");
+  }),
+);
+
+it.effect("decodes provider.session.stopped event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 201,
+      eventId: "evt-ps-stopped-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "provider.session.stopped",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-ps-stop-1",
+      causationEventId: null,
+      correlationId: "cmd-ps-stop-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        providerId: "codex",
+        sessionId: "sess-abc-123",
+        stoppedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "provider.session.stopped");
+  }),
+);
+
+it.effect("decodes auth.session.issued event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 202,
+      eventId: "evt-auth-issued-1",
+      aggregateKind: "project",
+      aggregateId: "server",
+      type: "auth.session.issued",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-auth-issue-1",
+      causationEventId: null,
+      correlationId: "cmd-auth-issue-1",
+      metadata: {},
+      payload: {
+        sessionId: "sid-opaque-123",
+        method: "bearer-session-token",
+        role: "client",
+        subject: "browser",
+        issuedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "auth.session.issued");
+  }),
+);
+
+it.effect("decodes auth.session.revoked event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 203,
+      eventId: "evt-auth-revoked-1",
+      aggregateKind: "project",
+      aggregateId: "server",
+      type: "auth.session.revoked",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-auth-revoke-1",
+      causationEventId: null,
+      correlationId: "cmd-auth-revoke-1",
+      metadata: {},
+      payload: {
+        sessionId: "sid-opaque-123",
+        revokedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "auth.session.revoked");
+  }),
+);
+
+it.effect("decodes auth.pairing-link.issued event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 204,
+      eventId: "evt-pl-issued-1",
+      aggregateKind: "project",
+      aggregateId: "server",
+      type: "auth.pairing-link.issued",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-pl-issue-1",
+      causationEventId: null,
+      correlationId: "cmd-pl-issue-1",
+      metadata: {},
+      payload: {
+        linkId: "link-opaque-abc",
+        role: "client",
+        subject: "one-time-token",
+        issuedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "auth.pairing-link.issued");
+  }),
+);
+
+it.effect("decodes auth.pairing-link.revoked event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 205,
+      eventId: "evt-pl-revoked-1",
+      aggregateKind: "project",
+      aggregateId: "server",
+      type: "auth.pairing-link.revoked",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-pl-revoke-1",
+      causationEventId: null,
+      correlationId: "cmd-pl-revoke-1",
+      metadata: {},
+      payload: {
+        linkId: "link-opaque-abc",
+        revokedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "auth.pairing-link.revoked");
+  }),
+);
+
+it.effect("decodes settings.changed event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 206,
+      eventId: "evt-settings-changed-1",
+      aggregateKind: "project",
+      aggregateId: "server",
+      type: "settings.changed",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-settings-change-1",
+      causationEventId: null,
+      correlationId: "cmd-settings-change-1",
+      metadata: {},
+      payload: {
+        changedKeys: ["telemetry", "autoMode"],
+        changedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    if (parsed.type !== "settings.changed") {
+      assert.fail(`Expected settings.changed event, received ${parsed.type}.`);
+    }
+    assert.deepStrictEqual(parsed.payload.changedKeys, ["telemetry", "autoMode"]);
+  }),
+);
+
+it.effect("decodes vcs.worktree.created event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 207,
+      eventId: "evt-vcs-wt-created-1",
+      aggregateKind: "worktree",
+      aggregateId: "/home/user/dev/projects/gitscode/.worktrees/feat-foo",
+      type: "vcs.worktree.created",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-vcs-wt-create-1",
+      causationEventId: null,
+      correlationId: "cmd-vcs-wt-create-1",
+      metadata: {},
+      payload: {
+        worktreePath: "/home/user/dev/projects/gitscode/.worktrees/feat-foo",
+        branch: "feat/foo",
+        createdAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "vcs.worktree.created");
+  }),
+);
+
+it.effect("decodes vcs.worktree.removed event (W5.4b)", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 208,
+      eventId: "evt-vcs-wt-removed-1",
+      aggregateKind: "worktree",
+      aggregateId: "/home/user/dev/projects/gitscode/.worktrees/feat-foo",
+      type: "vcs.worktree.removed",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+      commandId: "cmd-vcs-wt-remove-1",
+      causationEventId: null,
+      correlationId: "cmd-vcs-wt-remove-1",
+      metadata: {},
+      payload: {
+        worktreePath: "/home/user/dev/projects/gitscode/.worktrees/feat-foo",
+        removedAt: "2026-07-04T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "vcs.worktree.removed");
+  }),
+);

@@ -827,6 +827,83 @@ const WorktreeAdoptCommand = Schema.Struct({
   adoptedAt: IsoDateTime,
 });
 
+// Provider session audit commands (W5.4b)
+const ProviderSessionSpawnCommand = Schema.Struct({
+  type: Schema.Literal("provider.session.spawn"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  providerId: TrimmedNonEmptyString,
+  sessionId: TrimmedNonEmptyString,
+  spawnedAt: IsoDateTime,
+});
+
+const ProviderSessionStopCommand = Schema.Struct({
+  type: Schema.Literal("provider.session.stop"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  providerId: TrimmedNonEmptyString,
+  sessionId: TrimmedNonEmptyString,
+  stoppedAt: IsoDateTime,
+});
+
+// Auth audit commands — server-scoped, sentinel aggregate "server" (W5.4b)
+const AuthSessionIssueCommand = Schema.Struct({
+  type: Schema.Literal("auth.session.issue"),
+  commandId: CommandId,
+  sessionId: TrimmedNonEmptyString,
+  method: TrimmedNonEmptyString,
+  role: TrimmedNonEmptyString,
+  subject: TrimmedNonEmptyString,
+  issuedAt: IsoDateTime,
+});
+
+const AuthSessionRevokeCommand = Schema.Struct({
+  type: Schema.Literal("auth.session.revoke"),
+  commandId: CommandId,
+  sessionId: TrimmedNonEmptyString,
+  revokedAt: IsoDateTime,
+});
+
+const AuthPairingLinkIssueCommand = Schema.Struct({
+  type: Schema.Literal("auth.pairing-link.issue"),
+  commandId: CommandId,
+  linkId: TrimmedNonEmptyString,
+  role: TrimmedNonEmptyString,
+  subject: TrimmedNonEmptyString,
+  issuedAt: IsoDateTime,
+});
+
+const AuthPairingLinkRevokeCommand = Schema.Struct({
+  type: Schema.Literal("auth.pairing-link.revoke"),
+  commandId: CommandId,
+  linkId: TrimmedNonEmptyString,
+  revokedAt: IsoDateTime,
+});
+
+// Settings audit command (W5.4b)
+const SettingsRecordChangeCommand = Schema.Struct({
+  type: Schema.Literal("settings.record-change"),
+  commandId: CommandId,
+  changedKeys: Schema.Array(TrimmedNonEmptyString),
+  changedAt: IsoDateTime,
+});
+
+// VCS standalone worktree audit commands (W5.4b)
+const VcsWorktreeRecordCreatedCommand = Schema.Struct({
+  type: Schema.Literal("vcs.worktree.record-created"),
+  commandId: CommandId,
+  worktreePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
+const VcsWorktreeRecordRemovedCommand = Schema.Struct({
+  type: Schema.Literal("vcs.worktree.record-removed"),
+  commandId: CommandId,
+  worktreePath: TrimmedNonEmptyString,
+  removedAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -840,6 +917,16 @@ const InternalOrchestrationCommand = Schema.Union([
   WorktreeBuryCommand,
   WorktreeRecordOwnerCommand,
   WorktreeAdoptCommand,
+  // W5.4b audit commands
+  ProviderSessionSpawnCommand,
+  ProviderSessionStopCommand,
+  AuthSessionIssueCommand,
+  AuthSessionRevokeCommand,
+  AuthPairingLinkIssueCommand,
+  AuthPairingLinkRevokeCommand,
+  SettingsRecordChangeCommand,
+  VcsWorktreeRecordCreatedCommand,
+  VcsWorktreeRecordRemovedCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -878,6 +965,16 @@ export const OrchestrationEventType = Schema.Literals([
   "worktree.adopted",
   "worktree.owner-recorded",
   "command.denied",
+  // W5.4b audit events
+  "provider.session.spawned",
+  "provider.session.stopped",
+  "auth.session.issued",
+  "auth.session.revoked",
+  "auth.pairing-link.issued",
+  "auth.pairing-link.revoked",
+  "settings.changed",
+  "vcs.worktree.created",
+  "vcs.worktree.removed",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1116,6 +1213,74 @@ export const CommandDeniedPayload = Schema.Struct({
 export type CommandDeniedPayload = typeof CommandDeniedPayload.Type;
 // --- end actor authorization denial payload ---
 
+// --- W5.4b audit event payloads ---
+
+export const ProviderSessionSpawnedPayload = Schema.Struct({
+  threadId: ThreadId,
+  providerId: TrimmedNonEmptyString,
+  sessionId: TrimmedNonEmptyString,
+  spawnedAt: IsoDateTime,
+});
+export type ProviderSessionSpawnedPayload = typeof ProviderSessionSpawnedPayload.Type;
+
+export const ProviderSessionStoppedPayload = Schema.Struct({
+  threadId: ThreadId,
+  providerId: TrimmedNonEmptyString,
+  sessionId: TrimmedNonEmptyString,
+  stoppedAt: IsoDateTime,
+});
+export type ProviderSessionStoppedPayload = typeof ProviderSessionStoppedPayload.Type;
+
+export const AuthSessionIssuedPayload = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  method: TrimmedNonEmptyString,
+  role: TrimmedNonEmptyString,
+  subject: TrimmedNonEmptyString,
+  issuedAt: IsoDateTime,
+});
+export type AuthSessionIssuedPayload = typeof AuthSessionIssuedPayload.Type;
+
+export const AuthSessionRevokedPayload = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  revokedAt: IsoDateTime,
+});
+export type AuthSessionRevokedPayload = typeof AuthSessionRevokedPayload.Type;
+
+export const AuthPairingLinkIssuedPayload = Schema.Struct({
+  linkId: TrimmedNonEmptyString,
+  role: TrimmedNonEmptyString,
+  subject: TrimmedNonEmptyString,
+  issuedAt: IsoDateTime,
+});
+export type AuthPairingLinkIssuedPayload = typeof AuthPairingLinkIssuedPayload.Type;
+
+export const AuthPairingLinkRevokedPayload = Schema.Struct({
+  linkId: TrimmedNonEmptyString,
+  revokedAt: IsoDateTime,
+});
+export type AuthPairingLinkRevokedPayload = typeof AuthPairingLinkRevokedPayload.Type;
+
+export const SettingsChangedPayload = Schema.Struct({
+  changedKeys: Schema.Array(TrimmedNonEmptyString),
+  changedAt: IsoDateTime,
+});
+export type SettingsChangedPayload = typeof SettingsChangedPayload.Type;
+
+export const VcsWorktreeCreatedPayload = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type VcsWorktreeCreatedPayload = typeof VcsWorktreeCreatedPayload.Type;
+
+export const VcsWorktreeRemovedPayload = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  removedAt: IsoDateTime,
+});
+export type VcsWorktreeRemovedPayload = typeof VcsWorktreeRemovedPayload.Type;
+
+// --- end W5.4b audit event payloads ---
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1279,6 +1444,52 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("command.denied"),
     payload: CommandDeniedPayload,
+  }),
+  // W5.4b audit events — audit-only, not projected
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("provider.session.spawned"),
+    payload: ProviderSessionSpawnedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("provider.session.stopped"),
+    payload: ProviderSessionStoppedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("auth.session.issued"),
+    payload: AuthSessionIssuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("auth.session.revoked"),
+    payload: AuthSessionRevokedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("auth.pairing-link.issued"),
+    payload: AuthPairingLinkIssuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("auth.pairing-link.revoked"),
+    payload: AuthPairingLinkRevokedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("settings.changed"),
+    payload: SettingsChangedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("vcs.worktree.created"),
+    payload: VcsWorktreeCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("vcs.worktree.removed"),
+    payload: VcsWorktreeRemovedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
