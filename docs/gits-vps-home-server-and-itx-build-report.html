@@ -1,0 +1,1778 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GITS VPS, Home Server, And Mini ITX Build Report</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f9;
+        --paper: #ffffff;
+        --ink: #15171c;
+        --muted: #5d6675;
+        --line: #d8dde5;
+        --soft: #eef1f5;
+        --teal: #0f766e;
+        --teal-soft: #dff5f1;
+        --blue: #2563eb;
+        --blue-soft: #e7efff;
+        --amber: #b45309;
+        --amber-soft: #fff3d7;
+        --red: #b42318;
+        --red-soft: #ffe8e5;
+        --green: #15803d;
+        --green-soft: #e7f8ed;
+        --violet: #6d28d9;
+        --violet-soft: #f0e9ff;
+        --shadow: 0 16px 40px rgb(21 23 28 / 10%);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-size: 16px;
+        line-height: 1.55;
+      }
+
+      a {
+        color: inherit;
+        text-decoration-color: rgb(15 118 110 / 45%);
+        text-underline-offset: 0.18em;
+      }
+
+      .page {
+        min-height: 100vh;
+      }
+
+      .shell {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        border-bottom: 1px solid rgb(216 221 229 / 85%);
+        background: rgb(246 247 249 / 92%);
+        backdrop-filter: blur(14px);
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 64px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 1px solid #111827;
+        background: #111827;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .brand-text {
+        min-width: 0;
+      }
+
+      .brand-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 800;
+        line-height: 1.15;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .brand-subtitle {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      .nav a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 32px;
+        border: 1px solid transparent;
+        padding: 5px 9px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .nav a:hover {
+        border-color: var(--line);
+        background: var(--paper);
+        color: var(--ink);
+      }
+
+      .hero {
+        padding: 44px 0 28px;
+        border-bottom: 1px solid var(--line);
+        background:
+          linear-gradient(90deg, rgb(15 118 110 / 10%) 0 24%, transparent 24% 100%),
+          linear-gradient(180deg, #ffffff 0%, #f6f7f9 100%);
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
+        gap: 28px;
+        align-items: stretch;
+      }
+
+      .kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+        border: 1px solid rgb(15 118 110 / 28%);
+        background: var(--teal-soft);
+        padding: 5px 10px;
+        color: var(--teal);
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        line-height: 1.12;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 920px;
+        font-size: clamp(34px, 6vw, 72px);
+        font-weight: 900;
+      }
+
+      h2 {
+        font-size: clamp(26px, 3.2vw, 40px);
+        font-weight: 900;
+      }
+
+      h3 {
+        font-size: 18px;
+        font-weight: 850;
+      }
+
+      .lede {
+        max-width: 760px;
+        margin: 18px 0 0;
+        color: #3f4754;
+        font-size: clamp(17px, 2vw, 21px);
+      }
+
+      .hero-card {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        box-shadow: var(--shadow);
+        padding: 22px;
+      }
+
+      .recommendation-label {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .recommendation-name {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .price {
+        display: flex;
+        align-items: end;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .price strong {
+        font-size: 34px;
+        line-height: 1;
+      }
+
+      .price span {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .hero-card ul {
+        display: grid;
+        gap: 8px;
+        margin: 18px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .hero-card li {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr);
+        gap: 8px;
+        color: #374151;
+        font-size: 14px;
+      }
+
+      .check {
+        width: 16px;
+        height: 16px;
+        margin-top: 3px;
+        border: 1px solid rgb(21 128 61 / 55%);
+        background: var(--green-soft);
+      }
+
+      .section {
+        padding: 48px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .section-header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 22px;
+      }
+
+      .section-header p {
+        max-width: 660px;
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .metric {
+        min-height: 142px;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 18px;
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 10px;
+        font-size: 30px;
+        line-height: 1;
+      }
+
+      .metric p {
+        margin: 12px 0 0;
+        color: #495261;
+        font-size: 13px;
+      }
+
+      .host-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .host {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 20px;
+      }
+
+      .host.recommended {
+        border-color: rgb(15 118 110 / 55%);
+        box-shadow: 0 16px 36px rgb(15 118 110 / 14%);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid rgb(15 118 110 / 30%);
+        background: var(--teal-soft);
+        padding: 4px 8px;
+        color: var(--teal);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .host h3 {
+        margin-top: 14px;
+        font-size: 24px;
+      }
+
+      .host-spec {
+        margin: 8px 0 16px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .host-price {
+        font-size: 28px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .host-price small {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .bar-stack {
+        display: grid;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      .bar-row {
+        display: grid;
+        grid-template-columns: 92px minmax(0, 1fr) 72px;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .bar-track {
+        height: 12px;
+        background: var(--soft);
+      }
+
+      .bar-fill {
+        height: 100%;
+        background: var(--teal);
+      }
+
+      .bar-fill.blue {
+        background: var(--blue);
+      }
+
+      .bar-fill.amber {
+        background: var(--amber);
+      }
+
+      .workflow {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .flow-panel {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 18px;
+      }
+
+      .flow-panel ul {
+        display: grid;
+        gap: 10px;
+        margin: 16px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .flow-panel li {
+        border-left: 4px solid var(--teal);
+        background: #f8fafc;
+        padding: 10px 12px;
+        color: #374151;
+        font-size: 14px;
+      }
+
+      .diagram {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 20px;
+      }
+
+      .diagram svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      .command-grid {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .command {
+        border: 1px solid var(--line);
+        background: #f8fafc;
+        padding: 10px 8px;
+        text-align: center;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .energy-card {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 22px;
+      }
+
+      .gauge {
+        display: grid;
+        place-items: center;
+        aspect-ratio: 1 / 1;
+        max-width: 280px;
+        margin: 10px auto 16px;
+        border-radius: 50%;
+        background: conic-gradient(var(--green) 0 50%, var(--amber) 50% 100%);
+        padding: 18px;
+      }
+
+      .gauge-inner {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--paper);
+        text-align: center;
+      }
+
+      .gauge-inner strong {
+        display: block;
+        font-size: 42px;
+        line-height: 1;
+      }
+
+      .gauge-inner span {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .checklist {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .checklist li {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 12px;
+        color: #374151;
+        font-size: 14px;
+      }
+
+      .dot {
+        width: 18px;
+        height: 18px;
+        margin-top: 2px;
+        background: var(--teal);
+      }
+
+      .timeline {
+        display: grid;
+        gap: 14px;
+      }
+
+      .timeline-step {
+        display: grid;
+        grid-template-columns: 54px minmax(0, 1fr);
+        gap: 14px;
+        align-items: stretch;
+      }
+
+      .timeline-number {
+        display: grid;
+        place-items: center;
+        min-height: 54px;
+        background: #111827;
+        color: #fff;
+        font-weight: 900;
+      }
+
+      .timeline-card {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 14px 16px;
+      }
+
+      .timeline-card strong {
+        display: block;
+        font-size: 15px;
+      }
+
+      .timeline-card span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .parts-table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        overflow: hidden;
+      }
+
+      .parts-table th,
+      .parts-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 13px 14px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .parts-table th {
+        background: #111827;
+        color: #fff;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .parts-table td {
+        font-size: 14px;
+      }
+
+      .parts-table td:last-child,
+      .parts-table th:last-child {
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .budget-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      .budget {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 18px;
+      }
+
+      .budget strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 26px;
+      }
+
+      .budget span {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .callout {
+        border: 1px solid rgb(180 83 9 / 34%);
+        background: var(--amber-soft);
+        padding: 18px;
+        color: #5f3307;
+      }
+
+      .callout strong {
+        display: block;
+        margin-bottom: 6px;
+        color: #422006;
+      }
+
+      .sources {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 18px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .sources li {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 12px;
+        color: var(--muted);
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+
+      .footer {
+        padding: 32px 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 960px) {
+        .hero-grid,
+        .split,
+        .workflow {
+          grid-template-columns: 1fr;
+        }
+
+        .metric-grid,
+        .host-grid,
+        .workflow,
+        .budget-grid,
+        .sources {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .command-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 680px) {
+        .shell {
+          width: min(100% - 20px, 1180px);
+        }
+
+        .topbar-inner,
+        .section-header {
+          align-items: start;
+          flex-direction: column;
+        }
+
+        .nav {
+          justify-content: flex-start;
+        }
+
+        .hero {
+          padding-top: 28px;
+        }
+
+        .metric-grid,
+        .host-grid,
+        .workflow,
+        .budget-grid,
+        .sources,
+        .command-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .parts-table {
+          display: block;
+          overflow-x: auto;
+          white-space: nowrap;
+        }
+
+        .bar-row {
+          grid-template-columns: 74px minmax(0, 1fr) 58px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="shell topbar-inner">
+          <div class="brand">
+            <div class="mark">G</div>
+            <div class="brand-text">
+              <p class="brand-title">GITS Infrastructure Report</p>
+              <p class="brand-subtitle">VPS now, home server later, Black Friday ITX build</p>
+            </div>
+          </div>
+          <nav class="nav" aria-label="Report sections">
+            <a href="#decision">Decision</a>
+            <a href="#workflow">Workflow</a>
+            <a href="#server">Home Server</a>
+            <a href="#build">ITX Build</a>
+            <a href="#plan">Plan</a>
+          </nav>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero" id="decision">
+          <div class="shell hero-grid">
+            <div>
+              <div class="kicker">2026-07-04 planning report</div>
+              <h1>
+                Rent a cheap bare-metal box now. Turn the current ITX PC into the permanent GITS
+                brain later.
+              </h1>
+              <p class="lede">
+                The clean path is not buying a giant VPS. Use a temporary Hetzner EX44 for
+                GITS/HERMES over Tailscale, then repurpose the Ryzen 7 3700X mini ITX machine as the
+                always-on home server after the new developer/gaming PC lands.
+              </p>
+            </div>
+            <aside class="hero-card" aria-label="Primary recommendation">
+              <p class="recommendation-label">Recommended temporary host</p>
+              <p class="recommendation-name">Hetzner EX44-1-LTD</p>
+              <div class="price">
+                <strong>EUR 57.30</strong>
+                <span>per month<br />no setup fee</span>
+              </div>
+              <ul>
+                <li>
+                  <span class="check" aria-hidden="true"></span
+                  ><span>64 GB RAM for multiple provider sessions and worktrees.</span>
+                </li>
+                <li>
+                  <span class="check" aria-hidden="true"></span
+                  ><span>2x512 GB NVMe, enough for the stated 1 TB target.</span>
+                </li>
+                <li>
+                  <span class="check" aria-hidden="true"></span
+                  ><span>Cheap enough to cancel after home migration proves stable.</span>
+                </li>
+              </ul>
+            </aside>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="shell">
+            <div class="metric-grid">
+              <div class="metric">
+                <span>Short-term spend</span>
+                <strong>~EUR 57/mo</strong>
+                <p>
+                  EX44 is the proving ground for GITS, HERMES, Tailscale, Telegram, and backups.
+                </p>
+              </div>
+              <div class="metric">
+                <span>Home-server power</span>
+                <strong>50-100 W</strong>
+                <p>
+                  Expected tuned idle range for the Ryzen 7 3700X box, depending on GPU and PSU.
+                </p>
+              </div>
+              <div class="metric">
+                <span>RTX 3080 age</span>
+                <strong>5y 10m</strong>
+                <p>Launched September 17, 2020. Still useful, no longer a high-end 2026 target.</p>
+              </div>
+              <div class="metric">
+                <span>Stage 2 ITX budget</span>
+                <strong>EUR 3.5-4.2k</strong>
+                <p>9950X3D + 96 GB DDR5 + RTX 5080 route, assuming the RTX 5080 price behaves.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="shell">
+            <div class="section-header">
+              <div>
+                <h2>VPS Shortlist</h2>
+              </div>
+              <p>
+                1 TB is enough, so the huge AX102 class is unnecessary. The EX44 wins because it
+                avoids setup cost and is good enough for the temporary phase.
+              </p>
+            </div>
+            <div class="host-grid">
+              <article class="host recommended">
+                <span class="badge">Pick</span>
+                <h3>EX44-1-LTD</h3>
+                <p class="host-spec">Core i5-13500, 64 GB RAM, 2x512 GB NVMe</p>
+                <p class="host-price">EUR 57.30 <small>/ mo</small></p>
+                <div class="bar-stack" aria-label="EX44 score bars">
+                  <div class="bar-row">
+                    <span>Cost</span>
+                    <div class="bar-track"><div class="bar-fill" style="width: 92%"></div></div>
+                    <span>Best</span>
+                  </div>
+                  <div class="bar-row">
+                    <span>Power</span>
+                    <div class="bar-track">
+                      <div class="bar-fill blue" style="width: 74%"></div>
+                    </div>
+                    <span>Good</span>
+                  </div>
+                  <div class="bar-row">
+                    <span>Disk</span>
+                    <div class="bar-track">
+                      <div class="bar-fill amber" style="width: 72%"></div>
+                    </div>
+                    <span>1 TB</span>
+                  </div>
+                </div>
+              </article>
+              <article class="host">
+                <span class="badge">AMD</span>
+                <h3>AX42-1-LTD</h3>
+                <p class="host-spec">Ryzen 7 PRO 8700GE, 64 GB DDR5, 2x512 GB NVMe</p>
+                <p class="host-price">EUR 77.30 <small>/ mo + setup</small></p>
+                <div class="bar-stack" aria-label="AX42 score bars">
+                  <div class="bar-row">
+                    <span>Cost</span>
+                    <div class="bar-track"><div class="bar-fill" style="width: 72%"></div></div>
+                    <span>Good</span>
+                  </div>
+                  <div class="bar-row">
+                    <span>Power</span>
+                    <div class="bar-track">
+                      <div class="bar-fill blue" style="width: 82%"></div>
+                    </div>
+                    <span>Fast</span>
+                  </div>
+                  <div class="bar-row">
+                    <span>Disk</span>
+                    <div class="bar-track">
+                      <div class="bar-fill amber" style="width: 72%"></div>
+                    </div>
+                    <span>1 TB</span>
+                  </div>
+                </div>
+              </article>
+              <article class="host">
+                <span class="badge">RAID1</span>
+                <h3>EX63-1-LTD</h3>
+                <p class="host-spec">Core Ultra 7 265, 64 GB DDR5, 2x1 TB NVMe</p>
+                <p class="host-price">EUR 97.30 <small>/ mo + setup</small></p>
+                <div class="bar-stack" aria-label="EX63 score bars">
+                  <div class="bar-row">
+                    <span>Cost</span>
+                    <div class="bar-track"><div class="bar-fill" style="width: 55%"></div></div>
+                    <span>Ok</span>
+                  </div>
+                  <div class="bar-row">
+                    <span>Power</span>
+                    <div class="bar-track">
+                      <div class="bar-fill blue" style="width: 86%"></div>
+                    </div>
+                    <span>Fast</span>
+                  </div>
+                  <div class="bar-row">
+                    <span>Disk</span>
+                    <div class="bar-track">
+                      <div class="bar-fill amber" style="width: 95%"></div>
+                    </div>
+                    <span>Safe</span>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="workflow">
+          <div class="shell">
+            <div class="section-header">
+              <div>
+                <h2>Remote-Agent Workflow</h2>
+              </div>
+              <p>
+                The YouTube transcript points at the same architecture: agent runs on the server,
+                operator enters through Tailscale, state survives laptop sleep, and Telegram becomes
+                the async command surface.
+              </p>
+            </div>
+            <div class="workflow">
+              <div class="flow-panel">
+                <h3>Operator Devices</h3>
+                <ul>
+                  <li>Laptop, phone, tablet, travel machine.</li>
+                  <li>SSH through Tailscale, no public port forwarding.</li>
+                  <li>Telegram for status and approvals.</li>
+                </ul>
+              </div>
+              <div class="flow-panel">
+                <h3>Always-On Host</h3>
+                <ul>
+                  <li>GITS web/control surface.</li>
+                  <li>HERMES as message brain once wired.</li>
+                  <li>tmux for manual Claude/Codex sessions.</li>
+                </ul>
+              </div>
+              <div class="flow-panel">
+                <h3>Guardrails</h3>
+                <ul>
+                  <li>Default-deny firewall.</li>
+                  <li>Off-box backups.</li>
+                  <li>Held PRs and verifier flows before landing changes.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="diagram" style="margin-top: 18px">
+              <svg
+                viewBox="0 0 980 340"
+                role="img"
+                aria-labelledby="architecture-title architecture-desc"
+              >
+                <title id="architecture-title">GITS remote development architecture</title>
+                <desc id="architecture-desc">
+                  Devices connect over Tailscale to a VPS or home server running GITS, HERMES,
+                  provider sessions, worktrees, and backups.
+                </desc>
+                <defs>
+                  <marker
+                    id="arrow"
+                    markerWidth="10"
+                    markerHeight="10"
+                    refX="8"
+                    refY="3"
+                    orient="auto"
+                    markerUnits="strokeWidth"
+                  >
+                    <path d="M0,0 L0,6 L9,3 z" fill="#374151"></path>
+                  </marker>
+                </defs>
+                <rect x="24" y="36" width="210" height="96" fill="#e7efff" stroke="#2563eb"></rect>
+                <text x="48" y="76" font-size="20" font-weight="800" fill="#111827">
+                  Owned devices
+                </text>
+                <text x="48" y="104" font-size="14" fill="#4b5563">Laptop, phone, tablet</text>
+                <rect x="24" y="204" width="210" height="86" fill="#f0e9ff" stroke="#6d28d9"></rect>
+                <text x="48" y="242" font-size="20" font-weight="800" fill="#111827">Telegram</text>
+                <text x="48" y="268" font-size="14" fill="#4b5563">Approve, pause, status</text>
+                <rect
+                  x="390"
+                  y="42"
+                  width="260"
+                  height="248"
+                  fill="#ffffff"
+                  stroke="#15171c"
+                  stroke-width="2"
+                ></rect>
+                <text x="418" y="78" font-size="22" font-weight="900" fill="#111827">
+                  VPS now / home later
+                </text>
+                <rect
+                  x="418"
+                  y="106"
+                  width="204"
+                  height="36"
+                  fill="#dff5f1"
+                  stroke="#0f766e"
+                ></rect>
+                <text x="438" y="130" font-size="14" font-weight="800" fill="#0f766e">
+                  GITS cockpit
+                </text>
+                <rect
+                  x="418"
+                  y="154"
+                  width="204"
+                  height="36"
+                  fill="#fff3d7"
+                  stroke="#b45309"
+                ></rect>
+                <text x="438" y="178" font-size="14" font-weight="800" fill="#92400e">
+                  HERMES brain
+                </text>
+                <rect
+                  x="418"
+                  y="202"
+                  width="204"
+                  height="36"
+                  fill="#e7efff"
+                  stroke="#2563eb"
+                ></rect>
+                <text x="438" y="226" font-size="14" font-weight="800" fill="#1d4ed8">
+                  Codex / Claude / tmux
+                </text>
+                <rect
+                  x="418"
+                  y="250"
+                  width="204"
+                  height="22"
+                  fill="#f8fafc"
+                  stroke="#94a3b8"
+                ></rect>
+                <text x="438" y="266" font-size="12" font-weight="800" fill="#475569">
+                  worktrees + logs + SQLite
+                </text>
+                <rect x="752" y="70" width="190" height="74" fill="#e7f8ed" stroke="#15803d"></rect>
+                <text x="778" y="104" font-size="19" font-weight="800" fill="#111827">
+                  Git remotes
+                </text>
+                <text x="778" y="128" font-size="13" fill="#4b5563">branches and PRs</text>
+                <rect
+                  x="752"
+                  y="210"
+                  width="190"
+                  height="74"
+                  fill="#ffe8e5"
+                  stroke="#b42318"
+                ></rect>
+                <text x="778" y="244" font-size="19" font-weight="800" fill="#111827">
+                  Off-box backup
+                </text>
+                <text x="778" y="268" font-size="13" fill="#4b5563">daily snapshots</text>
+                <line
+                  x1="234"
+                  y1="84"
+                  x2="382"
+                  y2="84"
+                  stroke="#374151"
+                  stroke-width="2"
+                  marker-end="url(#arrow)"
+                ></line>
+                <text x="260" y="70" font-size="13" font-weight="800" fill="#374151">
+                  Tailscale SSH
+                </text>
+                <line
+                  x1="234"
+                  y1="247"
+                  x2="382"
+                  y2="198"
+                  stroke="#374151"
+                  stroke-width="2"
+                  marker-end="url(#arrow)"
+                ></line>
+                <text x="256" y="238" font-size="13" font-weight="800" fill="#374151">
+                  typed commands
+                </text>
+                <line
+                  x1="650"
+                  y1="113"
+                  x2="744"
+                  y2="113"
+                  stroke="#374151"
+                  stroke-width="2"
+                  marker-end="url(#arrow)"
+                ></line>
+                <line
+                  x1="650"
+                  y1="247"
+                  x2="744"
+                  y2="247"
+                  stroke="#374151"
+                  stroke-width="2"
+                  marker-end="url(#arrow)"
+                ></line>
+              </svg>
+            </div>
+            <div class="command-grid" aria-label="Minimal Telegram command surface">
+              <div class="command">status</div>
+              <div class="command">pause</div>
+              <div class="command">resume</div>
+              <div class="command">approve</div>
+              <div class="command">reject</div>
+              <div class="command">tail</div>
+              <div class="command">open task</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="server">
+          <div class="shell split">
+            <div>
+              <div class="section-header" style="display: block">
+                <h2>Current PC Becomes The Server</h2>
+                <p style="margin-top: 10px">
+                  The Ryzen 7 3700X mini ITX system is enough for GITS/HERMES. The GPU is the thing
+                  to remove or avoid using if power matters.
+                </p>
+              </div>
+              <div class="energy-card">
+                <div class="gauge" aria-label="Power cost gauge">
+                  <div class="gauge-inner">
+                    <div>
+                      <strong>EUR 7-14</strong>
+                      <span>estimated monthly power</span>
+                    </div>
+                  </div>
+                </div>
+                <p>
+                  <strong>50 W</strong> always on is about <strong>36 kWh/month</strong>. At EUR
+                  0.20/kWh, that is about EUR 7.20/month. At 100 W, it is about EUR 14.40/month.
+                </p>
+              </div>
+            </div>
+            <div>
+              <ul class="checklist">
+                <li>
+                  <span class="dot" aria-hidden="true"></span
+                  ><span>Enable BIOS C-states and Ryzen Eco Mode or lower PPT.</span>
+                </li>
+                <li>
+                  <span class="dot" aria-hidden="true"></span
+                  ><span
+                    >Remove the RTX 3080 if the machine can boot headless or with a tiny display
+                    adapter.</span
+                  >
+                </li>
+                <li>
+                  <span class="dot" aria-hidden="true"></span
+                  ><span>Run Linux headless, no desktop environment.</span>
+                </li>
+                <li>
+                  <span class="dot" aria-hidden="true"></span
+                  ><span>Use SSDs for repos, state, logs, and databases.</span>
+                </li>
+                <li>
+                  <span class="dot" aria-hidden="true"></span
+                  ><span>Add a small UPS if HERMES becomes important.</span>
+                </li>
+                <li>
+                  <span class="dot" aria-hidden="true"></span
+                  ><span>Keep offsite backups even after moving home.</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="shell">
+            <div class="section-header">
+              <div>
+                <h2>RTX 3080 Reality Check</h2>
+              </div>
+              <p>
+                The RTX 3080 is about 5 years and 10 months old as of this report. It is useful, but
+                it should not be the always-on server GPU if energy saving matters.
+              </p>
+            </div>
+            <div class="metric-grid">
+              <div class="metric">
+                <span>Launch date</span>
+                <strong>2020-09-17</strong>
+                <p>NVIDIA launched the RTX 3080 first in the RTX 30 series.</p>
+              </div>
+              <div class="metric">
+                <span>Still good</span>
+                <strong>1440p</strong>
+                <p>Useful for gaming and CUDA work that fits inside 10-12 GB VRAM.</p>
+              </div>
+              <div class="metric">
+                <span>Weak spot</span>
+                <strong>VRAM</strong>
+                <p>Newer games, local AI, and creator workloads want more headroom.</p>
+              </div>
+              <div class="metric">
+                <span>Recommendation</span>
+                <strong>Reuse</strong>
+                <p>Keep it until RTX 5080 pricing is attractive, then upgrade.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="build">
+          <div class="shell">
+            <div class="section-header">
+              <div>
+                <h2>PCPartPicker-Style Mini ITX Build</h2>
+              </div>
+              <p>
+                Target: your LG UltraGear 45-inch 5K2K OLED. The RTX 3080 still works, but the Ryzen
+                7 3700X and 32 GB DDR4 are now the bottleneck for high-refresh gaming, heavy dev
+                work, and agent tooling.
+              </p>
+            </div>
+            <div class="metric-grid" style="margin-bottom: 18px">
+              <div class="metric">
+                <span>Monitor</span>
+                <strong>5120x2160</strong>
+                <p>LG UltraGear 45GX950A-B, 44.5-inch OLED, 5K2K, 165 Hz, DisplayPort 2.1.</p>
+              </div>
+              <div class="metric">
+                <span>Pixel load</span>
+                <strong>11.06M</strong>
+                <p>About 33% more pixels than 4K and 2.24x 3440x1440 ultrawide.</p>
+              </div>
+              <div class="metric">
+                <span>Stage 1 spend</span>
+                <strong>EUR 1.9-2.4k</strong>
+                <p>New platform, CPU, RAM, SSD, cooler; reuse RTX 3080, NR200P, and SF750.</p>
+              </div>
+              <div class="metric">
+                <span>Stage 2 spend</span>
+                <strong>EUR 3.5-4.2k</strong>
+                <p>Add an RTX 5080 and SF1000 when Black Friday pricing and fit make sense.</p>
+              </div>
+            </div>
+            <table class="parts-table">
+              <thead>
+                <tr>
+                  <th>Part</th>
+                  <th>Recommended pick</th>
+                  <th>Approx price</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>CPU</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/procesador-amd-ryzen-9-9950x3d-16-nucleos-4-3-ghz-base-5-7-ghz-turbo-tray"
+                      >AMD Ryzen 9 9950X3D tray</a
+                    >
+                    or
+                    <a
+                      href="https://www.pccomponentes.com/procesador-amd-ryzen-9-9950x3d-4-3-5-7ghz-box"
+                      >box</a
+                    >. Best dev + gaming balance.
+                  </td>
+                  <td>EUR 654-699</td>
+                </tr>
+                <tr>
+                  <td>CPU value option</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/procesador-amd-ryzen-7-9800x3d-4-7-5-2ghz"
+                      >AMD Ryzen 7 9800X3D</a
+                    >. Better pure gaming value, weaker for heavy parallel dev.
+                  </td>
+                  <td>EUR 457-467</td>
+                </tr>
+                <tr>
+                  <td>Motherboard</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/placa-base-asus-rog-strix-b850-i-gaming-wifi"
+                      >ASUS ROG Strix B850-I Gaming WiFi</a
+                    >. Mini ITX, AM5, WiFi 7, 2.5 GbE, 2x M.2.
+                  </td>
+                  <td>EUR 372</td>
+                </tr>
+                <tr>
+                  <td>RAM</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/memoria-ram-corsair-vengeance-ddr5-96gb-2-x-48gb-ddr5-6000-cl30-36-36-76-140v-intel-xmp-amd-expo-grey"
+                      >Corsair Vengeance 96 GB, 2x48 GB, DDR5-6000 CL30 EXPO</a
+                    >. Sweet spot for mini ITX dev + gaming.
+                  </td>
+                  <td>EUR 559 when listed</td>
+                </tr>
+                <tr>
+                  <td>GPU now</td>
+                  <td>Reuse RTX 3080. Keep it until RTX 5080/5090 prices improve.</td>
+                  <td>EUR 0</td>
+                </tr>
+                <tr>
+                  <td>GPU upgrade</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/tarjetas-graficas/geforce-rtx-5080/grafica-nvidia"
+                      >RTX 5080 16 GB, SFF-friendly model</a
+                    >. Buy only after checking exact length, thickness, and power-cable bend.
+                  </td>
+                  <td>EUR 1,388-1,500+</td>
+                </tr>
+                <tr>
+                  <td>No-compromise GPU</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/tarjetas-graficas/geforce-rtx-5090/grafica-nvidia"
+                      >RTX 5090 32 GB</a
+                    >. Best 5K2K + AI headroom, terrible current value and hard mini ITX fit.
+                  </td>
+                  <td>EUR 5,200-6,100+</td>
+                </tr>
+                <tr>
+                  <td>Primary SSD</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/disco-duro-samsung-990-pro-4tb-ssd-pcie-4-0-nvme-m-2"
+                      >Samsung 990 Pro 4 TB</a
+                    >
+                    or
+                    <a
+                      href="https://www.pccomponentes.com/disco-duro-samsung-990-evo-plus-4tb-disco-ssd-7250mb-s-nvme-pcie-5-0-x2-nvme-2-0-nand"
+                      >990 EVO Plus 4 TB</a
+                    >.
+                  </td>
+                  <td>EUR 300-450+</td>
+                </tr>
+                <tr>
+                  <td>Air cooler</td>
+                  <td>
+                    <a href="https://www.thermalright.com/product/phantom-spirit-120-se/"
+                      >Thermalright Phantom Spirit 120 SE</a
+                    >. 154 mm tall; fits NR200P's 155 mm air-cooler limit.
+                  </td>
+                  <td>EUR 45-70</td>
+                </tr>
+                <tr>
+                  <td>AIO cooler</td>
+                  <td>
+                    <a
+                      href="https://www.pccomponentes.com/refrigeracion-liquida-arctic-liquid-freezer-iii-pro-280mm-2-ventiladores-vrm-premium"
+                      >Arctic Liquid Freezer III/III Pro 280</a
+                    >. Best sustained-load route for 9950X3D if layout works.
+                  </td>
+                  <td>EUR 100-130</td>
+                </tr>
+                <tr>
+                  <td>PSU now</td>
+                  <td>Reuse your Corsair Platinum 750 W with the RTX 3080.</td>
+                  <td>EUR 0</td>
+                </tr>
+                <tr>
+                  <td>PSU upgrade</td>
+                  <td>
+                    <a
+                      href="https://www.corsair.com/eu/en/p/psu/cp-9020257-eu/sf-series-sf1000-fully-modular-80-plus-platinum-sfx-power-supply-eu-cp-9020257-eu"
+                      >Corsair SF1000</a
+                    >
+                    or equivalent ATX 3.x SFX unit for RTX 5080/5090.
+                  </td>
+                  <td>EUR 215-250</td>
+                </tr>
+                <tr>
+                  <td>Case</td>
+                  <td>Reuse Cooler Master NR200P. Check exact GPU dimensions before buying.</td>
+                  <td>EUR 0</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="budget-grid">
+              <div class="budget">
+                <span>Stage 1 platform</span>
+                <strong>EUR 1.9-2.4k</strong>
+              </div>
+              <div class="budget">
+                <span>Stage 2 RTX 5080</span>
+                <strong>EUR 3.5-4.2k</strong>
+              </div>
+              <div class="budget">
+                <span>RTX 5090 route</span>
+                <strong>EUR 7k+</strong>
+              </div>
+            </div>
+            <div class="callout" style="margin-top: 18px">
+              <strong>Lazy staged recommendation</strong>
+              Build the AM5 platform first and reuse the RTX 3080. That removes the CPU/RAM
+              bottleneck immediately. Buy an RTX 5080 only when an NR200P-compatible model lands
+              near EUR 1,100-1,200. Skip RTX 5090 unless you need 32 GB VRAM and are willing to
+              change PSU/case/cooling.
+            </div>
+
+            <div class="section-header" style="margin-top: 34px">
+              <div>
+                <h3>CPU Benchmark Class</h3>
+              </div>
+              <p>
+                The 3700X is not bad; it is just out of class for a 2026 5K2K high-refresh desktop
+                with heavy dev workloads.
+              </p>
+            </div>
+            <table class="parts-table">
+              <thead>
+                <tr>
+                  <th>CPU</th>
+                  <th>Cores / threads</th>
+                  <th>PassMark class</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Ryzen 7 3700X</td>
+                  <td>8 / 16</td>
+                  <td>About 22k. Baseline; dated for high-refresh 5K2K and heavy multitasking.</td>
+                </tr>
+                <tr>
+                  <td>Ryzen 7 9800X3D</td>
+                  <td>8 / 16</td>
+                  <td>About 40k. Huge gaming uplift, efficient, easier to cool.</td>
+                </tr>
+                <tr>
+                  <td>Ryzen 9 9950X3D</td>
+                  <td>16 / 32</td>
+                  <td>
+                    About 69k. Best all-round pick for gaming plus compile, VM, container, and agent
+                    workloads.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="section-header" style="margin-top: 34px">
+              <div>
+                <h3>GPU Benchmark Target For 5K2K</h3>
+              </div>
+              <p>
+                Once the CPU/RAM bottleneck is removed, the monitor is GPU-bound. Treat 5K2K as
+                heavier than 4K, not as normal ultrawide.
+              </p>
+            </div>
+            <table class="parts-table">
+              <thead>
+                <tr>
+                  <th>GPU</th>
+                  <th>VRAM / power</th>
+                  <th>Expected 5K2K role</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>RTX 3080</td>
+                  <td>10-12 GB, about 320 W</td>
+                  <td>
+                    Usable today, especially with DLSS, but VRAM and ray tracing are the weak spots.
+                  </td>
+                </tr>
+                <tr>
+                  <td>RTX 5080</td>
+                  <td>16 GB, 360 W, 850 W PSU guidance</td>
+                  <td>
+                    Best sane upgrade target: roughly 50-70% faster than RTX 3080 in many 4K-class
+                    comparisons, plus DLSS 4/MFG.
+                  </td>
+                </tr>
+                <tr>
+                  <td>RTX 5090</td>
+                  <td>32 GB, 575 W, 1000 W PSU guidance</td>
+                  <td>
+                    Best raw headroom for 5K2K, AI, and creator work, but current pricing and NR200P
+                    fit make it a bad default.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="section-header" style="margin-top: 34px">
+              <div>
+                <h3>NR200P Cooling And Fit</h3>
+              </div>
+              <p>
+                The case works, but the exact cooler and GPU model matter. This is where a
+                PCPartPicker-compatible list still needs manual clearance checks.
+              </p>
+            </div>
+            <table class="parts-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Fit verdict</th>
+                  <th>Decision</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Thermalright Phantom Spirit 120 SE air</td>
+                  <td>Fits: 154 mm cooler vs 155 mm NR200P limit.</td>
+                  <td>Best simple option; use mesh side panel, tune 9950X3D Eco/PBO if needed.</td>
+                </tr>
+                <tr>
+                  <td>Noctua NH-U12A</td>
+                  <td>Does not officially fit: 158 mm cooler vs 155 mm limit.</td>
+                  <td>Skip for this case unless you want to gamble or mod.</td>
+                </tr>
+                <tr>
+                  <td>280 mm AIO</td>
+                  <td>Supported by NR200P, but layout matters.</td>
+                  <td>Best sustained-load choice for 9950X3D if side-radiator/GPU layout works.</td>
+                </tr>
+                <tr>
+                  <td>RTX 5080</td>
+                  <td>Likely with a compact/SFF-friendly model.</td>
+                  <td>
+                    Check card length, width, slot thickness, and 12V-2x6 cable bend before buying.
+                  </td>
+                </tr>
+                <tr>
+                  <td>RTX 5090</td>
+                  <td>Not a default fit for original NR200P.</td>
+                  <td>
+                    Only buy after confirming exact card dimensions; many partner cards are too
+                    large or too hot.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Corsair Platinum 750 W</td>
+                  <td>Fine for RTX 3080 stage.</td>
+                  <td>
+                    Upgrade to SF1000 for RTX 5080/5090; NVIDIA/Corsair guidance is 850 W for 5080,
+                    1000 W for 5090.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="plan">
+          <div class="shell split">
+            <div>
+              <div class="section-header" style="display: block">
+                <h2>Black Friday Plan</h2>
+                <p style="margin-top: 10px">
+                  The lazy path is to prove the workflow before moving hardware. Cancel the VPS only
+                  after the home server survives real usage.
+                </p>
+              </div>
+            </div>
+            <div class="timeline">
+              <div class="timeline-step">
+                <div class="timeline-number">1</div>
+                <div class="timeline-card">
+                  <strong>Rent EX44-1-LTD now</strong
+                  ><span
+                    >Install GITS, HERMES prerequisites, Tailscale, tmux, backups, and firewall
+                    rules.</span
+                  >
+                </div>
+              </div>
+              <div class="timeline-step">
+                <div class="timeline-number">2</div>
+                <div class="timeline-card">
+                  <strong>Harden the workflow</strong
+                  ><span
+                    >Use the VPS as the proving ground for Telegram approvals and held-PR
+                    operation.</span
+                  >
+                </div>
+              </div>
+              <div class="timeline-step">
+                <div class="timeline-number">3</div>
+                <div class="timeline-card">
+                  <strong>Buy the new ITX PC around Black Friday</strong
+                  ><span
+                    >Target 9950X3D + 96 GB DDR5 first, then RTX 5080 if GPU prices and NR200P fit
+                    are good.</span
+                  >
+                </div>
+              </div>
+              <div class="timeline-step">
+                <div class="timeline-number">4</div>
+                <div class="timeline-card">
+                  <strong>Move the 3700X box to server duty</strong
+                  ><span
+                    >Headless Linux, low-power tuning, offsite backup, and no public web exposure by
+                    default.</span
+                  >
+                </div>
+              </div>
+              <div class="timeline-step">
+                <div class="timeline-number">5</div>
+                <div class="timeline-card">
+                  <strong>Migrate and observe for one week</strong
+                  ><span
+                    >Only cancel the VPS after the home server proves stable under real GITS/HERMES
+                    work.</span
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="shell">
+            <div class="section-header">
+              <div>
+                <h2>Sources</h2>
+              </div>
+              <p>
+                Prices are volatile. Treat these as July 2026 planning bands, not a purchase order.
+              </p>
+            </div>
+            <ul class="sources">
+              <li>
+                <a href="https://www.youtube.com/watch?v=5nJUsgYWINE"
+                  >YouTube transcript source video</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/"
+                  >Hetzner 2026 price adjustment</a
+                >
+              </li>
+              <li><a href="https://tailscale.com/docs/features/tailscale-ssh">Tailscale SSH</a></li>
+              <li>
+                <a href="https://tailscale.com/docs/reference/tailscale-cli/serve"
+                  >Tailscale Serve</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://www.nvidia.com/en-us/geforce/news/introducing-rtx-30-series-graphics-cards/"
+                  >NVIDIA RTX 3080 launch</a
+                >
+              </li>
+              <li>
+                <a href="https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/"
+                  >NVIDIA RTX 5080</a
+                >
+              </li>
+              <li>
+                <a href="https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090/"
+                  >NVIDIA RTX 5090</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x3d.html"
+                  >AMD Ryzen 9 9950X3D</a
+                >
+              </li>
+              <li>
+                <a href="https://www.lg.com/us/monitors/lg-45gx950a-b-gaming-monitor"
+                  >LG UltraGear 45GX950A-B</a
+                >
+              </li>
+              <li>
+                <a href="https://www.coolermaster.com/en-global/products/masterbox-nr200p.html"
+                  >Cooler Master NR200P</a
+                >
+              </li>
+              <li>
+                <a href="https://www.thermalright.com/product/phantom-spirit-120-se/"
+                  >Thermalright Phantom Spirit 120 SE</a
+                >
+              </li>
+              <li><a href="https://www.noctua.at/en/products/nh-u12a">Noctua NH-U12A</a></li>
+              <li>
+                <a
+                  href="https://help.corsair.com/hc/en-us/articles/32465644341265-What-Power-Supply-Unit-PSU-should-I-buy-for-my-Nvidia-RTX-5000-series-GPU"
+                  >Corsair RTX 5000-series PSU guidance</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://www.pccomponentes.com/procesador-amd-ryzen-9-9950x3d-4-3-5-7ghz-box"
+                  >PcComponentes Ryzen 9 9950X3D</a
+                >
+              </li>
+              <li>
+                <a href="https://www.pccomponentes.com/procesador-amd-ryzen-7-9800x3d-4-7-5-2ghz"
+                  >PcComponentes Ryzen 7 9800X3D</a
+                >
+              </li>
+              <li>
+                <a href="https://www.pccomponentes.com/placa-base-asus-rog-strix-b850-i-gaming-wifi"
+                  >PcComponentes ASUS ROG Strix B850-I</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://www.pccomponentes.com/tarjetas-graficas/geforce-rtx-5080/grafica-nvidia"
+                  >PcComponentes RTX 5080 listings</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://www.pccomponentes.com/tarjetas-graficas/geforce-rtx-5090/grafica-nvidia"
+                  >PcComponentes RTX 5090 listings</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://www.xda-developers.com/i-compared-two-flagship-gpus-separated-by-half-a-decade-and-the-results-shocked-me/"
+                  >RTX 5080 vs RTX 3080 comparison</a
+                >
+              </li>
+              <li>
+                <a href="https://technical.city/en/video/GeForce-RTX-3080-vs-GeForce-RTX-5080"
+                  >RTX 5080 vs RTX 3080 aggregate</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://thepcenthusiast.com/nvidia-geforce-rtx-5090-vs-rtx-4090-vs-rtx-3080-ti-gpu/"
+                  >RTX 5090 vs RTX 3080 4K comparison</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://bestvaluegpu.com/en-eu/history/new-and-used-rtx-5080-price-history-and-specs/"
+                  >RTX 5080 EU price tracker</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://bestvaluegpu.com/history/new-and-used-rtx-5090-price-history-and-specs/"
+                  >RTX 5090 US price tracker</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://www.corsair.com/eu/en/p/psu/cp-9020257-eu/sf-series-sf1000-fully-modular-80-plus-platinum-sfx-power-supply-eu-cp-9020257-eu"
+                  >Corsair SF1000 EU listing</a
+                >
+              </li>
+              <li>
+                <a href="https://www.fractal-design.com/products/cases/terra/terra/"
+                  >Fractal Terra</a
+                >
+              </li>
+            </ul>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="shell">
+          Generated from <code>docs/gits-vps-home-server-and-itx-build-report.md</code>. Standalone
+          file: no build step required.
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
