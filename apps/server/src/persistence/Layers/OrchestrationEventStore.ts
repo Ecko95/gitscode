@@ -182,7 +182,7 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
-  const append: OrchestrationEventStoreShape["append"] = (event) =>
+  const append: OrchestrationEventStoreShape["append"] = (event, actorKind) =>
     appendEventRow({
       eventId: event.eventId,
       aggregateKind: event.aggregateKind,
@@ -190,7 +190,8 @@ const makeEventStore = Effect.gen(function* () {
       type: event.type,
       causationEventId: event.causationEventId,
       correlationId: event.correlationId,
-      actorKind: inferActorKind(event),
+      // ponytail: stamped actor takes precedence; inferActorKind is fallback for pre-actor replay events
+      actorKind: actorKind ?? inferActorKind(event),
       occurredAt: event.occurredAt,
       commandId: event.commandId,
       payloadJson: event.payload,

@@ -5,7 +5,7 @@ import type {
   ThreadId,
   WorktreePath,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+import { EventId, OrchestrationActorKind, OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -38,6 +38,7 @@ import {
   type OrchestrationDispatchError,
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
+import { checkActorAuthorization } from "../commandInvariants.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
@@ -53,6 +54,7 @@ const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvar
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
+  actorKind: Schema.Schema.Type<typeof OrchestrationActorKind>;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
 }
@@ -158,6 +160,53 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        // Actor authorization guard — runs before decider (plan 23, W5.3)
+        const authError = checkActorAuthorization(envelope.command, envelope.actorKind);
+        if (authError !== null) {
+          const deniedAt = yield* nowIso;
+          const denialEventId = EventId.make(yield* crypto.randomUUIDv4);
+          const denialEvent: Omit<OrchestrationEvent, "sequence"> = {
+            eventId: denialEventId,
+            type: "command.denied",
+            aggregateKind: aggregateRef.aggregateKind,
+            aggregateId: aggregateRef.aggregateId,
+            occurredAt: deniedAt,
+            commandId: envelope.command.commandId,
+            causationEventId: null,
+            correlationId: envelope.command.commandId,
+            metadata: {},
+            payload: {
+              commandType: envelope.command.type,
+              commandId: envelope.command.commandId,
+              actorKind: envelope.actorKind,
+              reason: authError.message,
+              deniedAt,
+            },
+          };
+          // Store denial event (audit-only, not projected) — fire-and-forget on store failure
+          yield* eventStore.append(denialEvent, "server").pipe(
+            Effect.flatMap((stored) => PubSub.publish(eventPubSub, stored)),
+            Effect.catchAll(() =>
+              Effect.logWarning("failed to persist command.denied event", {
+                commandId: envelope.command.commandId,
+                actorKind: envelope.actorKind,
+              }),
+            ),
+          );
+          yield* commandReceiptRepository
+            .upsert({
+              commandId: envelope.command.commandId,
+              aggregateKind: aggregateRef.aggregateKind,
+              aggregateId: aggregateRef.aggregateId,
+              acceptedAt: deniedAt,
+              resultSequence: commandReadModel.snapshotSequence,
+              status: "rejected",
+              error: authError.message,
+            })
+            .pipe(Effect.catch(() => Effect.void));
+          return yield* authError;
+        }
+
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
@@ -181,7 +230,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               let nextCommandReadModel = commandReadModel;
 
               for (const nextEvent of eventBases) {
-                const savedEvent = yield* eventStore.append(nextEvent);
+                const savedEvent = yield* eventStore.append(nextEvent, envelope.actorKind);
                 nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
                 yield* projectionPipeline.projectEvent(savedEvent);
                 committedEvents.push(savedEvent);
@@ -317,11 +366,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive) =>
     eventStore.readFromSequence(fromSequenceExclusive);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command, actor) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, {
         command,
+        actorKind: actor,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       });

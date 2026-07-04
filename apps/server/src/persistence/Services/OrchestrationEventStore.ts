@@ -9,7 +9,7 @@
  *
  * @module OrchestrationEventStore
  */
-import { OrchestrationEvent } from "@t3tools/contracts";
+import { OrchestrationActorKind, OrchestrationEvent } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -24,12 +24,13 @@ export interface OrchestrationEventStoreShape {
    * Persist a new orchestration event.
    *
    * @param event - Event payload without sequence (assigned by storage).
+   * @param actorKind - Actor identity stamped at dispatch time; falls back to
+   *   `inferActorKind` heuristic for pre-actor replay events when omitted.
    * @returns Effect containing the stored event with assigned sequence.
-   *
-   * Actor kind is inferred from command/metadata before persistence.
    */
   readonly append: (
     event: Omit<OrchestrationEvent, "sequence">,
+    actorKind?: typeof OrchestrationActorKind.Type,
   ) => Effect.Effect<OrchestrationEvent, OrchestrationEventStoreError>;
 
   /**

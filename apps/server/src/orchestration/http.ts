@@ -81,7 +81,7 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
       ),
     );
     const normalizedCommand = yield* normalizeDispatchCommand(command);
-    const result = yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
+    const result = yield* orchestrationEngine.dispatch(normalizedCommand, "operator").pipe(
       Effect.mapError(
         (cause) =>
           new OrchestrationDispatchCommandError({

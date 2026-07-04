@@ -80,13 +80,16 @@ export const upsertVisualPlanState = (threadId: ThreadId, next: VisualPlanState)
       createdAt: next.createdAt,
       updatedAt: at,
     };
-    yield* engine.dispatch({
-      type: "thread.visual-plan.upsert",
-      commandId: CommandId.make(`visual-plan:${threadId}:${randomUUID()}`),
-      threadId,
-      visualPlan,
-      createdAt: at,
-    });
+    yield* engine.dispatch(
+      {
+        type: "thread.visual-plan.upsert",
+        commandId: CommandId.make(`visual-plan:${threadId}:${randomUUID()}`),
+        threadId,
+        visualPlan,
+        createdAt: at,
+      },
+      "server",
+    );
     setVisualPlanState(threadId, next);
     return visualPlan;
   });

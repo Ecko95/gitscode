@@ -199,7 +199,7 @@ export const critTurnRouteLayer = HttpRouter.add(
           }),
       ),
     );
-    yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
+    yield* orchestrationEngine.dispatch(normalizedCommand, "delamain").pipe(
       Effect.mapError(
         (cause) =>
           new CritHttpError({

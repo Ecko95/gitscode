@@ -131,33 +131,39 @@ async function setupThread(engine: System["engine"], run: System["run"]): Promis
 
   await run(
     engine
-      .dispatch({
-        type: "project.create",
-        commandId: mkCommandId("proj"),
-        projectId,
-        title: "Flood Project",
-        workspaceRoot: `/tmp/flood-${tag}`,
-        defaultModelSelection: DEFAULT_MODEL,
-        createdAt: NOW,
-      })
+      .dispatch(
+        {
+          type: "project.create",
+          commandId: mkCommandId("proj"),
+          projectId,
+          title: "Flood Project",
+          workspaceRoot: `/tmp/flood-${tag}`,
+          defaultModelSelection: DEFAULT_MODEL,
+          createdAt: NOW,
+        },
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 
   await run(
     engine
-      .dispatch({
-        type: "thread.create",
-        commandId: mkCommandId("thread"),
-        threadId,
-        projectId,
-        title: "Flood Thread",
-        modelSelection: DEFAULT_MODEL,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: NOW,
-      })
+      .dispatch(
+        {
+          type: "thread.create",
+          commandId: mkCommandId("thread"),
+          threadId,
+          projectId,
+          title: "Flood Thread",
+          modelSelection: DEFAULT_MODEL,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: NOW,
+        },
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 
@@ -174,89 +180,104 @@ async function dispatchTurnCycle(
 
   await run(
     engine
-      .dispatch({
-        type: "thread.turn.start",
-        commandId: mkCommandId("turn-start"),
-        threadId,
-        message: {
-          messageId: mkMessageId(),
-          role: "user",
-          text: `flood ${index}`,
-          attachments: [],
+      .dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: mkCommandId("turn-start"),
+          threadId,
+          message: {
+            messageId: mkMessageId(),
+            role: "user",
+            text: `flood ${index}`,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: NOW,
         },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: NOW,
-      })
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 
   await run(
     engine
-      .dispatch({
-        type: "thread.session.set",
-        commandId: mkCommandId("sess"),
-        threadId,
-        session: {
+      .dispatch(
+        {
+          type: "thread.session.set",
+          commandId: mkCommandId("sess"),
           threadId,
-          status: "running",
-          providerName: "codex",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          runtimeMode: "approval-required",
-          activeTurnId: turnId,
-          lastError: null,
-          updatedAt: NOW,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: NOW,
+          },
+          createdAt: NOW,
         },
-        createdAt: NOW,
-      })
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 
   // 512 B payload per delta — simulates a streaming tool-output chunk.
   await run(
     engine
-      .dispatch({
-        type: "thread.message.assistant.delta",
-        commandId: mkCommandId("delta"),
-        threadId,
-        messageId: mkMessageId(),
-        turnId,
-        delta: "x".repeat(512),
-        createdAt: NOW,
-      })
+      .dispatch(
+        {
+          type: "thread.message.assistant.delta",
+          commandId: mkCommandId("delta"),
+          threadId,
+          messageId: mkMessageId(),
+          turnId,
+          delta: "x".repeat(512),
+          createdAt: NOW,
+        },
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 
   await run(
     engine
-      .dispatch({
-        type: "thread.message.assistant.complete",
-        commandId: mkCommandId("complete"),
-        threadId,
-        messageId: mkMessageId(),
-        turnId,
-        createdAt: NOW,
-      })
-      .pipe(Effect.orDie),
-  );
-
-  await run(
-    engine
-      .dispatch({
-        type: "thread.activity.append",
-        commandId: mkCommandId("activity"),
-        threadId,
-        activity: {
-          id: mkEventId(),
-          tone: "info",
-          kind: "provider.turn.completed",
-          summary: "flood turn completed",
-          payload: { detail: `flood event ${index}` },
+      .dispatch(
+        {
+          type: "thread.message.assistant.complete",
+          commandId: mkCommandId("complete"),
+          threadId,
+          messageId: mkMessageId(),
           turnId,
           createdAt: NOW,
         },
-        createdAt: NOW,
-      })
+        "operator",
+      )
+      .pipe(Effect.orDie),
+  );
+
+  await run(
+    engine
+      .dispatch(
+        {
+          type: "thread.activity.append",
+          commandId: mkCommandId("activity"),
+          threadId,
+          activity: {
+            id: mkEventId(),
+            tone: "info",
+            kind: "provider.turn.completed",
+            summary: "flood turn completed",
+            payload: { detail: `flood event ${index}` },
+            turnId,
+            createdAt: NOW,
+          },
+          createdAt: NOW,
+        },
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 }

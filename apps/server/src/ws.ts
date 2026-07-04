@@ -358,21 +358,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           activityId: serverEventId,
         }).pipe(
           Effect.flatMap(({ commandId, activityId }) =>
-            orchestrationEngine.dispatch({
-              type: "thread.activity.append",
-              commandId,
-              threadId: input.threadId,
-              activity: {
-                id: activityId,
-                tone: input.tone,
-                kind: input.kind,
-                summary: input.summary,
-                payload: input.payload,
-                turnId: null,
+            orchestrationEngine.dispatch(
+              {
+                type: "thread.activity.append",
+                commandId,
+                threadId: input.threadId,
+                activity: {
+                  id: activityId,
+                  tone: input.tone,
+                  kind: input.kind,
+                  summary: input.summary,
+                  payload: input.payload,
+                  turnId: null,
+                  createdAt: input.createdAt,
+                },
                 createdAt: input.createdAt,
               },
-              createdAt: input.createdAt,
-            }),
+              "server",
+            ),
           ),
         );
 
@@ -512,11 +515,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             createdThread
               ? serverCommandId("bootstrap-thread-delete").pipe(
                   Effect.flatMap((commandId) =>
-                    orchestrationEngine.dispatch({
-                      type: "thread.delete",
-                      commandId,
-                      threadId: command.threadId,
-                    }),
+                    orchestrationEngine.dispatch(
+                      {
+                        type: "thread.delete",
+                        commandId,
+                        threadId: command.threadId,
+                      },
+                      "server",
+                    ),
                   ),
                   Effect.ignoreCause({ log: true }),
                 )
@@ -640,19 +646,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
-              yield* orchestrationEngine.dispatch({
-                type: "thread.create",
-                commandId: yield* serverCommandId("bootstrap-thread-create"),
-                threadId: command.threadId,
-                projectId: bootstrap.createThread.projectId,
-                title: bootstrap.createThread.title,
-                modelSelection: bootstrap.createThread.modelSelection,
-                runtimeMode: bootstrap.createThread.runtimeMode,
-                interactionMode: bootstrap.createThread.interactionMode,
-                branch: bootstrap.createThread.branch,
-                worktreePath: bootstrap.createThread.worktreePath,
-                createdAt: bootstrap.createThread.createdAt,
-              });
+              yield* orchestrationEngine.dispatch(
+                {
+                  type: "thread.create",
+                  commandId: yield* serverCommandId("bootstrap-thread-create"),
+                  threadId: command.threadId,
+                  projectId: bootstrap.createThread.projectId,
+                  title: bootstrap.createThread.title,
+                  modelSelection: bootstrap.createThread.modelSelection,
+                  runtimeMode: bootstrap.createThread.runtimeMode,
+                  interactionMode: bootstrap.createThread.interactionMode,
+                  branch: bootstrap.createThread.branch,
+                  worktreePath: bootstrap.createThread.worktreePath,
+                  createdAt: bootstrap.createThread.createdAt,
+                },
+                "operator",
+              );
               createdThread = true;
             }
 
@@ -664,19 +673,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
-              yield* orchestrationEngine.dispatch({
-                type: "thread.meta.update",
-                commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
-                threadId: command.threadId,
-                branch: worktree.worktree.refName,
-                worktreePath: targetWorktreePath,
-              });
+              yield* orchestrationEngine.dispatch(
+                {
+                  type: "thread.meta.update",
+                  commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
+                  threadId: command.threadId,
+                  branch: worktree.worktree.refName,
+                  worktreePath: targetWorktreePath,
+                },
+                "operator",
+              );
               yield* refreshGitStatus(targetWorktreePath);
             }
 
             yield* runSetupProgram();
 
-            return yield* orchestrationEngine.dispatch(finalTurnStartCommand);
+            return yield* orchestrationEngine.dispatch(finalTurnStartCommand, "operator");
           });
 
           return yield* bootstrapProgram.pipe(
@@ -697,7 +709,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
             : orchestrationEngine
-                .dispatch(normalizedCommand)
+                .dispatch(normalizedCommand, "operator")
                 .pipe(
                   Effect.mapError((cause) =>
                     toDispatchCommandError(cause, "Failed to dispatch orchestration command"),

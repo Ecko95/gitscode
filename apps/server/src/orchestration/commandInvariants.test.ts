@@ -12,6 +12,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import {
+  checkActorAuthorization,
   findThreadById,
   listThreadsByProjectId,
   requireNonNegativeInteger,
@@ -217,5 +218,118 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("greater than or equal to 0");
+  });
+});
+
+// ── Plan 23 (W5.3): actor authorization deny matrix ────────────────────────
+
+describe("checkActorAuthorization", () => {
+  const cmd = (
+    type: OrchestrationCommand["type"],
+    extra: Record<string, unknown> = {},
+  ): OrchestrationCommand =>
+    ({
+      type,
+      commandId: CommandId.make("cmd-test"),
+      threadId: ThreadId.make("thread-1"),
+      projectId: ProjectId.make("project-1"),
+      ...extra,
+    }) as OrchestrationCommand;
+
+  // delamain denied for session-mutating commands
+  it("denies delamain + thread.turn.start", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.turn.start", {
+        message: { messageId: MessageId.make("msg-1"), role: "user", text: "hi", attachments: [] },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      "delamain",
+    );
+    expect(err).not.toBeNull();
+    expect(err?.message).toMatch(/delamain/);
+  });
+
+  it("denies delamain + thread.delete", () => {
+    const err = checkActorAuthorization(cmd("thread.delete"), "delamain");
+    expect(err).not.toBeNull();
+  });
+
+  // delamain allowed for respond commands
+  it("allows delamain + thread.approval.respond", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.approval.respond", {
+        requestId: "req-1",
+        decision: { type: "allow" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      "delamain",
+    );
+    expect(err).toBeNull();
+  });
+
+  // supervisor denied for checkpoint.revert
+  it("denies supervisor + thread.checkpoint.revert", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.checkpoint.revert", { turnCount: 1, revertedAt: "2026-01-01T00:00:00.000Z" }),
+      "supervisor",
+    );
+    expect(err).not.toBeNull();
+  });
+
+  // operator allowed for any client command
+  it("allows operator + thread.delete", () => {
+    const err = checkActorAuthorization(cmd("thread.delete"), "operator");
+    expect(err).toBeNull();
+  });
+
+  it("allows operator + thread.turn.start", () => {
+    const err = checkActorAuthorization(
+      cmd("thread.turn.start", {
+        message: { messageId: MessageId.make("msg-2"), role: "user", text: "go", attachments: [] },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      "operator",
+    );
+    expect(err).toBeNull();
+  });
+
+  // server allowed for internal (worktree) commands
+  it("allows server + worktree.bury", () => {
+    const err = checkActorAuthorization(
+      {
+        type: "worktree.bury",
+        commandId: CommandId.make("cmd-bury"),
+        threadId: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/wt" as ReturnType<typeof ThreadId.make>,
+        branch: null,
+        trigger: "retirement",
+        finalCheckpointRef: null,
+        buriedAt: "2026-01-01T00:00:00.000Z",
+      } as unknown as OrchestrationCommand,
+      "server",
+    );
+    expect(err).toBeNull();
+  });
+
+  // operator denied for internal commands
+  it("denies operator + worktree.bury", () => {
+    const err = checkActorAuthorization(
+      {
+        type: "worktree.bury",
+        commandId: CommandId.make("cmd-bury"),
+        threadId: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/wt" as ReturnType<typeof ThreadId.make>,
+        branch: null,
+        trigger: "retirement",
+        finalCheckpointRef: null,
+        buriedAt: "2026-01-01T00:00:00.000Z",
+      } as unknown as OrchestrationCommand,
+      "operator",
+    );
+    expect(err).not.toBeNull();
   });
 });

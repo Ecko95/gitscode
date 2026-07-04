@@ -197,33 +197,39 @@ async function runSession(
   // Setup: create project + thread (not counted in measurement)
   await run(
     engine
-      .dispatch({
-        type: "project.create",
-        commandId: mkCommandId("proj-create"),
-        projectId,
-        title: `Perf Project ${sessionId}`,
-        workspaceRoot: `/tmp/perf-${sessionId}`,
-        defaultModelSelection: DEFAULT_MODEL_SELECTION,
-        createdAt: NOW,
-      })
+      .dispatch(
+        {
+          type: "project.create",
+          commandId: mkCommandId("proj-create"),
+          projectId,
+          title: `Perf Project ${sessionId}`,
+          workspaceRoot: `/tmp/perf-${sessionId}`,
+          defaultModelSelection: DEFAULT_MODEL_SELECTION,
+          createdAt: NOW,
+        },
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 
   await run(
     engine
-      .dispatch({
-        type: "thread.create",
-        commandId: mkCommandId("thread-create"),
-        threadId,
-        projectId,
-        title: `Perf Thread ${sessionId}`,
-        modelSelection: DEFAULT_MODEL_SELECTION,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: NOW,
-      })
+      .dispatch(
+        {
+          type: "thread.create",
+          commandId: mkCommandId("thread-create"),
+          threadId,
+          projectId,
+          title: `Perf Thread ${sessionId}`,
+          modelSelection: DEFAULT_MODEL_SELECTION,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: NOW,
+        },
+        "operator",
+      )
       .pipe(Effect.orDie),
   );
 
@@ -242,88 +248,103 @@ async function runSession(
 
     await timed(
       engine
-        .dispatch({
-          type: "thread.turn.start",
-          commandId: mkCommandId("turn-start"),
-          threadId,
-          message: {
-            messageId,
-            role: "user",
-            text: `perf test message ${i}`,
-            attachments: [],
-          },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          createdAt: NOW,
-        })
-        .pipe(Effect.orDie),
-    );
-
-    await timed(
-      engine
-        .dispatch({
-          type: "thread.session.set",
-          commandId: mkCommandId("session-set"),
-          threadId,
-          session: {
+        .dispatch(
+          {
+            type: "thread.turn.start",
+            commandId: mkCommandId("turn-start"),
             threadId,
-            status: "running",
-            providerName: "codex",
-            providerInstanceId: ProviderInstanceId.make("codex"),
+            message: {
+              messageId,
+              role: "user",
+              text: `perf test message ${i}`,
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
             runtimeMode: "approval-required",
-            activeTurnId: turnId,
-            lastError: null,
-            updatedAt: NOW,
+            createdAt: NOW,
           },
-          createdAt: NOW,
-        })
+          "operator",
+        )
         .pipe(Effect.orDie),
     );
 
     await timed(
       engine
-        .dispatch({
-          type: "thread.message.assistant.delta",
-          commandId: mkCommandId("msg-delta"),
-          threadId,
-          messageId: mkMessageId(),
-          turnId,
-          delta: "hello world streaming",
-          createdAt: NOW,
-        })
+        .dispatch(
+          {
+            type: "thread.session.set",
+            commandId: mkCommandId("session-set"),
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "approval-required",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: NOW,
+            },
+            createdAt: NOW,
+          },
+          "operator",
+        )
         .pipe(Effect.orDie),
     );
 
     await timed(
       engine
-        .dispatch({
-          type: "thread.message.assistant.complete",
-          commandId: mkCommandId("msg-complete"),
-          threadId,
-          messageId: mkMessageId(),
-          turnId,
-          createdAt: NOW,
-        })
+        .dispatch(
+          {
+            type: "thread.message.assistant.delta",
+            commandId: mkCommandId("msg-delta"),
+            threadId,
+            messageId: mkMessageId(),
+            turnId,
+            delta: "hello world streaming",
+            createdAt: NOW,
+          },
+          "operator",
+        )
         .pipe(Effect.orDie),
     );
 
     await timed(
       engine
-        .dispatch({
-          type: "thread.activity.append",
-          commandId: mkCommandId("activity"),
-          threadId,
-          activity: {
-            id: mkEventId(),
-            tone: "info",
-            kind: "provider.turn.completed",
-            summary: "turn completed",
-            payload: { detail: "perf baseline" },
+        .dispatch(
+          {
+            type: "thread.message.assistant.complete",
+            commandId: mkCommandId("msg-complete"),
+            threadId,
+            messageId: mkMessageId(),
             turnId,
             createdAt: NOW,
           },
-          createdAt: NOW,
-        })
+          "operator",
+        )
+        .pipe(Effect.orDie),
+    );
+
+    await timed(
+      engine
+        .dispatch(
+          {
+            type: "thread.activity.append",
+            commandId: mkCommandId("activity"),
+            threadId,
+            activity: {
+              id: mkEventId(),
+              tone: "info",
+              kind: "provider.turn.completed",
+              summary: "turn completed",
+              payload: { detail: "perf baseline" },
+              turnId,
+              createdAt: NOW,
+            },
+            createdAt: NOW,
+          },
+          "operator",
+        )
         .pipe(Effect.orDie),
     );
   }

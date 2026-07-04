@@ -855,12 +855,21 @@ export const OrchestrationEventType = Schema.Literals([
   "worktree.buried",
   "worktree.adopted",
   "worktree.owner-recorded",
+  "command.denied",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
 export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "worktree"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
-export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
+export const OrchestrationActorKind = Schema.Literals([
+  "client", // ponytail: keep for backward compat with pre-actor events on replay
+  "server",
+  "provider",
+  "operator",
+  "supervisor",
+  "delamain",
+]);
+export type OrchestrationActorKind = typeof OrchestrationActorKind.Type;
 
 export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
@@ -1074,6 +1083,17 @@ export type WorktreeOwnerRecordedPayload = typeof WorktreeOwnerRecordedPayload.T
 
 // --- end worktree graveyard payloads ---
 
+// --- actor authorization denial payload (plan 23, W5.3) ---
+export const CommandDeniedPayload = Schema.Struct({
+  commandType: Schema.String,
+  commandId: CommandId,
+  actorKind: OrchestrationActorKind,
+  reason: TrimmedNonEmptyString,
+  deniedAt: IsoDateTime,
+});
+export type CommandDeniedPayload = typeof CommandDeniedPayload.Type;
+// --- end actor authorization denial payload ---
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1231,6 +1251,12 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("worktree.owner-recorded"),
     payload: WorktreeOwnerRecordedPayload,
+  }),
+  // actor authorization denial event (plan 23, W5.3) — audit-only, not projected
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("command.denied"),
+    payload: CommandDeniedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
