@@ -273,15 +273,78 @@ const runRebuild = Effect.fn("runRebuild")(function* (includeArchive: boolean) {
   yield* Console.log(`Rebuild complete. ${replayCount} events replayed.`);
 });
 
+// ── Per-table content fingerprint ─────────────────────────────────────────────
+
+/**
+ * Key columns chosen per table: columns whose corruption matters (state,
+ * ids, json payloads). Not every column — audit timestamps (created_at) are
+ * stable; we focus on mutable state and identity.
+ *
+ * Determinism: group_concat order is unspecified in SQLite unless the input
+ * rows are already sorted. We feed a sorted subquery so the concat is stable
+ * across both DBs.
+ *
+ * ponytail: group_concat fingerprint — cheap, no crypto dep, human-readable on diff.
+ * Ceiling: hash collision theoretically possible; use sha256 per row if that matters.
+ */
+/** @internal exported for testing */
+export const TABLE_FINGERPRINT_QUERIES: Record<string, string> = {
+  // project_id is the PK; title+workspace_root+deleted_at detect rename/delete corruption.
+  projection_projects: `
+    SELECT group_concat(project_id || '|' || title || '|' || workspace_root || '|' || coalesce(deleted_at,''), char(10))
+    FROM (SELECT project_id, title, workspace_root, deleted_at FROM projection_projects ORDER BY project_id)
+  `,
+  // thread_id PK; project_id+title+deleted_at+archived_at are the mutable state that matters.
+  projection_threads: `
+    SELECT group_concat(thread_id || '|' || project_id || '|' || title || '|' || coalesce(deleted_at,'') || '|' || coalesce(archived_at,''), char(10))
+    FROM (SELECT thread_id, project_id, title, deleted_at, archived_at FROM projection_threads ORDER BY thread_id)
+  `,
+  // message_id PK; role+text are the corruption-prone fields (text is the actual content).
+  projection_thread_messages: `
+    SELECT group_concat(message_id || '|' || thread_id || '|' || role || '|' || text, char(10))
+    FROM (SELECT message_id, thread_id, role, text FROM projection_thread_messages ORDER BY message_id)
+  `,
+  // activity_id PK; kind+payload_json capture what each activity says.
+  projection_thread_activities: `
+    SELECT group_concat(activity_id || '|' || thread_id || '|' || kind || '|' || payload_json, char(10))
+    FROM (SELECT activity_id, thread_id, kind, payload_json FROM projection_thread_activities ORDER BY activity_id)
+  `,
+  // plan_id PK; plan_markdown is the mutable value a bad migration could corrupt.
+  projection_thread_proposed_plans: `
+    SELECT group_concat(plan_id || '|' || thread_id || '|' || plan_markdown, char(10))
+    FROM (SELECT plan_id, thread_id, plan_markdown FROM projection_thread_proposed_plans ORDER BY plan_id)
+  `,
+  // plan_id PK; content_json is the visual plan body.
+  projection_thread_visual_plans: `
+    SELECT group_concat(plan_id || '|' || thread_id || '|' || content_json, char(10))
+    FROM (SELECT plan_id, thread_id, content_json FROM projection_thread_visual_plans ORDER BY plan_id)
+  `,
+  // thread_id PK (one session row per thread); status+provider_session_id+last_error are the mutable state.
+  projection_thread_sessions: `
+    SELECT group_concat(thread_id || '|' || status || '|' || coalesce(provider_session_id,'') || '|' || coalesce(last_error,''), char(10))
+    FROM (SELECT thread_id, status, provider_session_id, last_error FROM projection_thread_sessions ORDER BY thread_id)
+  `,
+  // row_id is AUTOINCREMENT PK; turn_id+state+checkpoint_status are the corruption-prone fields.
+  projection_turns: `
+    SELECT group_concat(thread_id || '|' || coalesce(turn_id,'') || '|' || state || '|' || coalesce(checkpoint_status,''), char(10))
+    FROM (SELECT thread_id, turn_id, state, checkpoint_status FROM projection_turns ORDER BY row_id)
+  `,
+  // request_id PK; status+decision+resolved_at capture approval lifecycle.
+  projection_pending_approvals: `
+    SELECT group_concat(request_id || '|' || thread_id || '|' || status || '|' || coalesce(decision,'') || '|' || coalesce(resolved_at,''), char(10))
+    FROM (SELECT request_id, thread_id, status, decision, resolved_at FROM projection_pending_approvals ORDER BY request_id)
+  `,
+};
+
 // ── Verify mode logic ─────────────────────────────────────────────────────────
 
 /**
  * Replay all events into a fresh :memory: DB and compare per-table row counts
- * against the live DB. Reports MATCH/MISMATCH per table. Read-only.
+ * AND a deterministic content fingerprint (group_concat of key columns, ordered
+ * by primary key) against the live DB.
  *
- * ponytail: row count comparison only — sufficient for human-readable drift detection.
- * Ceiling: identical row counts with different data won't be caught; upgrade to
- * per-row hash if needed.
+ * Row count check runs first (fast fail). Content fingerprint catches value
+ * corruption that preserves row counts — the motivating failure mode.
  */
 const runVerify = Effect.fn("runVerify")(function* (
   config: ServerConfigShape,
@@ -332,10 +395,13 @@ const runVerify = Effect.fn("runVerify")(function* (
       );
     }
 
-    yield* Console.log(`Replayed ${replayCount} events. Comparing row counts...`);
+    yield* Console.log(`Replayed ${replayCount} events. Comparing projections...`);
 
     let allMatch = true;
-    for (const table of PROJECTION_TABLES.filter((t) => t !== "projection_state")) {
+    const verifyTables = PROJECTION_TABLES.filter((t) => t !== "projection_state");
+
+    for (const table of verifyTables) {
+      // Step 1: fast row-count check
       const liveCount = yield* liveSql<{ readonly n: number }>`
         SELECT COUNT(*) AS n FROM ${liveSql(table)}
       `.pipe(
@@ -350,18 +416,48 @@ const runVerify = Effect.fn("runVerify")(function* (
         Effect.orElseSucceed(() => 0),
       );
 
-      const status = liveCount === memCount ? "MATCH" : "MISMATCH";
-      if (liveCount !== memCount) allMatch = false;
+      if (liveCount !== memCount) {
+        allMatch = false;
+        yield* Console.log(
+          `  MISMATCH ${table}: live=${liveCount} memory=${memCount} (row count differs)`,
+        );
+        continue;
+      }
 
-      yield* Console.log(`  ${status} ${table}: live=${liveCount} memory=${memCount}`);
+      // Step 2: content fingerprint — catches value corruption with same row count
+      const fingerprintSql = TABLE_FINGERPRINT_QUERIES[table];
+      if (fingerprintSql === undefined) {
+        // No fingerprint query defined; row count match is sufficient for this table.
+        yield* Console.log(`  MATCH ${table}: count=${liveCount}`);
+        continue;
+      }
+
+      const liveHash = yield* liveSql.unsafe<Record<string, unknown>>(fingerprintSql).pipe(
+        Effect.map((rows) => (rows[0] ? Object.values(rows[0])[0] : null)),
+        Effect.orElseSucceed(() => null),
+      );
+
+      const memHash = yield* memSql.unsafe<Record<string, unknown>>(fingerprintSql).pipe(
+        Effect.map((rows) => (rows[0] ? Object.values(rows[0])[0] : null)),
+        Effect.orElseSucceed(() => null),
+      );
+
+      if (liveHash !== memHash) {
+        allMatch = false;
+        yield* Console.log(
+          `  MISMATCH ${table}: count=${liveCount} but content differs (corruption detected)`,
+        );
+      } else {
+        yield* Console.log(`  MATCH ${table}: count=${liveCount}`);
+      }
     }
 
     if (!allMatch) {
-      yield* Console.error("\nVerify FAILED: projection row count mismatch detected.");
+      yield* Console.error("\nVerify FAILED: projection mismatch detected.");
       // ponytail: die = unrecoverable CLI exit; typed fail not needed here
-      return yield* Effect.die("Verify failed: row count mismatch");
+      return yield* Effect.die("Verify failed: projection mismatch");
     } else {
-      yield* Console.log("\nVerify PASSED: all projection table row counts match.");
+      yield* Console.log("\nVerify PASSED: all projection tables match (counts + content).");
     }
   }).pipe(Effect.provide(memLayer));
 });
