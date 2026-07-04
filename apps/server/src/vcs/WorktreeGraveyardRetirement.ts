@@ -1,8 +1,7 @@
 /**
  * Worktree graveyard retirement handler (plan 21, W2.2).
  *
- * Single shared Effect function used by ThreadDeletionReactor.
- * Not a new reactor — injected via the DrainableWorker callback closure.
+ * Single shared Effect function used by ThreadDeletionReactor and InactivityReapRetirementReactor.
  *
  * Retirement flow:
  *   1. Dispatch `worktree.retire.start` → store retiring-started event
@@ -16,11 +15,9 @@
  *   - captureCheckpoint fails → warn, bury with null ref (burial proceeds)
  *   - removeWorktree fails    → warn, NO buried event (retiring-started stays as recovery marker)
  *
- * NOTE(plan 21 W2.2): the inactivity-reap trigger is wired in ThreadDeletionReactor only.
- * ProviderSessionReaper cannot use retireWorktree directly because yielding its service
- * dependencies cascades into ProviderRuntimeLayerLive's R in a way TS cannot resolve
- * via RuntimeCoreDependenciesLive's provideMerge chain (the ReactorLayerLive chain works
- * because RuntimeReceiptBusLive is explicitly in that chain). See TODO in ProviderSessionReaper.
+ * Both retirement triggers (plan 21 W2.2 + W2.2b) are now wired:
+ *   - thread-deleted   → ThreadDeletionReactor (ReactorLayerLive)
+ *   - inactivity-reap  → InactivityReapRetirementReactor (RuntimeDependenciesLive)
  */
 import type { ThreadId } from "@t3tools/contracts";
 import { CheckpointRef, CommandId } from "@t3tools/contracts";
