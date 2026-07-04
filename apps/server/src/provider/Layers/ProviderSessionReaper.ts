@@ -13,13 +13,6 @@ import {
 } from "../Services/ProviderSessionReaper.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 
-// ponytail(plan 21 W2.2): worktree retirement on inactivity-reap is deferred.
-// Adding retirement services to the outer gen cascades into ProviderRuntimeLayerLive's R type
-// in a way TypeScript cannot resolve via RuntimeCoreDependenciesLive's provideMerge chain
-// (TS can handle ReactorLayerLive chain but not the nested ProviderRuntimeLayerLive chain).
-// The ThreadDeletionReactor path (thread.deleted → retireWorktree) covers the primary case.
-// TODO(plan 21 W2.2): wire inactivity-reap retirement in a separate reactor or via DrainableWorker.
-
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 

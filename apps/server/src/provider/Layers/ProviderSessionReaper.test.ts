@@ -371,7 +371,7 @@ describe("ProviderSessionReaper", () => {
         {
           id: threadId,
           session: {
-            threadId,
+            threadId: threadId,
             status: "stopped",
             providerName: "claudeAgent",
             runtimeMode: "full-access",

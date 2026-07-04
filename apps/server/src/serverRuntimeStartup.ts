@@ -36,6 +36,7 @@ import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import { GraveyardOrphanAdopter } from "./vcs/GraveyardOrphanAdopter.ts";
 import { GraveyardReaper } from "./vcs/GraveyardReaper.ts";
+import { InactivityReapRetirementReactor } from "./vcs/InactivityReapRetirementReactor.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -319,6 +320,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const providerSessionReaper = yield* ProviderSessionReaper;
   const graveyardOrphanAdopter = yield* GraveyardOrphanAdopter;
   const graveyardReaper = yield* GraveyardReaper;
+  const inactivityReapRetirementReactor = yield* InactivityReapRetirementReactor;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -373,6 +375,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
         yield* graveyardReaper.start().pipe(Scope.provide(reactorScope));
+        yield* inactivityReapRetirementReactor.start().pipe(Scope.provide(reactorScope));
       }),
     );
 
