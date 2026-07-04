@@ -2189,6 +2189,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  // Graveyard reaper: block pruning of pre-W2.5 worktrees that have no owner-recorded
+  // events but are still referenced by a live (non-deleted) thread in the projection.
+  // ARCHIVED threads block too — deleted_at IS NULL covers them (plan 21 W2.4 fix).
+  const hasLiveThreadForWorktreePath: ProjectionSnapshotQueryShape["hasLiveThreadForWorktreePath"] =
+    (worktreePath) =>
+      sql<{ exists_flag: number }>`
+        SELECT 1 AS exists_flag
+        FROM projection_threads
+        WHERE worktree_path = ${worktreePath}
+          AND deleted_at IS NULL
+        LIMIT 1
+      `.pipe(
+        Effect.map((rows) => rows.length > 0),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.hasLiveThreadForWorktreePath:query",
+            "ProjectionSnapshotQuery.hasLiveThreadForWorktreePath:decode",
+          ),
+        ),
+      );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2204,6 +2225,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadDetailById,
     getThreadWorktreeInfo,
+    hasLiveThreadForWorktreePath,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

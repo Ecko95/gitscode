@@ -170,6 +170,16 @@ export interface ProjectionSnapshotQueryShape {
     }>,
     ProjectionRepositoryError
   >;
+
+  /**
+   * Returns true when any non-deleted thread has this worktree path.
+   * Used by GraveyardReaper to block pruning of pre-W2.5 worktrees that
+   * have no owner-recorded events but are still referenced in the projection.
+   * ARCHIVED threads block (deleted_at IS NULL covers them).
+   */
+  readonly hasLiveThreadForWorktreePath: (
+    worktreePath: string,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
 }
 
 /**

@@ -109,6 +109,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+          hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
       ),
     );
@@ -202,6 +203,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+          hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
       ),
     );
@@ -285,6 +287,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+          hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
       ),
     );
@@ -353,6 +356,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+          hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
       ),
     );
@@ -406,6 +410,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+          hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
       ),
     );

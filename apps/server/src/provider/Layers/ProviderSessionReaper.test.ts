@@ -211,6 +211,7 @@ describe("ProviderSessionReaper", () => {
             ),
           getThreadDetailById: () => Effect.die("unused"),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+          hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
       ),
       Layer.provideMerge(NodeServices.layer),

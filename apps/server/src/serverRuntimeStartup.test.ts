@@ -105,6 +105,7 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+          hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
         Effect.provideService(AnalyticsService, {
           record: () => Effect.void,
@@ -168,6 +169,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+        hasLiveThreadForWorktreePath: () => Effect.succeed(false),
       }),
       Effect.provideService(OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -211,6 +213,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+        hasLiveThreadForWorktreePath: () => Effect.succeed(false),
       }),
       Effect.provideService(OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -260,6 +263,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+        hasLiveThreadForWorktreePath: () => Effect.succeed(false),
       }),
       Effect.provideService(OrchestrationEngineService, {
         readEvents: () => Stream.empty,

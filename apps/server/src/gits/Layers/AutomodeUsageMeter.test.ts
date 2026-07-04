@@ -62,6 +62,7 @@ function makeProjectionLayer(readModel: OrchestrationReadModel) {
     getThreadShellById: () => Effect.succeed(Option.none()),
     getThreadDetailById: () => Effect.succeed(Option.none()),
     getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
+    hasLiveThreadForWorktreePath: () => Effect.succeed(false),
   });
 }
 
