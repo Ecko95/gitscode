@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
 /**
  * Tests for GraveyardOrphanAdopter (plan 21 W2.3).
  *
@@ -6,7 +7,8 @@
  *   - (b) retiring-started but no buried → retireWorktree called (resume path)
  *   - (c) already buried → untouched (no dispatch, no retirement)
  *   - (c) already adopted → untouched
- *   - owner-only → treated as case (a), adopt dispatched
+ *   - (d) owner-only + live thread → NOT adopted (healthy bound worktree)
+ *   - (d) owner-only + dead/absent thread → adopt dispatched
  */
 import { ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
 import { tmpdir } from "node:os";
@@ -15,6 +17,7 @@ import { join } from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { describe, expect, it, beforeEach } from "vitest";
 
@@ -24,12 +27,13 @@ import {
 } from "../checkpointing/Services/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   RuntimeReceiptBus,
   type OrchestrationRuntimeReceipt,
 } from "../orchestration/Services/RuntimeReceiptBus.ts";
 import { GitVcsDriver } from "./GitVcsDriver.ts";
-import { GraveyardOrphanAdopterLive } from "./GraveyardOrphanAdopter.ts";
+import { GraveyardOrphanAdopter, GraveyardOrphanAdopterLive } from "./GraveyardOrphanAdopter.ts";
 
 // -- helpers --
 
@@ -99,6 +103,24 @@ const makeNoopGitLayer = () =>
     }),
   );
 
+// ponytail: liveThreadIds=Set — getThreadShellById returns Some for known ids, None otherwise
+function makeProjectionSnapshotQueryLayer(liveThreadIds: Set<string> = new Set()) {
+  return Layer.succeed(
+    ProjectionSnapshotQuery,
+    new Proxy({} as never, {
+      get: (_target, prop) => {
+        if (prop === "getThreadShellById") {
+          return (threadId: string) =>
+            Effect.succeed(
+              liveThreadIds.has(threadId) ? Option.some({ threadId } as never) : Option.none(),
+            );
+        }
+        return () => Effect.die(`unused projection method: ${String(prop)}`);
+      },
+    }),
+  );
+}
+
 function makeServerConfigLayer(worktreesDir: string) {
   return Layer.succeed(ServerConfig, {
     worktreesDir,
@@ -108,6 +130,7 @@ function makeServerConfigLayer(worktreesDir: string) {
 async function runAdopter(opts: {
   worktreesDir: string;
   events: OrchestrationEvent[];
+  liveThreadIds?: Set<string>;
 }): Promise<{ dispatched: string[] }> {
   const { layer: engineLayer, dispatched } = makeEngineLayer(opts.events);
 
@@ -118,6 +141,7 @@ async function runAdopter(opts: {
         makeNoopReceiptLayer(),
         makeNoopCheckpointLayer(),
         makeNoopGitLayer(),
+        makeProjectionSnapshotQueryLayer(opts.liveThreadIds),
         makeServerConfigLayer(opts.worktreesDir),
         NodeServices.layer,
       ),
@@ -133,9 +157,6 @@ async function runAdopter(opts: {
 
   return { dispatched };
 }
-
-// -- import the service class --
-import { GraveyardOrphanAdopter } from "./GraveyardOrphanAdopter.ts";
 
 // -- tests --
 
@@ -155,22 +176,47 @@ describe("GraveyardOrphanAdopter", () => {
     expect(dispatched).toContain("worktree.adopt");
   });
 
-  it("case (a): owner-only → dispatches worktree.adopt (no retirement history)", async () => {
-    const fullPath = addWorktree("my-repo", "feat-owner-only");
+  it("case (d): owner-only + dead/absent thread → dispatches worktree.adopt", async () => {
+    const fullPath = addWorktree("my-repo", "feat-owner-dead-thread");
     const ownerEvent = {
       type: "worktree.owner-recorded",
       aggregateKind: "worktree",
       payload: {
         worktreePath: fullPath,
-        threadId: ThreadId.make("t-1"),
+        threadId: ThreadId.make("t-dead"),
         branch: null,
         projectId: "proj-1",
-        recordedAt: new Date().toISOString(),
+        recordedAt: "2026-01-01T00:00:00.000Z",
       },
     } as unknown as OrchestrationEvent;
 
+    // liveThreadIds is empty → getThreadShellById returns None → adopt
     const { dispatched } = await runAdopter({ worktreesDir, events: [ownerEvent] });
     expect(dispatched).toContain("worktree.adopt");
+  });
+
+  it("case (d): owner-only + live thread → NOT adopted (healthy bound worktree)", async () => {
+    const liveThreadId = ThreadId.make("t-alive");
+    const fullPath = addWorktree("my-repo", "feat-owner-live-thread");
+    const ownerEvent = {
+      type: "worktree.owner-recorded",
+      aggregateKind: "worktree",
+      payload: {
+        worktreePath: fullPath,
+        threadId: liveThreadId,
+        branch: null,
+        projectId: "proj-1",
+        recordedAt: "2026-01-01T00:00:00.000Z",
+      },
+    } as unknown as OrchestrationEvent;
+
+    // liveThreadIds contains this thread → getThreadShellById returns Some → skip
+    const { dispatched } = await runAdopter({
+      worktreesDir,
+      events: [ownerEvent],
+      liveThreadIds: new Set([liveThreadId]),
+    });
+    expect(dispatched).toHaveLength(0);
   });
 
   it("case (b): retiring-started without buried → calls worktree.retire.start (resume)", async () => {
@@ -183,7 +229,7 @@ describe("GraveyardOrphanAdopter", () => {
         threadId: ThreadId.make("t-retire"),
         branch: null,
         trigger: "thread-deleted",
-        initiatedAt: new Date().toISOString(),
+        initiatedAt: "2026-01-01T00:00:00.000Z",
       },
     } as unknown as OrchestrationEvent;
 
@@ -203,7 +249,7 @@ describe("GraveyardOrphanAdopter", () => {
         branch: null,
         trigger: "retirement",
         finalCheckpointRef: null,
-        buriedAt: new Date().toISOString(),
+        buriedAt: "2026-01-01T00:00:00.000Z",
       },
     } as unknown as OrchestrationEvent;
 
@@ -220,7 +266,7 @@ describe("GraveyardOrphanAdopter", () => {
         worktreePath: fullPath,
         branch: null,
         orphanReason: "no-event-binding",
-        adoptedAt: new Date().toISOString(),
+        adoptedAt: "2026-01-01T00:00:00.000Z",
       },
     } as unknown as OrchestrationEvent;
 

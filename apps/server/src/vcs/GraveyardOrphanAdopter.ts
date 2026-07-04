@@ -3,13 +3,17 @@
  *
  * Runs once at boot after reactors start. For every path found under worktreesDir:
  *
- *   (a) No worktree events at all, or only `worktree.owner-recorded`
- *       → dispatch `worktree.adopt` (reaper W2.4 handles eventual removal)
+ *   (a) No worktree events at all → dispatch `worktree.adopt`
  *
  *   (b) `worktree.retiring-started` but no `worktree.buried`
  *       → crash-recovery: re-run retireWorktree (idempotent raw-checkpoint path)
  *
  *   (c) `worktree.buried` or `worktree.adopted` already — untouched.
+ *
+ *   (d) `worktree.owner-recorded` present, no retirement events:
+ *       → look up owning thread in projection:
+ *           thread alive (exists, not deleted) → BOUND — skip, log debug
+ *           thread absent/deleted → orphan → dispatch `worktree.adopt`
  *
  * Never silently deletes. Adoption emits before any state change.
  */
@@ -20,6 +24,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { CommandId, ThreadId } from "@t3tools/contracts";
@@ -28,6 +33,7 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { CheckpointStore } from "../checkpointing/Services/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../orchestration/Services/RuntimeReceiptBus.ts";
 import { GitVcsDriver } from "./GitVcsDriver.ts";
 import { retireWorktree } from "./WorktreeGraveyardRetirement.ts";
@@ -43,26 +49,28 @@ interface WorktreePathInfo {
 
 type WorktreePathStatus =
   | { readonly kind: "none" }
-  | { readonly kind: "owner-only" }
+  | { readonly kind: "owner-only"; readonly threadId: typeof ThreadId.Type }
   | { readonly kind: "retiring" }
   | { readonly kind: "buried" }
   | { readonly kind: "adopted" };
 
 function classifyEvents(events: ReadonlyArray<OrchestrationEvent>): WorktreePathStatus {
-  let hasOwner = false;
+  let ownerThreadId: typeof ThreadId.Type | null = null;
   let hasRetiring = false;
   let hasBuried = false;
   let hasAdopted = false;
   for (const ev of events) {
-    if (ev.type === "worktree.owner-recorded") hasOwner = true;
-    else if (ev.type === "worktree.retiring-started") hasRetiring = true;
+    if (ev.type === "worktree.owner-recorded") {
+      const p = ev.payload as Record<string, unknown>;
+      if (typeof p["threadId"] === "string") ownerThreadId = p["threadId"] as typeof ThreadId.Type;
+    } else if (ev.type === "worktree.retiring-started") hasRetiring = true;
     else if (ev.type === "worktree.buried") hasBuried = true;
     else if (ev.type === "worktree.adopted") hasAdopted = true;
   }
   if (hasBuried) return { kind: "buried" };
   if (hasAdopted) return { kind: "adopted" };
   if (hasRetiring) return { kind: "retiring" };
-  if (hasOwner) return { kind: "owner-only" };
+  if (ownerThreadId !== null) return { kind: "owner-only", threadId: ownerThreadId };
   return { kind: "none" };
 }
 
@@ -84,6 +92,7 @@ export const GraveyardOrphanAdopterLive: Layer.Layer<
   | CheckpointStore
   | GitVcsDriver
   | RuntimeReceiptBus
+  | ProjectionSnapshotQuery
   | FileSystem.FileSystem
   | Path.Path
   | ServerConfig
@@ -98,6 +107,7 @@ export const GraveyardOrphanAdopterLive: Layer.Layer<
     const checkpointStore = yield* CheckpointStore;
     const gitDriver = yield* GitVcsDriver;
     const receiptBus = yield* RuntimeReceiptBus;
+    const projectionQuery = yield* ProjectionSnapshotQuery;
     const fs = yield* FileSystem.FileSystem;
     const pathSvc = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
@@ -192,7 +202,29 @@ export const GraveyardOrphanAdopterLive: Layer.Layer<
           return;
         }
 
-        // case (a): none or owner-only → emit worktree.adopted
+        if (status.kind === "owner-only") {
+          // case (d): owner-recorded with no retirement history — check thread liveness.
+          // getThreadShellById filters WHERE deleted_at IS NULL AND archived_at IS NULL
+          // (ProjectionSnapshotQuery.ts:717) so None = absent OR deleted/archived.
+          const shell = yield* projectionQuery
+            .getThreadShellById(status.threadId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(shell)) {
+            // Thread is alive — this is a healthy bound worktree, never adopt it.
+            yield* Effect.logDebug("graveyard.adopter.bound-skip", {
+              worktreePath: info.fullPath,
+              threadId: status.threadId,
+            });
+            return;
+          }
+          // Thread absent/deleted — fall through to orphan adoption below.
+          yield* Effect.logInfo("graveyard.adopter.dead-thread-orphan", {
+            worktreePath: info.fullPath,
+            threadId: status.threadId,
+          });
+        }
+
+        // case (a)/(d-dead): none or owner-only with dead/absent thread → emit worktree.adopted
         yield* Effect.logInfo("graveyard.adopter.adopting-orphan", {
           worktreePath: info.fullPath,
         });
