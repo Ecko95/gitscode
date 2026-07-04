@@ -70,6 +70,7 @@ import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { GraveyardOrphanAdopterLive } from "./vcs/GraveyardOrphanAdopter.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -411,13 +412,16 @@ const RuntimeDependenciesBaseLive = RuntimeCoreDependenciesLive.pipe(
 // server crashes at boot). The base's outputs are merged through, so
 // `yield* CritSidecarManager` still resolves in ws.ts.
 //
-// VisualPlanMcpServiceLive follows the same pattern: it needs AuthControlPlane
-// (from AuthLayerLive) + OrchestrationEngineService (from OrchestrationLayerLive),
-// both exposed by RuntimeDependenciesBaseLive. Wired here so its R leaks no
-// further than this module.
-const RuntimeDependenciesLive = Layer.merge(CritSidecarManagerLive, VisualPlanMcpServiceLive).pipe(
-  Layer.provideMerge(RuntimeDependenciesBaseLive),
-);
+// VisualPlanMcpServiceLive and GraveyardOrphanAdopterLive follow the same pattern:
+// they need services from RuntimeDependenciesBaseLive and must CONSUME rather than
+// be merged as siblings — otherwise their requirements leak to the server launch layer.
+// GraveyardOrphanAdopterLive additionally needs PlatformServicesLive (FileSystem, Path,
+// Crypto) which is provided at the outermost layer; provide it explicitly here.
+const RuntimeDependenciesLive = Layer.mergeAll(
+  CritSidecarManagerLive,
+  VisualPlanMcpServiceLive,
+  GraveyardOrphanAdopterLive,
+).pipe(Layer.provideMerge(RuntimeDependenciesBaseLive), Layer.provideMerge(PlatformServicesLive));
 
 const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(RuntimeDependenciesLive),

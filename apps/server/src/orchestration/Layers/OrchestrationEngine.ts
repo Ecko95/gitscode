@@ -71,6 +71,7 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       };
     case "worktree.retire.start":
     case "worktree.bury":
+    case "worktree.adopt":
       return {
         aggregateKind: "worktree",
         // ponytail: worktree path is the aggregate id per plan 21
