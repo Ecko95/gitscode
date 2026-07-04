@@ -1,10 +1,13 @@
 import {
   EventId,
+  ProjectId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type WorktreePath,
 } from "@t3tools/contracts";
+
+const SERVER_AGGREGATE_ID = ProjectId.make("server");
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -847,6 +850,161 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           branch: command.branch,
           orphanReason: "no-event-binding" as const,
           adoptedAt: command.adoptedAt,
+        },
+      };
+    }
+
+    // W5.4b audit commands — no invariant checks, pass-through to event store
+    case "provider.session.spawn": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.spawnedAt,
+          commandId: command.commandId,
+        })),
+        type: "provider.session.spawned",
+        payload: {
+          threadId: command.threadId,
+          providerId: command.providerId,
+          sessionId: command.sessionId,
+          spawnedAt: command.spawnedAt,
+        },
+      };
+    }
+
+    case "provider.session.stop": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.stoppedAt,
+          commandId: command.commandId,
+        })),
+        type: "provider.session.stopped",
+        payload: {
+          threadId: command.threadId,
+          providerId: command.providerId,
+          sessionId: command.sessionId,
+          stoppedAt: command.stoppedAt,
+        },
+      };
+    }
+
+    case "auth.session.issue": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: SERVER_AGGREGATE_ID,
+          occurredAt: command.issuedAt,
+          commandId: command.commandId,
+        })),
+        type: "auth.session.issued",
+        payload: {
+          sessionId: command.sessionId,
+          method: command.method,
+          role: command.role,
+          subject: command.subject,
+          issuedAt: command.issuedAt,
+        },
+      };
+    }
+
+    case "auth.session.revoke": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: SERVER_AGGREGATE_ID,
+          occurredAt: command.revokedAt,
+          commandId: command.commandId,
+        })),
+        type: "auth.session.revoked",
+        payload: {
+          sessionId: command.sessionId,
+          revokedAt: command.revokedAt,
+        },
+      };
+    }
+
+    case "auth.pairing-link.issue": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: SERVER_AGGREGATE_ID,
+          occurredAt: command.issuedAt,
+          commandId: command.commandId,
+        })),
+        type: "auth.pairing-link.issued",
+        payload: {
+          linkId: command.linkId,
+          role: command.role,
+          subject: command.subject,
+          issuedAt: command.issuedAt,
+        },
+      };
+    }
+
+    case "auth.pairing-link.revoke": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: SERVER_AGGREGATE_ID,
+          occurredAt: command.revokedAt,
+          commandId: command.commandId,
+        })),
+        type: "auth.pairing-link.revoked",
+        payload: {
+          linkId: command.linkId,
+          revokedAt: command.revokedAt,
+        },
+      };
+    }
+
+    case "settings.record-change": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: SERVER_AGGREGATE_ID,
+          occurredAt: command.changedAt,
+          commandId: command.commandId,
+        })),
+        type: "settings.changed",
+        payload: {
+          changedKeys: command.changedKeys,
+          changedAt: command.changedAt,
+        },
+      };
+    }
+
+    case "vcs.worktree.record-created": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "worktree",
+          aggregateId: command.worktreePath as WorktreePath,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "vcs.worktree.created",
+        payload: {
+          worktreePath: command.worktreePath,
+          branch: command.branch,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "vcs.worktree.record-removed": {
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "worktree",
+          aggregateId: command.worktreePath as WorktreePath,
+          occurredAt: command.removedAt,
+          commandId: command.commandId,
+        })),
+        type: "vcs.worktree.removed",
+        payload: {
+          worktreePath: command.worktreePath,
+          removedAt: command.removedAt,
         },
       };
     }

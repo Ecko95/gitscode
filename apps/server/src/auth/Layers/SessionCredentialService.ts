@@ -1,4 +1,9 @@
-import { AuthSessionId, type AuthClientMetadata, type AuthClientSession } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  CommandId,
+  type AuthClientMetadata,
+  type AuthClientSession,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -12,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
 import { ServerConfig } from "../../config.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { AuthSessionRepositoryLive } from "../../persistence/Layers/AuthSessions.ts";
 import { AuthSessionRepository } from "../../persistence/Services/AuthSessions.ts";
 import { ServerSecretStore } from "../Services/ServerSecretStore.ts";
@@ -98,6 +104,8 @@ export const makeSessionCredentialService = Effect.gen(function* () {
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<string, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
+  // W5.4b: optional — absent in CLI contexts without orchestration engine
+  const engineOption = yield* Effect.serviceOption(OrchestrationEngineService);
   const cookieName = resolveSessionCookieName({
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -258,6 +266,23 @@ export const makeSessionCredentialService = Effect.gen(function* () {
           connected: false,
         }),
       );
+      // W5.4b: audit session issue — opaque sessionId only, no token
+      if (Option.isSome(engineOption)) {
+        yield* engineOption.value
+          .dispatch(
+            {
+              type: "auth.session.issue",
+              commandId: CommandId.make(yield* crypto.randomUUIDv4),
+              sessionId,
+              method: claims.method,
+              role: claims.role,
+              subject: claims.sub,
+              issuedAt: DateTime.formatIso(issuedAt),
+            },
+            "server",
+          )
+          .pipe(Effect.ignoreCause({ log: true }));
+      }
 
       return {
         sessionId,
@@ -476,6 +501,20 @@ export const makeSessionCredentialService = Effect.gen(function* () {
           return next;
         });
         yield* emitRemoved(sessionId);
+        // W5.4b: audit session revoke
+        if (Option.isSome(engineOption)) {
+          yield* engineOption.value
+            .dispatch(
+              {
+                type: "auth.session.revoke",
+                commandId: CommandId.make(yield* crypto.randomUUIDv4),
+                sessionId,
+                revokedAt: DateTime.formatIso(revokedAt),
+              },
+              "server",
+            )
+            .pipe(Effect.ignoreCause({ log: true }));
+        }
       }
       return revoked;
     }).pipe(Effect.mapError(toSessionCredentialError("Failed to revoke session.")));

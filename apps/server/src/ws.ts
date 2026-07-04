@@ -1149,7 +1149,26 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
-            serverSettings.updateSettings(patch).pipe(Effect.map(redactServerSettingsForClient)),
+            Effect.gen(function* () {
+              const result = yield* serverSettings.updateSettings(patch);
+              const changedKeys = Object.keys(patch ?? {});
+              if (changedKeys.length > 0) {
+                // W5.4b: fire-and-forget audit emit; catchCause covers dispatch + commandId errors
+                yield* Effect.gen(function* () {
+                  yield* orchestrationEngine.dispatch(
+                    {
+                      type: "settings.record-change",
+                      commandId: yield* serverCommandId("settings-change"),
+                      // ponytail: key names only — never values (security)
+                      changedKeys,
+                      changedAt: yield* nowIso,
+                    },
+                    "operator",
+                  );
+                }).pipe(Effect.catchCause(() => Effect.void));
+              }
+              return redactServerSettingsForClient(result);
+            }),
             {
               "rpc.aggregate": "server",
             },
@@ -1351,13 +1370,45 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            Effect.gen(function* () {
+              const result = yield* gitWorkflow.createWorktree(input);
+              yield* refreshGitStatus(input.cwd);
+              // W5.4b: fire-and-forget audit emit; catchCause covers dispatch + commandId errors
+              yield* Effect.gen(function* () {
+                yield* orchestrationEngine.dispatch(
+                  {
+                    type: "vcs.worktree.record-created",
+                    commandId: yield* serverCommandId("vcs-worktree-created"),
+                    worktreePath: result.worktree.path,
+                    branch: result.worktree.refName,
+                    createdAt: yield* nowIso,
+                  },
+                  "operator",
+                );
+              }).pipe(Effect.catchCause(() => Effect.void));
+              return result;
+            }),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            Effect.gen(function* () {
+              yield* gitWorkflow.removeWorktree(input);
+              yield* refreshGitStatus(input.cwd);
+              // W5.4b: fire-and-forget audit emit; catchCause covers dispatch + commandId errors
+              yield* Effect.gen(function* () {
+                yield* orchestrationEngine.dispatch(
+                  {
+                    type: "vcs.worktree.record-removed",
+                    commandId: yield* serverCommandId("vcs-worktree-removed"),
+                    worktreePath: input.path,
+                    removedAt: yield* nowIso,
+                  },
+                  "operator",
+                );
+              }).pipe(Effect.catchCause(() => Effect.void));
+            }),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>

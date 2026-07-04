@@ -10,6 +10,7 @@
  * @module ProviderServiceLive
  */
 import {
+  CommandId,
   ModelSelection,
   NonNegativeInt,
   ThreadId,
@@ -25,6 +26,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -55,6 +57,7 @@ import {
 } from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "./ProviderEventLoggers.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
@@ -201,6 +204,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
   const analytics = yield* Effect.service(AnalyticsService);
+  const orchestrationEngine = yield* Effect.serviceOption(OrchestrationEngineService);
+  // W5.4b: captured once so emit closures don't expose Crypto in method R channels
+  const cryptoService = yield* Crypto.Crypto;
   const eventLoggers = yield* ProviderEventLoggers;
   // Options-provided logger wins (test overrides); otherwise we take whatever
   // the `ProviderEventLoggers` tag exposes — `undefined` means "no canonical
@@ -606,6 +612,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             typeof input.modelSelection?.model === "string" &&
             input.modelSelection.model.trim().length > 0,
         });
+        // W5.4b: audit provider session spawn — fire-and-forget; PlatformError on UUID is fatal → orDie
+        if (Option.isSome(orchestrationEngine)) {
+          const spawnedAt = yield* nowIso;
+          const commandId = CommandId.make(yield* Effect.orDie(cryptoService.randomUUIDv4));
+          yield* orchestrationEngine.value
+            .dispatch(
+              {
+                type: "provider.session.spawn",
+                commandId,
+                threadId,
+                providerId: sessionWithInstance.provider,
+                // ponytail: threadId is the provider session identity (one session per thread)
+                sessionId: threadId,
+                spawnedAt,
+              },
+              "server",
+            )
+            .pipe(Effect.ignoreCause({ log: true }));
+        }
 
         return sessionWithInstance;
       }).pipe(
@@ -839,6 +864,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* analytics.record("provider.session.stopped", {
           provider: routed.adapter.provider,
         });
+        // W5.4b: audit provider session stop — fire-and-forget; PlatformError on UUID is fatal → orDie
+        if (Option.isSome(orchestrationEngine)) {
+          const stoppedAt = yield* nowIso;
+          const commandId = CommandId.make(yield* Effect.orDie(cryptoService.randomUUIDv4));
+          yield* orchestrationEngine.value
+            .dispatch(
+              {
+                type: "provider.session.stop",
+                commandId,
+                threadId: input.threadId,
+                providerId: routed.adapter.provider,
+                // ponytail: threadId is the provider session identity (one session per thread)
+                sessionId: input.threadId,
+                stoppedAt,
+              },
+              "server",
+            )
+            .pipe(Effect.ignoreCause({ log: true }));
+        }
       }).pipe(
         withMetrics({
           counter: providerSessionsTotal,
