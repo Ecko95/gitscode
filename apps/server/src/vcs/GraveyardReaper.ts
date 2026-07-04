@@ -4,16 +4,24 @@
  * Runs on a 1-hour interval. For each adopted worktree older than
  * GITS_GRAVEYARD_MAX_AGE_MS (default 7 days):
  *
- *   REBINDING GUARD (evaluated immediately before pruning):
+ *   REBINDING GUARD (evaluated immediately before pruning) — two layers:
+ *
+ *   Layer 1 — event-store (covers post-W2.5 worktrees with owner-recorded events):
  *   - If a `worktree.owner-recorded` event exists for the path AND no
  *     `thread.deleted` event exists for the owning thread, the worktree is
  *     rebound to a live (or archived-but-not-deleted) thread. Skip without
- *     emitting anything (log graveyard.reaper.skip-rebound). A future sweep
- *     re-evaluates after the thread is eventually deleted.
+ *     emitting anything (log graveyard.reaper.skip-rebound).
  *   - Archived-but-not-deleted threads BLOCK pruning — parked work stays on
  *     disk. `thread.deleted` is the only signal that frees the worktree.
  *
- *   PRUNE (only when rebinding guard passes):
+ *   Layer 2 — projection DB (covers pre-W2.5 worktrees with NO owner-recorded events):
+ *   - When layer 1 sees no ownership events (pure-orphan case), check the projection:
+ *     does any non-deleted thread have this worktree_path? If yes → BLOCK (skip-rebound).
+ *   - Uses ProjectionSnapshotQuery.hasLiveThreadForWorktreePath which queries
+ *     `projection_threads WHERE worktree_path = ? AND deleted_at IS NULL`.
+ *   - ARCHIVED threads block because deleted_at IS NULL covers them.
+ *
+ *   PRUNE (only when both guard layers pass):
  *   1. captureCheckpoint (raw git ref, no active turn needed — plan 21 Contradiction #1)
  *   2. removeWorktree (force: true — adopted orphans are likely dirty)
  *   3. Emit worktree.buried (trigger: "reaper", finalCheckpointRef from step 1)
@@ -21,17 +29,10 @@
  *   Failure modes:
  *   - captureCheckpoint fails → buried with null ref (removal proceeds)
  *   - removeWorktree fails → warn, NO buried event, retry next sweep
+ *   - hasLiveThreadForWorktreePath fails → warn, skip (fail-safe: don't prune on error)
  *
- * Rebinding check uses the event store only (no DB query needed):
- *   - `worktree.owner-recorded` events carry the owning threadId
- *   - `thread.deleted` events (aggregateKind="thread") signal deletion
- *   - If owner exists AND no thread.deleted for that threadId → BLOCK
- *
- * The event-store approach is preferred over ProjectionSnapshotQuery.getThreadShellById
- * (apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts:779-807) which filters
- * `deleted_at IS NULL AND archived_at IS NULL` — that would miss archived threads and allow
- * premature pruning of parked work. The event-store check correctly blocks archived threads
- * because `thread.archived` does not produce a `thread.deleted` event.
+ * Layer 1 event-store check is preferred for post-W2.5 worktrees.
+ * Layer 2 DB check is the safety net for production worktrees created before W2.5.
  */
 // @effect-diagnostics globalDate:off
 
@@ -52,6 +53,7 @@ import type { CheckpointRef, OrchestrationEvent } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { CheckpointStore } from "../checkpointing/Services/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { GitVcsDriver } from "./GitVcsDriver.ts";
 import { graveyardCheckpointRef } from "./WorktreeGraveyardRetirement.ts";
 
@@ -141,7 +143,8 @@ type SweepDeps =
   | GitVcsDriver
   | ServerConfig
   | FileSystem.FileSystem
-  | Crypto.Crypto;
+  | Crypto.Crypto
+  | ProjectionSnapshotQuery;
 
 // ponytail: no explicit type annotation — let TypeScript infer the R channel from services used;
 // the test harness provides matching layers.
@@ -152,6 +155,7 @@ export const runSweepOnce = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
+  const projectionQuery = yield* ProjectionSnapshotQuery;
 
   // ponytail: read env var each sweep call so tests can override between runs
   const maxAgeMs: number =
@@ -209,10 +213,31 @@ export const runSweepOnce = Effect.gen(function* () {
     const adoptedMs = Date.parse(entry.adoptedAt);
     if (Number.isNaN(adoptedMs) || now - adoptedMs <= maxAgeMs) continue;
 
-    // REBINDING GUARD — check immediately before pruning
+    // REBINDING GUARD — two layers checked immediately before pruning.
+    // Layer 1: event-store (post-W2.5 worktrees with owner-recorded events)
     if (!isStillUnbound(worktreePath, allEvents)) {
       yield* Effect.logInfo("graveyard.reaper.skip-rebound", { worktreePath });
       continue;
+    }
+
+    // Layer 2: projection DB (pre-W2.5 worktrees — no owner-recorded events exist).
+    // isStillUnbound returns true for "no owner events" (pure-orphan path), but a live
+    // thread may still reference this path via the projection. Block if so.
+    // Fail-safe: treat query errors as "live thread present" (don't prune on uncertainty).
+    if (getOwnerThreadId(worktreePath, allEvents) === null) {
+      const projBound: boolean = yield* projectionQuery
+        .hasLiveThreadForWorktreePath(worktreePath)
+        .pipe(
+          Effect.catch((_err) =>
+            Effect.logWarning("graveyard.reaper.projection-check-failed", { worktreePath }).pipe(
+              Effect.as(true), // fail-safe: assume bound
+            ),
+          ),
+        );
+      if (projBound) {
+        yield* Effect.logInfo("graveyard.reaper.skip-rebound", { worktreePath });
+        continue;
+      }
     }
 
     // Disk presence check (may have been removed externally)
@@ -305,6 +330,7 @@ export const GraveyardReaperLive: Layer.Layer<
   | ServerConfig
   | FileSystem.FileSystem
   | Crypto.Crypto
+  | ProjectionSnapshotQuery
 > = Layer.effect(
   GraveyardReaper,
   Effect.gen(function* () {
@@ -316,6 +342,7 @@ export const GraveyardReaperLive: Layer.Layer<
     const serverConfig = yield* ServerConfig;
     const fs = yield* FileSystem.FileSystem;
     const crypto = yield* Crypto.Crypto;
+    const projectionQuery = yield* ProjectionSnapshotQuery;
 
     // ponytail: read env var at construction — single knob, never changes at runtime
     const maxAgeMs: number =
@@ -330,6 +357,7 @@ export const GraveyardReaperLive: Layer.Layer<
       Layer.succeed(ServerConfig, serverConfig),
       Layer.succeed(FileSystem.FileSystem, fs),
       Layer.succeed(Crypto.Crypto, crypto),
+      Layer.succeed(ProjectionSnapshotQuery, projectionQuery),
     );
 
     const start = (): Effect.Effect<void, never, Scope.Scope> =>

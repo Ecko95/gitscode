@@ -33,6 +33,7 @@ import {
 } from "../checkpointing/Services/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { GitVcsDriver } from "./GitVcsDriver.ts";
 import { runSweepOnce } from "./GraveyardReaper.ts";
 
@@ -205,6 +206,31 @@ function makeGitLayer(fail: boolean) {
   );
 }
 
+/**
+ * Layer 2 projection guard — controls what hasLiveThreadForWorktreePath returns.
+ * Default (liveWorktreePaths=[]) returns false (no live threads). Pass the path
+ * under test to simulate a live thread referencing that worktree.
+ */
+function makeProjectionLayer(liveWorktreePaths: string[] = []) {
+  return Layer.succeed(ProjectionSnapshotQuery, {
+    getCommandReadModel: () => Effect.die("unused"),
+    getSnapshot: () => Effect.die("unused"),
+    getShellSnapshot: () => Effect.die("unused"),
+    getArchivedShellSnapshot: () => Effect.die("unused"),
+    getSnapshotSequence: () => Effect.die("unused"),
+    getCounts: () => Effect.die("unused"),
+    getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+    getProjectShellById: () => Effect.die("unused"),
+    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+    getThreadCheckpointContext: () => Effect.die("unused"),
+    getFullThreadDiffContext: () => Effect.die("unused"),
+    getThreadShellById: () => Effect.die("unused"),
+    getThreadDetailById: () => Effect.die("unused"),
+    getThreadWorktreeInfo: () => Effect.die("unused"),
+    hasLiveThreadForWorktreePath: (p: string) => Effect.succeed(liveWorktreePaths.includes(p)),
+  } as never);
+}
+
 // ---------------------------------------------------------------------------
 // Run harness — invokes runSweepOnce directly (no Schedule, no forkScoped)
 // ---------------------------------------------------------------------------
@@ -214,6 +240,8 @@ async function runReaperSweep(opts: {
   events: OrchestrationEvent[];
   failCp?: boolean;
   failGit?: boolean;
+  /** Worktree paths that a live (non-deleted) thread references in the projection DB. */
+  liveWorktreePaths?: string[];
 }): Promise<{ dispatched: Array<Record<string, unknown>> }> {
   const { layer: engineLayer, dispatched } = makeEngineLayer(opts.events);
 
@@ -226,6 +254,7 @@ async function runReaperSweep(opts: {
       makeGitLayer(opts.failGit ?? false),
       Layer.succeed(ServerConfig, { worktreesDir: opts.worktreesDir } as never),
       NodeServices.layer, // provides FileSystem, Crypto
+      makeProjectionLayer(opts.liveWorktreePaths ?? []),
     );
 
     await Effect.runPromise(runSweepOnce.pipe(Effect.provide(baseLayer)));
@@ -327,5 +356,39 @@ describe("GraveyardReaper — sweep behaviour", () => {
     const events = [makeAdoptedEvent(path), makeBuriedEvent(path)];
     const { dispatched } = await runReaperSweep({ worktreesDir, events });
     expect(dispatched.filter((d) => d["type"] === "worktree.bury")).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Layer 2 guard: pre-W2.5 worktrees — no owner-recorded events, projection check
+  // ---------------------------------------------------------------------------
+
+  it("REBOUND (layer 2): adopted, NO owner-recorded events, live thread in projection → skip", async () => {
+    // Simulates a pre-W2.5 worktree: adopted as orphan (orphanReason="no-event-binding"),
+    // no worktree.owner-recorded event exists, but the projection DB shows a live thread
+    // still references the path. Layer 1 (event-store) sees no owner → would prune.
+    // Layer 2 (projection) blocks it: hasLiveThreadForWorktreePath returns true.
+    const path = addPath();
+    const events = [makeAdoptedEvent(path)]; // no owner-recorded event
+    const { dispatched } = await runReaperSweep({
+      worktreesDir,
+      events,
+      liveWorktreePaths: [path], // projection says a live thread uses this path
+    });
+    expect(dispatched.filter((d) => d["type"] === "worktree.bury")).toHaveLength(0);
+  });
+
+  it("layer 2: adopted, NO owner-recorded events, thread deleted (not in projection) → pruned", async () => {
+    // Same pre-W2.5 scenario but the referencing thread has been deleted.
+    // hasLiveThreadForWorktreePath returns false → no projection block → pruned normally.
+    const path = addPath();
+    const events = [makeAdoptedEvent(path)]; // no owner-recorded event
+    const { dispatched } = await runReaperSweep({
+      worktreesDir,
+      events,
+      liveWorktreePaths: [], // no live thread → unbound → prune
+    });
+    const buryCmds = dispatched.filter((d) => d["type"] === "worktree.bury");
+    expect(buryCmds).toHaveLength(1);
+    expect(buryCmds[0]!["trigger"]).toBe("reaper");
   });
 });
