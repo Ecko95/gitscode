@@ -79,13 +79,49 @@ The script:
 
 `install-gits-user-service.sh` generates a systemd user unit identical to the WSL
 variant. The same `MemoryMax` / `--max-old-space-size` defaults apply; override with
-env vars for higher-memory VPS tiers (W6.3):
+the provided VPS scale profile for dedicated hosts.
+
+---
+
+## VPS scale profile
+
+`scripts/gits-hosting/profiles/vps.env` ships recommended values for a **dedicated
+32 GB VPS**. Source it before running the install script:
 
 ```bash
-GITS_HOSTING_MEMORY_MAX=12G \
-GITS_HOSTING_NODE_HEAP_MB=10240 \
+set -a
+source scripts/gits-hosting/profiles/vps.env
+set +a
 scripts/gits-hosting/install-gits-user-service.sh --start
 ```
+
+Or inline (single command):
+
+```bash
+env $(grep -v '^#' scripts/gits-hosting/profiles/vps.env | xargs) \
+  scripts/gits-hosting/install-gits-user-service.sh --start
+```
+
+### Profile values
+
+| Variable                       | Profile value | WSL default | Justification                                                                                        |
+| ------------------------------ | ------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
+| `GITS_HOSTING_MEMORY_MAX`      | `24G`         | `6G`        | Leaves ~8 GB for OS + Tailscale + MCP sidecars on a 32 GB host                                       |
+| `GITS_HOSTING_NODE_HEAP_MB`    | `16384`       | `4096`      | Gives V8 room for large concurrent conversation histories; stays well below `MemoryMax`              |
+| `GITS_AUTOMODE_DRIVER_TICK_MS` | `2000`        | `5000`      | Halves automode reaction latency; safe when the host has CPU headroom with no competing desktop load |
+
+Adjust values for your actual RAM before sourcing. The only hard constraint is
+`GITS_HOSTING_NODE_HEAP_MB` (MiB) × 1.07 < `GITS_HOSTING_MEMORY_MAX` — leave
+overhead for V8 off-heap allocations.
+
+### Knobs that do not yet exist
+
+The following would be useful on a VPS but are not yet env-var-tunable
+(tracked for future work):
+
+- `ProviderSessionReaper` sweep interval and inactivity threshold — hardcoded to
+  5 min / 30 min in `apps/server/src/provider/Layers/ProviderSessionReaper.ts`;
+  a shorter sweep (e.g. 60 s) would reclaim slots faster under heavy concurrent load.
 
 ---
 
