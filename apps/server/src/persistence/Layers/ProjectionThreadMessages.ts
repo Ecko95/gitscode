@@ -36,6 +36,7 @@ function toProjectionThreadMessage(
     isStreaming: row.isStreaming === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    providerMessageId: row.providerMessageId,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
   };
 }
@@ -56,6 +57,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json,
+          provider_message_id,
           is_streaming,
           created_at,
           updated_at
@@ -74,6 +76,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
               WHERE message_id = ${row.messageId}
             )
           ),
+          COALESCE(
+            ${row.providerMessageId},
+            (
+              SELECT provider_message_id
+              FROM projection_thread_messages
+              WHERE message_id = ${row.messageId}
+            )
+          ),
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -87,6 +97,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json = COALESCE(
             excluded.attachments_json,
             projection_thread_messages.attachments_json
+          ),
+          provider_message_id = COALESCE(
+            excluded.provider_message_id,
+            projection_thread_messages.provider_message_id
           ),
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
@@ -107,6 +121,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          provider_message_id AS "providerMessageId",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -128,6 +143,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          provider_message_id AS "providerMessageId",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"

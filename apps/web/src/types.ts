@@ -49,6 +49,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ChatAttachment[];
+  providerMessageId?: string;
   turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;

@@ -147,6 +147,8 @@ interface AssistantTextBlockState {
   fallbackText: string;
   streamClosed: boolean;
   completionEmitted: boolean;
+  providerMessageId: string | undefined;
+  emittedProviderMessageId: string | undefined;
 }
 
 interface PendingApproval {
@@ -1186,6 +1188,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       fallbackText: options?.fallbackText ?? "",
       streamClosed: options?.streamClosed ?? false,
       completionEmitted: false,
+      providerMessageId: undefined,
+      emittedProviderMessageId: undefined,
     };
     turnState.assistantTextBlocks.set(blockIndex, block);
     turnState.assistantTextBlockOrder.push(block);
@@ -1218,15 +1222,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   ) {
     const turnState = context.turnState;
-    if (!turnState || block.completionEmitted) {
+    if (!turnState) {
       return;
     }
 
-    if (!options?.force && !block.streamClosed) {
+    const shouldRefreshProviderMessageId =
+      block.completionEmitted &&
+      block.providerMessageId !== undefined &&
+      block.providerMessageId !== block.emittedProviderMessageId;
+
+    if (block.completionEmitted && !shouldRefreshProviderMessageId) {
       return;
     }
 
-    if (!block.emittedTextDelta && block.fallbackText.length > 0) {
+    if (!block.completionEmitted && !options?.force && !block.streamClosed) {
+      return;
+    }
+
+    if (!block.completionEmitted && !block.emittedTextDelta && block.fallbackText.length > 0) {
       const deltaStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
         type: "content.delta",
@@ -1240,7 +1253,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           streamKind: "assistant_text",
           delta: block.fallbackText,
         },
-        providerRefs: nativeProviderRefs(context),
+        providerRefs: nativeProviderRefs(context, { providerItemId: block.providerMessageId }),
         ...(options?.rawMethod || options?.rawPayload
           ? {
               raw: {
@@ -1253,9 +1266,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    block.completionEmitted = true;
-    if (turnState.assistantTextBlocks.get(block.blockIndex) === block) {
-      turnState.assistantTextBlocks.delete(block.blockIndex);
+    if (!block.completionEmitted) {
+      block.completionEmitted = true;
+      if (turnState.assistantTextBlocks.get(block.blockIndex) === block) {
+        turnState.assistantTextBlocks.delete(block.blockIndex);
+      }
     }
 
     const stamp = yield* makeEventStamp();
@@ -1273,7 +1288,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         title: "Assistant message",
         ...(block.fallbackText.length > 0 ? { detail: block.fallbackText } : {}),
       },
-      providerRefs: nativeProviderRefs(context),
+      providerRefs: nativeProviderRefs(context, { providerItemId: block.providerMessageId }),
       ...(options?.rawMethod || options?.rawPayload
         ? {
             raw: {
@@ -1284,6 +1299,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }
         : {}),
     });
+    block.emittedProviderMessageId = block.providerMessageId;
   });
 
   const backfillAssistantTextBlocksFromSnapshot = Effect.fn(
@@ -1321,11 +1337,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         continue;
       }
 
+      entry.block.providerMessageId = message.uuid;
       if (entry.block.fallbackText.length === 0) {
         entry.block.fallbackText = text;
       }
 
-      if (entry.block.streamClosed && !entry.block.completionEmitted) {
+      if (entry.block.streamClosed) {
         yield* completeAssistantTextBlock(context, entry.block, {
           rawMethod: "claude/assistant",
           rawPayload: message,

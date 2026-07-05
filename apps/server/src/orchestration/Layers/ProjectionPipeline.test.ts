@@ -173,6 +173,156 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       }
     }),
   );
+
+  it.effect("bootstraps provider message anchors and fork parentage", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-02T00:00:00.000Z";
+
+      yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.make("evt-fork-project"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-fork"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-fork-project"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-project"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-fork"),
+          title: "Fork Project",
+          workspaceRoot: "/tmp/project-fork",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-fork-source-thread"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-fork-source"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-fork-source-thread"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-source-thread"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-fork-source"),
+          projectId: ProjectId.make("project-fork"),
+          title: "Source Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-fork-child-thread"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-fork-child"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-fork-child-thread"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-child-thread"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-fork-child"),
+          projectId: ProjectId.make("project-fork"),
+          title: "Child Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.forked",
+        eventId: EventId.make("evt-fork-parentage"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-fork-child"),
+        occurredAt: "2026-01-02T00:00:01.000Z",
+        commandId: CommandId.make("cmd-fork-parentage"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-parentage"),
+        metadata: {},
+        payload: {
+          sourceThreadId: ThreadId.make("thread-fork-source"),
+          forkMessageId: MessageId.make("message-fork-anchor"),
+          mode: "full",
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-fork-message-anchor"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-fork-child"),
+        occurredAt: "2026-01-02T00:00:02.000Z",
+        commandId: CommandId.make("cmd-fork-message-anchor"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-message-anchor"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-fork-child"),
+          messageId: MessageId.make("message-fork-anchor"),
+          role: "assistant",
+          text: "anchored",
+          providerMessageId: "provider-message-1",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-02T00:00:02.000Z",
+          updatedAt: "2026-01-02T00:00:02.000Z",
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const threadRows = yield* sql<{
+        readonly parentThreadId: string | null;
+        readonly forkedFromMessageId: string | null;
+      }>`
+        SELECT
+          parent_thread_id AS "parentThreadId",
+          forked_from_message_id AS "forkedFromMessageId"
+        FROM projection_threads
+        WHERE thread_id = 'thread-fork-child'
+      `;
+      assert.deepEqual(threadRows, [
+        {
+          parentThreadId: "thread-fork-source",
+          forkedFromMessageId: "message-fork-anchor",
+        },
+      ]);
+
+      const messageRows = yield* sql<{
+        readonly providerMessageId: string | null;
+      }>`
+        SELECT provider_message_id AS "providerMessageId"
+        FROM projection_thread_messages
+        WHERE message_id = 'message-fork-anchor'
+      `;
+      assert.deepEqual(messageRows, [{ providerMessageId: "provider-message-1" }]);
+    }),
+  );
 });
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(

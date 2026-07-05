@@ -36,6 +36,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "user",
         text: "initial",
         attachments: persistedAttachments,
+        providerMessageId: "provider-message-preserved",
         isStreaming: false,
         createdAt,
         updatedAt,
@@ -47,6 +48,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "user",
         text: "updated",
+        providerMessageId: null,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:00:02.000Z",
@@ -55,12 +57,14 @@ layer("ProjectionThreadMessageRepository", (it) => {
       const rows = yield* repository.listByThreadId({ threadId });
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.text, "updated");
+      assert.equal(rows[0]?.providerMessageId, "provider-message-preserved");
       assert.deepEqual(rows[0]?.attachments, persistedAttachments);
 
       const rowById = yield* repository.getByMessageId({ messageId });
       assert.equal(rowById._tag, "Some");
       if (rowById._tag === "Some") {
         assert.equal(rowById.value.text, "updated");
+        assert.equal(rowById.value.providerMessageId, "provider-message-preserved");
         assert.deepEqual(rowById.value.attachments, persistedAttachments);
       }
     }),
@@ -88,6 +92,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
             sizeBytes: 5,
           },
         ],
+        providerMessageId: null,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:01.000Z",
@@ -100,6 +105,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "assistant",
         text: "cleared",
         attachments: [],
+        providerMessageId: null,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:02.000Z",
