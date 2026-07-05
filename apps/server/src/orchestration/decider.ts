@@ -1,5 +1,6 @@
 import {
   EventId,
+  MessageId,
   ProjectId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -24,6 +25,12 @@ import {
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import {
+  findThreadForkPrefix,
+  inferThreadProviderLabel,
+  resolveThreadForkAnchor,
+  supportsFullThreadFork,
+} from "./threadFork.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -62,6 +69,23 @@ type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
+
+function commandInvariantError(
+  commandType: OrchestrationCommand["type"],
+  detail: string,
+): OrchestrationCommandInvariantError {
+  return new OrchestrationCommandInvariantError({
+    commandType,
+    detail,
+  });
+}
+
+function forkCopyMessageId(input: {
+  readonly threadId: Extract<OrchestrationCommand, { type: "thread.fork" }>["newThreadId"];
+  readonly uuid: string;
+}): MessageId {
+  return MessageId.make(`${input.threadId}:fork-message:${input.uuid}`);
+}
 
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
@@ -247,6 +271,137 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.fork": {
+      if (command.mode !== "full") {
+        return yield* commandInvariantError(
+          command.type,
+          "thread-fork-summary-unsupported: summary fork mode is not implemented yet.",
+        );
+      }
+
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.newThreadId,
+      });
+
+      if (!supportsFullThreadFork(sourceThread)) {
+        return yield* commandInvariantError(
+          command.type,
+          `thread-fork-provider-unsupported: fork is not supported for provider '${inferThreadProviderLabel(
+            sourceThread,
+          )}' yet.`,
+        );
+      }
+
+      const anchorResolution = resolveThreadForkAnchor({
+        sourceThread,
+        messageId: command.messageId,
+      });
+      if (anchorResolution._tag === "missing-message") {
+        return yield* commandInvariantError(
+          command.type,
+          `thread-fork-message-not-found: Message '${command.messageId}' does not belong to thread '${command.threadId}'.`,
+        );
+      }
+      if (anchorResolution._tag === "unavailable") {
+        return yield* commandInvariantError(
+          command.type,
+          `thread-fork-anchor-unavailable: Message '${command.messageId}' cannot be used as a fork anchor because no provider message id is available before it.`,
+        );
+      }
+
+      const createdEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.newThreadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created",
+        payload: {
+          threadId: command.newThreadId,
+          projectId: sourceThread.projectId,
+          title: `${sourceThread.title} (fork)`,
+          modelSelection: sourceThread.modelSelection,
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+
+      const prefixMessages = findThreadForkPrefix({
+        sourceThread,
+        messageId: command.messageId,
+      });
+      if (prefixMessages === undefined) {
+        return yield* commandInvariantError(
+          command.type,
+          `thread-fork-message-not-found: Message '${command.messageId}' does not belong to thread '${command.threadId}'.`,
+        );
+      }
+
+      // ponytail: slice 2 copies message text only. Turn/checkpoint/file-state
+      // copying is deliberately out of scope; slices 4/5 rely on this ceiling.
+      const messageEvents: PlannedOrchestrationEvent[] = [];
+      for (const sourceMessage of prefixMessages) {
+        const uuid = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
+        messageEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.newThreadId,
+            occurredAt: sourceMessage.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.newThreadId,
+            messageId: forkCopyMessageId({
+              threadId: command.newThreadId,
+              uuid,
+            }),
+            role: sourceMessage.role,
+            text: sourceMessage.text,
+            ...(sourceMessage.attachments !== undefined
+              ? { attachments: sourceMessage.attachments }
+              : {}),
+            ...(sourceMessage.providerMessageId !== undefined
+              ? { providerMessageId: sourceMessage.providerMessageId }
+              : {}),
+            turnId: null,
+            streaming: false,
+            createdAt: sourceMessage.createdAt,
+            updatedAt: sourceMessage.updatedAt,
+          },
+        });
+      }
+
+      const forkedEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.newThreadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.forked",
+        payload: {
+          sourceThreadId: command.threadId,
+          forkMessageId: command.messageId,
+          mode: command.mode,
+        },
+      };
+
+      return [createdEvent, ...messageEvents, forkedEvent];
     }
 
     case "thread.delete": {

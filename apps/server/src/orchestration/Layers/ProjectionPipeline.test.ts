@@ -2,8 +2,11 @@ import {
   CheckpointRef,
   CommandId,
   CorrelationId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  type OrchestrationMessage,
+  type OrchestrationReadModel,
   ProjectId,
   ThreadId,
   TurnId,
@@ -33,6 +36,7 @@ import {
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { decideOrchestrationCommand } from "../decider.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
@@ -321,6 +325,171 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         WHERE message_id = 'message-fork-anchor'
       `;
       assert.deepEqual(messageRows, [{ providerMessageId: "provider-message-1" }]);
+    }),
+  );
+
+  it.effect("projects parentage from decider-produced thread.fork events", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-03T00:00:00.000Z";
+      const projectId = ProjectId.make("project-fork-decider");
+      const sourceThreadId = ThreadId.make("thread-fork-decider-source");
+      const childThreadId = ThreadId.make("thread-fork-decider-child");
+      const anchorMessageId = MessageId.make("message-fork-decider-anchor");
+      const sourceMessages: OrchestrationMessage[] = [
+        {
+          id: MessageId.make("message-fork-decider-user"),
+          role: "user",
+          text: "prompt",
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: anchorMessageId,
+          role: "assistant",
+          text: "answer",
+          providerMessageId: "provider-message-decider",
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ];
+      const readModel: OrchestrationReadModel = {
+        snapshotSequence: 0,
+        projects: [
+          {
+            id: projectId,
+            title: "Fork Decider Project",
+            workspaceRoot: "/tmp/project-fork-decider",
+            defaultModelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: null,
+          },
+        ],
+        threads: [
+          {
+            id: sourceThreadId,
+            projectId,
+            title: "Fork Decider Source",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+            runtimeMode: "full-access",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            branch: null,
+            worktreePath: "/tmp/project-fork-decider",
+            latestTurn: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            deletedAt: null,
+            messages: sourceMessages,
+            proposedPlans: [],
+            visualPlans: [],
+            activities: [],
+            checkpoints: [],
+            session: null,
+          },
+        ],
+        updatedAt: now,
+      };
+
+      yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.make("evt-fork-decider-project"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-fork-decider-project"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-decider-project"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Fork Decider Project",
+          workspaceRoot: "/tmp/project-fork-decider",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-6",
+          },
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-fork-decider-source-thread"),
+        aggregateKind: "thread",
+        aggregateId: sourceThreadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-fork-decider-source-thread"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-decider-source-thread"),
+        metadata: {},
+        payload: {
+          threadId: sourceThreadId,
+          projectId,
+          title: "Fork Decider Source",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-6",
+          },
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: "/tmp/project-fork-decider",
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const decision = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-fork-decider"),
+          threadId: sourceThreadId,
+          newThreadId: childThreadId,
+          messageId: anchorMessageId,
+          mode: "full",
+          createdAt: now,
+        },
+        readModel,
+      });
+      const events = Array.isArray(decision) ? decision : [decision];
+      for (const event of events) {
+        yield* eventStore.append(event);
+      }
+
+      yield* projectionPipeline.bootstrap;
+
+      const threadRows = yield* sql<{
+        readonly parentThreadId: string | null;
+        readonly forkedFromMessageId: string | null;
+      }>`
+        SELECT
+          parent_thread_id AS "parentThreadId",
+          forked_from_message_id AS "forkedFromMessageId"
+        FROM projection_threads
+        WHERE thread_id = 'thread-fork-decider-child'
+      `;
+      assert.deepEqual(threadRows, [
+        {
+          parentThreadId: "thread-fork-decider-source",
+          forkedFromMessageId: "message-fork-decider-anchor",
+        },
+      ]);
     }),
   );
 });

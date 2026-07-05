@@ -522,6 +522,19 @@ const ThreadCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadForkedMode = Schema.Literals(["full", "summary"]);
+export type ThreadForkedMode = typeof ThreadForkedMode.Type;
+
+const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  newThreadId: ThreadId,
+  messageId: MessageId,
+  mode: ThreadForkedMode,
+  createdAt: IsoDateTime,
+});
+
 const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
   commandId: CommandId,
@@ -677,6 +690,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -698,6 +712,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -1072,9 +1087,6 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   ),
   updatedAt: IsoDateTime,
 });
-
-export const ThreadForkedMode = Schema.Literals(["full", "summary"]);
-export type ThreadForkedMode = typeof ThreadForkedMode.Type;
 
 export const ThreadForkedPayload = Schema.Struct({
   sourceThreadId: ThreadId,
