@@ -131,10 +131,47 @@ stale-turbo → force tsgo). Escalation: 2 failed acceptance rounds → Fable re
 
 | Wave | Item | Status | Evidence |
 |------|------|--------|----------|
-| W0 | Plan 26 doc PR | pending | — |
-| W0 | Slice 0 recon peer | pending | — |
-| W1 | Slice 1 PR | not started | — |
+| W0 | Plan 26 doc PR | in review | PR #97 |
+| W0 | Slice 0 recon peer | DONE 2026-07-05 | peer e65d740f, report in §9 |
+| W1 | Slice 1 PR | dispatched | peer brief per §9 decisions |
 | W2 | Slice 2 PR | not started | — |
 | W3 | Slice 3 PR | not started | — |
 | W4 | Slice 4 PR | not started | — |
 | W5 | Slice 5 PR | not started | — |
+
+## 9. Recon results (slice 0, peer e65d740f, 2026-07-05) — binding decisions
+
+Corrections to §1: `thread/rollback` is ALREADY called (revert-user-message feature:
+`CodexSessionRuntime.ts:1377-1380`, exposed via `CodexAdapter.ts:1637-1658`,
+`ProviderService.ts:982-1007`, UI `RevertUserMessageButton` in `MessagesTimeline.tsx:346-427`).
+Only `thread/fork` has no call site. Fork = the non-destructive sibling of revert; mirror
+its patterns end-to-end.
+
+- **D1 (Q1)**: No per-message provider id exists anywhere (events, projections). Add optional
+  `providerMessageId` to the message contracts + `projection_thread_messages.provider_message_id`;
+  ClaudeAdapter emits `message.uuid` (captured at `:2083-2089`) per assistant message.
+  LIMITATION: messages recorded before this feature can only fork from the latest cursor anchor.
+- **D2 (Q2)**: Reference-only fork events are NOT retention-safe (archive moves deleted-thread
+  events out of hot log: `OrchestrationEventStore.ts:383-393`; rebuild defaults hot-only:
+  `cli/db.ts:151-158,216-240`). DECISION: copy-at-command-time — the fork handler re-emits
+  the prefix as fresh standard message events into the NEW thread's stream (projector needs
+  no new copy logic), plus a `thread.forked` metadata event (parentage only).
+- **D3 (Q3)**: Codex turns ≠ projection_turns rows (interrupts/approvals/uncheckpointed).
+  `thread/fork` response returns populated `thread.turns` (`schema.gen.ts:33550-33570`).
+  numTurns = forkResponse.thread.turns.length − K (K = codex turn count retained at anchor,
+  mapped via turn-id match against `projection_turns` first, checkpoint_turn_count fallback).
+  GUARD: ambiguous mapping → typed failure, never mis-truncate. Rollback rejects <1
+  (`CodexAdapter.ts:1637-1644`) — skip rollback when numTurns == 0.
+- **D4 (Q4)**: UI seams: rows `MessagesTimeline.tsx:323-509` (mirror RevertUserMessageButton);
+  commands via `api.orchestration.dispatchCommand` (`environmentApi.ts:56-58`, `ws.ts:730-751`);
+  navigation `threadRoutes.ts:15-22` + `routes/_chat.$environmentId.$threadId.tsx:149-159`;
+  composer prefill `composerDraftStore.ts:348-355` `setPrompt`.
+- **D5 (Q5)**: `client.request("thread/fork", ...)` is callable+typed already
+  (`client.ts:39-44,197-210`; `meta.gen.ts:175-180,256-260`). Add `forkThread` to
+  `CodexSessionRuntimeShape`, parse via `parseThreadSnapshot`, expose through
+  CodexAdapter/ProviderAdapter/ProviderService mirroring the rollback surface.
+- **Q6 confirmed**: agent-sdk 0.3.154 `Options` has `forkSession?: boolean` (`sdk.d.ts:1426-1429`)
+  and `resumeSessionAt?: string` (`sdk.d.ts:1693-1707`).
+- **Q7 confirmed**: no structural 1-thread-per-environment coupling (server threads bind
+  projectId/worktreePath by threadId; environment is a client scope). Shared-cwd concurrent
+  sessions can race — documented v1 hazard (same as revert already has).
