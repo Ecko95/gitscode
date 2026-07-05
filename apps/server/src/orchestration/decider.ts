@@ -274,13 +274,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.fork": {
-      if (command.mode !== "full") {
-        return yield* commandInvariantError(
-          command.type,
-          "thread-fork-summary-unsupported: summary fork mode is not implemented yet.",
-        );
-      }
-
       const sourceThread = yield* requireThread({
         readModel,
         command,
@@ -292,29 +285,42 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.newThreadId,
       });
 
-      if (!supportsFullThreadFork(sourceThread)) {
-        return yield* commandInvariantError(
-          command.type,
-          `thread-fork-provider-unsupported: fork is not supported for provider '${inferThreadProviderLabel(
-            sourceThread,
-          )}' yet.`,
-        );
+      if (command.mode === "full") {
+        if (!supportsFullThreadFork(sourceThread)) {
+          return yield* commandInvariantError(
+            command.type,
+            `thread-fork-provider-unsupported: fork is not supported for provider '${inferThreadProviderLabel(
+              sourceThread,
+            )}' yet.`,
+          );
+        }
+
+        const anchorResolution = resolveThreadForkAnchor({
+          sourceThread,
+          messageId: command.messageId,
+        });
+        if (anchorResolution._tag === "missing-message") {
+          return yield* commandInvariantError(
+            command.type,
+            `thread-fork-message-not-found: Message '${command.messageId}' does not belong to thread '${command.threadId}'.`,
+          );
+        }
+        if (anchorResolution._tag === "unavailable") {
+          return yield* commandInvariantError(
+            command.type,
+            `thread-fork-anchor-unavailable: Message '${command.messageId}' cannot be used as a fork anchor because no provider message id is available before it.`,
+          );
+        }
       }
 
-      const anchorResolution = resolveThreadForkAnchor({
+      const prefixMessages = findThreadForkPrefix({
         sourceThread,
         messageId: command.messageId,
       });
-      if (anchorResolution._tag === "missing-message") {
+      if (prefixMessages === undefined) {
         return yield* commandInvariantError(
           command.type,
           `thread-fork-message-not-found: Message '${command.messageId}' does not belong to thread '${command.threadId}'.`,
-        );
-      }
-      if (anchorResolution._tag === "unavailable") {
-        return yield* commandInvariantError(
-          command.type,
-          `thread-fork-anchor-unavailable: Message '${command.messageId}' cannot be used as a fork anchor because no provider message id is available before it.`,
         );
       }
 
@@ -340,50 +346,43 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
 
-      const prefixMessages = findThreadForkPrefix({
-        sourceThread,
-        messageId: command.messageId,
-      });
-      if (prefixMessages === undefined) {
-        return yield* commandInvariantError(
-          command.type,
-          `thread-fork-message-not-found: Message '${command.messageId}' does not belong to thread '${command.threadId}'.`,
-        );
-      }
+      const seedPrompt = command.mode === "summary" ? command.seedPrompt?.trim() : undefined;
 
       // ponytail: slice 2 copies message text only. Turn/checkpoint/file-state
       // copying is deliberately out of scope; slices 4/5 rely on this ceiling.
       const messageEvents: PlannedOrchestrationEvent[] = [];
-      for (const sourceMessage of prefixMessages) {
-        const uuid = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
-        messageEvents.push({
-          ...(yield* withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.newThreadId,
-            occurredAt: sourceMessage.createdAt,
-            commandId: command.commandId,
-          })),
-          type: "thread.message-sent",
-          payload: {
-            threadId: command.newThreadId,
-            messageId: forkCopyMessageId({
+      if (command.mode === "full") {
+        for (const sourceMessage of prefixMessages) {
+          const uuid = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
+          messageEvents.push({
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.newThreadId,
+              occurredAt: sourceMessage.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.message-sent",
+            payload: {
               threadId: command.newThreadId,
-              uuid,
-            }),
-            role: sourceMessage.role,
-            text: sourceMessage.text,
-            ...(sourceMessage.attachments !== undefined
-              ? { attachments: sourceMessage.attachments }
-              : {}),
-            ...(sourceMessage.providerMessageId !== undefined
-              ? { providerMessageId: sourceMessage.providerMessageId }
-              : {}),
-            turnId: null,
-            streaming: false,
-            createdAt: sourceMessage.createdAt,
-            updatedAt: sourceMessage.updatedAt,
-          },
-        });
+              messageId: forkCopyMessageId({
+                threadId: command.newThreadId,
+                uuid,
+              }),
+              role: sourceMessage.role,
+              text: sourceMessage.text,
+              ...(sourceMessage.attachments !== undefined
+                ? { attachments: sourceMessage.attachments }
+                : {}),
+              ...(sourceMessage.providerMessageId !== undefined
+                ? { providerMessageId: sourceMessage.providerMessageId }
+                : {}),
+              turnId: null,
+              streaming: false,
+              createdAt: sourceMessage.createdAt,
+              updatedAt: sourceMessage.updatedAt,
+            },
+          });
+        }
       }
 
       const forkedEvent: PlannedOrchestrationEvent = {
@@ -398,6 +397,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           sourceThreadId: command.threadId,
           forkMessageId: command.messageId,
           mode: command.mode,
+          ...(seedPrompt ? { seedPrompt } : {}),
         },
       };
 

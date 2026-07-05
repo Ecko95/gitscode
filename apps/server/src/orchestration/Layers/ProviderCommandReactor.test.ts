@@ -288,6 +288,14 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const generateThreadForkSummary = vi.fn<TextGenerationShape["generateThreadForkSummary"]>((_) =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadForkSummary",
+          detail: "disabled in test harness",
+        }),
+      ),
+    );
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
@@ -366,6 +374,7 @@ describe("ProviderCommandReactor", () => {
         Layer.mock(TextGeneration, {
           generateBranchName,
           generateThreadTitle,
+          generateThreadForkSummary,
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -432,6 +441,7 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      generateThreadForkSummary,
       runtimeSessions,
       stateDir,
       drain,
@@ -717,6 +727,232 @@ describe("ProviderCommandReactor", () => {
         ],
       });
     }
+  });
+
+  it("generates and posts a summary fork seed without seeding a provider cursor", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadForkSummary.mockReturnValue(
+      Effect.succeed({ summary: "User asked for auth fixes. Assistant identified failing tests." }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-summary-source-user"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-user-summary-1"),
+            role: "user",
+            text: "fix auth",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("cmd-summary-source-assistant-delta"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: asMessageId("message-assistant-summary-1"),
+          delta: "look at auth.spec.ts",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("cmd-summary-source-assistant-complete"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: asMessageId("message-assistant-summary-1"),
+          providerMessageId: "assistant-provider-summary-1",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-summary-thread-fork-reactor"),
+          threadId: ThreadId.make("thread-1"),
+          newThreadId: ThreadId.make("thread-summary-forked-1"),
+          messageId: asMessageId("message-assistant-summary-1"),
+          mode: "summary",
+          seedPrompt: "  keep the answer short  ",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.generateThreadForkSummary.mock.calls.length === 1);
+    expect(harness.generateThreadForkSummary.mock.calls[0]?.[0]).toMatchObject({
+      transcript: expect.stringContaining("look at auth.spec.ts"),
+      seedPrompt: "keep the answer short",
+    });
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const forkThread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.make("thread-summary-forked-1"),
+      );
+      return Boolean(
+        forkThread?.messages.some((message) => message.text.startsWith("Fork summary\n\n")) &&
+        forkThread.session?.status === "stopped",
+      );
+    });
+
+    const binding = await Effect.runPromise(
+      harness.providerSessionDirectory.getBinding(ThreadId.make("thread-summary-forked-1")),
+    );
+    expect(Option.isNone(binding)).toBe(true);
+
+    const readModelAfterSummary = await harness.readModel();
+    const forkThread = readModelAfterSummary.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-summary-forked-1"),
+    );
+    expect(forkThread?.messages.map((message) => message.role)).toEqual(["assistant"]);
+    expect(forkThread?.messages[0]?.text).toContain("User asked for auth fixes");
+    expect(forkThread?.messages[0]?.text).toContain("Seed prompt");
+    expect(forkThread?.session?.status).toBe("stopped");
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-summary-fork-first-turn"),
+          threadId: ThreadId.make("thread-summary-forked-1"),
+          message: {
+            messageId: asMessageId("message-user-summary-fork-1"),
+            role: "user",
+            text: "continue from there",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-summary-forked-1"),
+      input: expect.stringContaining("Context carried over from the forked source thread:"),
+    });
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      input: expect.stringContaining("continue from there"),
+    });
+  });
+
+  it("surfaces summary generation failure and leaves the summary fork usable", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadForkSummary.mockReturnValue(
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadForkSummary",
+          detail: "summary model unavailable",
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-summary-failure-source-user"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-user-summary-failure-1"),
+            role: "user",
+            text: "fix auth",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-summary-failure-thread-fork"),
+          threadId: ThreadId.make("thread-1"),
+          newThreadId: ThreadId.make("thread-summary-failed-1"),
+          messageId: asMessageId("message-user-summary-failure-1"),
+          mode: "summary",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-summary-failed-1"))
+          ?.session?.lastError === "summary model unavailable"
+      );
+    });
+
+    const readModel = await harness.readModel();
+    const forkThread = readModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-summary-failed-1"),
+    );
+    expect(forkThread?.session?.status).toBe("error");
+    expect(forkThread?.messages).toEqual([]);
+    expect(forkThread?.activities.at(-1)).toMatchObject({
+      kind: "thread.fork.summary.failed",
+      summary: "Thread fork summary failed",
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-summary-failed-first-turn"),
+          threadId: ThreadId.make("thread-summary-failed-1"),
+          message: {
+            messageId: asMessageId("message-user-summary-failed-fork-1"),
+            role: "user",
+            text: "start without summary",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-summary-failed-1"),
+      input: "start without summary",
+    });
   });
 
   it("generates a thread title on the first turn", async () => {

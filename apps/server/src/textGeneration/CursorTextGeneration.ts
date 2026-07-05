@@ -14,6 +14,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadForkSummaryPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -33,7 +34,8 @@ function mapCursorAcpError(
     | "generateCommitMessage"
     | "generatePrContent"
     | "generateBranchName"
-    | "generateThreadTitle",
+    | "generateThreadTitle"
+    | "generateThreadForkSummary",
   detail: string,
   cause: unknown,
 ): TextGenerationError {
@@ -74,7 +76,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadForkSummary";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -269,10 +272,32 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateThreadForkSummary: TextGenerationShape["generateThreadForkSummary"] = Effect.fn(
+    "CursorTextGeneration.generateThreadForkSummary",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildThreadForkSummaryPrompt({
+      transcript: input.transcript,
+      seedPrompt: input.seedPrompt,
+    });
+
+    const generated = yield* runCursorJson({
+      operation: "generateThreadForkSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      summary: generated.summary.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadForkSummary,
   } satisfies TextGenerationShape;
 });

@@ -4,6 +4,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadForkSummaryPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
@@ -133,6 +134,20 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+  });
+});
+
+describe("buildThreadForkSummaryPrompt", () => {
+  it("includes the transcript and optional seed prompt", () => {
+    const result = buildThreadForkSummaryPrompt({
+      transcript: "Message 1 (user)\nFix auth tests.",
+      seedPrompt: "Focus on the failing login spec.",
+    });
+
+    expect(result.prompt).toContain("Conversation transcript:");
+    expect(result.prompt).toContain("Fix auth tests.");
+    expect(result.prompt).toContain("User seed prompt:");
+    expect(result.prompt).toContain("Focus on the failing login spec.");
   });
 });
 

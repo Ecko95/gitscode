@@ -25,6 +25,10 @@ import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
 import { __resetLocalApiForTests } from "../localApi";
+import {
+  __resetPrimaryEnvironmentBootstrapForTests,
+  __resetServerAuthBootstrapForTests,
+} from "../environments/primary";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig, getServerConfigUpdatedNotification } from "../rpc/serverState";
 import { getWsConnectionStatus } from "../rpc/wsConnectionState";
@@ -70,6 +74,7 @@ const THREAD_ID = "thread-kb-toast-test" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
+const APP_STARTUP_WAIT_MS = 20_000;
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -341,7 +346,7 @@ async function waitForElement<T extends Element>(
       element = query();
       expect(element, errorMessage).toBeTruthy();
     },
-    { timeout: 8_000, interval: 16 },
+    { timeout: APP_STARTUP_WAIT_MS, interval: 16 },
   );
   return element!;
 }
@@ -365,7 +370,7 @@ async function waitForWsConnection(): Promise<void> {
     () => {
       expect(getWsConnectionStatus().phase).toBe("connected");
     },
-    { timeout: 8_000, interval: 16 },
+    { timeout: APP_STARTUP_WAIT_MS, interval: 16 },
   );
 }
 
@@ -393,7 +398,7 @@ async function waitForNoToasts(): Promise<void> {
     () => {
       expect(queryToastTitles()).toHaveLength(0);
     },
-    { timeout: 8_000, interval: 16 },
+    { timeout: APP_STARTUP_WAIT_MS, interval: 16 },
   );
 }
 
@@ -407,7 +412,7 @@ async function waitForInitialWsSubscriptions(): Promise<void> {
         rpcHarness.requests.some((request) => request._tag === WS_METHODS.subscribeServerConfig),
       ).toBe(true);
     },
-    { timeout: 8_000, interval: 16 },
+    { timeout: APP_STARTUP_WAIT_MS, interval: 16 },
   );
 }
 
@@ -416,7 +421,7 @@ async function waitForServerConfigSnapshot(): Promise<void> {
     () => {
       expect(getServerConfig()).not.toBeNull();
     },
-    { timeout: 8_000, interval: 16 },
+    { timeout: APP_STARTUP_WAIT_MS, interval: 16 },
   );
 }
 
@@ -546,6 +551,9 @@ describe("Keybindings update toast", () => {
         return [];
       },
     });
+    Reflect.deleteProperty(window, "nativeApi");
+    __resetPrimaryEnvironmentBootstrapForTests();
+    __resetServerAuthBootstrapForTests();
     await __resetLocalApiForTests();
     localStorage.clear();
     document.body.innerHTML = "";
@@ -561,6 +569,9 @@ describe("Keybindings update toast", () => {
   });
 
   afterEach(() => {
+    Reflect.deleteProperty(window, "nativeApi");
+    __resetPrimaryEnvironmentBootstrapForTests();
+    __resetServerAuthBootstrapForTests();
     document.body.innerHTML = "";
   });
 

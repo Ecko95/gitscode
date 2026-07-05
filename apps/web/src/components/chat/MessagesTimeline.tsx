@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ServerProviderSkill,
+  type ThreadForkedMode,
   type TurnId,
 } from "@t3tools/contracts";
 import {
@@ -28,6 +29,7 @@ import {
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
+  ChevronDownIcon,
   CheckIcon,
   CircleAlertIcon,
   EyeIcon,
@@ -42,6 +44,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -96,7 +99,7 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
-  onForkMessage: (message: Pick<TimelineMessage, "id" | "role" | "text">) => void;
+  onForkMessage: (message: ThreadForkRequest) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   critReviewAvailable: boolean;
@@ -134,7 +137,7 @@ interface MessagesTimelineProps {
   onOpenCritReview: () => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
-  onForkMessage: (message: Pick<TimelineMessage, "id" | "role" | "text">) => void;
+  onForkMessage: (message: ThreadForkRequest) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -323,6 +326,10 @@ function keyExtractor(item: MessagesTimelineRow) {
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
+type ThreadForkRequest = Pick<TimelineMessage, "id" | "role" | "text"> & {
+  mode?: ThreadForkedMode;
+  seedPrompt?: string | undefined;
+};
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
@@ -455,17 +462,43 @@ function ForkMessageButton({
   }
 
   return (
-    <Button
-      type="button"
-      size={size}
-      variant="outline"
-      disabled={activity.isRevertingCheckpoint || activity.isWorking}
-      onClick={() => ctx.onForkMessage(message)}
-      title="Fork from here"
-      className={className}
-    >
-      <GitBranchIcon className="size-3" />
-    </Button>
+    <div className="inline-flex items-center">
+      <Button
+        type="button"
+        size={size}
+        variant="outline"
+        disabled={activity.isRevertingCheckpoint || activity.isWorking}
+        onClick={() => ctx.onForkMessage(message)}
+        title="Fork from here"
+        className={cn(className, "rounded-r-none border-r-0")}
+      >
+        <GitBranchIcon className="size-3" />
+      </Button>
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              size={size}
+              variant="outline"
+              disabled={activity.isRevertingCheckpoint || activity.isWorking}
+              aria-label="Fork options"
+              title="Fork options"
+              className={cn(className, "rounded-l-none px-1")}
+            />
+          }
+        >
+          <ChevronDownIcon className="size-3" />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {/* ponytail: seedPrompt is wired in the command helper, but this row
+             action ships summary-only until a reusable prompt dialog exists. */}
+          <MenuItem onClick={() => ctx.onForkMessage({ ...message, mode: "summary" })}>
+            <GitBranchIcon className="size-3.5" />
+            Fork with summary
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
+    </div>
   );
 }
 

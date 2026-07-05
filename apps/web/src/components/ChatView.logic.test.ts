@@ -53,6 +53,33 @@ describe("buildFullThreadForkCommand", () => {
       createdAt: "2026-07-05T12:00:00.000Z",
     });
   });
+
+  it("builds the client thread.fork command with summary mode and seed prompt", () => {
+    const sourceThreadId = ThreadId.make("thread-source");
+    const newThreadId = ThreadId.make("thread-fork-target");
+    const messageId = MessageId.make("msg-anchor");
+
+    expect(
+      buildFullThreadForkCommand({
+        commandId: CommandId.make("command-fork"),
+        sourceThreadId,
+        newThreadId,
+        messageId,
+        mode: "summary",
+        seedPrompt: "  focus on the failing auth test  ",
+        createdAt: "2026-07-05T12:00:00.000Z",
+      }),
+    ).toEqual({
+      type: "thread.fork",
+      commandId: CommandId.make("command-fork"),
+      threadId: sourceThreadId,
+      newThreadId,
+      messageId,
+      mode: "summary",
+      seedPrompt: "focus on the failing auth test",
+      createdAt: "2026-07-05T12:00:00.000Z",
+    });
+  });
 });
 
 describe("deriveThreadForkPrefillPrompt", () => {

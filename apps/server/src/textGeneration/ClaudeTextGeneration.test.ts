@@ -286,6 +286,33 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("generates thread fork summaries through the Claude provider", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            summary: "  Auth tests fail after login redirect changes.  ",
+          },
+        }),
+        stdinMustContain: "You summarize coding-agent conversations for a fresh forked session.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadForkSummary({
+            cwd: process.cwd(),
+            transcript: "Message 1 (user)\nFix auth tests.",
+            seedPrompt: "Keep the next answer short.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.summary).toBe("Auth tests fail after login redirect changes.");
+        }),
+    ),
+  );
+
   it.effect("runs Claude text generation with the configured Claude HOME", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

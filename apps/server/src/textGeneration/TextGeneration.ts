@@ -70,6 +70,18 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ThreadForkSummaryGenerationInput {
+  cwd: string;
+  transcript: string;
+  seedPrompt?: string | undefined;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadForkSummaryGenerationResult {
+  summary: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -77,6 +89,9 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateThreadForkSummary(
+    input: ThreadForkSummaryGenerationInput,
+  ): Promise<ThreadForkSummaryGenerationResult>;
 }
 
 /**
@@ -110,6 +125,13 @@ export interface TextGenerationShape {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  /**
+   * Summarize the retained prefix of a forked thread for fresh-session seeding.
+   */
+  readonly generateThreadForkSummary: (
+    input: ThreadForkSummaryGenerationInput,
+  ) => Effect.Effect<ThreadForkSummaryGenerationResult, TextGenerationError>;
 }
 
 /**
@@ -123,7 +145,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateThreadForkSummary";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistryShape,
@@ -161,6 +184,10 @@ export const makeTextGenerationFromRegistry = (
   generateThreadTitle: (input) =>
     resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
       Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+    ),
+  generateThreadForkSummary: (input) =>
+    resolveInstance(registry, "generateThreadForkSummary", input.modelSelection.instanceId).pipe(
+      Effect.flatMap((textGeneration) => textGeneration.generateThreadForkSummary(input)),
     ),
 });
 

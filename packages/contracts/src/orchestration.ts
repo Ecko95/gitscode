@@ -536,6 +536,7 @@ const ThreadForkCommand = Schema.Struct({
   newThreadId: ThreadId,
   messageId: MessageId,
   mode: ThreadForkedMode,
+  seedPrompt: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
 });
 
@@ -1096,6 +1097,7 @@ export const ThreadForkedPayload = Schema.Struct({
   sourceThreadId: ThreadId,
   forkMessageId: MessageId,
   mode: ThreadForkedMode,
+  seedPrompt: Schema.optional(Schema.String),
 });
 
 export const ThreadMessageSentPayload = Schema.Struct({

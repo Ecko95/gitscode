@@ -216,3 +216,35 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Thread fork summary
+// ---------------------------------------------------------------------------
+
+export interface ThreadForkSummaryPromptInput {
+  transcript: string;
+  seedPrompt?: string | undefined;
+}
+
+export function buildThreadForkSummaryPrompt(input: ThreadForkSummaryPromptInput) {
+  const trimmedSeedPrompt = input.seedPrompt?.trim();
+  const prompt = [
+    "You summarize coding-agent conversations for a fresh forked session.",
+    "Return a JSON object with key: summary.",
+    "Rules:",
+    "- preserve the user's goals, constraints, decisions, and current state",
+    "- include files, commands, errors, and follow-up work only when relevant",
+    "- write compact markdown that a coding agent can use as context",
+    "- do not invent details that are not in the transcript",
+    "",
+    "Conversation transcript:",
+    limitSection(input.transcript, 40_000),
+    ...(trimmedSeedPrompt ? ["", "User seed prompt:", limitSection(trimmedSeedPrompt, 4_000)] : []),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    summary: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

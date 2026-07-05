@@ -99,6 +99,7 @@ function forkCommand(input: {
   readonly messageId: MessageId;
   readonly threadId?: ThreadId;
   readonly mode?: "full" | "summary";
+  readonly seedPrompt?: string;
 }) {
   return {
     type: "thread.fork" as const,
@@ -107,6 +108,7 @@ function forkCommand(input: {
     newThreadId: NEW_THREAD_ID,
     messageId: input.messageId,
     mode: input.mode ?? "full",
+    ...(input.seedPrompt !== undefined ? { seedPrompt: input.seedPrompt } : {}),
     createdAt: NOW,
   };
 }
@@ -329,30 +331,69 @@ it.layer(NodeServices.layer)("decider thread.fork", (it) => {
     }),
   );
 
-  it.effect("rejects summary mode until the summary slice owns it", () =>
+  it.effect("emits only created and forked for summary mode with a trimmed seed prompt", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        decideOrchestrationCommand({
-          command: forkCommand({
-            messageId: asMessageId("message-assistant-1"),
-            mode: "summary",
-          }),
-          readModel: readModel(
-            thread({
-              messages: [
-                message({
-                  id: "message-assistant-1",
-                  role: "assistant",
-                  text: "answer",
-                  providerMessageId: "assistant-provider-1",
-                }),
-              ],
-            }),
-          ),
+      const result = yield* decideOrchestrationCommand({
+        command: forkCommand({
+          messageId: asMessageId("message-assistant-1"),
+          mode: "summary",
+          seedPrompt: "  focus on auth tests  ",
         }),
-      );
+        readModel: readModel(
+          thread({
+            providerInstanceId: "opencode",
+            messages: [
+              message({ id: "message-user-1", role: "user", text: "first" }),
+              message({
+                id: "message-assistant-1",
+                role: "assistant",
+                text: "answer",
+              }),
+            ],
+          }),
+        ),
+      });
 
-      expect(error.message).toContain("thread-fork-summary-unsupported");
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual(["thread.created", "thread.forked"]);
+      const forked = events.at(-1);
+      expect(forked?.type).toBe("thread.forked");
+      if (forked?.type === "thread.forked") {
+        expect(forked.payload).toEqual({
+          sourceThreadId: SOURCE_THREAD_ID,
+          forkMessageId: asMessageId("message-assistant-1"),
+          mode: "summary",
+          seedPrompt: "focus on auth tests",
+        });
+      }
+    }),
+  );
+
+  it.effect("accepts summary anchors without provider message ids on legacy threads", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: forkCommand({
+          messageId: asMessageId("message-assistant-1"),
+          mode: "summary",
+        }),
+        readModel: readModel(
+          thread({
+            messages: [
+              message({ id: "message-user-1", role: "user", text: "first" }),
+              message({ id: "message-assistant-1", role: "assistant", text: "legacy" }),
+              message({
+                id: "message-assistant-2",
+                role: "assistant",
+                text: "latest",
+                providerMessageId: "assistant-provider-2",
+              }),
+            ],
+          }),
+        ),
+      });
+
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual(["thread.created", "thread.forked"]);
     }),
   );
 
