@@ -1,6 +1,9 @@
 import {
+  type ClientOrchestrationCommand,
+  type CommandId,
   type EnvironmentId,
   isProviderDriverKind,
+  type MessageId,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -11,7 +14,7 @@ import {
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
-import { selectThreadByRef, useStore } from "../store";
+import { selectThreadByRef, selectThreadExistsByRef, useStore } from "../store";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -21,8 +24,37 @@ import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
+export const THREAD_FORK_MODE = "full" as const;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+type ThreadForkCommand = Extract<ClientOrchestrationCommand, { type: "thread.fork" }>;
+
+// ponytail: slice 4 only exposes full-mode forks; slice 5 can thread a mode
+// option through this helper without redesigning the row action.
+export function buildFullThreadForkCommand(input: {
+  commandId: CommandId;
+  sourceThreadId: ThreadId;
+  newThreadId: ThreadId;
+  messageId: MessageId;
+  createdAt: string;
+}): ThreadForkCommand {
+  return {
+    type: "thread.fork",
+    commandId: input.commandId,
+    threadId: input.sourceThreadId,
+    newThreadId: input.newThreadId,
+    messageId: input.messageId,
+    mode: THREAD_FORK_MODE,
+    createdAt: input.createdAt,
+  };
+}
+
+export function deriveThreadForkPrefillPrompt(
+  message: Pick<ChatMessage, "role" | "text">,
+): string | null {
+  return message.role === "user" ? message.text : null;
+}
 
 export function buildLocalDraftThread(
   threadId: ThreadId,
@@ -297,6 +329,47 @@ export async function waitForStartedServerThread(
     });
 
     if (threadHasStarted(getThread())) {
+      finish(true);
+      return;
+    }
+
+    timeoutId = globalThis.setTimeout(() => {
+      finish(false);
+    }, timeoutMs);
+  });
+}
+
+export async function waitForRegisteredServerThread(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  if (selectThreadExistsByRef(useStore.getState(), threadRef)) {
+    return true;
+  }
+
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+    const finish = (result: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
+      unsubscribe();
+      resolve(result);
+    };
+
+    const unsubscribe = useStore.subscribe((state) => {
+      if (!selectThreadExistsByRef(state, threadRef)) {
+        return;
+      }
+      finish(true);
+    });
+
+    if (selectThreadExistsByRef(useStore.getState(), threadRef)) {
       finish(true);
       return;
     }

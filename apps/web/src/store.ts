@@ -135,6 +135,11 @@ const MAX_THREAD_PROPOSED_PLANS = 200;
 const MAX_THREAD_ACTIVITIES = 500;
 const EMPTY_THREAD_IDS: ThreadId[] = [];
 
+interface ForkMetadata {
+  readonly parentThreadId: ThreadId | null;
+  readonly forkedFromMessageId: MessageId | null;
+}
+
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -154,6 +159,16 @@ function normalizeModelSelection<T extends { instanceId: string; model: string }
 
 function mapProjectScripts(scripts: ReadonlyArray<Project["scripts"][number]>): Project["scripts"] {
   return scripts.map((script) => ({ ...script }));
+}
+
+function readThreadForkMetadata(thread: unknown): ForkMetadata {
+  const carrier = thread as Partial<ForkMetadata>;
+  return {
+    // ponytail: server snapshots already select these fields, but the local
+    // contract type has not caught up; keep the bridge web-local and nullable.
+    parentThreadId: carrier.parentThreadId ?? null,
+    forkedFromMessageId: carrier.forkedFromMessageId ?? null,
+  };
 }
 
 function mapSession(session: OrchestrationSession): ThreadSession {
@@ -243,6 +258,7 @@ function mapProject(
 }
 
 function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): Thread {
+  const forkMetadata = readThreadForkMetadata(thread);
   return {
     id: thread.id,
     environmentId,
@@ -262,6 +278,8 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
+    parentThreadId: forkMetadata.parentThreadId,
+    forkedFromMessageId: forkMetadata.forkedFromMessageId,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
@@ -278,6 +296,7 @@ function mapThreadShell(
   turnState: ThreadTurnState;
   summary: SidebarThreadSummary;
 } {
+  const forkMetadata = readThreadForkMetadata(thread);
   const shell: ThreadShell = {
     id: thread.id,
     environmentId,
@@ -291,6 +310,8 @@ function mapThreadShell(
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
+    parentThreadId: forkMetadata.parentThreadId,
+    forkedFromMessageId: forkMetadata.forkedFromMessageId,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
   };
@@ -310,6 +331,8 @@ function mapThreadShell(
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    parentThreadId: forkMetadata.parentThreadId,
+    forkedFromMessageId: forkMetadata.forkedFromMessageId,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     latestUserMessageAt: thread.latestUserMessageAt,
@@ -339,6 +362,8 @@ function toThreadShell(thread: Thread): ThreadShell {
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
+    parentThreadId: thread.parentThreadId ?? null,
+    forkedFromMessageId: thread.forkedFromMessageId ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
   };
@@ -410,6 +435,8 @@ function sidebarThreadSummariesEqual(
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
+    left.parentThreadId === right.parentThreadId &&
+    left.forkedFromMessageId === right.forkedFromMessageId &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
@@ -435,6 +462,8 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
+    left.parentThreadId === right.parentThreadId &&
+    left.forkedFromMessageId === right.forkedFromMessageId &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath
   );
@@ -1350,6 +1379,14 @@ function applyEnvironmentOrchestrationEvent(
         ...thread,
         interactionMode: event.payload.interactionMode,
         updatedAt: event.payload.updatedAt,
+      }));
+
+    case "thread.forked":
+      return updateThreadState(state, event.aggregateId as ThreadId, (thread) => ({
+        ...thread,
+        parentThreadId: event.payload.sourceThreadId,
+        forkedFromMessageId: event.payload.forkMessageId,
+        updatedAt: event.occurredAt,
       }));
 
     case "thread.turn-start-requested":

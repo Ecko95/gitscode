@@ -114,6 +114,8 @@ export interface Thread {
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
+  parentThreadId?: ThreadId | null;
+  forkedFromMessageId?: MessageId | null;
   branch: string | null;
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
@@ -133,6 +135,8 @@ export interface ThreadShell {
   createdAt: string;
   archivedAt: string | null;
   updatedAt?: string | undefined;
+  parentThreadId?: ThreadId | null;
+  forkedFromMessageId?: MessageId | null;
   branch: string | null;
   worktreePath: string | null;
 }
@@ -153,6 +157,8 @@ export interface SidebarThreadSummary {
   archivedAt: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  parentThreadId?: ThreadId | null;
+  forkedFromMessageId?: MessageId | null;
   branch: string | null;
   worktreePath: string | null;
   latestUserMessageAt: string | null;

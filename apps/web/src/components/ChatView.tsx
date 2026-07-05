@@ -77,6 +77,7 @@ import {
 } from "../pendingUserInput";
 import {
   selectProjectsAcrossEnvironments,
+  selectSidebarThreadsForProjectRef,
   selectThreadsAcrossEnvironments,
   useStore,
 } from "../store";
@@ -93,6 +94,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type SidebarThreadSummary,
   type SessionPhase,
   type Thread,
   type TurnDiffSummary,
@@ -137,7 +139,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -166,10 +168,12 @@ import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/Compos
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  buildFullThreadForkCommand,
   buildLocalDraftThread,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveThreadForkPrefillPrompt,
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -183,6 +187,7 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
+  waitForRegisteredServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -210,6 +215,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+const EMPTY_SIDEBAR_THREAD_SUMMARIES: SidebarThreadSummary[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
@@ -1073,6 +1079,29 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
+  const forkParentThreadRef = useMemo(
+    () =>
+      activeThread?.parentThreadId
+        ? scopeThreadRef(activeThread.environmentId, activeThread.parentThreadId)
+        : null,
+    [activeThread?.environmentId, activeThread?.parentThreadId],
+  );
+  const forkParentThread = useStore(
+    useMemo(() => createThreadSelectorByRef(forkParentThreadRef), [forkParentThreadRef]),
+  );
+  const activeThreadForks = useStore(
+    useShallow((state) => {
+      if (!activeThread || !activeProjectRef) {
+        return EMPTY_SIDEBAR_THREAD_SUMMARIES;
+      }
+      return selectSidebarThreadsForProjectRef(state, activeProjectRef).filter(
+        (thread) =>
+          thread.id !== activeThread.id &&
+          thread.archivedAt === null &&
+          thread.parentThreadId === activeThread.id,
+      );
+    }),
+  );
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
@@ -2855,6 +2884,98 @@ export default function ChatView(props: ChatViewProps) {
     toggleTerminalVisibility,
   ]);
 
+  const navigateToServerThread = useCallback(
+    (targetThreadId: ThreadId) => {
+      if (!activeThread) {
+        return;
+      }
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, targetThreadId)),
+      });
+    },
+    [activeThread, navigate],
+  );
+
+  const onForkMessage = useCallback(
+    async (message: Pick<ChatMessage, "id" | "role" | "text">) => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        message.role === "system" ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+        setThreadError(
+          activeThread.id,
+          `Reconnect ${activeEnvironmentUnavailableLabel} before forking threads.`,
+        );
+        return;
+      }
+      if (phase === "running" || isSendBusy || isConnecting) {
+        setThreadError(activeThread.id, "Interrupt the current turn before forking this thread.");
+        return;
+      }
+
+      const nextThreadId = newThreadId();
+      const nextThreadRef = scopeThreadRef(activeThread.environmentId, nextThreadId);
+      sendInFlightRef.current = true;
+      setThreadError(activeThread.id, null);
+
+      try {
+        await api.orchestration.dispatchCommand(
+          buildFullThreadForkCommand({
+            commandId: newCommandId(),
+            sourceThreadId: activeThread.id,
+            newThreadId: nextThreadId,
+            messageId: message.id,
+            createdAt: new Date().toISOString(),
+          }),
+        );
+        const forkPrefillPrompt = deriveThreadForkPrefillPrompt(message);
+        if (forkPrefillPrompt !== null) {
+          setComposerDraftPrompt(nextThreadRef, forkPrefillPrompt);
+        }
+        const forkRegistered = await waitForRegisteredServerThread(nextThreadRef, 5_000);
+        if (!forkRegistered) {
+          throw new Error("Fork was created, but the forked thread has not appeared yet.");
+        }
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(nextThreadRef),
+        });
+      } catch (err) {
+        if (deriveThreadForkPrefillPrompt(message) !== null) {
+          setComposerDraftPrompt(nextThreadRef, "");
+        }
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to fork this thread.",
+        );
+      } finally {
+        sendInFlightRef.current = false;
+      }
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeEnvironmentUnavailableLabel,
+      activeThread,
+      environmentId,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      navigate,
+      phase,
+      setComposerDraftPrompt,
+      setThreadError,
+    ],
+  );
+
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
       const api = readEnvironmentApi(environmentId);
@@ -3848,6 +3969,16 @@ export default function ChatView(props: ChatViewProps) {
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          forkedFromThread={
+            forkParentThreadRef
+              ? {
+                  title: forkParentThread?.title ?? "source thread",
+                  onOpen: () => navigateToServerThread(forkParentThreadRef.threadId),
+                }
+              : null
+          }
+          forkedThreads={activeThreadForks}
+          onOpenForkedThread={navigateToServerThread}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
@@ -3902,6 +4033,7 @@ export default function ChatView(props: ChatViewProps) {
               onOpenCritReview={onOpenCritReview}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
+              onForkMessage={onForkMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}

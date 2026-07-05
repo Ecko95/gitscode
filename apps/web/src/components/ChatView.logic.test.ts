@@ -1,6 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
+  CommandId,
   EnvironmentId,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -14,8 +16,10 @@ import { type Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  buildFullThreadForkCommand,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveThreadForkPrefillPrompt,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
@@ -24,6 +28,43 @@ import {
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("buildFullThreadForkCommand", () => {
+  it("builds the client thread.fork command with full mode and a generated target thread id", () => {
+    const sourceThreadId = ThreadId.make("thread-source");
+    const newThreadId = ThreadId.make("thread-fork-target");
+    const messageId = MessageId.make("msg-anchor");
+
+    expect(
+      buildFullThreadForkCommand({
+        commandId: CommandId.make("command-fork"),
+        sourceThreadId,
+        newThreadId,
+        messageId,
+        createdAt: "2026-07-05T12:00:00.000Z",
+      }),
+    ).toEqual({
+      type: "thread.fork",
+      commandId: CommandId.make("command-fork"),
+      threadId: sourceThreadId,
+      newThreadId,
+      messageId,
+      mode: "full",
+      createdAt: "2026-07-05T12:00:00.000Z",
+    });
+  });
+});
+
+describe("deriveThreadForkPrefillPrompt", () => {
+  it("prefills only user-anchor forks", () => {
+    expect(deriveThreadForkPrefillPrompt({ role: "user", text: "please retry this" })).toBe(
+      "please retry this",
+    );
+    expect(deriveThreadForkPrefillPrompt({ role: "assistant", text: "assistant answer" })).toBe(
+      null,
+    );
+  });
+});
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {

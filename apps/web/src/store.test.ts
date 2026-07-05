@@ -1054,4 +1054,44 @@ describe("incremental orchestration updates", () => {
     });
     expect(threadsOf(next)[0]?.latestTurn?.sourceProposedPlan).toBeUndefined();
   });
+
+  it("records fork metadata from thread.forked events on the child thread", () => {
+    const sourceThread = makeThread({ id: ThreadId.make("thread-source"), title: "Source" });
+    const childThreadId = ThreadId.make("thread-child");
+    const anchorMessageId = MessageId.make("message-anchor");
+    const created = applyOrchestrationEvent(
+      makeState(sourceThread),
+      makeEvent("thread.created", {
+        threadId: childThreadId,
+        projectId: sourceThread.projectId,
+        title: "Child",
+        modelSelection: sourceThread.modelSelection,
+        runtimeMode: sourceThread.runtimeMode,
+        interactionMode: sourceThread.interactionMode,
+        branch: sourceThread.branch,
+        worktreePath: sourceThread.worktreePath,
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:00.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const forked = applyOrchestrationEvent(
+      created,
+      makeEvent(
+        "thread.forked",
+        {
+          sourceThreadId: sourceThread.id,
+          forkMessageId: anchorMessageId,
+          mode: "full",
+        },
+        { aggregateId: childThreadId },
+      ),
+      localEnvironmentId,
+    );
+
+    const child = selectThreadByRef(forked, scopeThreadRef(localEnvironmentId, childThreadId));
+    expect(child?.parentThreadId).toBe(sourceThread.id);
+    expect(child?.forkedFromMessageId).toBe(anchorMessageId);
+  });
 });
