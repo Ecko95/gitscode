@@ -32,6 +32,7 @@ import {
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
+  GitBranchIcon,
   HammerIcon,
   type LucideIcon,
   SquarePenIcon,
@@ -95,6 +96,7 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onForkMessage: (message: Pick<TimelineMessage, "id" | "role" | "text">) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   critReviewAvailable: boolean;
@@ -132,6 +134,7 @@ interface MessagesTimelineProps {
   onOpenCritReview: () => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onForkMessage: (message: Pick<TimelineMessage, "id" | "role" | "text">) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -163,6 +166,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenCritReview,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  onForkMessage,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -235,6 +239,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onForkMessage,
       onImageExpand,
       onOpenTurnDiff,
       critReviewAvailable,
@@ -249,6 +254,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onForkMessage,
       onImageExpand,
       onOpenTurnDiff,
       critReviewAvailable,
@@ -396,6 +402,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 {displayedUserMessage.copyText && (
                   <MessageCopyButton text={displayedUserMessage.copyText} />
                 )}
+                {!row.message.streaming && (
+                  <ForkMessageButton
+                    message={{ id: row.message.id, role: row.message.role, text: row.message.text }}
+                  />
+                )}
                 {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
               </div>
               <p className="text-right text-xs text-muted-foreground/50">
@@ -423,6 +434,37 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
       title="Revert to this message"
     >
       <Undo2Icon className="size-3" />
+    </Button>
+  );
+}
+
+function ForkMessageButton({
+  message,
+  className,
+  size = "xs",
+}: {
+  message: Pick<TimelineMessage, "id" | "role" | "text">;
+  className?: string;
+  size?: "xs" | "icon-xs";
+}) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+
+  if (message.role === "system") {
+    return null;
+  }
+
+  return (
+    <Button
+      type="button"
+      size={size}
+      variant="outline"
+      disabled={activity.isRevertingCheckpoint || activity.isWorking}
+      onClick={() => ctx.onForkMessage(message)}
+      title="Fork from here"
+      className={className}
+    >
+      <GitBranchIcon className="size-3" />
     </Button>
   );
 }
@@ -468,9 +510,26 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             )}
           </p>
           <AssistantCopyButton row={row} />
+          <AssistantForkButton row={row} />
         </div>
       </div>
     </>
+  );
+}
+
+function AssistantForkButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  if (row.message.streaming) {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center opacity-0 transition-opacity duration-200 group-hover/assistant:opacity-100">
+      <ForkMessageButton
+        message={{ id: row.message.id, role: row.message.role, text: row.message.text }}
+        size="icon-xs"
+        className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+      />
+    </div>
   );
 }
 

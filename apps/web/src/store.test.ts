@@ -5,12 +5,15 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  OrchestrationShellSnapshot,
+  OrchestrationThread,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -23,6 +26,8 @@ import {
   selectThreadExistsByRef,
   setThreadBranch,
   selectThreadsAcrossEnvironments,
+  syncServerShellSnapshot,
+  syncServerThreadDetail,
   type AppState,
   type EnvironmentState,
 } from "./store";
@@ -30,6 +35,8 @@ import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./t
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+const decodeShellSnapshot = Schema.decodeUnknownSync(OrchestrationShellSnapshot);
+const decodeThread = Schema.decodeUnknownSync(OrchestrationThread);
 
 function withActiveEnvironmentState(
   environmentState: EnvironmentState,
@@ -1053,5 +1060,150 @@ describe("incremental orchestration updates", () => {
       state: "running",
     });
     expect(threadsOf(next)[0]?.latestTurn?.sourceProposedPlan).toBeUndefined();
+  });
+
+  it("records fork metadata from thread.forked events on the child thread", () => {
+    const sourceThread = makeThread({ id: ThreadId.make("thread-source"), title: "Source" });
+    const childThreadId = ThreadId.make("thread-child");
+    const anchorMessageId = MessageId.make("message-anchor");
+    const created = applyOrchestrationEvent(
+      makeState(sourceThread),
+      makeEvent("thread.created", {
+        threadId: childThreadId,
+        projectId: sourceThread.projectId,
+        title: "Child",
+        modelSelection: sourceThread.modelSelection,
+        runtimeMode: sourceThread.runtimeMode,
+        interactionMode: sourceThread.interactionMode,
+        branch: sourceThread.branch,
+        worktreePath: sourceThread.worktreePath,
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:00.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const forked = applyOrchestrationEvent(
+      created,
+      makeEvent(
+        "thread.forked",
+        {
+          sourceThreadId: sourceThread.id,
+          forkMessageId: anchorMessageId,
+          mode: "full",
+        },
+        { aggregateId: childThreadId },
+      ),
+      localEnvironmentId,
+    );
+
+    const child = selectThreadByRef(forked, scopeThreadRef(localEnvironmentId, childThreadId));
+    expect(child?.parentThreadId).toBe(sourceThread.id);
+    expect(child?.forkedFromMessageId).toBe(anchorMessageId);
+  });
+
+  it("preserves fork metadata through contracts decode for shell hydration and thread detail sync", () => {
+    const projectId = ProjectId.make("project-fork");
+    const sourceThreadId = ThreadId.make("thread-source");
+    const forkedThreadId = ThreadId.make("thread-forked");
+    const anchorMessageId = MessageId.make("message-fork-anchor");
+
+    const shellSnapshot = decodeShellSnapshot({
+      snapshotSequence: 1,
+      projects: [
+        {
+          id: projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          repositoryIdentity: null,
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
+          },
+          scripts: [],
+          createdAt: "2026-07-05T12:00:00.000Z",
+          updatedAt: "2026-07-05T12:00:00.000Z",
+        },
+      ],
+      threads: [
+        {
+          id: forkedThreadId,
+          projectId,
+          title: "Forked thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          parentThreadId: sourceThreadId,
+          forkedFromMessageId: anchorMessageId,
+          latestTurn: null,
+          createdAt: "2026-07-05T12:00:00.000Z",
+          updatedAt: "2026-07-05T12:00:00.000Z",
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+      ],
+      updatedAt: "2026-07-05T12:00:00.000Z",
+    });
+
+    const shellHydrated = syncServerShellSnapshot(
+      makeEmptyState({ bootstrapComplete: false }),
+      shellSnapshot,
+      localEnvironmentId,
+    );
+    const shellState = environmentStateOf(shellHydrated, localEnvironmentId);
+
+    expect(shellState.threadShellById[forkedThreadId]?.parentThreadId).toBe(sourceThreadId);
+    expect(shellState.threadShellById[forkedThreadId]?.forkedFromMessageId).toBe(anchorMessageId);
+    expect(shellState.sidebarThreadSummaryById[forkedThreadId]?.parentThreadId).toBe(
+      sourceThreadId,
+    );
+    expect(shellState.sidebarThreadSummaryById[forkedThreadId]?.forkedFromMessageId).toBe(
+      anchorMessageId,
+    );
+
+    const threadDetail = decodeThread({
+      id: forkedThreadId,
+      projectId,
+      title: "Forked thread",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: DEFAULT_MODEL,
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "main",
+      worktreePath: null,
+      parentThreadId: sourceThreadId,
+      forkedFromMessageId: anchorMessageId,
+      latestTurn: null,
+      createdAt: "2026-07-05T12:00:00.000Z",
+      updatedAt: "2026-07-05T12:00:00.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      visualPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+
+    const detailHydrated = syncServerThreadDetail(shellHydrated, threadDetail, localEnvironmentId);
+    const forkedThread = selectThreadByRef(
+      detailHydrated,
+      scopeThreadRef(localEnvironmentId, forkedThreadId),
+    );
+
+    expect(forkedThread?.parentThreadId).toBe(sourceThreadId);
+    expect(forkedThread?.forkedFromMessageId).toBe(anchorMessageId);
   });
 });

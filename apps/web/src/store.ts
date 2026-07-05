@@ -262,6 +262,8 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
+    parentThreadId: thread.parentThreadId ?? null,
+    forkedFromMessageId: thread.forkedFromMessageId ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
@@ -291,6 +293,8 @@ function mapThreadShell(
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
+    parentThreadId: thread.parentThreadId ?? null,
+    forkedFromMessageId: thread.forkedFromMessageId ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
   };
@@ -310,6 +314,8 @@ function mapThreadShell(
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    parentThreadId: thread.parentThreadId ?? null,
+    forkedFromMessageId: thread.forkedFromMessageId ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     latestUserMessageAt: thread.latestUserMessageAt,
@@ -339,6 +345,8 @@ function toThreadShell(thread: Thread): ThreadShell {
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
+    parentThreadId: thread.parentThreadId ?? null,
+    forkedFromMessageId: thread.forkedFromMessageId ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
   };
@@ -410,6 +418,8 @@ function sidebarThreadSummariesEqual(
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
+    left.parentThreadId === right.parentThreadId &&
+    left.forkedFromMessageId === right.forkedFromMessageId &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
@@ -435,6 +445,8 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
+    left.parentThreadId === right.parentThreadId &&
+    left.forkedFromMessageId === right.forkedFromMessageId &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath
   );
@@ -1350,6 +1362,14 @@ function applyEnvironmentOrchestrationEvent(
         ...thread,
         interactionMode: event.payload.interactionMode,
         updatedAt: event.payload.updatedAt,
+      }));
+
+    case "thread.forked":
+      return updateThreadState(state, event.aggregateId as ThreadId, (thread) => ({
+        ...thread,
+        parentThreadId: event.payload.sourceThreadId,
+        forkedFromMessageId: event.payload.forkMessageId,
+        updatedAt: event.occurredAt,
       }));
 
     case "thread.turn-start-requested":

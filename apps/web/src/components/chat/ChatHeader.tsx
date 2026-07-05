@@ -10,14 +10,17 @@ import { memo } from "react";
 import DevCommandsControl from "../DevCommandsControl";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
-import { Badge } from "../ui/badge";
+import { DiffIcon, GitBranchIcon, TerminalSquareIcon } from "lucide-react";
+import { Badge, badgeVariants } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
+import { Button } from "../ui/button";
+import { cn } from "~/lib/utils";
+import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -25,6 +28,15 @@ interface ChatHeaderProps {
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  forkedFromThread: {
+    title: string;
+    onOpen: () => void;
+  } | null;
+  forkedThreads: ReadonlyArray<{
+    id: ThreadId;
+    title: string;
+  }>;
+  onOpenForkedThread: (threadId: ThreadId) => void;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -63,6 +75,9 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   activeProjectName,
+  forkedFromThread,
+  forkedThreads,
+  onOpenForkedThread,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -107,6 +122,59 @@ export const ChatHeader = memo(function ChatHeader({
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
         )}
+        {forkedFromThread ? (
+          <Badge
+            variant="outline"
+            size="sm"
+            className="max-w-full min-w-0 gap-1 text-muted-foreground sm:max-w-64"
+            render={
+              <button
+                type="button"
+                onClick={forkedFromThread.onOpen}
+                title={`Forked from ${forkedFromThread.title}`}
+                data-testid="forked-from-chip"
+              />
+            }
+          >
+            <GitBranchIcon className="size-3" />
+            <span className="shrink-0">Forked from</span>
+            <span className="min-w-0 truncate">{forkedFromThread.title}</span>
+          </Badge>
+        ) : null}
+        {forkedThreads.length > 0 ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className={cn(
+                    badgeVariants({ size: "sm", variant: "outline" }),
+                    "h-5 min-w-0 max-w-full gap-1 rounded-sm px-[calc(--spacing(1)-1px)] text-muted-foreground shadow-none sm:h-4 sm:max-w-32",
+                  )}
+                  aria-label={`Show ${forkedThreads.length} ${forkedThreads.length === 1 ? "fork" : "forks"}`}
+                  data-testid="thread-forks-menu-trigger"
+                />
+              }
+            >
+              <GitBranchIcon className="size-3" />
+              <span>
+                {forkedThreads.length} {forkedThreads.length === 1 ? "fork" : "forks"}
+              </span>
+            </MenuTrigger>
+            <MenuPopup align="start" className="w-64">
+              <MenuGroup>
+                <MenuGroupLabel>Forks</MenuGroupLabel>
+                {forkedThreads.map((thread) => (
+                  <MenuItem key={thread.id} onClick={() => onOpenForkedThread(thread.id)}>
+                    <span className="min-w-0 truncate">{thread.title}</span>
+                  </MenuItem>
+                ))}
+              </MenuGroup>
+            </MenuPopup>
+          </Menu>
+        ) : null}
         {activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git

@@ -64,6 +64,7 @@ function buildProps() {
     onOpenCritReview: vi.fn(),
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: vi.fn(),
+    onForkMessage: vi.fn(),
     isRevertingCheckpoint: false,
     onImageExpand: vi.fn(),
     activeThreadEnvironmentId: EnvironmentId.make("environment-local"),
@@ -92,6 +93,21 @@ function buildUserTimelineEntry(text: string) {
       text,
       createdAt: MESSAGE_CREATED_AT,
       streaming: false,
+    },
+  };
+}
+
+function buildAssistantTimelineEntry(text: string, streaming = false) {
+  return {
+    id: "entry-assistant-1",
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: "message-assistant-1" as never,
+      role: "assistant" as const,
+      text,
+      createdAt: MESSAGE_CREATED_AT,
+      streaming,
     },
   };
 }
@@ -259,6 +275,71 @@ describe("MessagesTimeline", () => {
 
       const messageBody = document.querySelector("[data-user-message-body='true']");
       expect(messageBody?.getAttribute("data-user-message-collapsed")).toBe("true");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("calls the fork callback from user message actions", async () => {
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[buildUserTimelineEntry("fork this user prompt")]}
+      />,
+    );
+
+    try {
+      const row = document.querySelector<HTMLElement>('[data-message-id="message-1"]');
+      const forkButton = row?.querySelector<HTMLButtonElement>('button[title="Fork from here"]');
+
+      expect(forkButton).toBeTruthy();
+      forkButton?.click();
+
+      expect(props.onForkMessage).toHaveBeenCalledWith({
+        id: "message-1",
+        role: "user",
+        text: "fork this user prompt",
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("calls the fork callback from assistant message actions and hides it while streaming", async () => {
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[buildAssistantTimelineEntry("fork this response")]}
+      />,
+    );
+
+    try {
+      const row = document.querySelector<HTMLElement>('[data-message-id="message-assistant-1"]');
+      const forkButton = row?.querySelector<HTMLButtonElement>('button[title="Fork from here"]');
+
+      expect(forkButton).toBeTruthy();
+      forkButton?.click();
+
+      expect(props.onForkMessage).toHaveBeenCalledWith({
+        id: "message-assistant-1",
+        role: "assistant",
+        text: "fork this response",
+      });
+
+      await screen.rerender(
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[buildAssistantTimelineEntry("streaming response", true)]}
+        />,
+      );
+
+      expect(
+        document
+          .querySelector<HTMLElement>('[data-message-id="message-assistant-1"]')
+          ?.querySelector<HTMLButtonElement>('button[title="Fork from here"]'),
+      ).toBeNull();
     } finally {
       await screen.unmount();
     }
