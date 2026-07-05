@@ -64,13 +64,35 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "does not exist",
 ];
 
-export const CodexResumeCursorSchema = Schema.Struct({
+const CodexThreadResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
 });
+const CodexForkSourceTurnSchema = Schema.Struct({
+  turnId: Schema.optional(Schema.String),
+  state: Schema.String,
+  checkpointTurnCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+const CodexForkAnchorSchema = Schema.Struct({
+  boundary: Schema.Literals(["before-turn", "after-turn"]),
+  turnId: Schema.optional(Schema.String),
+  retainedCheckpointTurnCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  checkpointFallbackAllowed: Schema.Boolean,
+});
+export const CodexForkResumeCursorSchema = Schema.Struct({
+  forkSession: Schema.Literal(true),
+  sourceThreadId: Schema.String,
+  anchor: CodexForkAnchorSchema,
+  sourceTurns: Schema.Array(CodexForkSourceTurnSchema),
+});
+export const CodexResumeCursorSchema = Schema.Union([
+  CodexThreadResumeCursorSchema,
+  CodexForkResumeCursorSchema,
+]);
 const CodexUserInputAnswerObject = Schema.Struct({
   answers: Schema.Array(Schema.String),
 });
-const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
+const isCodexThreadResumeCursorSchema = Schema.is(CodexThreadResumeCursorSchema);
+const isCodexForkResumeCursorSchema = Schema.is(CodexForkResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
@@ -89,10 +111,12 @@ export type CodexTurnStartParamsWithCollaborationMode =
 const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
 
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
+export type CodexForkResumeCursor = typeof CodexForkResumeCursorSchema.Type;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
 type CodexThreadItem =
   | EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number]["items"][number]
-  | EffectCodexSchema.V2ThreadRollbackResponse["thread"]["turns"][number]["items"][number];
+  | EffectCodexSchema.V2ThreadRollbackResponse["thread"]["turns"][number]["items"][number]
+  | EffectCodexSchema.V2ThreadForkResponse["thread"]["turns"][number]["items"][number];
 
 export interface CodexSessionRuntimeOptions {
   readonly threadId: ThreadId;
@@ -140,6 +164,9 @@ export interface CodexSessionRuntimeShape {
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly forkThread: (
+    cursor: CodexForkResumeCursor,
+  ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -160,7 +187,8 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimePendingApprovalNotFoundError
   | CodexSessionRuntimePendingUserInputNotFoundError
   | CodexSessionRuntimeInvalidUserInputAnswersError
-  | CodexSessionRuntimeThreadIdMissingError;
+  | CodexSessionRuntimeThreadIdMissingError
+  | CodexSessionRuntimeForkTurnMismatchError;
 
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
@@ -203,6 +231,19 @@ export class CodexSessionRuntimeThreadIdMissingError extends Schema.TaggedErrorC
 ) {
   override get message(): string {
     return `Codex session is missing a provider thread id for ${this.threadId}`;
+  }
+}
+
+export class CodexSessionRuntimeForkTurnMismatchError extends Schema.TaggedErrorClass<CodexSessionRuntimeForkTurnMismatchError>()(
+  "CodexSessionRuntimeForkTurnMismatchError",
+  {
+    threadId: Schema.String,
+    sourceThreadId: Schema.String,
+    issue: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `thread-fork-codex-turn-mismatch: ${this.issue}`;
   }
 }
 
@@ -260,7 +301,13 @@ function normalizeCodexModelSlug(
 function readResumeCursorThreadId(
   resumeCursor: ProviderSession["resumeCursor"],
 ): string | undefined {
-  return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
+  return isCodexThreadResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
+}
+
+function readForkResumeCursor(
+  resumeCursor: ProviderSession["resumeCursor"],
+): CodexForkResumeCursor | undefined {
+  return isCodexForkResumeCursorSchema(resumeCursor) ? resumeCursor : undefined;
 }
 
 function runtimeModeToThreadConfig(input: RuntimeMode): {
@@ -444,12 +491,30 @@ type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
 
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
+type CodexThreadForkMethod = "thread/fork";
 
 interface CodexThreadOpenClient {
   readonly request: <M extends CodexThreadOpenMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
   ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
+}
+
+interface CodexThreadForkClient {
+  readonly request: <M extends CodexThreadForkMethod>(
+    method: M,
+    payload: CodexRpc.ClientRequestParamsByMethod[M],
+  ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
+}
+
+interface CodexForkThreadInput {
+  readonly client: CodexThreadForkClient;
+  readonly threadId: ThreadId;
+  readonly cursor: CodexForkResumeCursor;
+  readonly rollbackThread: (
+    threadId: string,
+    numTurns: number,
+  ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
 }
 
 export const openCodexThread = (input: {
@@ -502,6 +567,122 @@ export const openCodexThread = (input: {
       ),
     );
 };
+
+function failCodexForkTurnMismatch(input: {
+  readonly threadId: ThreadId;
+  readonly sourceThreadId: string;
+  readonly issue: string;
+}): Effect.Effect<never, CodexSessionRuntimeForkTurnMismatchError> {
+  return Effect.fail(
+    new CodexSessionRuntimeForkTurnMismatchError({
+      threadId: input.threadId,
+      sourceThreadId: input.sourceThreadId,
+      issue: input.issue,
+    }),
+  );
+}
+
+function codexForkCursorHasSourceTurn(cursor: CodexForkResumeCursor, turnId: string): boolean {
+  return cursor.sourceTurns.some((turn) => turn.turnId === turnId);
+}
+
+function resolveCodexForkRetainedTurnCount(input: {
+  readonly threadId: ThreadId;
+  readonly cursor: CodexForkResumeCursor;
+  readonly snapshot: CodexThreadSnapshot;
+}): Effect.Effect<number, CodexSessionRuntimeForkTurnMismatchError> {
+  const forkTurnIds = input.snapshot.turns.map((turn) => String(turn.id));
+  const anchorTurnId = input.cursor.anchor.turnId;
+  if (anchorTurnId !== undefined) {
+    if (!codexForkCursorHasSourceTurn(input.cursor, anchorTurnId)) {
+      return failCodexForkTurnMismatch({
+        threadId: input.threadId,
+        sourceThreadId: input.cursor.sourceThreadId,
+        issue: `anchor turn '${anchorTurnId}' is not present in the source projection turn records.`,
+      });
+    }
+
+    const forkIndex = forkTurnIds.indexOf(anchorTurnId);
+    if (forkIndex < 0) {
+      return failCodexForkTurnMismatch({
+        threadId: input.threadId,
+        sourceThreadId: input.cursor.sourceThreadId,
+        issue: `anchor turn '${anchorTurnId}' was not found in the forked Codex thread.`,
+      });
+    }
+
+    return Effect.succeed(
+      input.cursor.anchor.boundary === "after-turn" ? forkIndex + 1 : forkIndex,
+    );
+  }
+
+  if (
+    input.cursor.anchor.checkpointFallbackAllowed &&
+    input.cursor.anchor.retainedCheckpointTurnCount !== undefined
+  ) {
+    return Effect.succeed(input.cursor.anchor.retainedCheckpointTurnCount);
+  }
+
+  return failCodexForkTurnMismatch({
+    threadId: input.threadId,
+    sourceThreadId: input.cursor.sourceThreadId,
+    issue:
+      "anchor turn id is unavailable and checkpoint fallback was not marked unambiguous by the source projection.",
+  });
+}
+
+export const forkCodexThread = (input: CodexForkThreadInput) =>
+  Effect.gen(function* () {
+    if (input.cursor.sourceThreadId.trim().length === 0) {
+      return yield* failCodexForkTurnMismatch({
+        threadId: input.threadId,
+        sourceThreadId: input.cursor.sourceThreadId,
+        issue: "source provider thread id is unavailable.",
+      });
+    }
+    if (
+      input.cursor.anchor.turnId === undefined &&
+      (!input.cursor.anchor.checkpointFallbackAllowed ||
+        input.cursor.anchor.retainedCheckpointTurnCount === undefined)
+    ) {
+      return yield* failCodexForkTurnMismatch({
+        threadId: input.threadId,
+        sourceThreadId: input.cursor.sourceThreadId,
+        issue:
+          "anchor turn id is unavailable and checkpoint fallback was not marked unambiguous by the source projection.",
+      });
+    }
+    const anchorTurnId = input.cursor.anchor.turnId;
+    if (anchorTurnId !== undefined && !codexForkCursorHasSourceTurn(input.cursor, anchorTurnId)) {
+      return yield* failCodexForkTurnMismatch({
+        threadId: input.threadId,
+        sourceThreadId: input.cursor.sourceThreadId,
+        issue: `anchor turn '${anchorTurnId}' is not present in the source projection turn records.`,
+      });
+    }
+
+    const response = yield* input.client.request("thread/fork", {
+      threadId: input.cursor.sourceThreadId,
+    });
+    const snapshot = parseThreadSnapshot(response);
+    const retainedTurnCount = yield* resolveCodexForkRetainedTurnCount({
+      threadId: input.threadId,
+      cursor: input.cursor,
+      snapshot,
+    });
+    const numTurns = snapshot.turns.length - retainedTurnCount;
+    if (numTurns < 0) {
+      return yield* failCodexForkTurnMismatch({
+        threadId: input.threadId,
+        sourceThreadId: input.cursor.sourceThreadId,
+        issue: `retained turn count ${retainedTurnCount} exceeds forked Codex turn count ${snapshot.turns.length}.`,
+      });
+    }
+    if (numTurns === 0) {
+      return snapshot;
+    }
+    return yield* input.rollbackThread(snapshot.threadId, numTurns);
+  });
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
   switch (notification.method) {
@@ -716,7 +897,10 @@ function updateSession(
 }
 
 function parseThreadSnapshot(
-  response: EffectCodexSchema.V2ThreadReadResponse | EffectCodexSchema.V2ThreadRollbackResponse,
+  response:
+    | EffectCodexSchema.V2ThreadReadResponse
+    | EffectCodexSchema.V2ThreadRollbackResponse
+    | EffectCodexSchema.V2ThreadForkResponse,
 ): CodexThreadSnapshot {
   return {
     threadId: response.thread.id,
@@ -1248,29 +1432,43 @@ export const makeCodexSessionRuntime = (
           ? yield* visualPlanMcpSvc.issueToken(options.threadId)
           : undefined;
 
-      const opened = yield* openCodexThread({
-        client,
-        threadId: options.threadId,
-        runtimeMode: options.runtimeMode,
-        cwd: options.cwd,
-        requestedModel,
-        serviceTier: options.serviceTier,
-        resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
-        visualPlanMcpUrl: options.visualPlanMcpUrl,
-        ...(visualPlanMcpToken ? { visualPlanMcpToken } : {}),
-        onResumeFallback: (error) =>
-          emitSessionEvent(
-            "session/resume-failed",
-            `Thread resume failed; starting fresh. Reason: ${error.message}`,
-          ).pipe(Effect.orDie),
-      });
-
-      const providerThreadId = opened.thread.id;
+      const forkCursor = readForkResumeCursor(options.resumeCursor);
+      const opened =
+        forkCursor === undefined
+          ? yield* openCodexThread({
+              client,
+              threadId: options.threadId,
+              runtimeMode: options.runtimeMode,
+              cwd: options.cwd,
+              requestedModel,
+              serviceTier: options.serviceTier,
+              resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+              visualPlanMcpUrl: options.visualPlanMcpUrl,
+              ...(visualPlanMcpToken ? { visualPlanMcpToken } : {}),
+              onResumeFallback: (error) =>
+                emitSessionEvent(
+                  "session/resume-failed",
+                  `Thread resume failed; starting fresh. Reason: ${error.message}`,
+                ).pipe(Effect.orDie),
+            })
+          : undefined;
+      const forkedSnapshot =
+        forkCursor !== undefined ? yield* forkRuntimeThread(forkCursor) : undefined;
+      const providerThreadId = opened?.thread.id ?? forkedSnapshot?.threadId;
+      if (!providerThreadId) {
+        return yield* new CodexSessionRuntimeThreadIdMissingError({
+          threadId: options.threadId,
+        });
+      }
       const session = {
         ...(yield* Ref.get(sessionRef)),
         status: "ready",
-        cwd: opened.cwd,
-        model: opened.model,
+        cwd: opened?.cwd ?? options.cwd,
+        ...(opened?.model !== undefined
+          ? { model: opened.model }
+          : requestedModel !== undefined
+            ? { model: requestedModel }
+            : {}),
         resumeCursor: { threadId: providerThreadId },
         updatedAt: yield* nowIso,
       } satisfies ProviderSession;
@@ -1288,6 +1486,43 @@ export const makeCodexSessionRuntime = (
       }
       return providerThreadId;
     });
+
+    function rollbackProviderThread(providerThreadId: string, numTurns: number) {
+      return Effect.gen(function* () {
+        const response = yield* client.request("thread/rollback", {
+          threadId: providerThreadId,
+          numTurns,
+        });
+        yield* updateSession(sessionRef, {
+          status: "ready",
+          activeTurnId: undefined,
+        });
+        return parseThreadSnapshot(response);
+      });
+    }
+
+    function rollbackCurrentThread(numTurns: number) {
+      return readProviderThreadId.pipe(
+        Effect.flatMap((providerThreadId) => rollbackProviderThread(providerThreadId, numTurns)),
+      );
+    }
+
+    function forkRuntimeThread(cursor: CodexForkResumeCursor) {
+      return forkCodexThread({
+        client,
+        threadId: options.threadId,
+        cursor,
+        rollbackThread: rollbackProviderThread,
+      }).pipe(
+        Effect.tap((snapshot) =>
+          updateSession(sessionRef, {
+            status: "ready",
+            activeTurnId: undefined,
+            resumeCursor: { threadId: snapshot.threadId },
+          }),
+        ),
+      );
+    }
 
     const close = Effect.gen(function* () {
       const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
@@ -1371,19 +1606,8 @@ export const makeCodexSessionRuntime = (
         });
         return parseThreadSnapshot(response);
       }),
-      rollbackThread: (numTurns) =>
-        Effect.gen(function* () {
-          const providerThreadId = yield* readProviderThreadId;
-          const response = yield* client.request("thread/rollback", {
-            threadId: providerThreadId,
-            numTurns,
-          });
-          yield* updateSession(sessionRef, {
-            status: "ready",
-            activeTurnId: undefined,
-          });
-          return parseThreadSnapshot(response);
-        }),
+      forkThread: forkRuntimeThread,
+      rollbackThread: rollbackCurrentThread,
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);

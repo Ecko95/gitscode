@@ -19,12 +19,24 @@ export function inferThreadProviderLabel(thread: OrchestrationThread): string {
   return thread.session?.providerName ?? String(thread.modelSelection.instanceId);
 }
 
+function isClaudeForkProviderLabel(providerLabel: string): boolean {
+  return providerLabel === "claudeagent" || providerLabel.startsWith("claude");
+}
+
+function isCodexForkProviderLabel(providerLabel: string): boolean {
+  return providerLabel === "codex" || providerLabel.startsWith("codex");
+}
+
+export function isCodexThreadForkProvider(thread: OrchestrationThread): boolean {
+  return isCodexForkProviderLabel(inferThreadProviderLabel(thread).toLowerCase());
+}
+
 export function supportsFullThreadFork(thread: OrchestrationThread): boolean {
   const providerLabel = inferThreadProviderLabel(thread).toLowerCase();
   // ponytail: the orchestration read model has no provider-instance registry;
-  // custom Claude instance ids are treated by slug prefix until command
+  // custom Claude/Codex instance ids are treated by slug prefix until command
   // preflight can resolve drivers.
-  return providerLabel === "claudeagent" || providerLabel.startsWith("claude");
+  return isClaudeForkProviderLabel(providerLabel) || isCodexForkProviderLabel(providerLabel);
 }
 
 export function findThreadForkPrefix(input: {
@@ -54,6 +66,12 @@ export function resolveThreadForkAnchor(input: {
   const anchor = input.sourceThread.messages[anchorIndex];
   if (!anchor) {
     return { _tag: "missing-message" };
+  }
+
+  if (isCodexThreadForkProvider(input.sourceThread)) {
+    // ponytail: Codex anchors are resolved at first session start against
+    // thread/fork's returned turn list; command time only has GITS projections.
+    return { _tag: "plain-resume" };
   }
 
   const providerMessageId =

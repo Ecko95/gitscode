@@ -256,6 +256,23 @@ it.layer(NodeServices.layer)("decider thread.fork", (it) => {
     }),
   );
 
+  it.effect("accepts a Codex first-user anchor with an empty copied prefix", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: forkCommand({ messageId: asMessageId("message-user-1") }),
+        readModel: readModel(
+          thread({
+            providerInstanceId: "codex",
+            messages: [message({ id: "message-user-1", role: "user", text: "first" })],
+          }),
+        ),
+      });
+
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual(["thread.created", "thread.forked"]);
+    }),
+  );
+
   it.effect("rejects unknown source threads", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
@@ -294,7 +311,7 @@ it.layer(NodeServices.layer)("decider thread.fork", (it) => {
           command: forkCommand({ messageId: asMessageId("message-assistant-1") }),
           readModel: readModel(
             thread({
-              providerInstanceId: "codex",
+              providerInstanceId: "opencode",
               messages: [
                 message({
                   id: "message-assistant-1",

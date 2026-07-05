@@ -3,6 +3,7 @@ import {
   CommandId,
   EventId,
   type ModelSelection,
+  type OrchestrationMessage,
   type OrchestrationEvent,
   ProviderDriverKind,
   type ProjectId,
@@ -41,7 +42,17 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
-import { resolveThreadForkAnchor, supportsFullThreadFork } from "../threadFork.ts";
+import {
+  isCodexThreadForkProvider,
+  resolveThreadForkAnchor,
+  supportsFullThreadFork,
+} from "../threadFork.ts";
+import {
+  ProjectionTurnRepository,
+  type ProjectionTurn,
+} from "../../persistence/Services/ProjectionTurns.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import type { CodexForkResumeCursor } from "../../provider/Layers/CodexSessionRuntime.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -106,6 +117,14 @@ function readResumeSessionId(resumeCursor: unknown): string | undefined {
       : "sessionId" in resumeCursor
         ? resumeCursor.sessionId
         : undefined;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+}
+
+function readCodexResumeThreadId(resumeCursor: unknown): string | undefined {
+  if (!resumeCursor || typeof resumeCursor !== "object" || Array.isArray(resumeCursor)) {
+    return undefined;
+  }
+  const raw = "threadId" in resumeCursor ? resumeCursor.threadId : undefined;
   return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
 }
 
@@ -197,12 +216,166 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
   return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
 }
 
+type CodexForkCursorSourceTurn = CodexForkResumeCursor["sourceTurns"][number];
+type CodexForkCursorAnchor = CodexForkResumeCursor["anchor"];
+
+function toOrderedCodexSourceTurns(
+  turns: ReadonlyArray<ProjectionTurn>,
+): ReadonlyArray<ProjectionTurn & { readonly turnId: TurnId }> {
+  return turns
+    .filter((turn): turn is ProjectionTurn & { readonly turnId: TurnId } => turn.turnId !== null)
+    .toSorted((left, right) => {
+      const requested = left.requestedAt.localeCompare(right.requestedAt);
+      return requested !== 0 ? requested : String(left.turnId).localeCompare(String(right.turnId));
+    });
+}
+
+function toCodexForkCursorSourceTurns(
+  turns: ReadonlyArray<ProjectionTurn & { readonly turnId: TurnId }>,
+): ReadonlyArray<CodexForkCursorSourceTurn> {
+  return turns.map((turn) => ({
+    turnId: String(turn.turnId),
+    state: turn.state,
+    ...(turn.checkpointTurnCount !== null ? { checkpointTurnCount: turn.checkpointTurnCount } : {}),
+  }));
+}
+
+function findCodexTurnForAssistantMessage(
+  turns: ReadonlyArray<ProjectionTurn & { readonly turnId: TurnId }>,
+  message: OrchestrationMessage,
+): (ProjectionTurn & { readonly turnId: TurnId }) | undefined {
+  if (message.turnId !== null) {
+    const byMessageTurn = turns.find((turn) => turn.turnId === message.turnId);
+    if (byMessageTurn) {
+      return byMessageTurn;
+    }
+  }
+  return turns.find((turn) => turn.assistantMessageId === message.id);
+}
+
+function checkpointFallbackForRetainedProjectionCount(
+  turns: ReadonlyArray<ProjectionTurn & { readonly turnId: TurnId }>,
+  retainedProjectionTurnCount: number,
+): Pick<CodexForkCursorAnchor, "retainedCheckpointTurnCount" | "checkpointFallbackAllowed"> {
+  if (retainedProjectionTurnCount === 0) {
+    return {
+      retainedCheckpointTurnCount: 0,
+      checkpointFallbackAllowed: true,
+    };
+  }
+
+  const retainedTurns = turns.slice(0, retainedProjectionTurnCount);
+  const lastRetainedTurn = retainedTurns[retainedTurns.length - 1];
+  const checkpointFallbackAllowed =
+    retainedTurns.length === retainedProjectionTurnCount &&
+    retainedTurns.every(
+      (turn, index) => turn.state === "completed" && turn.checkpointTurnCount === index + 1,
+    );
+  return {
+    ...(lastRetainedTurn?.checkpointTurnCount !== null &&
+    lastRetainedTurn?.checkpointTurnCount !== undefined
+      ? { retainedCheckpointTurnCount: lastRetainedTurn.checkpointTurnCount }
+      : {}),
+    checkpointFallbackAllowed,
+  };
+}
+
+function codexForkAnchorAfterTurn(input: {
+  readonly turn: ProjectionTurn & { readonly turnId: TurnId };
+  readonly turns: ReadonlyArray<ProjectionTurn & { readonly turnId: TurnId }>;
+}): CodexForkCursorAnchor {
+  const retainedProjectionTurnCount = input.turns.findIndex((turn) => turn === input.turn) + 1;
+  return {
+    boundary: "after-turn",
+    turnId: String(input.turn.turnId),
+    ...checkpointFallbackForRetainedProjectionCount(input.turns, retainedProjectionTurnCount),
+  };
+}
+
+function codexForkAnchorBeforeTurn(input: {
+  readonly turn: ProjectionTurn & { readonly turnId: TurnId };
+  readonly turns: ReadonlyArray<ProjectionTurn & { readonly turnId: TurnId }>;
+}): CodexForkCursorAnchor {
+  const retainedProjectionTurnCount = input.turns.findIndex((turn) => turn === input.turn);
+  return {
+    boundary: "before-turn",
+    turnId: String(input.turn.turnId),
+    ...checkpointFallbackForRetainedProjectionCount(input.turns, retainedProjectionTurnCount),
+  };
+}
+
+function buildCodexForkCursor(input: {
+  readonly sourceProviderThreadId: string;
+  readonly sourceMessages: ReadonlyArray<OrchestrationMessage>;
+  readonly forkMessageId: OrchestrationMessage["id"];
+  readonly sourceTurns: ReadonlyArray<ProjectionTurn>;
+}): CodexForkResumeCursor | undefined {
+  const anchorIndex = input.sourceMessages.findIndex(
+    (message) => message.id === input.forkMessageId,
+  );
+  const anchorMessage = input.sourceMessages[anchorIndex];
+  if (!anchorMessage) {
+    return undefined;
+  }
+
+  const orderedTurns = toOrderedCodexSourceTurns(input.sourceTurns);
+  const sourceTurns = toCodexForkCursorSourceTurns(orderedTurns);
+
+  const anchor: CodexForkCursorAnchor | undefined = (() => {
+    if (anchorMessage.role === "assistant") {
+      const turn = findCodexTurnForAssistantMessage(orderedTurns, anchorMessage);
+      return turn
+        ? codexForkAnchorAfterTurn({ turn, turns: orderedTurns })
+        : {
+            boundary: "after-turn",
+            checkpointFallbackAllowed: false,
+          };
+    }
+
+    const containingTurn = orderedTurns.find((turn) => turn.pendingMessageId === anchorMessage.id);
+    if (containingTurn) {
+      return codexForkAnchorBeforeTurn({ turn: containingTurn, turns: orderedTurns });
+    }
+
+    const previousAssistant = input.sourceMessages
+      .slice(0, anchorIndex)
+      .findLast((message) => message.role === "assistant");
+    if (previousAssistant) {
+      const previousTurn = findCodexTurnForAssistantMessage(orderedTurns, previousAssistant);
+      return previousTurn
+        ? codexForkAnchorAfterTurn({ turn: previousTurn, turns: orderedTurns })
+        : {
+            boundary: "after-turn",
+            checkpointFallbackAllowed: false,
+          };
+    }
+
+    return {
+      boundary: "before-turn",
+      retainedCheckpointTurnCount: 0,
+      checkpointFallbackAllowed: true,
+    };
+  })();
+
+  if (!anchor) {
+    return undefined;
+  }
+
+  return {
+    forkSession: true,
+    sourceThreadId: input.sourceProviderThreadId,
+    anchor,
+    sourceTurns,
+  };
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerSessionDirectory = yield* ProviderSessionDirectory;
+  const projectionTurnRepository = yield* ProjectionTurnRepository;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -1009,6 +1182,56 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    if (isCodexThreadForkProvider(sourceThread)) {
+      const sourceProviderThreadId = readCodexResumeThreadId(sourceBinding.resumeCursor);
+      if (!sourceProviderThreadId) {
+        yield* Effect.logWarning("provider command reactor could not seed codex fork cursor", {
+          sourceThreadId: sourceThread.id,
+          forkThreadId,
+          reason: "missing-source-provider-thread-id",
+        });
+        return;
+      }
+
+      const sourceTurns = yield* projectionTurnRepository.listByThreadId({
+        threadId: sourceThread.id,
+      });
+      const forkCursor = buildCodexForkCursor({
+        sourceProviderThreadId,
+        sourceMessages: sourceThread.messages,
+        forkMessageId: event.payload.forkMessageId,
+        sourceTurns,
+      });
+      if (!forkCursor) {
+        yield* Effect.logWarning("provider command reactor could not seed codex fork cursor", {
+          sourceThreadId: sourceThread.id,
+          forkThreadId,
+          reason: "missing-fork-anchor",
+        });
+        return;
+      }
+
+      yield* providerSessionDirectory.upsert({
+        threadId: forkThread.id,
+        provider: sourceBinding.provider,
+        providerInstanceId:
+          sourceBinding.providerInstanceId ?? forkThread.modelSelection.instanceId,
+        runtimeMode: forkThread.runtimeMode,
+        status: "stopped",
+        resumeCursor: forkCursor,
+        runtimePayload: {
+          cwd: forkThread.worktreePath,
+          model: forkThread.modelSelection.model,
+          modelSelection: forkThread.modelSelection,
+          activeTurnId: null,
+          lastError: null,
+          lastRuntimeEvent: "thread.forked",
+          lastRuntimeEventAt: event.occurredAt,
+        },
+      });
+      return;
+    }
+
     const sourceSessionId = readResumeSessionId(sourceBinding.resumeCursor);
     if (!sourceSessionId) {
       yield* Effect.logWarning("provider command reactor could not seed fork cursor", {
@@ -1145,4 +1368,6 @@ const make = Effect.gen(function* () {
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+);

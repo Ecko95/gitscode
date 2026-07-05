@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  CheckpointRef,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -369,6 +370,7 @@ describe("ProviderCommandReactor", () => {
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -559,6 +561,160 @@ describe("ProviderCommandReactor", () => {
         resume: sourceSessionId,
         resumeSessionAt: "assistant-provider-1",
         forkSession: true,
+      });
+    }
+  });
+
+  it("seeds a Codex fork cursor from source projection turns", async () => {
+    const codexInstanceId = ProviderInstanceId.make("codex");
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: codexInstanceId,
+        model: "gpt-5-codex",
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-codex-source-turn-start"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-user-codex-1"),
+            role: "user",
+            text: "first codex turn",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-codex-source-session-running"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: ProviderDriverKind.make("codex"),
+            providerInstanceId: codexInstanceId,
+            runtimeMode: "full-access",
+            activeTurnId: asTurnId("codex-turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("cmd-codex-source-assistant-complete"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: asMessageId("message-assistant-codex-1"),
+          providerMessageId: "codex-item-assistant-1",
+          turnId: asTurnId("codex-turn-1"),
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make("cmd-codex-source-turn-checkpoint"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("codex-turn-1"),
+          completedAt: now,
+          checkpointRef: CheckpointRef.make("checkpoint-codex-1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: asMessageId("message-assistant-codex-1"),
+          checkpointTurnCount: 1,
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.providerSessionDirectory.upsert({
+        threadId: ThreadId.make("thread-1"),
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+        status: "running",
+        resumeCursor: {
+          threadId: "source-codex-provider-thread",
+        },
+        runtimePayload: {
+          cwd: "/tmp/provider-project",
+          model: "gpt-5-codex",
+          activeTurnId: null,
+          lastError: null,
+        },
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-codex-thread-fork-reactor"),
+          threadId: ThreadId.make("thread-1"),
+          newThreadId: ThreadId.make("thread-codex-forked-1"),
+          messageId: asMessageId("message-assistant-codex-1"),
+          mode: "full",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      const binding = await Effect.runPromise(
+        harness.providerSessionDirectory.getBinding(ThreadId.make("thread-codex-forked-1")),
+      );
+      return Option.isSome(binding);
+    });
+
+    const binding = await Effect.runPromise(
+      harness.providerSessionDirectory.getBinding(ThreadId.make("thread-codex-forked-1")),
+    );
+    expect(Option.isSome(binding)).toBe(true);
+    if (Option.isSome(binding)) {
+      expect(binding.value.provider).toBe(ProviderDriverKind.make("codex"));
+      expect(binding.value.providerInstanceId).toBe(codexInstanceId);
+      expect(binding.value.resumeCursor).toEqual({
+        forkSession: true,
+        sourceThreadId: "source-codex-provider-thread",
+        anchor: {
+          boundary: "after-turn",
+          turnId: "codex-turn-1",
+          retainedCheckpointTurnCount: 1,
+          checkpointFallbackAllowed: true,
+        },
+        sourceTurns: [
+          {
+            turnId: "codex-turn-1",
+            state: "completed",
+            checkpointTurnCount: 1,
+          },
+        ],
       });
     }
   });
