@@ -133,6 +133,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   {
     type:
       | "thread.message-sent"
+      | "thread.forked"
       | "thread.proposed-plan-upserted"
       | "thread.visual-plan-upserted"
       | "thread.activity-appended"
@@ -143,6 +144,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 > {
   return (
     event.type === "thread.message-sent" ||
+    event.type === "thread.forked" ||
     event.type === "thread.proposed-plan-upserted" ||
     event.type === "thread.visual-plan-upserted" ||
     event.type === "thread.activity-appended" ||

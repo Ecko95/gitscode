@@ -135,14 +135,29 @@ layer("AllMigrations.fixture", (it) => {
 
       // ── Assertion 3: key post-chain columns exist ──────────────────────────
       // projection_threads: model_selection_json (added by 016), archived_at (017),
-      //   latest_user_message_at (023), provider_instance_id (028)
+      //   latest_user_message_at (023), fork parentage (034)
       const threadCols = yield* sql<{
         readonly name: string;
       }>`PRAGMA table_info(projection_threads)`;
       const threadColNames = new Set(threadCols.map((c) => c.name));
-      for (const col of ["model_selection_json", "archived_at", "latest_user_message_at"]) {
+      for (const col of [
+        "model_selection_json",
+        "archived_at",
+        "latest_user_message_at",
+        "parent_thread_id",
+        "forked_from_message_id",
+      ]) {
         assert.ok(threadColNames.has(col), `projection_threads.${col} missing`);
       }
+
+      const messageCols = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(projection_thread_messages)`;
+      const messageColNames = new Set(messageCols.map((c) => c.name));
+      assert.ok(
+        messageColNames.has("provider_message_id"),
+        "projection_thread_messages.provider_message_id missing",
+      );
 
       // projection_projects: default_model_selection_json (added by 016)
       const projCols = yield* sql<{

@@ -704,7 +704,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -829,6 +829,7 @@ describe("ClaudeAdapterLive", () => {
           "item.completed",
           "item.started",
           "item.completed",
+          "item.completed",
           "turn.completed",
         ],
       );
@@ -856,6 +857,12 @@ describe("ClaudeAdapterLive", () => {
         (event) =>
           event.type === "item.completed" && event.payload.itemType === "assistant_message",
       );
+      const assistantCompletions = runtimeEvents.filter(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      assert.equal(assistantCompletions.length, 2);
+      assert.equal(String(assistantCompletions[1]?.providerRefs?.providerItemId), "assistant-1");
       const toolStartedIndex = runtimeEvents.findIndex((event) => event.type === "item.started");
       assert.equal(
         assistantCompletedIndex >= 0 &&

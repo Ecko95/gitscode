@@ -186,6 +186,9 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     id: message.id,
     role: message.role,
     text: message.text,
+    ...(message.providerMessageId !== undefined
+      ? { providerMessageId: message.providerMessageId }
+      : {}),
     turnId: message.turnId,
     createdAt: message.createdAt,
     streaming: message.streaming,
@@ -1395,6 +1398,9 @@ function applyEnvironmentOrchestrationEvent(
           ...(event.payload.attachments !== undefined
             ? { attachments: event.payload.attachments }
             : {}),
+          ...(event.payload.providerMessageId !== undefined
+            ? { providerMessageId: event.payload.providerMessageId }
+            : {}),
           turnId: event.payload.turnId,
           streaming: event.payload.streaming,
           createdAt: event.payload.createdAt,
@@ -1414,6 +1420,9 @@ function applyEnvironmentOrchestrationEvent(
                         : entry.text,
                     streaming: message.streaming,
                     ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
+                    ...(message.providerMessageId !== undefined
+                      ? { providerMessageId: message.providerMessageId }
+                      : {}),
                     ...(message.streaming
                       ? entry.completedAt !== undefined
                         ? { completedAt: entry.completedAt }

@@ -193,6 +193,13 @@ function proposedPlanIdFromEvent(event: ProviderRuntimeEvent, threadId: ThreadId
   return `plan:${threadId}:event:${event.eventId}`;
 }
 
+function providerMessageIdFromEvent(event: ProviderRuntimeEvent): string | undefined {
+  // ponytail: only persist native provider anchors that already surfaced on the event.
+  return event.providerRefs?.providerItemId !== undefined
+    ? String(event.providerRefs.providerItemId)
+    : undefined;
+}
+
 function assistantSegmentBaseKeyFromEvent(event: ProviderRuntimeEvent): string {
   return String(event.itemId ?? event.turnId ?? event.eventId);
 }
@@ -953,6 +960,7 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    providerMessageId?: string;
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
@@ -986,6 +994,9 @@ const make = Effect.gen(function* () {
             commandId: yield* providerCommandId(input.event, input.commandTag),
             threadId: input.threadId,
             messageId: input.messageId,
+            ...(input.providerMessageId !== undefined
+              ? { providerMessageId: input.providerMessageId }
+              : {}),
             ...(input.turnId ? { turnId: input.turnId } : {}),
             createdAt: input.createdAt,
           },
@@ -1494,6 +1505,7 @@ const make = Effect.gen(function* () {
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
               ),
               fallbackText: event.payload.detail,
+              providerMessageId: providerMessageIdFromEvent(event),
             }
           : undefined;
       const proposedPlanCompletion =
@@ -1526,6 +1538,7 @@ const make = Effect.gen(function* () {
           Option.isNone(activeAssistantMessageId) &&
           turnId !== undefined &&
           hasAssistantMessagesForTurn &&
+          assistantCompletion.providerMessageId === undefined &&
           (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
 
         if (!shouldSkipRedundantCompletion) {
@@ -1542,6 +1555,9 @@ const make = Effect.gen(function* () {
             commandTag: "assistant-complete",
             finalDeltaCommandTag: "assistant-delta-finalize",
             hasProjectedMessage: existingAssistantMessage !== undefined,
+            ...(assistantCompletion.providerMessageId !== undefined
+              ? { providerMessageId: assistantCompletion.providerMessageId }
+              : {}),
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
