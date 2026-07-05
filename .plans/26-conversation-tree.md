@@ -131,13 +131,36 @@ stale-turbo → force tsgo). Escalation: 2 failed acceptance rounds → Fable re
 
 | Wave | Item | Status | Evidence |
 |------|------|--------|----------|
-| W0 | Plan 26 doc PR | in review | PR #97 |
+| W0 | Plan 26 doc PR | MERGED | PR #97 (27d52cada) |
 | W0 | Slice 0 recon peer | DONE 2026-07-05 | peer e65d740f, report in §9 |
-| W1 | Slice 1 PR | dispatched | peer brief per §9 decisions |
-| W2 | Slice 2 PR | not started | — |
-| W3 | Slice 3 PR | not started | — |
-| W4 | Slice 4 PR | not started | — |
-| W5 | Slice 5 PR | not started | — |
+| W1 | Slice 1 PR | MERGED | PR #98 (17666b75a), peer a9688dde |
+| W2 | Slice 2 PR | MERGED | PR #99 (31a0207b4), peer 1fd26166 |
+| W3 | Slice 3 PR | MERGED | PR #100 (4186d6343), peer f98401d3 |
+| W4 | Slice 4 PR | MERGED | PR #101 (88f0c7268), peer 766ac303 + 1 fix round |
+| W5 | Slice 5 PR | MERGED | PR #102 (4c495bc2c), peer 85f8892b |
+
+## 10. Completion record (2026-07-05) — SHIPPED
+
+All five slices merged to `gits` same-day, CI green on every PR (7 checks each). Orchestration:
+Fable (scoping/review/merge only), 6 codex peers gpt-5.5 effort high, one review-driven rework
+(slice 4: fork parentage fields were silently stripped by the strict contract decode on
+snapshot hydration — fixed typed, with a decode-path regression test).
+
+Recorded debt (all `ponytail:`-commented in code):
+- Provider fork capability = label-prefix match (`threadFork.ts`) until a registry-backed
+  capability lookup exists.
+- Summary seed detection = rendered heading marker (`ProviderCommandReactor.ts`), replace
+  with a typed seed flag if summary forks gain lifecycle state.
+- `seedPrompt` is contract-wired but has no input dialog in the UI yet.
+- Codex fork orphan: if `thread/rollback` fails after `thread/fork`, the forked provider
+  thread remains app-server-side (mirrors existing rollback semantics).
+- Fork navigation waits ≤5s for the thread to register; slower streams surface the existing
+  thread error instead.
+
+Deferred (§6 unchanged): workspace restore on fork, tree visualization view, in-place rollback.
+LIMITATION (by design, D1): messages persisted before slice 1 have no provider anchors —
+full-mode forks on legacy threads only work from the latest assistant message; summary-mode
+forks work everywhere.
 
 ## 9. Recon results (slice 0, peer e65d740f, 2026-07-05) — binding decisions
 
