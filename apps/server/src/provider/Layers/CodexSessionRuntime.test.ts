@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, it } from "vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, TurnId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -14,10 +14,17 @@ import {
 import {
   buildThreadStartParams,
   buildTurnStartParams,
+  CodexSessionRuntimeForkTurnMismatchError,
+  forkCodexThread,
   isRecoverableThreadResumeError,
   openCodexThread,
+  type CodexForkResumeCursor,
+  type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const isCodexSessionRuntimeForkTurnMismatchError = Schema.is(
+  CodexSessionRuntimeForkTurnMismatchError,
+);
 
 function makeThreadOpenResponse(
   threadId: string,
@@ -40,6 +47,50 @@ function makeThreadOpenResponse(
       },
     },
   } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/start"];
+}
+
+function makeThreadForkResponse(
+  threadId: string,
+  turnIds: ReadonlyArray<string>,
+): CodexRpc.ClientRequestResponsesByMethod["thread/fork"] {
+  return {
+    cwd: "/tmp/project",
+    model: "gpt-5.3-codex",
+    modelProvider: "openai",
+    approvalPolicy: "never",
+    approvalsReviewer: "user",
+    sandbox: { type: "danger-full-access" },
+    thread: {
+      id: threadId,
+      createdAt: "2026-04-18T00:00:00.000Z",
+      source: { session: "cli" },
+      turns: turnIds.map((id) => ({ id, items: [] })),
+      status: {
+        state: "idle",
+        activeFlags: [],
+      },
+    },
+  } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/fork"];
+}
+
+function forkCursor(input: {
+  readonly anchorTurnId: string;
+  readonly boundary: "before-turn" | "after-turn";
+}): CodexForkResumeCursor {
+  return {
+    forkSession: true,
+    sourceThreadId: "source-provider-thread",
+    anchor: {
+      boundary: input.boundary,
+      turnId: input.anchorTurnId,
+      checkpointFallbackAllowed: false,
+    },
+    sourceTurns: [
+      { turnId: "source-turn-1", state: "completed", checkpointTurnCount: 1 },
+      { turnId: "source-turn-2", state: "completed", checkpointTurnCount: 2 },
+      { turnId: "source-turn-3", state: "completed", checkpointTurnCount: 3 },
+    ],
+  };
 }
 
 describe("buildTurnStartParams", () => {
@@ -348,6 +399,218 @@ describe("openCodexThread", () => {
         isCodexAppServerRequestError(error) &&
         error.errorMessage === "timed out waiting for server",
     );
+  });
+});
+
+describe("forkCodexThread", () => {
+  it("calls thread/fork then rolls back the forked thread by the unmatched suffix", async () => {
+    const calls: Array<{ method: "thread/fork" | "thread/rollback"; payload: unknown }> = [];
+    const client = {
+      request: <M extends "thread/fork">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(
+          makeThreadForkResponse("forked-provider-thread", [
+            "source-turn-1",
+            "source-turn-2",
+            "source-turn-3",
+          ]) as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+    const rollbackThread = (threadId: string, numTurns: number) =>
+      Effect.sync(() => {
+        calls.push({ method: "thread/rollback", payload: { threadId, numTurns } });
+        return {
+          threadId,
+          turns: [
+            { id: TurnId.make("source-turn-1"), items: [] },
+            { id: TurnId.make("source-turn-2"), items: [] },
+          ],
+        } as unknown as CodexThreadSnapshot;
+      });
+
+    const snapshot = await Effect.runPromise(
+      forkCodexThread({
+        client,
+        threadId: ThreadId.make("thread-fork"),
+        cursor: forkCursor({ anchorTurnId: "source-turn-2", boundary: "after-turn" }),
+        rollbackThread,
+      }),
+    );
+
+    assert.equal(snapshot.threadId, "forked-provider-thread");
+    assert.deepStrictEqual(calls, [
+      { method: "thread/fork", payload: { threadId: "source-provider-thread" } },
+      {
+        method: "thread/rollback",
+        payload: { threadId: "forked-provider-thread", numTurns: 1 },
+      },
+    ]);
+  });
+
+  it("skips thread/rollback when the forked thread already matches the retained prefix", async () => {
+    const calls: Array<{ method: "thread/fork" | "thread/rollback"; payload: unknown }> = [];
+    const client = {
+      request: <M extends "thread/fork">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(
+          makeThreadForkResponse("forked-provider-thread", [
+            "source-turn-1",
+            "source-turn-2",
+            "source-turn-3",
+          ]) as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+    const rollbackThread = (threadId: string, numTurns: number) =>
+      Effect.sync(() => {
+        calls.push({ method: "thread/rollback", payload: { threadId, numTurns } });
+        return { threadId, turns: [] } as unknown as CodexThreadSnapshot;
+      });
+
+    const snapshot = await Effect.runPromise(
+      forkCodexThread({
+        client,
+        threadId: ThreadId.make("thread-fork"),
+        cursor: forkCursor({ anchorTurnId: "source-turn-3", boundary: "after-turn" }),
+        rollbackThread,
+      }),
+    );
+
+    assert.equal(snapshot.threadId, "forked-provider-thread");
+    assert.deepStrictEqual(calls, [
+      { method: "thread/fork", payload: { threadId: "source-provider-thread" } },
+    ]);
+  });
+
+  it("treats before-turn anchors as excluding the anchor turn", async () => {
+    const calls: Array<{ method: "thread/fork" | "thread/rollback"; payload: unknown }> = [];
+    const client = {
+      request: <M extends "thread/fork">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(
+          makeThreadForkResponse("forked-provider-thread", [
+            "source-turn-1",
+            "source-turn-2",
+            "source-turn-3",
+          ]) as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+    const rollbackThread = (threadId: string, numTurns: number) =>
+      Effect.sync(() => {
+        calls.push({ method: "thread/rollback", payload: { threadId, numTurns } });
+        return {
+          threadId,
+          turns: [{ id: TurnId.make("source-turn-1"), items: [] }],
+        } as unknown as CodexThreadSnapshot;
+      });
+
+    await Effect.runPromise(
+      forkCodexThread({
+        client,
+        threadId: ThreadId.make("thread-fork"),
+        cursor: forkCursor({ anchorTurnId: "source-turn-2", boundary: "before-turn" }),
+        rollbackThread,
+      }),
+    );
+
+    assert.deepStrictEqual(calls, [
+      { method: "thread/fork", payload: { threadId: "source-provider-thread" } },
+      {
+        method: "thread/rollback",
+        payload: { threadId: "forked-provider-thread", numTurns: 2 },
+      },
+    ]);
+  });
+
+  it("fails with a typed mismatch and does not roll back when the anchor turn is absent", async () => {
+    const calls: Array<{ method: "thread/fork" | "thread/rollback"; payload: unknown }> = [];
+    const client = {
+      request: <M extends "thread/fork">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(
+          makeThreadForkResponse("forked-provider-thread", [
+            "source-turn-1",
+          ]) as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+    const rollbackThread = (threadId: string, numTurns: number) =>
+      Effect.sync(() => {
+        calls.push({ method: "thread/rollback", payload: { threadId, numTurns } });
+        return { threadId, turns: [] } as unknown as CodexThreadSnapshot;
+      });
+
+    await assert.rejects(
+      Effect.runPromise(
+        forkCodexThread({
+          client,
+          threadId: ThreadId.make("thread-fork"),
+          cursor: forkCursor({ anchorTurnId: "source-turn-2", boundary: "after-turn" }),
+          rollbackThread,
+        }),
+      ),
+      (error: unknown) =>
+        isCodexSessionRuntimeForkTurnMismatchError(error) &&
+        error.message.includes("anchor turn 'source-turn-2' was not found"),
+    );
+    assert.deepStrictEqual(calls, [
+      { method: "thread/fork", payload: { threadId: "source-provider-thread" } },
+    ]);
+  });
+
+  it("fails before forking when the source projection lacks the anchor turn", async () => {
+    const calls: Array<{ method: "thread/fork" | "thread/rollback"; payload: unknown }> = [];
+    const client = {
+      request: <M extends "thread/fork">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(
+          makeThreadForkResponse("forked-provider-thread", [
+            "source-turn-1",
+          ]) as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+    const rollbackThread = (threadId: string, numTurns: number) =>
+      Effect.sync(() => {
+        calls.push({ method: "thread/rollback", payload: { threadId, numTurns } });
+        return { threadId, turns: [] } as unknown as CodexThreadSnapshot;
+      });
+    const cursor = forkCursor({ anchorTurnId: "source-turn-2", boundary: "after-turn" });
+
+    await assert.rejects(
+      Effect.runPromise(
+        forkCodexThread({
+          client,
+          threadId: ThreadId.make("thread-fork"),
+          cursor: {
+            ...cursor,
+            sourceTurns: [{ turnId: "source-turn-1", state: "completed", checkpointTurnCount: 1 }],
+          },
+          rollbackThread,
+        }),
+      ),
+      (error: unknown) =>
+        isCodexSessionRuntimeForkTurnMismatchError(error) &&
+        error.message.includes("source projection turn records"),
+    );
+    assert.deepStrictEqual(calls, []);
   });
 });
 

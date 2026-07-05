@@ -41,6 +41,7 @@ import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
   type CodexSessionRuntimeOptions,
+  type CodexForkResumeCursor,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
@@ -103,6 +104,14 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       }),
   );
 
+  public readonly forkThreadImpl = vi.fn(
+    (_cursor: CodexForkResumeCursor): Promise<CodexThreadSnapshot> =>
+      Promise.resolve({
+        threadId: "provider-thread-fork",
+        turns: [],
+      }),
+  );
+
   public readonly respondToRequestImpl = vi.fn(
     (_requestId: ApprovalRequestId, _decision: ProviderApprovalDecision): Promise<void> =>
       Promise.resolve(undefined),
@@ -136,6 +145,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   readThread = Effect.promise(() => this.readThreadImpl());
+
+  forkThread(cursor: CodexForkResumeCursor) {
+    return Effect.promise(() => this.forkThreadImpl(cursor));
+  }
 
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
@@ -285,6 +298,40 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         visualPlanMcpUrl: "http://127.0.0.1:0/api/gits/visual-plan/mcp",
         runtimeMode: "full-access",
+      });
+    }),
+  );
+
+  it.effect("passes codex fork cursors through to the runtime", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const forkCursor: CodexForkResumeCursor = {
+        forkSession: true,
+        sourceThreadId: "source-provider-thread",
+        anchor: {
+          boundary: "after-turn",
+          turnId: "codex-turn-1",
+          checkpointFallbackAllowed: false,
+        },
+        sourceTurns: [
+          {
+            turnId: "codex-turn-1",
+            state: "completed",
+            checkpointTurnCount: 1,
+          },
+        ],
+      };
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-fork"),
+        resumeCursor: forkCursor,
+        runtimeMode: "full-access",
+      });
+
+      assert.deepStrictEqual(validationRuntimeFactory.factory.mock.calls[0]?.[0].resumeCursor, {
+        ...forkCursor,
       });
     }),
   );
