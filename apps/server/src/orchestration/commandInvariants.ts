@@ -199,6 +199,7 @@ function isStructuralCommand(command: OrchestrationCommand): boolean {
   const t = command.type;
   return (
     t === "thread.create" ||
+    t === "thread.fork" ||
     t === "thread.delete" ||
     t === "project.create" ||
     t === "project.delete" ||

@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -40,8 +41,11 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
+import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
 import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -88,7 +92,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | ProviderSessionDirectory,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -331,9 +338,14 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolverLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntimeRepositoryLive),
+      Layer.provide(SqlitePersistenceMemory),
+    );
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService)({
@@ -364,6 +376,9 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const providerSessionDirectory = await runtime.runPromise(
+      Effect.service(ProviderSessionDirectory),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -403,6 +418,7 @@ describe("ProviderCommandReactor", () => {
 
     return {
       engine,
+      providerSessionDirectory,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
@@ -460,6 +476,91 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("seeds a Claude fork cursor on the new thread runtime binding", async () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: claudeInstanceId,
+        model: "claude-sonnet-4-6",
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const sourceSessionId = "550e8400-e29b-41d4-a716-446655440000";
+
+    await Effect.runPromise(
+      harness.providerSessionDirectory.upsert({
+        threadId: ThreadId.make("thread-1"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeInstanceId,
+        runtimeMode: "full-access",
+        status: "running",
+        resumeCursor: {
+          threadId: ThreadId.make("thread-1"),
+          resume: sourceSessionId,
+          resumeSessionAt: "assistant-provider-1",
+          turnCount: 1,
+        },
+        runtimePayload: {
+          cwd: "/tmp/provider-project",
+          model: "claude-sonnet-4-6",
+          activeTurnId: null,
+          lastError: null,
+        },
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("cmd-assistant-complete-before-fork"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: asMessageId("message-assistant-1"),
+          providerMessageId: "assistant-provider-1",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-thread-fork-reactor"),
+          threadId: ThreadId.make("thread-1"),
+          newThreadId: ThreadId.make("thread-forked-1"),
+          messageId: asMessageId("message-assistant-1"),
+          mode: "full",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      const binding = await Effect.runPromise(
+        harness.providerSessionDirectory.getBinding(ThreadId.make("thread-forked-1")),
+      );
+      return Option.isSome(binding);
+    });
+
+    const binding = await Effect.runPromise(
+      harness.providerSessionDirectory.getBinding(ThreadId.make("thread-forked-1")),
+    );
+    expect(Option.isSome(binding)).toBe(true);
+    if (Option.isSome(binding)) {
+      expect(binding.value.provider).toBe(ProviderDriverKind.make("claudeAgent"));
+      expect(binding.value.providerInstanceId).toBe(claudeInstanceId);
+      expect(binding.value.resumeCursor).toEqual({
+        threadId: ThreadId.make("thread-forked-1"),
+        resume: sourceSessionId,
+        resumeSessionAt: "assistant-provider-1",
+        forkSession: true,
+      });
+    }
   });
 
   it("generates a thread title on the first turn", async () => {

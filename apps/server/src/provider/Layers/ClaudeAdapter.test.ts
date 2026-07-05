@@ -2985,6 +2985,99 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("passes fork cursor options once and drops them after the new session id lands", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const sourceSessionId = "550e8400-e29b-41d4-a716-446655440000";
+      const forkedSessionId = "7368d0c7-40a3-4d8a-bcc1-ac80c49f2719";
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 5).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: sourceSessionId,
+          resumeSessionAt: "assistant-99",
+          forkSession: true,
+          turnCount: 3,
+        },
+        runtimeMode: "full-access",
+      });
+
+      let createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.resume, sourceSessionId);
+      assert.equal(createInput?.options.resumeSessionAt, "assistant-99");
+      assert.equal(createInput?.options.forkSession, true);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        apiKeySource: "none",
+        claude_code_version: "test",
+        cwd: "/tmp/claude-adapter-test",
+        tools: [],
+        mcp_servers: [],
+        model: "claude-sonnet-4-5",
+        permissionMode: "bypassPermissions",
+        slash_commands: [],
+        output_style: "default",
+        skills: [],
+        plugins: [],
+        session_id: forkedSessionId,
+        uuid: "fork-init",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: forkedSessionId,
+        uuid: "assistant-100",
+        message: {
+          id: "assistant-message-100",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-4-5",
+          content: [{ type: "text", text: "forked answer" }],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {
+            input_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 1,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      yield* Fiber.join(runtimeEventsFiber);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      const activeSessions = yield* adapter.listSessions();
+      const nextResumeCursor = activeSessions[0]?.resumeCursor;
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: nextResumeCursor,
+        runtimeMode: "full-access",
+      });
+
+      createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.resume, forkedSessionId);
+      assert.equal(createInput?.options.resumeSessionAt, undefined);
+      assert.equal(createInput?.options.forkSession, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

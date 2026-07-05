@@ -31,6 +31,7 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -40,6 +41,7 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { resolveThreadForkAnchor, supportsFullThreadFork } from "../threadFork.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -52,7 +54,8 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.forked";
   }
 >;
 
@@ -86,6 +89,25 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+
+function threadIdForProviderIntentEvent(event: ProviderIntentEvent): ThreadId {
+  return event.type === "thread.forked"
+    ? ThreadId.make(String(event.aggregateId))
+    : event.payload.threadId;
+}
+
+function readResumeSessionId(resumeCursor: unknown): string | undefined {
+  if (!resumeCursor || typeof resumeCursor !== "object" || Array.isArray(resumeCursor)) {
+    return undefined;
+  }
+  const raw =
+    "resume" in resumeCursor
+      ? resumeCursor.resume
+      : "sessionId" in resumeCursor
+        ? resumeCursor.sessionId
+        : undefined;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+}
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -180,6 +202,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -956,12 +979,91 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processThreadForked = Effect.fn("processThreadForked")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.forked" }>,
+  ) {
+    const forkThreadId = ThreadId.make(String(event.aggregateId));
+    const sourceThread = yield* resolveThread(event.payload.sourceThreadId);
+    const forkThread = yield* resolveThread(forkThreadId);
+    if (!sourceThread || !forkThread) {
+      return;
+    }
+    if (!supportsFullThreadFork(sourceThread)) {
+      yield* Effect.logWarning("provider command reactor skipped unsupported fork provider", {
+        sourceThreadId: sourceThread.id,
+        forkThreadId,
+        mode: event.payload.mode,
+      });
+      return;
+    }
+
+    const sourceBinding = Option.getOrUndefined(
+      yield* providerSessionDirectory.getBinding(sourceThread.id),
+    );
+    if (!sourceBinding) {
+      yield* Effect.logWarning("provider command reactor could not seed fork cursor", {
+        sourceThreadId: sourceThread.id,
+        forkThreadId,
+        reason: "missing-source-provider-binding",
+      });
+      return;
+    }
+
+    const sourceSessionId = readResumeSessionId(sourceBinding.resumeCursor);
+    if (!sourceSessionId) {
+      yield* Effect.logWarning("provider command reactor could not seed fork cursor", {
+        sourceThreadId: sourceThread.id,
+        forkThreadId,
+        reason: "missing-source-resume-session-id",
+      });
+      return;
+    }
+
+    const anchor = resolveThreadForkAnchor({
+      sourceThread,
+      messageId: event.payload.forkMessageId,
+    });
+    if (anchor._tag === "missing-message" || anchor._tag === "unavailable") {
+      yield* Effect.logWarning("provider command reactor could not seed fork cursor", {
+        sourceThreadId: sourceThread.id,
+        forkThreadId,
+        reason: anchor._tag,
+      });
+      return;
+    }
+
+    yield* providerSessionDirectory.upsert({
+      threadId: forkThread.id,
+      provider: sourceBinding.provider,
+      providerInstanceId: sourceBinding.providerInstanceId ?? forkThread.modelSelection.instanceId,
+      runtimeMode: forkThread.runtimeMode,
+      status: "stopped",
+      resumeCursor: {
+        threadId: forkThread.id,
+        resume: sourceSessionId,
+        ...(anchor._tag === "provider-message"
+          ? { resumeSessionAt: anchor.providerMessageId }
+          : {}),
+        forkSession: true,
+      },
+      runtimePayload: {
+        cwd: forkThread.worktreePath,
+        model: forkThread.modelSelection.model,
+        modelSelection: forkThread.modelSelection,
+        activeTurnId: null,
+        lastError: null,
+        lastRuntimeEvent: "thread.forked",
+        lastRuntimeEventAt: event.occurredAt,
+      },
+    });
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
     yield* Effect.annotateCurrentSpan({
       "orchestration.event_type": event.type,
-      "orchestration.thread_id": event.payload.threadId,
+      "orchestration.thread_id": threadIdForProviderIntentEvent(event),
       ...(event.commandId ? { "orchestration.command_id": event.commandId } : {}),
     });
     yield* increment(orchestrationEventsProcessedTotal, {
@@ -996,6 +1098,9 @@ const make = Effect.gen(function* () {
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
         return;
+      case "thread.forked":
+        yield* processThreadForked(event);
+        return;
     }
   });
 
@@ -1022,7 +1127,8 @@ const make = Effect.gen(function* () {
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested"
+        event.type === "thread.session-stop-requested" ||
+        event.type === "thread.forked"
       ) {
         return yield* worker.enqueue(event);
       }
