@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  MessageId,
   type ModelSelection,
   type OrchestrationMessage,
   type OrchestrationEvent,
@@ -11,6 +12,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  TextGenerationError,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -43,6 +45,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import {
+  findThreadForkPrefix,
   isCodexThreadForkProvider,
   resolveThreadForkAnchor,
   supportsFullThreadFork,
@@ -55,6 +58,7 @@ import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/Projectio
 import type { CodexForkResumeCursor } from "../../provider/Layers/CodexSessionRuntime.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -100,11 +104,82 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const THREAD_FORK_SUMMARY_HEADING = "Fork summary";
 
 function threadIdForProviderIntentEvent(event: ProviderIntentEvent): ThreadId {
   return event.type === "thread.forked"
     ? ThreadId.make(String(event.aggregateId))
     : event.payload.threadId;
+}
+
+function toOptionalTrimmedText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function renderThreadForkTranscript(messages: ReadonlyArray<OrchestrationMessage>): string {
+  if (messages.length === 0) {
+    return "(No previous messages are retained before this fork anchor.)";
+  }
+
+  return messages
+    .map((message, index) => {
+      const text = message.text.trim();
+      return [`Message ${index + 1} (${message.role})`, text.length > 0 ? text : "(empty)"].join(
+        "\n",
+      );
+    })
+    .join("\n\n");
+}
+
+function buildThreadForkSummaryMessage(input: {
+  readonly summary: string;
+  readonly seedPrompt?: string | undefined;
+}): string {
+  const seedPrompt = toOptionalTrimmedText(input.seedPrompt);
+  return [
+    THREAD_FORK_SUMMARY_HEADING,
+    "",
+    input.summary.trim(),
+    ...(seedPrompt ? ["", "Seed prompt", "", seedPrompt] : []),
+  ].join("\n");
+}
+
+function isThreadForkSummaryMessage(message: OrchestrationMessage): boolean {
+  // ponytail: marker by rendered heading, not event metadata; replace with a
+  // typed seed-message flag if summary forks gain richer lifecycle state.
+  return (
+    message.role === "assistant" &&
+    !message.streaming &&
+    message.text.startsWith(`${THREAD_FORK_SUMMARY_HEADING}\n\n`)
+  );
+}
+
+function findThreadForkSummarySeedMessage(input: {
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly parentThreadId?: ThreadId | null | undefined;
+}): OrchestrationMessage | undefined {
+  if (!input.parentThreadId) {
+    return undefined;
+  }
+  const userMessageCount = input.messages.filter((message) => message.role === "user").length;
+  if (userMessageCount !== 1) {
+    return undefined;
+  }
+  return input.messages.find(isThreadForkSummaryMessage);
+}
+
+function buildThreadForkSummarySeededTurnInput(input: {
+  readonly summaryMessageText: string;
+  readonly userMessageText: string;
+}): string {
+  return [
+    "Context carried over from the forked source thread:",
+    input.summaryMessageText,
+    "",
+    "New user request:",
+    input.userMessageText,
+  ].join("\n");
 }
 
 function readResumeSessionId(resumeCursor: unknown): string | undefined {
@@ -405,7 +480,8 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "thread.fork.summary.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -749,7 +825,17 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const summarySeedMessage = findThreadForkSummarySeedMessage({
+      messages: thread.messages,
+      parentThreadId: thread.parentThreadId,
+    });
+    const providerMessageText = summarySeedMessage
+      ? buildThreadForkSummarySeededTurnInput({
+          summaryMessageText: summarySeedMessage.text,
+          userMessageText: input.messageText,
+        })
+      : input.messageText;
+    const normalizedInput = toNonEmptyProviderInput(providerMessageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
@@ -1152,10 +1238,181 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const setThreadForkSummarySessionState = (input: {
+    readonly threadId: ThreadId;
+    readonly runtimeMode: RuntimeMode;
+    readonly status: OrchestrationSession["status"];
+    readonly lastError: string | null;
+    readonly createdAt: string;
+  }) =>
+    setThreadSession({
+      threadId: input.threadId,
+      session: {
+        threadId: input.threadId,
+        status: input.status,
+        providerName: null,
+        runtimeMode: input.runtimeMode,
+        activeTurnId: null,
+        lastError: input.lastError,
+        updatedAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+
+  const appendThreadForkSummaryMessage = Effect.fn("appendThreadForkSummaryMessage")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly text: string;
+      readonly createdAt: string;
+    }) {
+      const uuid = yield* crypto.randomUUIDv4;
+      const messageId = MessageId.make(`${input.threadId}:fork-summary:${uuid}`);
+      yield* orchestrationEngine.dispatch(
+        {
+          type: "thread.message.assistant.delta",
+          commandId: yield* serverCommandId("thread-fork-summary-delta"),
+          threadId: input.threadId,
+          messageId,
+          delta: input.text,
+          createdAt: input.createdAt,
+        },
+        "server",
+      );
+      yield* orchestrationEngine.dispatch(
+        {
+          type: "thread.message.assistant.complete",
+          commandId: yield* serverCommandId("thread-fork-summary-complete"),
+          threadId: input.threadId,
+          messageId,
+          createdAt: input.createdAt,
+        },
+        "server",
+      );
+    },
+  );
+
+  const processSummaryThreadForked = Effect.fn("processSummaryThreadForked")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.forked" }>,
+  ) {
+    const forkThreadId = ThreadId.make(String(event.aggregateId));
+    const sourceThread = yield* resolveThread(event.payload.sourceThreadId);
+    const forkThread = yield* resolveThread(forkThreadId);
+    if (!sourceThread || !forkThread) {
+      yield* Effect.logWarning("provider command reactor could not summarize fork", {
+        sourceThreadId: event.payload.sourceThreadId,
+        forkThreadId,
+        reason: "missing-thread",
+      });
+      return;
+    }
+
+    yield* setThreadForkSummarySessionState({
+      threadId: forkThread.id,
+      runtimeMode: forkThread.runtimeMode,
+      status: "starting",
+      lastError: null,
+      createdAt: event.occurredAt,
+    });
+
+    const prefixMessages = findThreadForkPrefix({
+      sourceThread,
+      messageId: event.payload.forkMessageId,
+    });
+    if (prefixMessages === undefined) {
+      return yield* new TextGenerationError({
+        operation: "generateThreadForkSummary",
+        detail: `Message '${event.payload.forkMessageId}' does not belong to thread '${sourceThread.id}'.`,
+      });
+    }
+
+    const seedPrompt = toOptionalTrimmedText(event.payload.seedPrompt);
+    const project = yield* resolveProject(forkThread.projectId);
+    const generationCwd =
+      resolveThreadWorkspaceCwd({
+        thread: forkThread,
+        projects: project ? [project] : [],
+      }) ?? process.cwd();
+    const { textGenerationModelSelection: modelSelection } =
+      yield* serverSettingsService.getSettings;
+    const generated = yield* textGeneration.generateThreadForkSummary({
+      cwd: generationCwd,
+      transcript: renderThreadForkTranscript(prefixMessages),
+      ...(seedPrompt ? { seedPrompt } : {}),
+      modelSelection,
+    });
+    const summary = generated.summary.trim();
+    if (!summary) {
+      return yield* new TextGenerationError({
+        operation: "generateThreadForkSummary",
+        detail: "Text generation returned an empty fork summary.",
+      });
+    }
+
+    yield* appendThreadForkSummaryMessage({
+      threadId: forkThread.id,
+      text: buildThreadForkSummaryMessage({ summary, seedPrompt }),
+      createdAt: event.occurredAt,
+    });
+    yield* setThreadForkSummarySessionState({
+      threadId: forkThread.id,
+      runtimeMode: forkThread.runtimeMode,
+      status: "stopped",
+      lastError: null,
+      createdAt: event.occurredAt,
+    });
+  });
+
+  const recoverSummaryThreadForkFailure = Effect.fn("recoverSummaryThreadForkFailure")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.forked" }>,
+    cause: Cause.Cause<unknown>,
+  ) {
+    const forkThreadId = ThreadId.make(String(event.aggregateId));
+    const forkThread = yield* resolveThread(forkThreadId);
+    if (!forkThread) {
+      yield* Effect.logWarning("provider command reactor failed to recover summary fork failure", {
+        forkThreadId,
+        cause: Cause.pretty(cause),
+      });
+      return;
+    }
+    const failReason = cause.reasons.find(Cause.isFailReason);
+    const detail = isTextGenerationError(failReason?.error)
+      ? failReason.error.detail
+      : formatFailureDetail(cause);
+    yield* setThreadForkSummarySessionState({
+      threadId: forkThread.id,
+      runtimeMode: forkThread.runtimeMode,
+      status: "error",
+      lastError: detail,
+      createdAt: event.occurredAt,
+    });
+    yield* appendProviderFailureActivity({
+      threadId: forkThread.id,
+      kind: "thread.fork.summary.failed",
+      summary: "Thread fork summary failed",
+      detail,
+      turnId: null,
+      createdAt: event.occurredAt,
+    });
+    yield* Effect.logWarning("provider command reactor failed to summarize fork", {
+      sourceThreadId: event.payload.sourceThreadId,
+      forkThreadId,
+      cause: Cause.pretty(cause),
+    });
+  });
+
   const processThreadForked = Effect.fn("processThreadForked")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.forked" }>,
   ) {
     const forkThreadId = ThreadId.make(String(event.aggregateId));
+    if (event.payload.mode === "summary") {
+      yield* processSummaryThreadForked(event).pipe(
+        Effect.catchCause((cause) => recoverSummaryThreadForkFailure(event, cause)),
+        Effect.forkScoped,
+      );
+      return;
+    }
+
     const sourceThread = yield* resolveThread(event.payload.sourceThreadId);
     const forkThread = yield* resolveThread(forkThreadId);
     if (!sourceThread || !forkThread) {

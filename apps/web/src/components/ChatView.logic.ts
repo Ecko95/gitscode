@@ -8,6 +8,7 @@ import {
   type ModelSelection,
   type ProviderDriverKind,
   type ScopedThreadRef,
+  type ThreadForkedMode,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -30,22 +31,27 @@ export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.
 
 type ThreadForkCommand = Extract<ClientOrchestrationCommand, { type: "thread.fork" }>;
 
-// ponytail: slice 4 only exposes full-mode forks; slice 5 can thread a mode
-// option through this helper without redesigning the row action.
+// ponytail: keep the old full-mode helper name so slice 5 can widen the
+// command payload without redesigning the row action call sites.
 export function buildFullThreadForkCommand(input: {
   commandId: CommandId;
   sourceThreadId: ThreadId;
   newThreadId: ThreadId;
   messageId: MessageId;
+  mode?: ThreadForkedMode;
+  seedPrompt?: string | undefined;
   createdAt: string;
 }): ThreadForkCommand {
+  const mode = input.mode ?? THREAD_FORK_MODE;
+  const seedPrompt = mode === "summary" ? input.seedPrompt?.trim() : undefined;
   return {
     type: "thread.fork",
     commandId: input.commandId,
     threadId: input.sourceThreadId,
     newThreadId: input.newThreadId,
     messageId: input.messageId,
-    mode: THREAD_FORK_MODE,
+    mode,
+    ...(seedPrompt ? { seedPrompt } : {}),
     createdAt: input.createdAt,
   };
 }

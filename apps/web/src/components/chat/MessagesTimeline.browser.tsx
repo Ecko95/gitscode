@@ -306,6 +306,34 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("calls the fork callback with summary mode from the fork options menu", async () => {
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[buildUserTimelineEntry("summarize this user prompt")]}
+      />,
+    );
+
+    try {
+      const row = document.querySelector<HTMLElement>('[data-message-id="message-1"]');
+      const optionsButton = row?.querySelector<HTMLButtonElement>('button[title="Fork options"]');
+
+      expect(optionsButton).toBeTruthy();
+      optionsButton?.click();
+      await page.getByText("Fork with summary").click();
+
+      expect(props.onForkMessage).toHaveBeenCalledWith({
+        id: "message-1",
+        role: "user",
+        text: "summarize this user prompt",
+        mode: "summary",
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("calls the fork callback from assistant message actions and hides it while streaming", async () => {
     const props = buildProps();
     const screen = await render(

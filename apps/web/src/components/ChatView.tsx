@@ -12,6 +12,7 @@ import {
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ThreadForkedMode,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -221,6 +222,11 @@ type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly connectionState: "connecting" | "disconnected" | "error";
+};
+
+type ThreadForkRequest = Pick<ChatMessage, "id" | "role" | "text"> & {
+  mode?: ThreadForkedMode;
+  seedPrompt?: string | undefined;
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
@@ -2898,7 +2904,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onForkMessage = useCallback(
-    async (message: Pick<ChatMessage, "id" | "role" | "text">) => {
+    async (message: ThreadForkRequest) => {
       const api = readEnvironmentApi(environmentId);
       if (
         !api ||
@@ -2928,17 +2934,20 @@ export default function ChatView(props: ChatViewProps) {
       setThreadError(activeThread.id, null);
 
       try {
+        const forkMode = message.mode ?? "full";
         await api.orchestration.dispatchCommand(
           buildFullThreadForkCommand({
             commandId: newCommandId(),
             sourceThreadId: activeThread.id,
             newThreadId: nextThreadId,
             messageId: message.id,
+            mode: forkMode,
+            seedPrompt: message.seedPrompt,
             createdAt: new Date().toISOString(),
           }),
         );
         const forkPrefillPrompt = deriveThreadForkPrefillPrompt(message);
-        if (forkPrefillPrompt !== null) {
+        if (forkMode === "full" && forkPrefillPrompt !== null) {
           setComposerDraftPrompt(nextThreadRef, forkPrefillPrompt);
         }
         const forkRegistered = await waitForRegisteredServerThread(nextThreadRef, 5_000);
@@ -2950,7 +2959,10 @@ export default function ChatView(props: ChatViewProps) {
           params: buildThreadRouteParams(nextThreadRef),
         });
       } catch (err) {
-        if (deriveThreadForkPrefillPrompt(message) !== null) {
+        if (
+          (message.mode ?? "full") === "full" &&
+          deriveThreadForkPrefillPrompt(message) !== null
+        ) {
           setComposerDraftPrompt(nextThreadRef, "");
         }
         setThreadError(

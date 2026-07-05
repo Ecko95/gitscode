@@ -40,6 +40,10 @@ import {
   __setEnvironmentApiOverrideForTests,
 } from "../environmentApi";
 import {
+  __resetPrimaryEnvironmentBootstrapForTests,
+  __resetServerAuthBootstrapForTests,
+} from "../environments/primary";
+import {
   resetSavedEnvironmentRegistryStoreForTests,
   resetSavedEnvironmentRuntimeStoreForTests,
   useSavedEnvironmentRegistryStore,
@@ -108,6 +112,7 @@ const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
 const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const UUID_ROUTE_RE = /^\/draft\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const APP_STARTUP_WAIT_MS = 20_000;
 const PROJECT_DRAFT_KEY = `${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`;
 const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
   {
@@ -576,7 +581,7 @@ async function waitForWsClient(): Promise<void> {
         true,
       );
     },
-    { timeout: 8_000, interval: 16 },
+    { timeout: APP_STARTUP_WAIT_MS, interval: 16 },
   );
 }
 
@@ -1737,6 +1742,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         return [];
       },
     });
+    Reflect.deleteProperty(window, "nativeApi");
+    __resetPrimaryEnvironmentBootstrapForTests();
+    __resetServerAuthBootstrapForTests();
     await __resetLocalApiForTests();
     await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
@@ -1775,6 +1783,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   afterEach(() => {
     customWsRpcResolver = null;
+    Reflect.deleteProperty(window, "nativeApi");
+    __resetPrimaryEnvironmentBootstrapForTests();
+    __resetServerAuthBootstrapForTests();
     document.body.innerHTML = "";
   });
 

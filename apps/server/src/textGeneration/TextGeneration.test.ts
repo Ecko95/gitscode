@@ -20,6 +20,8 @@ const makeStubTextGeneration = (overrides: Partial<TextGenerationShape>): TextGe
   generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
   generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
   generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+  generateThreadForkSummary: () =>
+    Effect.die("generateThreadForkSummary stub not configured for this test"),
   ...overrides,
 });
 
@@ -91,6 +93,34 @@ describe("makeTextGenerationFromRegistry", () => {
 
       expect(result.branch).toBe("personal-branch");
       expect(personalCalls).toEqual(["Refactor the routing layer"]);
+    }),
+  );
+
+  it.effect("delegates fork summary generation to the matching instance", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const calls: string[] = [];
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateThreadForkSummary: (input) => {
+            calls.push(input.transcript);
+            return Effect.succeed({ summary: "Summarized fork context" });
+          },
+        }),
+      );
+
+      const tg = makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+
+      const result = yield* tg.generateThreadForkSummary({
+        cwd: process.cwd(),
+        transcript: "Message 1 (user)\nFix auth tests.",
+        seedPrompt: "Keep it short.",
+        modelSelection: createModelSelection(instanceId, "claude-haiku-4-5"),
+      });
+
+      expect(result.summary).toBe("Summarized fork context");
+      expect(calls).toEqual(["Message 1 (user)\nFix auth tests."]);
     }),
   );
 
