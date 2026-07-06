@@ -255,10 +255,7 @@ function bufferOrTerminate<A, E, R>(
 
 export function readThreadDetailSnapshot(
   threadId: ThreadId,
-  projectionSnapshotQuery: Pick<
-    ProjectionSnapshotQueryShape,
-    "getSnapshotSequence" | "getThreadDetailById"
-  >,
+  projectionSnapshotQuery: Pick<ProjectionSnapshotQueryShape, "getThreadDetailSnapshot">,
 ): Effect.Effect<
   {
     readonly snapshotSequence: number;
@@ -266,29 +263,15 @@ export function readThreadDetailSnapshot(
   },
   OrchestrationGetSnapshotError
 > {
-  return Effect.gen(function* () {
-    const snapshotSequence = yield* projectionSnapshotQuery.getSnapshotSequence().pipe(
-      Effect.map(({ snapshotSequence }) => snapshotSequence),
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationGetSnapshotError({
-            message: "Failed to load orchestration snapshot sequence",
-            cause,
-          }),
-      ),
-    );
-    const threadDetail = yield* projectionSnapshotQuery.getThreadDetailById(threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationGetSnapshotError({
-            message: `Failed to load thread ${threadId}`,
-            cause,
-          }),
-      ),
-    );
-
-    return { snapshotSequence, threadDetail };
-  });
+  return projectionSnapshotQuery.getThreadDetailSnapshot(threadId).pipe(
+    Effect.mapError(
+      (cause) =>
+        new OrchestrationGetSnapshotError({
+          message: `Failed to load thread ${threadId}`,
+          cause,
+        }),
+    ),
+  );
 }
 
 function toAuthAccessStreamEvent(

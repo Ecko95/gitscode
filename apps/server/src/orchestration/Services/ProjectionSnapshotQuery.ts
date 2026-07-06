@@ -33,6 +33,11 @@ export interface ProjectionSnapshotSequence {
   readonly snapshotSequence: number;
 }
 
+export interface ProjectionThreadDetailSnapshot {
+  readonly snapshotSequence: number;
+  readonly threadDetail: Option.Option<OrchestrationThread>;
+}
+
 export interface ProjectionThreadCheckpointContext {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -157,6 +162,14 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single thread detail plus its matching projection snapshot sequence
+   * from one consistent database snapshot.
+   */
+  readonly getThreadDetailSnapshot: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProjectionThreadDetailSnapshot, ProjectionRepositoryError>;
 
   /**
    * Read worktree path and branch for a thread regardless of deleted/archived state.

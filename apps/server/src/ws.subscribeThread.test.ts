@@ -1,5 +1,5 @@
 import type { OrchestrationThread } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { MessageId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -41,33 +41,61 @@ function makeThread(): OrchestrationThread {
 }
 
 describe("subscribeThread initial snapshot", () => {
-  it("reads sequence before detail so interleaved commits stay live-replayable", async () => {
-    const order: string[] = [];
-    let committedSequence = 10;
-    const thread = makeThread();
+  it("requires a consistent thread detail snapshot from one service call", async () => {
+    const eventSequence = 11;
+    const threadWithEvent: OrchestrationThread = {
+      ...makeThread(),
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "user" as const,
+          text: "event included",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      ],
+    };
 
-    const result = await Effect.runPromise(
-      readThreadDetailSnapshot(threadId, {
-        getSnapshotSequence: () =>
-          Effect.sync(() => {
-            order.push("sequence");
-            const snapshotSequence = committedSequence;
-            committedSequence = 11;
-            return { snapshotSequence };
-          }),
-        getThreadDetailById: () =>
-          Effect.sync(() => {
-            order.push("detail");
-            expect(committedSequence).toBe(11);
-            return Option.some(thread);
-          }),
-      }),
-    );
+    const scenarios: ReadonlyArray<{
+      readonly label: string;
+      readonly snapshotSequence: number;
+      readonly threadDetail: Option.Option<OrchestrationThread>;
+    }> = [
+      {
+        label: "event present",
+        snapshotSequence: eventSequence,
+        threadDetail: Option.some(threadWithEvent),
+      },
+      {
+        label: "event absent",
+        snapshotSequence: eventSequence - 1,
+        threadDetail: Option.some(makeThread()),
+      },
+    ];
 
-    expect(order).toEqual(["sequence", "detail"]);
-    expect(result.snapshotSequence).toBe(10);
-    expect(11 > result.snapshotSequence).toBe(true);
-    expect(Option.getOrUndefined(result.threadDetail)).toBe(thread);
+    for (const scenario of scenarios) {
+      const result = await Effect.runPromise(
+        readThreadDetailSnapshot(threadId, {
+          getThreadDetailSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: scenario.snapshotSequence,
+              threadDetail: scenario.threadDetail,
+            }),
+        }),
+      );
+
+      const detail = Option.getOrUndefined(result.threadDetail);
+      const hasEvent = (detail?.messages.length ?? 0) > 0;
+      expect(result.snapshotSequence).toBe(scenario.snapshotSequence);
+      expect(
+        hasEvent
+          ? eventSequence <= result.snapshotSequence
+          : eventSequence > result.snapshotSequence,
+      ).toBe(true);
+    }
   });
 });
 

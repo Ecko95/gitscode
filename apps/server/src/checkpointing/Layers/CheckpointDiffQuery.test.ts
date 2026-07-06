@@ -108,6 +108,8 @@ describe("CheckpointDiffQueryLive", () => {
             }),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () =>
+            Effect.succeed({ snapshotSequence: 0, threadDetail: Option.none() }),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
           hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
@@ -202,6 +204,8 @@ describe("CheckpointDiffQueryLive", () => {
           getFullThreadDiffContext: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () =>
+            Effect.succeed({ snapshotSequence: 0, threadDetail: Option.none() }),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
           hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
@@ -286,6 +290,8 @@ describe("CheckpointDiffQueryLive", () => {
           getFullThreadDiffContext: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () =>
+            Effect.succeed({ snapshotSequence: 0, threadDetail: Option.none() }),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
           hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
@@ -355,6 +361,8 @@ describe("CheckpointDiffQueryLive", () => {
           getFullThreadDiffContext: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () =>
+            Effect.succeed({ snapshotSequence: 0, threadDetail: Option.none() }),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
           hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
@@ -409,6 +417,8 @@ describe("CheckpointDiffQueryLive", () => {
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () =>
+            Effect.succeed({ snapshotSequence: 0, threadDetail: Option.none() }),
           getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
           hasLiveThreadForWorktreePath: () => Effect.succeed(false),
         }),
