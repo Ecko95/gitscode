@@ -23,6 +23,7 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireThreadNotDeleted,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import {
@@ -274,7 +275,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.fork": {
-      const sourceThread = yield* requireThread({
+      const sourceThread = yield* requireThreadNotDeleted({
         readModel,
         command,
         threadId: command.threadId,
@@ -546,7 +547,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      const targetThread = yield* requireThread({
+      const targetThread = yield* requireThreadNotDeleted({
         readModel,
         command,
         threadId: command.threadId,
@@ -621,7 +622,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      yield* requireThreadNotDeleted({
         readModel,
         command,
         threadId: command.threadId,
@@ -643,7 +644,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.approval.respond": {
-      yield* requireThread({
+      yield* requireThreadNotDeleted({
         readModel,
         command,
         threadId: command.threadId,
@@ -669,7 +670,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.user-input.respond": {
-      yield* requireThread({
+      yield* requireThreadNotDeleted({
         readModel,
         command,
         threadId: command.threadId,
@@ -695,7 +696,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.checkpoint.revert": {
-      yield* requireThread({
+      yield* requireThreadNotDeleted({
         readModel,
         command,
         threadId: command.threadId,
@@ -717,7 +718,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.stop": {
-      yield* requireThread({
+      yield* requireThreadNotDeleted({
         readModel,
         command,
         threadId: command.threadId,

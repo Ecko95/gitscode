@@ -191,6 +191,101 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("rejects thread.turn.start against a deleted thread", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const initial = createEmptyReadModel(now);
+      const withProject = yield* projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-deleted-turn"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-deleted-turn"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-deleted-turn"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-deleted-turn"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-deleted-turn"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const withThread = yield* projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create-deleted-turn"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-deleted-turn"),
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-thread-create-deleted-turn"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-thread-create-deleted-turn"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-deleted-turn"),
+          projectId: asProjectId("project-deleted-turn"),
+          title: "Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const readModel = yield* projectEvent(withThread, {
+        sequence: 3,
+        eventId: asEventId("evt-thread-delete-deleted-turn"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-deleted-turn"),
+        type: "thread.deleted",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-thread-delete-deleted-turn"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-thread-delete-deleted-turn"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-deleted-turn"),
+          deletedAt: now,
+        },
+      });
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-turn-start-deleted"),
+            threadId: ThreadId.make("thread-deleted-turn"),
+            message: {
+              messageId: asMessageId("message-deleted-turn"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: now,
+          },
+          readModel,
+        }),
+      );
+
+      expect(error.message).toContain(
+        "Thread 'thread-deleted-turn' is already deleted and cannot handle command 'thread.turn.start'",
+      );
+    }),
+  );
+
   it.effect("emits thread.runtime-mode-set from thread.runtime-mode.set", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";

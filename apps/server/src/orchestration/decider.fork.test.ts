@@ -47,6 +47,7 @@ function message(input: {
 function thread(input?: {
   readonly providerInstanceId?: string;
   readonly messages?: ReadonlyArray<OrchestrationMessage>;
+  readonly deletedAt?: string | null;
 }): OrchestrationThread {
   const providerInstanceId = input?.providerInstanceId ?? "claudeAgent";
   return {
@@ -65,7 +66,7 @@ function thread(input?: {
     createdAt: NOW,
     updatedAt: NOW,
     archivedAt: null,
-    deletedAt: null,
+    deletedAt: input?.deletedAt ?? null,
     messages: [...(input?.messages ?? [])],
     proposedPlans: [],
     visualPlans: [],
@@ -288,6 +289,26 @@ it.layer(NodeServices.layer)("decider thread.fork", (it) => {
       );
 
       expect(error.message).toContain("Thread 'thread-missing' does not exist");
+    }),
+  );
+
+  it.effect("rejects deleted source threads", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: forkCommand({ messageId: asMessageId("message-user-1") }),
+          readModel: readModel(
+            thread({
+              deletedAt: "2026-01-01T00:01:00.000Z",
+              messages: [message({ id: "message-user-1", role: "user", text: "hi" })],
+            }),
+          ),
+        }),
+      );
+
+      expect(error.message).toContain(
+        "Thread 'thread-source' is already deleted and cannot handle command 'thread.fork'",
+      );
     }),
   );
 
