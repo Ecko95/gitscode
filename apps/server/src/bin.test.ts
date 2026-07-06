@@ -30,6 +30,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
+import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
@@ -118,6 +119,13 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
           Layer.provideMerge(SqlitePersistenceLayerLive),
           Layer.provide(ServerSecretStoreLive),
         ),
+      ),
+      Layer.provideMerge(
+        Layer.mock(ServerRuntimeStartup)({
+          awaitCommandReady: Effect.void,
+          markHttpListening: Effect.void,
+          enqueueCommand: (effect) => effect,
+        }),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
       Layer.provideMerge(

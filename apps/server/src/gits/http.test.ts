@@ -219,6 +219,30 @@ it.layer(NodeServices.layer)("gits http routes require authentication", (it) => 
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   );
 
+  it.effect("GET /api/gits/build-info returns 200 with owner session", () =>
+    Effect.gen(function* () {
+      yield* with_app((baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token("owner-a", "owner");
+          const response = yield* get_route(baseUrl, "/api/gits/build-info", bearer);
+          assert.equal(response.status, 200);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("GET /api/gits/build-info rejects thread-scoped sessions with 403", () =>
+    Effect.gen(function* () {
+      yield* with_app((baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token("thread-a", "thread-scoped");
+          const response = yield* get_route(baseUrl, "/api/gits/build-info", bearer);
+          assert.equal(response.status, 403);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
   it.effect("GET /api/gits/skills returns 401 without credentials", () =>
     Effect.gen(function* () {
       yield* with_app((baseUrl) =>

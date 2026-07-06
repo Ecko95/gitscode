@@ -39,6 +39,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { orchestrationDispatchRouteLayer } from "../orchestration/http.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { ServerRuntimeStartup } from "../serverRuntimeStartup.ts";
 import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
 
 import { compute_turn_status, critTurnRouteLayer, critTurnStatusRouteLayer } from "./critHttp.ts";
@@ -286,6 +287,13 @@ const make_app_layer = (config: ServerConfigShape, options: StubOptions) => {
     Layer.provideMerge(make_projection_layer(options.thread ?? Option.none())),
     Layer.provideMerge(make_engine_layer(options.onDispatch)),
     Layer.provideMerge(
+      Layer.mock(ServerRuntimeStartup)({
+        awaitCommandReady: Effect.void,
+        markHttpListening: Effect.void,
+        enqueueCommand: (effect) => effect,
+      }),
+    ),
+    Layer.provideMerge(
       Layer.succeed(ProjectFaviconResolver, { resolvePath: () => Effect.succeed(null) }),
     ),
     Layer.provideMerge(WorkspacePathsLive),
@@ -518,9 +526,9 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
       // The crit sidecar token is minted with role:"thread-scoped" + subject:threadId.
       // The owner-gated orchestration endpoints reject it (its `role !== "owner"`
       // trips `authenticateOwnerSession`), so the broad capability stays
-      // unreachable by the sidecar token. The owner gate surfaces this as a 400
-      // (OrchestrationDispatchCommandError), never a 2xx — the load-bearing
-      // property is that the dispatch is refused, not the exact status code.
+      // unreachable by the sidecar token. The owner gate surfaces this as a 403
+      // (AuthError) — the load-bearing property is that the dispatch is refused,
+      // not the exact status code.
       yield* with_app({ thread: Option.some(make_thread({ id: THREAD_A })) }, (baseUrl, token) =>
         Effect.gen(function* () {
           const bearer = yield* token(THREAD_A, "thread-scoped");
@@ -530,7 +538,7 @@ it.layer(NodeServices.layer)("crit http routes", (it) => {
             `expected the client token to be refused by the owner endpoint, got ${response.status}`,
           );
           assert.notEqual(response.status, 200);
-          assert.equal(response.status, 400);
+          assert.equal(response.status, 403);
         }),
       );
     }).pipe(Effect.provide(FetchHttpClient.layer)),
