@@ -293,6 +293,35 @@ function mapMessageRow(row: ProjectionThreadMessageRow): OrchestrationMessage {
   };
 }
 
+function mapActivityRow(
+  row: Schema.Schema.Type<typeof ProjectionThreadActivityDbRowSchema>,
+): OrchestrationThreadActivity {
+  return {
+    id: row.activityId,
+    tone: row.tone,
+    kind: row.kind,
+    summary: row.summary,
+    payload: row.payload,
+    turnId: row.turnId,
+    ...(row.sequence !== null ? { sequence: row.sequence } : {}),
+    createdAt: row.createdAt,
+  };
+}
+
+function mapCheckpointRow(
+  row: Schema.Schema.Type<typeof ProjectionCheckpointDbRowSchema>,
+): OrchestrationCheckpointSummary {
+  return {
+    turnId: row.turnId,
+    checkpointTurnCount: row.checkpointTurnCount,
+    checkpointRef: row.checkpointRef,
+    status: row.status,
+    files: row.files,
+    assistantMessageId: row.assistantMessageId,
+    completedAt: row.completedAt,
+  };
+}
+
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): ProjectionRepositoryError =>
     Schema.isSchemaError(cause)
@@ -466,7 +495,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
-        ORDER BY thread_id ASC, created_at ASC, message_id ASC
+        -- ponytail: rowid is the persisted proxy for first-seen event order
+        -- until message projections carry event sequence explicitly.
+        ORDER BY thread_id ASC, created_at ASC, rowid ASC
       `,
   });
 
@@ -851,7 +882,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, message_id ASC
+        -- ponytail: rowid is the persisted proxy for first-seen event order
+        -- until message projections carry event sequence explicitly.
+        ORDER BY created_at ASC, rowid ASC
       `,
   });
 
@@ -1357,6 +1390,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listThreadActivityRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadActivities:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadActivities:decodeRows",
+              ),
+            ),
+          ),
+          listCheckpointRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listCheckpoints:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listCheckpoints:decodeRows",
+              ),
+            ),
+          ),
           listThreadSessionRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1391,6 +1440,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             messageRows,
             proposedPlanRows,
             visualPlanRows,
+            activityRows,
+            checkpointRows,
             sessionRows,
             latestTurnRows,
             stateRows,
@@ -1478,6 +1529,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const visualPlansByThread = new Map<string, Array<OrchestrationVisualPlan>>();
               const sessionByThread = new Map<string, OrchestrationSession>();
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
+              const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
+              const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
 
               for (let index = 0; index < sessionRows.length; index += 1) {
                 const row = sessionRows[index];
@@ -1517,6 +1570,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 visualPlansByThread.set(row.threadId, threadVisualPlans);
               }
 
+              for (let index = 0; index < activityRows.length; index += 1) {
+                const row = activityRows[index];
+                if (!row) {
+                  continue;
+                }
+                updatedAt = maxIso(updatedAt, row.createdAt);
+                const threadActivities = activitiesByThread.get(row.threadId) ?? [];
+                threadActivities.push(mapActivityRow(row));
+                activitiesByThread.set(row.threadId, threadActivities);
+              }
+
+              for (let index = 0; index < checkpointRows.length; index += 1) {
+                const row = checkpointRows[index];
+                if (!row) {
+                  continue;
+                }
+                updatedAt = maxIso(updatedAt, row.completedAt);
+                const threadCheckpoints = checkpointsByThread.get(row.threadId) ?? [];
+                threadCheckpoints.push(mapCheckpointRow(row));
+                checkpointsByThread.set(row.threadId, threadCheckpoints);
+              }
+
               for (let index = 0; index < threadRows.length; index += 1) {
                 const row = threadRows[index];
                 if (!row) {
@@ -1544,8 +1619,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   messages: (messagesByThread.get(row.threadId) ?? []).slice(-MAX_THREAD_MESSAGES),
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   visualPlans: visualPlansByThread.get(row.threadId) ?? [],
-                  activities: [],
-                  checkpoints: [],
+                  activities: activitiesByThread.get(row.threadId) ?? [],
+                  checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                   session: sessionByThread.get(row.threadId) ?? null,
                 });
               }

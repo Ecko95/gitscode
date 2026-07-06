@@ -28,7 +28,7 @@ import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
-import { MAX_THREAD_MESSAGES } from "../projector.ts";
+import { MAX_THREAD_MESSAGES, projectEvent } from "../projector.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -1676,6 +1676,339 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepEqual(
         events.map((event) => event.type),
         ["thread.checkpoint-revert-requested"],
+      );
+    }),
+  );
+
+  it.effect(
+    "hydrates command read model checkpoints and activities for restart revert retention",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const projectRepository = yield* ProjectionProjectRepository;
+        const threadRepository = yield* ProjectionThreadRepository;
+        const messageRepository = yield* ProjectionThreadMessageRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-04-09T00:00:00.000Z";
+        const projectId = asProjectId("project-command-revert-retention");
+        const threadId = ThreadId.make("thread-command-revert-retention");
+        const turnOneId = asTurnId("turn-command-revert-retention-1");
+        const turnTwoId = asTurnId("turn-command-revert-retention-2");
+        const keepMessageId = asMessageId("message-command-revert-retention-keep");
+        const dropMessageId = asMessageId("message-command-revert-retention-drop");
+        const modelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        };
+
+        yield* sql`DELETE FROM projection_thread_activities`;
+        yield* sql`DELETE FROM projection_thread_messages`;
+        yield* sql`DELETE FROM projection_thread_proposed_plans`;
+        yield* sql`DELETE FROM projection_thread_visual_plans`;
+        yield* sql`DELETE FROM projection_thread_sessions`;
+        yield* sql`DELETE FROM projection_turns`;
+        yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_projects`;
+        yield* sql`DELETE FROM projection_state`;
+
+        yield* projectRepository.upsert({
+          projectId,
+          title: "Command Revert Retention Project",
+          workspaceRoot: "/tmp/command-revert-retention-project",
+          defaultModelSelection: modelSelection,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        });
+        yield* threadRepository.upsert({
+          threadId,
+          projectId,
+          title: "Command Revert Retention Thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          parentThreadId: null,
+          forkedFromMessageId: null,
+          latestTurnId: turnTwoId,
+          createdAt: now,
+          updatedAt: "2026-04-09T00:00:04.000Z",
+          archivedAt: null,
+          latestUserMessageAt: null,
+          pendingApprovalCount: 0,
+          pendingUserInputCount: 0,
+          hasActionableProposedPlan: 0,
+          deletedAt: null,
+        });
+
+        yield* messageRepository.upsert({
+          messageId: keepMessageId,
+          threadId,
+          turnId: turnOneId,
+          role: "assistant",
+          text: "keep after restart revert",
+          providerMessageId: null,
+          isStreaming: false,
+          createdAt: "2026-04-09T00:00:01.000Z",
+          updatedAt: "2026-04-09T00:00:01.000Z",
+        });
+        yield* messageRepository.upsert({
+          messageId: dropMessageId,
+          threadId,
+          turnId: turnTwoId,
+          role: "assistant",
+          text: "drop after restart revert",
+          providerMessageId: null,
+          isStreaming: false,
+          createdAt: "2026-04-09T00:00:02.000Z",
+          updatedAt: "2026-04-09T00:00:02.000Z",
+        });
+
+        yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES
+          (
+            ${threadId},
+            ${turnOneId},
+            NULL,
+            NULL,
+            NULL,
+            ${keepMessageId},
+            'completed',
+            '2026-04-09T00:00:01.000Z',
+            '2026-04-09T00:00:01.000Z',
+            '2026-04-09T00:00:01.500Z',
+            1,
+            ${asCheckpointRef("refs/t3/checkpoints/restart-retention/turn/1")},
+            'ready',
+            '[]'
+          ),
+          (
+            ${threadId},
+            ${turnTwoId},
+            NULL,
+            NULL,
+            NULL,
+            ${dropMessageId},
+            'completed',
+            '2026-04-09T00:00:02.000Z',
+            '2026-04-09T00:00:02.000Z',
+            '2026-04-09T00:00:02.500Z',
+            2,
+            ${asCheckpointRef("refs/t3/checkpoints/restart-retention/turn/2")},
+            'ready',
+            '[]'
+          )
+      `;
+        yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES
+          (
+            ${asEventId("activity-command-revert-retention-keep")},
+            ${threadId},
+            ${turnOneId},
+            'info',
+            'checkpoint',
+            'keep activity',
+            '{}',
+            1,
+            '2026-04-09T00:00:01.750Z'
+          ),
+          (
+            ${asEventId("activity-command-revert-retention-drop")},
+            ${threadId},
+            ${turnTwoId},
+            'info',
+            'checkpoint',
+            'drop activity',
+            '{}',
+            2,
+            '2026-04-09T00:00:02.750Z'
+          )
+      `;
+
+        const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+        const hydratedThread = commandReadModel.threads.find((entry) => entry.id === threadId);
+        assert.deepEqual(
+          hydratedThread?.checkpoints.map((checkpoint) => String(checkpoint.turnId)),
+          [String(turnOneId), String(turnTwoId)],
+        );
+        assert.deepEqual(
+          hydratedThread?.activities.map((activity) => String(activity.turnId)),
+          [String(turnOneId), String(turnTwoId)],
+        );
+
+        const decision = yield* decideOrchestrationCommand({
+          readModel: commandReadModel,
+          command: {
+            type: "thread.revert.complete",
+            commandId: asCommandId("cmd-command-revert-retention"),
+            threadId,
+            turnCount: 1,
+            createdAt: "2026-04-09T00:00:03.000Z",
+          },
+        });
+        const event = Array.isArray(decision) ? decision[0] : decision;
+        assert.equal(event?.type, "thread.reverted");
+
+        const afterRevert = yield* projectEvent(commandReadModel, event);
+        const retainedThread = afterRevert.threads.find((entry) => entry.id === threadId);
+        assert.deepEqual(
+          retainedThread?.messages.map((message) => String(message.id)),
+          [String(keepMessageId)],
+        );
+        assert.deepEqual(
+          retainedThread?.activities.map((activity) => String(activity.id)),
+          ["activity-command-revert-retention-keep"],
+        );
+        assert.deepEqual(
+          retainedThread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
+          [1],
+        );
+      }),
+  );
+
+  it.effect("keeps same-timestamp message hydration in insertion order", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-04-10T00:00:00.000Z";
+      const projectId = asProjectId("project-command-message-order");
+      const threadId = ThreadId.make("thread-command-message-order");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Command Message Order Project",
+        workspaceRoot: "/tmp/command-message-order-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId,
+        projectId,
+        title: "Command Message Order Thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: now,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          attachments_json,
+          provider_message_id,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES
+          (
+            'message-command-order-b',
+            ${threadId},
+            NULL,
+            'user',
+            'first inserted',
+            NULL,
+            NULL,
+            0,
+            ${now},
+            ${now}
+          ),
+          (
+            'message-command-order-a',
+            ${threadId},
+            NULL,
+            'assistant',
+            'second inserted',
+            NULL,
+            NULL,
+            0,
+            ${now},
+            ${now}
+          )
+      `;
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const commandThread = commandReadModel.threads.find((entry) => entry.id === threadId);
+      assert.deepEqual(
+        commandThread?.messages.map((message) => String(message.id)),
+        ["message-command-order-b", "message-command-order-a"],
+      );
+
+      const fullSnapshot = yield* snapshotQuery.getSnapshot();
+      const snapshotThread = fullSnapshot.threads.find((entry) => entry.id === threadId);
+      assert.deepEqual(
+        snapshotThread?.messages.map((message) => String(message.id)),
+        ["message-command-order-b", "message-command-order-a"],
+      );
+
+      const detail = yield* snapshotQuery.getThreadDetailById(threadId);
+      assert.deepEqual(
+        detail._tag === "Some" ? detail.value.messages.map((message) => String(message.id)) : [],
+        ["message-command-order-b", "message-command-order-a"],
       );
     }),
   );
