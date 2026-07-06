@@ -7,6 +7,7 @@ import { join } from "node:path";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthSessionId,
   CommandId,
   ProjectId,
   type ClientOrchestrationCommand,
@@ -17,6 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import {
   FetchHttpClient,
   HttpClient,
@@ -32,6 +35,7 @@ import {
   type ServerAuthShape,
 } from "../auth/Services/ServerAuth.ts";
 import { ServerConfig, deriveServerPaths, type ServerConfigShape } from "../config.ts";
+import { PersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import {
   makeCommandGate,
   ServerRuntimeStartup,
@@ -75,9 +79,9 @@ const make_test_server_config = (baseDir: string) =>
   });
 
 const ownerSession: AuthenticatedSession = {
-  sessionId: "session-owner",
+  sessionId: AuthSessionId.make("session-owner"),
   subject: "owner",
-  method: "bearer",
+  method: "bearer-session-token",
   role: "owner",
 };
 
@@ -103,15 +107,19 @@ const make_auth_layer = (session: AuthenticatedSession | AuthError) =>
 const emptySnapshot = {
   projects: [],
   threads: [],
-  providers: [],
   snapshotSequence: 0,
+  updatedAt: "2026-07-06T00:00:00.000Z",
 } satisfies OrchestrationReadModel;
 
-const make_snapshot_layer = (snapshotEffect = Effect.succeed(emptySnapshot)) =>
-  Layer.succeed(ProjectionSnapshotQuery, {
+const make_snapshot_layer = (
+  snapshotEffect: Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError> = Effect.succeed(
+    emptySnapshot,
+  ),
+) =>
+  Layer.mock(ProjectionSnapshotQuery)({
     // ponytail: route tests only exercise getSnapshot; the rest are never reached.
     getSnapshot: () => snapshotEffect,
-  } as typeof ProjectionSnapshotQuery.Service);
+  } as any);
 
 const make_workspace_paths_layer = () =>
   Layer.succeed(WorkspacePaths, {
@@ -143,11 +151,11 @@ const make_app_layer = (
     Layer.provideMerge(options.authLayer ?? make_auth_layer(ownerSession)),
     Layer.provideMerge(
       options.engineLayer ??
-        Layer.succeed(OrchestrationEngineService, {
+        Layer.mock(OrchestrationEngineService)({
           dispatch: () => Effect.succeed({ sequence: 1 }),
-          readEvents: () => Effect.die("unused"),
-          streamDomainEvents: Effect.die("unused"),
-        } as typeof OrchestrationEngineService.Service),
+          readEvents: () => Stream.empty,
+          streamDomainEvents: Stream.empty,
+        } as any),
     ),
     Layer.provideMerge(options.snapshotLayer ?? make_snapshot_layer()),
     Layer.provideMerge(
@@ -168,7 +176,7 @@ const make_app_layer = (
 
 const with_app = <A, E>(
   options: Parameters<typeof make_app_layer>[1],
-  run: (baseUrl: string) => Effect.Effect<A, E, HttpClient.HttpClient>,
+  run: (baseUrl: string) => Effect.Effect<A, E, HttpClient.HttpClient | Scope.Scope>,
 ) =>
   Effect.gen(function* () {
     const baseDir = mkdtempSync(join(tmpdir(), "t3-orchestration-http-test-"));
@@ -221,12 +229,12 @@ it.layer(NodeServices.layer)("orchestration http routes", (it) => {
           markHttpListening: Effect.void,
           enqueueCommand: commandGate.enqueueCommand,
         });
-        const engineLayer = Layer.succeed(OrchestrationEngineService, {
+        const engineLayer = Layer.mock(OrchestrationEngineService)({
           dispatch: () =>
             Ref.updateAndGet(dispatchCount, (count) => count + 1).pipe(Effect.as({ sequence: 42 })),
-          readEvents: () => Effect.die("unused"),
-          streamDomainEvents: Effect.die("unused"),
-        } as typeof OrchestrationEngineService.Service);
+          readEvents: () => Stream.empty,
+          streamDomainEvents: Stream.empty,
+        } as any);
 
         yield* with_app({ engineLayer, startupLayer }, (baseUrl) =>
           Effect.gen(function* () {
@@ -267,7 +275,14 @@ it.layer(NodeServices.layer)("orchestration http routes", (it) => {
     Effect.gen(function* () {
       yield* with_app(
         {
-          snapshotLayer: make_snapshot_layer(Effect.fail({ message: "database unavailable" })),
+          snapshotLayer: make_snapshot_layer(
+            Effect.fail(
+              new PersistenceSqlError({
+                operation: "test.getSnapshot",
+                detail: "database unavailable",
+              }),
+            ),
+          ),
         },
         (baseUrl) =>
           Effect.gen(function* () {

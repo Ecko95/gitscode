@@ -39,6 +39,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { orchestrationDispatchRouteLayer } from "../orchestration/http.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { ServerRuntimeStartup } from "../serverRuntimeStartup.ts";
 import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
 
 import { compute_turn_status, critTurnRouteLayer, critTurnStatusRouteLayer } from "./critHttp.ts";
@@ -285,6 +286,13 @@ const make_app_layer = (config: ServerConfigShape, options: StubOptions) => {
     Layer.provideMerge(authLayer),
     Layer.provideMerge(make_projection_layer(options.thread ?? Option.none())),
     Layer.provideMerge(make_engine_layer(options.onDispatch)),
+    Layer.provideMerge(
+      Layer.mock(ServerRuntimeStartup)({
+        awaitCommandReady: Effect.void,
+        markHttpListening: Effect.void,
+        enqueueCommand: (effect) => effect,
+      }),
+    ),
     Layer.provideMerge(
       Layer.succeed(ProjectFaviconResolver, { resolvePath: () => Effect.succeed(null) }),
     ),
