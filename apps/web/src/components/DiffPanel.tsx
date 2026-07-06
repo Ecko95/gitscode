@@ -7,6 +7,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
+  MessageSquarePlusIcon,
   PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
@@ -26,6 +27,8 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { useComposerHandleContext } from "../composerHandleContext";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
@@ -34,6 +37,13 @@ import {
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
+import {
+  appendDiffLineReferenceToPrompt,
+  buildDiffLineComposerReference,
+  resolveDiffLineFilePath,
+  resolveDiffLineSnippet,
+  type DiffLineSide,
+} from "../lib/diffLineComposerReference";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
@@ -120,6 +130,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
+  const composerHandleRef = useComposerHandleContext();
+  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -315,6 +328,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       return next;
     });
   }, []);
+  const appendDiffLineReference = useCallback(
+    (fileDiff: (typeof renderableFiles)[number], side: DiffLineSide, lineNumber: number) => {
+      if (!activeThread) return;
+      const composerTarget = scopeThreadRef(activeThread.environmentId, activeThread.id);
+      const reference = buildDiffLineComposerReference({
+        filePath: resolveDiffLineFilePath(fileDiff, side),
+        lineNumber,
+        snippet: resolveDiffLineSnippet(fileDiff, side, lineNumber),
+      });
+      const existingPrompt = getComposerDraft(composerTarget)?.prompt ?? "";
+      setComposerDraftPrompt(
+        composerTarget,
+        appendDiffLineReferenceToPrompt(existingPrompt, reference),
+      );
+      window.requestAnimationFrame(() => composerHandleRef?.current?.focusAtEnd());
+    },
+    [activeThread, composerHandleRef, getComposerDraft, setComposerDraftPrompt],
+  );
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -630,9 +661,32 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                             )}
                           </button>
                         )}
+                        renderGutterUtility={(getHoveredLine) => (
+                          <button
+                            type="button"
+                            data-utility-button=""
+                            className="inline-flex size-5 cursor-pointer items-center justify-center rounded-sm border-0 bg-primary p-0 text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label="Ask agent about this line"
+                            title="Ask agent about this line"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const hoveredLine = getHoveredLine();
+                              if (!hoveredLine) return;
+                              appendDiffLineReference(
+                                fileDiff,
+                                hoveredLine.side as DiffLineSide,
+                                hoveredLine.lineNumber,
+                              );
+                            }}
+                          >
+                            <MessageSquarePlusIcon className="size-3" />
+                          </button>
+                        )}
                         options={{
                           collapsed,
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                          enableGutterUtility: true,
                           lineDiffType: "none",
                           overflow: diffWordWrap ? "wrap" : "scroll",
                           theme: resolveDiffThemeName(resolvedTheme),
