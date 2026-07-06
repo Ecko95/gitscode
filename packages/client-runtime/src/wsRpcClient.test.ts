@@ -33,6 +33,7 @@ const baseRemoteStatus: VcsStatusRemoteResult = {
   aheadCount: 0,
   behindCount: 0,
   pr: null,
+  prChecks: null,
 };
 
 describe("createWsRpcClient", () => {
@@ -133,6 +134,7 @@ describe("createWsRpcClient", () => {
           behindCount: 0,
           aheadOfDefaultCount: 0,
           pr: null,
+          prChecks: null,
         },
       ],
       [
