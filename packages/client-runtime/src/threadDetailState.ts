@@ -243,13 +243,26 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     evictIdleEntriesToCapacity();
   }
 
+  // Sequence floor per target: the server publishes events after commit, so a
+  // subscribe racing a commit legitimately redelivers events already contained
+  // in the snapshot. Event application is not idempotent (streaming deltas
+  // append), so replaying one duplicates message text. Same guard as the web
+  // app's lastDetailSnapshotSequence.
+  const snapshotFloorByKey = new Map<string, number>();
+
   function applyStreamItem(
     targetKey: string,
     item: OrchestrationThreadStreamItem,
     threadId: ThreadIdType,
   ): void {
     if (item.kind === "snapshot") {
+      snapshotFloorByKey.set(targetKey, item.snapshot.snapshotSequence);
       setData(targetKey, item.snapshot.thread);
+      return;
+    }
+
+    const floor = snapshotFloorByKey.get(targetKey);
+    if (floor !== undefined && item.event.sequence <= floor) {
       return;
     }
 
@@ -286,14 +299,59 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     target: { readonly environmentId: EnvironmentId; readonly threadId: ThreadIdType },
     client: ThreadDetailClient,
   ): () => void {
-    markPending(targetKey);
-    return client.subscribeThread(
-      { threadId: target.threadId },
-      (item) => applyStreamItem(targetKey, item, target.threadId),
-      {
-        onResubscribe: () => markPending(targetKey),
-      },
-    );
+    // The server terminates slow-subscriber streams (buffer overflow) and
+    // expects the client to resubscribe for a fresh snapshot. Without this
+    // onEnd handling the entry freezes forever after one overflow.
+    let disposed = false;
+    let unsub = NOOP;
+    let retryFiber: Fiber.Fiber<void> | null = null;
+    // ponytail: capped exponential backoff so a permanently-failing thread
+    // (e.g. deleted) retries at 30s, not in a tight loop.
+    let retryDelayMs = 1_000;
+
+    const start = () => {
+      markPending(targetKey);
+      unsub = client.subscribeThread(
+        { threadId: target.threadId },
+        (item) => {
+          retryDelayMs = 1_000;
+          applyStreamItem(targetKey, item, target.threadId);
+        },
+        {
+          onResubscribe: () => markPending(targetKey),
+          onEnd: () => {
+            if (disposed) {
+              return;
+            }
+            const delay = retryDelayMs;
+            retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
+            retryFiber = Effect.runFork(
+              Effect.sleep(Duration.millis(delay)).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    retryFiber = null;
+                    if (!disposed) {
+                      start();
+                    }
+                  }),
+                ),
+              ),
+            );
+          },
+        },
+      );
+    };
+
+    start();
+    return () => {
+      disposed = true;
+      if (retryFiber !== null) {
+        Effect.runFork(Fiber.interrupt(retryFiber));
+        retryFiber = null;
+      }
+      snapshotFloorByKey.delete(targetKey);
+      unsub();
+    };
   }
 
   function createDynamicSubscription(

@@ -6,6 +6,9 @@ import type {
   ServerLifecycleWelcomePayload,
   TerminalEvent,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import type { KnownEnvironment } from "./knownEnvironment.ts";
 import type { WsRpcClient } from "./wsRpcClient.ts";
@@ -165,31 +168,72 @@ export function createEnvironmentConnection(
       })
     : () => undefined;
 
-  const unsubShell = input.client.orchestration.subscribeShell(
-    (item) => {
-      if (disposed) {
-        return;
-      }
+  // The server terminates slow-subscriber shell streams (buffer overflow) and
+  // expects a fresh subscribe; without onEnd handling the shell state freezes
+  // permanently. Resubscribe with capped exponential backoff.
+  let shellUnsub: () => void = () => undefined;
+  let shellRetryFiber: Fiber.Fiber<void> | null = null;
+  let shellRetryDelayMs = 1_000;
 
-      if (item.kind === "snapshot") {
-        input.syncShellSnapshot(item.snapshot, environmentId);
-        bootstrapGate.resolve();
-        return;
-      }
-
-      input.applyShellEvent(item, environmentId);
-    },
-    {
-      onResubscribe: () => {
+  const startShellSubscription = () => {
+    shellUnsub = input.client.orchestration.subscribeShell(
+      (item) => {
         if (disposed) {
           return;
         }
 
-        bootstrapGate.reset();
-        input.onShellResubscribe?.(environmentId);
+        shellRetryDelayMs = 1_000;
+        if (item.kind === "snapshot") {
+          input.syncShellSnapshot(item.snapshot, environmentId);
+          bootstrapGate.resolve();
+          return;
+        }
+
+        input.applyShellEvent(item, environmentId);
       },
-    },
-  );
+      {
+        onResubscribe: () => {
+          if (disposed) {
+            return;
+          }
+
+          bootstrapGate.reset();
+          input.onShellResubscribe?.(environmentId);
+        },
+        onEnd: () => {
+          if (disposed) {
+            return;
+          }
+
+          const delay = shellRetryDelayMs;
+          shellRetryDelayMs = Math.min(shellRetryDelayMs * 2, 30_000);
+          shellRetryFiber = Effect.runFork(
+            Effect.sleep(Duration.millis(delay)).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  shellRetryFiber = null;
+                  if (!disposed) {
+                    bootstrapGate.reset();
+                    input.onShellResubscribe?.(environmentId);
+                    startShellSubscription();
+                  }
+                }),
+              ),
+            ),
+          );
+        },
+      },
+    );
+  };
+
+  startShellSubscription();
+  const unsubShell = () => {
+    if (shellRetryFiber !== null) {
+      Effect.runFork(Fiber.interrupt(shellRetryFiber));
+      shellRetryFiber = null;
+    }
+    shellUnsub();
+  };
 
   const unsubTerminalEvent = input.applyTerminalEvent
     ? input.client.terminal.onEvent((event) => {
