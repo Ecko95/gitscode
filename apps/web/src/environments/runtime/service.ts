@@ -99,9 +99,14 @@ type ThreadDetailSubscriptionEntry = {
   // ponytail: tracks the snapshotSequence from the most recent detail snapshot so
   // stale events replayed after a resubscribe are discarded (W3.1).
   lastDetailSnapshotSequence: number;
+  // ponytail: legacy web cache keeps its own detail stream gate until it is
+  // migrated to the shared runtime manager.
+  lastAppliedDetailSequence: number;
   // W4.4b: true while a server-failure-triggered resubscribe is in progress;
   // gates further incoming events so a burst can't loop into a refetch storm.
   gapRefetchPending: boolean;
+  resubscribeTimeoutId: ReturnType<typeof setTimeout> | null;
+  resubscribeRetryDelayMs: number;
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
@@ -156,6 +161,8 @@ let lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
 const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
 const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
 const BROWSER_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
+const THREAD_DETAIL_RESUBSCRIBE_INITIAL_BACKOFF_MS = 1_000;
+const THREAD_DETAIL_RESUBSCRIBE_MAX_BACKOFF_MS = 30_000;
 const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS = 150;
 const NOOP = () => undefined;
 const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
@@ -374,6 +381,13 @@ function shouldEvictThreadDetailSubscription(entry: ThreadDetailSubscriptionEntr
   return entry.refCount === 0 && !isNonIdleThreadDetailSubscription(entry);
 }
 
+function clearThreadDetailSubscriptionRetry(entry: ThreadDetailSubscriptionEntry): void {
+  if (entry.resubscribeTimeoutId !== null) {
+    clearTimeout(entry.resubscribeTimeoutId);
+    entry.resubscribeTimeoutId = null;
+  }
+}
+
 function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): boolean {
   if (entry.unsubscribeConnectionListener !== null) {
     entry.unsubscribeConnectionListener();
@@ -388,15 +402,19 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
     return false;
   }
 
+  clearThreadDetailSubscriptionRetry(entry);
   // Reset sequence gate on each (re)subscribe so the fresh snapshot's sequence
   // becomes the new floor — events with sequence ≤ that value are stale (W3.1).
   entry.lastDetailSnapshotSequence = -1;
+  entry.lastAppliedDetailSequence = -1;
 
   entry.unsubscribe = connection.client.orchestration.subscribeThread(
     { threadId: entry.threadId },
     (item) => {
       if (item.kind === "snapshot") {
         entry.lastDetailSnapshotSequence = item.snapshot.snapshotSequence;
+        entry.lastAppliedDetailSequence = item.snapshot.snapshotSequence;
+        entry.resubscribeRetryDelayMs = THREAD_DETAIL_RESUBSCRIBE_INITIAL_BACKOFF_MS;
         // W4.4b: gate resets once fresh snapshot arrives.
         entry.gapRefetchPending = false;
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId);
@@ -411,15 +429,37 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
       if (entry.gapRefetchPending) {
         return;
       }
+      if (
+        entry.lastAppliedDetailSequence >= 0 &&
+        item.event.sequence > entry.lastAppliedDetailSequence + 1
+      ) {
+        entry.gapRefetchPending = true;
+        entry.unsubscribe();
+        entry.unsubscribe = NOOP;
+        attachThreadDetailSubscription(entry);
+        return;
+      }
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
+      entry.lastAppliedDetailSequence = item.event.sequence;
     },
     {
       // W4.4b: on server-side subscription failure (e.g. buffer overflow), resubscribe
       // to get a fresh snapshot. gapRefetchPending gates until the snapshot arrives.
       onEnd: () => {
+        if (entry.resubscribeTimeoutId !== null) {
+          return;
+        }
         entry.gapRefetchPending = true;
         entry.unsubscribe = NOOP;
-        attachThreadDetailSubscription(entry);
+        const delayMs = entry.resubscribeRetryDelayMs;
+        entry.resubscribeRetryDelayMs = Math.min(
+          entry.resubscribeRetryDelayMs * 2,
+          THREAD_DETAIL_RESUBSCRIBE_MAX_BACKOFF_MS,
+        );
+        entry.resubscribeTimeoutId = setTimeout(() => {
+          entry.resubscribeTimeoutId = null;
+          attachThreadDetailSubscription(entry);
+        }, delayMs);
       },
     },
   );
@@ -446,6 +486,7 @@ function disposeThreadDetailSubscriptionByKey(key: string): boolean {
   }
 
   clearThreadDetailSubscriptionEviction(entry);
+  clearThreadDetailSubscriptionRetry(entry);
   entry.unsubscribeConnectionListener?.();
   entry.unsubscribeConnectionListener = null;
   threadDetailSubscriptions.delete(key);
@@ -467,6 +508,7 @@ function detachThreadDetailSubscriptionsForEnvironment(environmentId: Environmen
     if (entry.environmentId !== environmentId) {
       continue;
     }
+    clearThreadDetailSubscriptionRetry(entry);
     entry.unsubscribe();
     entry.unsubscribe = NOOP;
     watchThreadDetailSubscriptionConnection(entry);
@@ -607,7 +649,10 @@ export function retainThreadDetailSubscription(
     lastAccessedAt: Date.now(),
     evictionTimeoutId: null,
     lastDetailSnapshotSequence: -1,
+    lastAppliedDetailSequence: -1,
     gapRefetchPending: false,
+    resubscribeTimeoutId: null,
+    resubscribeRetryDelayMs: THREAD_DETAIL_RESUBSCRIBE_INITIAL_BACKOFF_MS,
   };
   threadDetailSubscriptions.set(key, entry);
   if (!attachThreadDetailSubscription(entry)) {
