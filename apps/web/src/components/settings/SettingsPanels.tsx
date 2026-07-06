@@ -12,7 +12,10 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED,
+  DEFAULT_UNIFIED_SETTINGS,
+} from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
@@ -429,6 +432,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.critReviewEnabled !== DEFAULT_UNIFIED_SETTINGS.critReviewEnabled
         ? ["Crit PR review"]
         : []),
+      ...((settings.desktopNotificationsEnabled ?? DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED) !==
+      DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED
+        ? ["Desktop notifications"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
     ],
     [
@@ -437,6 +444,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.critReviewEnabled,
+      settings.desktopNotificationsEnabled,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffIgnoreWhitespace,
@@ -473,6 +481,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       critReviewEnabled: DEFAULT_UNIFIED_SETTINGS.critReviewEnabled,
+      desktopNotificationsEnabled: DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
@@ -519,6 +528,39 @@ export function GeneralSettingsPanel() {
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  );
+  const handleDesktopNotificationsCheckedChange = useCallback(
+    async (checked: boolean) => {
+      if (!checked) {
+        await updateSettings({ desktopNotificationsEnabled: false });
+        return;
+      }
+
+      if (!("Notification" in window)) {
+        toastManager.add({
+          type: "warning",
+          title: "Desktop notifications unavailable",
+          description: "This browser does not support desktop notifications.",
+        });
+        return;
+      }
+
+      let permission = Notification.permission;
+      if (permission === "default") {
+        permission = await Notification.requestPermission();
+      }
+      if (permission !== "granted") {
+        toastManager.add({
+          type: "warning",
+          title: "Desktop notifications blocked",
+          description: "Allow notifications in your browser to enable this setting.",
+        });
+        return;
+      }
+
+      await updateSettings({ desktopNotificationsEnabled: true });
+    },
+    [updateSettings],
   );
 
   return (
@@ -596,6 +638,33 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Desktop notifications"
+          description="Notify when another thread completes a turn or needs your attention."
+          resetAction={
+            (settings.desktopNotificationsEnabled ?? DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED) !==
+            DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED ? (
+              <SettingResetButton
+                label="desktop notifications"
+                onClick={() =>
+                  updateSettings({
+                    desktopNotificationsEnabled: DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.desktopNotificationsEnabled === true}
+              onCheckedChange={(checked) =>
+                void handleDesktopNotificationsCheckedChange(Boolean(checked))
+              }
+              aria-label="Enable desktop notifications"
+            />
           }
         />
 
