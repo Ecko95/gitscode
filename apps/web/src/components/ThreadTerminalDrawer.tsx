@@ -85,6 +85,75 @@ function fitTerminalSafely(fitAddon: FitAddon): boolean {
   }
 }
 
+function attachTerminalRendererAddon(terminal: Terminal): { dispose: () => void } {
+  let rendererAddon: { dispose: () => void } | null = null;
+  let contextLossDisposable: { dispose: () => void } | null = null;
+  let disposed = false;
+
+  const disposeRendererAddon = () => {
+    disposed = true;
+    contextLossDisposable?.dispose();
+    contextLossDisposable = null;
+    rendererAddon?.dispose();
+    rendererAddon = null;
+  };
+
+  const detachActiveRendererAddon = () => {
+    contextLossDisposable?.dispose();
+    contextLossDisposable = null;
+    rendererAddon?.dispose();
+    rendererAddon = null;
+  };
+
+  const attachCanvasAddon = async () => {
+    detachActiveRendererAddon();
+    try {
+      // ponytail: lazy import avoids evaluating xterm renderer UMD bundles in node tests.
+      const { CanvasAddon } = await import("@xterm/addon-canvas");
+      const canvasAddon = new CanvasAddon();
+      if (disposed) {
+        canvasAddon.dispose();
+        return;
+      }
+      try {
+        terminal.loadAddon(canvasAddon);
+        rendererAddon = canvasAddon;
+      } catch {
+        canvasAddon.dispose();
+        rendererAddon = null;
+      }
+    } catch {
+      rendererAddon = null;
+    }
+  };
+
+  void (async () => {
+    try {
+      // ponytail: keep renderer addon loading local until this terminal surface needs sharing.
+      const { WebglAddon } = await import("@xterm/addon-webgl");
+      const webglAddon = new WebglAddon();
+      if (disposed) {
+        webglAddon.dispose();
+        return;
+      }
+      try {
+        terminal.loadAddon(webglAddon);
+        rendererAddon = webglAddon;
+        contextLossDisposable = webglAddon.onContextLoss(() => {
+          void attachCanvasAddon();
+        });
+      } catch {
+        webglAddon.dispose();
+        void attachCanvasAddon();
+      }
+    } catch {
+      void attachCanvasAddon();
+    }
+  })();
+
+  return { dispose: disposeRendererAddon };
+}
+
 function runtimeEnvSignature(runtimeEnv: Record<string, string> | undefined): string {
   if (!runtimeEnv) return "";
   return JSON.stringify(
@@ -334,6 +403,7 @@ export function TerminalViewport({
       theme: terminalThemeFromApp(mount),
     });
     terminal.loadAddon(fitAddon);
+    const rendererAddon = attachTerminalRendererAddon(terminal);
     terminal.open(mount);
     fitTerminalSafely(fitAddon);
 
@@ -723,6 +793,7 @@ export function TerminalViewport({
       themeObserver.disconnect();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      rendererAddon.dispose();
       terminal.dispose();
     };
     // autoFocus is intentionally omitted;

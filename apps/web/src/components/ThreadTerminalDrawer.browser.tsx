@@ -10,6 +10,11 @@ const {
   terminalDisposeSpy,
   fitAddonFitSpy,
   fitAddonLoadSpy,
+  canvasAddonDisposeSpy,
+  webglAddonDisposeSpy,
+  webglContextLossDisposeSpy,
+  webglContextLossListeners,
+  rendererMockState,
   environmentApiById,
   readEnvironmentApiMock,
   readLocalApiMock,
@@ -18,6 +23,14 @@ const {
   terminalDisposeSpy: vi.fn(),
   fitAddonFitSpy: vi.fn(),
   fitAddonLoadSpy: vi.fn(),
+  canvasAddonDisposeSpy: vi.fn(),
+  webglAddonDisposeSpy: vi.fn(),
+  webglContextLossDisposeSpy: vi.fn(),
+  webglContextLossListeners: [] as Array<() => void>,
+  rendererMockState: {
+    failCanvasLoad: false,
+    failWebglLoad: false,
+  },
   environmentApiById: new Map<
     string,
     {
@@ -43,9 +56,28 @@ const {
   })),
 }));
 
+vi.mock("@xterm/addon-canvas", () => ({
+  CanvasAddon: class MockCanvasAddon {
+    readonly __mockRenderer = "canvas";
+    dispose = canvasAddonDisposeSpy;
+  },
+}));
+
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
     fit = fitAddonFitSpy;
+  },
+}));
+
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: class MockWebglAddon {
+    readonly __mockRenderer = "webgl";
+    dispose = webglAddonDisposeSpy;
+
+    onContextLoss(listener: () => void) {
+      webglContextLossListeners.push(listener);
+      return { dispose: webglContextLossDisposeSpy };
+    }
   },
 }));
 
@@ -68,6 +100,24 @@ vi.mock("@xterm/xterm", () => ({
 
     loadAddon(addon: unknown) {
       fitAddonLoadSpy(addon);
+      if (
+        typeof addon === "object" &&
+        addon !== null &&
+        "__mockRenderer" in addon &&
+        addon.__mockRenderer === "webgl" &&
+        rendererMockState.failWebglLoad
+      ) {
+        throw new Error("WebGL unavailable");
+      }
+      if (
+        typeof addon === "object" &&
+        addon !== null &&
+        "__mockRenderer" in addon &&
+        addon.__mockRenderer === "canvas" &&
+        rendererMockState.failCanvasLoad
+      ) {
+        throw new Error("Canvas unavailable");
+      }
     }
 
     open() {}
@@ -246,6 +296,12 @@ describe("TerminalViewport", () => {
     terminalDisposeSpy.mockClear();
     fitAddonFitSpy.mockClear();
     fitAddonLoadSpy.mockClear();
+    canvasAddonDisposeSpy.mockClear();
+    webglAddonDisposeSpy.mockClear();
+    webglContextLossDisposeSpy.mockClear();
+    webglContextLossListeners.length = 0;
+    rendererMockState.failCanvasLoad = false;
+    rendererMockState.failWebglLoad = false;
   });
 
   it("does not create a terminal when APIs are unavailable", async () => {
@@ -304,6 +360,126 @@ describe("TerminalViewport", () => {
     } finally {
       await mounted.cleanup();
     }
+  });
+
+  it("loads the WebGL renderer addon when available", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.attach).toHaveBeenCalledTimes(1);
+      });
+      await vi.waitFor(() => {
+        expect(fitAddonLoadSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ __mockRenderer: "webgl" }),
+        );
+      });
+      expect(fitAddonLoadSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ __mockRenderer: "canvas" }),
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to the canvas renderer when WebGL is unavailable", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    rendererMockState.failWebglLoad = true;
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.attach).toHaveBeenCalledTimes(1);
+      });
+      await vi.waitFor(() => {
+        expect(fitAddonLoadSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ __mockRenderer: "webgl" }),
+        );
+        expect(fitAddonLoadSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ __mockRenderer: "canvas" }),
+        );
+      });
+      expect(webglAddonDisposeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to the canvas renderer when the WebGL context is lost", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(webglContextLossListeners).toHaveLength(1);
+      });
+      webglContextLossListeners[0]?.();
+      await vi.waitFor(() => {
+        expect(webglContextLossDisposeSpy).toHaveBeenCalledTimes(1);
+        expect(webglAddonDisposeSpy).toHaveBeenCalledTimes(1);
+        expect(fitAddonLoadSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ __mockRenderer: "canvas" }),
+        );
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the default DOM renderer when WebGL and canvas are unavailable", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    rendererMockState.failWebglLoad = true;
+    rendererMockState.failCanvasLoad = true;
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.attach).toHaveBeenCalledTimes(1);
+      });
+      await vi.waitFor(() => {
+        expect(webglAddonDisposeSpy).toHaveBeenCalledTimes(1);
+        expect(canvasAddonDisposeSpy).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disposes renderer addons when the terminal unmounts", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    await vi.waitFor(() => {
+      expect(environment.terminal.attach).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(webglContextLossListeners).toHaveLength(1);
+    });
+    await mounted.cleanup();
+
+    expect(webglContextLossDisposeSpy).toHaveBeenCalledTimes(1);
+    expect(webglAddonDisposeSpy).toHaveBeenCalledTimes(1);
   });
 
   it("reattaches the terminal when the scoped thread reference changes", async () => {
