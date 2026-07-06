@@ -186,6 +186,27 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
 }
 
+export async function updateSettings(patch: Partial<UnifiedSettings>): Promise<void> {
+  const { serverPatch, clientPatch } = splitPatch(patch);
+
+  if (Object.keys(serverPatch).length > 0) {
+    const currentServerConfig = getServerConfig();
+    if (currentServerConfig) {
+      applySettingsUpdated(applyServerSettingsPatch(currentServerConfig.settings, serverPatch));
+    }
+    // Fire-and-forget RPC — push will reconcile on success
+    void ensureLocalApi().server.updateSettings(serverPatch);
+  }
+
+  if (Object.keys(clientPatch).length > 0) {
+    await hydrateClientSettings();
+    persistClientSettings({
+      ...getClientSettingsSnapshot(),
+      ...clientPatch,
+    });
+  }
+}
+
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
@@ -193,32 +214,14 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
  * persisted via RPC. Client keys go through client persistence.
  */
 export function useUpdateSettings() {
-  const updateSettings = useCallback((patch: Partial<UnifiedSettings>) => {
-    const { serverPatch, clientPatch } = splitPatch(patch);
-
-    if (Object.keys(serverPatch).length > 0) {
-      const currentServerConfig = getServerConfig();
-      if (currentServerConfig) {
-        applySettingsUpdated(applyServerSettingsPatch(currentServerConfig.settings, serverPatch));
-      }
-      // Fire-and-forget RPC — push will reconcile on success
-      void ensureLocalApi().server.updateSettings(serverPatch);
-    }
-
-    if (Object.keys(clientPatch).length > 0) {
-      persistClientSettings({
-        ...getClientSettingsSnapshot(),
-        ...clientPatch,
-      });
-    }
-  }, []);
+  const updateSettingsCallback = useCallback(updateSettings, []);
 
   const resetSettings = useCallback(() => {
-    updateSettings(DEFAULT_UNIFIED_SETTINGS);
-  }, [updateSettings]);
+    void updateSettingsCallback(DEFAULT_UNIFIED_SETTINGS);
+  }, [updateSettingsCallback]);
 
   return {
-    updateSettings,
+    updateSettings: updateSettingsCallback,
     resetSettings,
   };
 }
