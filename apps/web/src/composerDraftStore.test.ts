@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import {
   defaultInstanceIdForDriver,
   EnvironmentId,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -127,6 +128,7 @@ function resetComposerDraftStore() {
   useComposerDraftStore.setState({
     draftsByThreadKey: {},
     draftThreadsByThreadKey: {},
+    queuedMessagesByThreadKey: {},
     logicalProjectDraftThreadKeyByLogicalProjectKey: {},
     stickyModelSelectionByProvider: {},
     stickyActiveProvider: null,
@@ -288,6 +290,110 @@ describe("composerDraftStore clearComposerContent", () => {
   });
 });
 
+describe("composerDraftStore queued messages", () => {
+  const threadId = ThreadId.make("thread-queue");
+  const otherThreadId = ThreadId.make("thread-queue-other");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const otherThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, otherThreadId);
+  const threadKey = scopedThreadKey(threadRef);
+  const otherThreadKey = scopedThreadKey(otherThreadRef);
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("stores queued messages FIFO and scoped by thread", () => {
+    const first = {
+      id: MessageId.make("message-1"),
+      text: "first",
+      rawPrompt: "first",
+      titleSeed: "first",
+      createdAt: "2026-07-06T10:00:00.000Z",
+      attachments: [],
+      modelSelection: modelSelection(CODEX_DRIVER, "gpt-5"),
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    };
+    const second = {
+      ...first,
+      id: MessageId.make("message-2"),
+      text: "second",
+      rawPrompt: "second",
+      titleSeed: "second",
+    };
+    const other = {
+      ...first,
+      id: MessageId.make("message-3"),
+      text: "other",
+      rawPrompt: "other",
+      titleSeed: "other",
+    };
+
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedMessage(threadRef, first);
+    store.enqueueQueuedMessage(threadRef, second);
+    store.enqueueQueuedMessage(otherThreadRef, other);
+    store.removeQueuedMessage(threadRef, first.id);
+
+    expect(
+      useComposerDraftStore.getState().queuedMessagesByThreadKey[threadKey]?.map((m) => m.text),
+    ).toEqual(["second"]);
+    expect(
+      useComposerDraftStore
+        .getState()
+        .queuedMessagesByThreadKey[otherThreadKey]?.map((m) => m.text),
+    ).toEqual(["other"]);
+  });
+
+  it("persists and hydrates queued messages", () => {
+    const message = {
+      id: MessageId.make("message-persist"),
+      text: "persisted",
+      rawPrompt: "persisted",
+      titleSeed: "persisted",
+      createdAt: "2026-07-06T10:00:00.000Z",
+      attachments: [
+        {
+          id: "image-queued",
+          name: "queued.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+      modelSelection: modelSelection(CODEX_DRIVER, "gpt-5"),
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    };
+    useComposerDraftStore.getState().enqueueQueuedMessage(threadRef, message);
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      queuedMessagesByThreadKey?: Record<string, unknown[]>;
+    };
+    const mergedState = persistApi
+      .getOptions()
+      .merge(persistedState, useComposerDraftStore.getInitialState());
+
+    expect(persistedState.queuedMessagesByThreadKey?.[threadKey]?.[0]).toMatchObject({
+      text: "persisted",
+      attachments: [{ id: "image-queued" }],
+    });
+    expect(mergedState.queuedMessagesByThreadKey[threadKey]?.[0]).toMatchObject({
+      text: "persisted",
+      attachments: [{ id: "image-queued" }],
+    });
+  });
+});
+
 describe("composerDraftStore syncPersistedAttachments", () => {
   const threadId = ThreadId.make("thread-sync-persisted");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
@@ -297,6 +403,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
     useComposerDraftStore.setState({
       draftsByThreadKey: {},
       draftThreadsByThreadKey: {},
+      queuedMessagesByThreadKey: {},
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
@@ -352,6 +459,7 @@ describe("composerDraftStore terminal contexts", () => {
     useComposerDraftStore.setState({
       draftsByThreadKey: {},
       draftThreadsByThreadKey: {},
+      queuedMessagesByThreadKey: {},
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
