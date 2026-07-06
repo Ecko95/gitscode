@@ -166,6 +166,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
+  getVisibleThreadsForProject,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -205,12 +206,12 @@ import {
 } from "../sidebarProjectGrouping";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
-  updated_at: "Last user message",
+  updated_at: "Last activity",
   created_at: "Created at",
   manual: "Manual",
 };
 const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
-  updated_at: "Last user message",
+  updated_at: "Last activity",
   created_at: "Created at",
 };
 const SIDEBAR_LIST_ANIMATION_OPTIONS = {
@@ -1245,11 +1246,23 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
-    const previewThreads =
-      isThreadListExpanded || !hasOverflowingThreads
-        ? visibleProjectThreads
-        : visibleProjectThreads.slice(0, sidebarThreadPreviewCount);
+    const activeThreadId = activeRouteThreadKey
+      ? visibleProjectThreads.find(
+          (thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+            activeRouteThreadKey,
+        )?.id
+      : undefined;
+    const {
+      hasHiddenThreads: hasOverflowingThreads,
+      hiddenThreads,
+      visibleThreads: previewThreads,
+    } = getVisibleThreadsForProject({
+      threads: visibleProjectThreads,
+      activeThreadId,
+      isThreadListExpanded,
+      previewLimit: sidebarThreadPreviewCount,
+    });
     const visibleThreadKeys = new Set(
       [...previewThreads, ...(pinnedCollapsedThread ? [pinnedCollapsedThread] : [])].map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -1260,10 +1273,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       : visibleProjectThreads.filter((thread) =>
           visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
         );
-    const hiddenThreads = visibleProjectThreads.filter(
-      (thread) =>
-        !visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    );
     return {
       hasOverflowingThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
@@ -1278,6 +1287,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
+    activeRouteThreadKey,
     sidebarThreadPreviewCount,
     threadLastVisitedAts,
     visibleProjectThreads,
@@ -1686,6 +1696,23 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     ],
   );
 
+  const attemptArchiveThread = useCallback(
+    async (threadRef: ScopedThreadRef) => {
+      try {
+        await archiveThread(threadRef);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to archive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [archiveThread],
+  );
+
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -1697,6 +1724,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const clicked = await api.contextMenu.show(
         [
           { id: "mark-unread", label: `Mark unread (${count})` },
+          { id: "archive", label: `Archive (${count})` },
           { id: "delete", label: `Delete (${count})`, destructive: true },
         ],
         position,
@@ -1708,6 +1736,22 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           markThreadUnread(threadKey, thread?.latestTurn?.completedAt);
         }
         clearSelection();
+        return;
+      }
+
+      if (clicked === "archive") {
+        if (appSettingsConfirmThreadArchive) {
+          const confirmed = await api.dialogs.confirm(
+            `Archive ${count} thread${count === 1 ? "" : "s"}?`,
+          );
+          if (!confirmed) return;
+        }
+        for (const threadKey of threadKeys) {
+          const thread = sidebarThreadByKeyRef.current.get(threadKey);
+          if (!thread) continue;
+          await attemptArchiveThread(scopeThreadRef(thread.environmentId, thread.id));
+        }
+        removeFromSelection(threadKeys);
         return;
       }
 
@@ -1734,7 +1778,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       removeFromSelection(threadKeys);
     },
     [
+      appSettingsConfirmThreadArchive,
       appSettingsConfirmThreadDelete,
+      attemptArchiveThread,
       clearSelection,
       deleteThread,
       markThreadUnread,
@@ -1833,23 +1879,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       })();
     },
     [createThreadForProjectMember, project.groupedProjectCount, project.memberProjects],
-  );
-
-  const attemptArchiveThread = useCallback(
-    async (threadRef: ScopedThreadRef) => {
-      try {
-        await archiveThread(threadRef);
-      } catch (error) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to archive thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    },
-    [archiveThread],
   );
 
   const beginRename = useCallback((threadKey: string, currentTitle: string) => {
@@ -2010,10 +2039,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
+      const isThreadRunning =
+        thread.session?.status === "running" && thread.session.activeTurnId != null;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "archive", label: "Archive", disabled: isThreadRunning },
           { id: "open-terminal", label: "Open in terminal", disabled: !threadWorkspacePath },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2029,6 +2061,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        return;
+      }
+      if (clicked === "archive") {
+        if (appSettingsConfirmThreadArchive) {
+          const confirmed = await api.dialogs.confirm(`Archive thread "${thread.title}"?`);
+          if (!confirmed) return;
+        }
+        await attemptArchiveThread(threadRef);
         return;
       }
       if (clicked === "open-terminal") {
@@ -2070,7 +2110,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       await deleteThread(threadRef);
     },
     [
+      appSettingsConfirmThreadArchive,
       appSettingsConfirmThreadDelete,
+      attemptArchiveThread,
       beginRename,
       copyPathToClipboard,
       copyThreadIdToClipboard,
@@ -3345,11 +3387,19 @@ export default function Sidebar() {
           return [];
         }
         const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
-        const previewThreads =
-          isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, sidebarThreadPreviewCount);
+        const activeThreadId = activeThreadKey
+          ? projectThreads.find(
+              (thread) =>
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                activeThreadKey,
+            )?.id
+          : undefined;
+        const { visibleThreads: previewThreads } = getVisibleThreadsForProject({
+          threads: projectThreads,
+          activeThreadId,
+          isThreadListExpanded,
+          previewLimit: sidebarThreadPreviewCount,
+        });
         const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
         return renderedThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),

@@ -4,6 +4,7 @@ import type { Thread } from "../types";
 
 export type ThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
   latestUserMessageAt?: string | null;
+  latestTurn?: Pick<NonNullable<Thread["latestTurn"]>, "completedAt"> | null;
   messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
 };
 
@@ -24,9 +25,9 @@ function getFirstSortableTimestamp(...values: Array<string | null | undefined>):
   return null;
 }
 
-function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
+function getLatestUserMessageTimestamp(thread: ThreadSortInput): number | null {
   if (thread.latestUserMessageAt) {
-    return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
+    return toSortableTimestamp(thread.latestUserMessageAt);
   }
 
   let latestUserMessageTimestamp: number | null = null;
@@ -41,11 +42,23 @@ function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
         : Math.max(latestUserMessageTimestamp, messageTimestamp);
   }
 
-  if (latestUserMessageTimestamp !== null) {
-    return latestUserMessageTimestamp;
-  }
+  return latestUserMessageTimestamp;
+}
 
-  return getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+function getLatestActivityTimestamp(thread: ThreadSortInput): number {
+  const latestUserMessageTimestamp = getLatestUserMessageTimestamp(thread);
+  const latestTurnCompletedTimestamp = toSortableTimestamp(
+    thread.latestTurn?.completedAt ?? undefined,
+  );
+  if (latestUserMessageTimestamp !== null && latestTurnCompletedTimestamp !== null) {
+    return Math.max(latestUserMessageTimestamp, latestTurnCompletedTimestamp);
+  }
+  return (
+    latestUserMessageTimestamp ??
+    latestTurnCompletedTimestamp ??
+    getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ??
+    Number.NEGATIVE_INFINITY
+  );
 }
 
 export function getThreadSortTimestamp(
@@ -57,7 +70,7 @@ export function getThreadSortTimestamp(
       getFirstSortableTimestamp(thread.createdAt, thread.updatedAt) ?? Number.NEGATIVE_INFINITY
     );
   }
-  return getLatestUserMessageTimestamp(thread);
+  return getLatestActivityTimestamp(thread);
 }
 
 export function sortThreads<T extends Pick<Thread, "id"> & ThreadSortInput>(

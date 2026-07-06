@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { getLatestThreadForProject, sortThreads } from "./threadSort";
@@ -112,6 +113,43 @@ describe("sortThreads", () => {
     expect(sorted.map((thread) => thread.id)).toEqual([
       ThreadId.make("thread-2"),
       ThreadId.make("thread-1"),
+    ]);
+  });
+
+  it("uses latest turn completion as activity when no newer user message exists", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: ThreadId.make("thread-1"),
+          latestTurn: {
+            turnId: TurnId.make("turn-1"),
+            state: "completed",
+            requestedAt: "2026-03-09T10:00:00.000Z",
+            startedAt: "2026-03-09T10:01:00.000Z",
+            completedAt: "2026-03-09T10:20:00.000Z",
+            assistantMessageId: null,
+          },
+        }),
+        makeThread({
+          id: ThreadId.make("thread-2"),
+          messages: [
+            {
+              id: "message-2" as never,
+              role: "user",
+              text: "older user activity",
+              createdAt: "2026-03-09T10:15:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:15:00.000Z",
+            },
+          ],
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-1"),
+      ThreadId.make("thread-2"),
     ]);
   });
 
