@@ -126,6 +126,7 @@ import {
   gitsBuildInfoRouteLayer,
   gitsMcpInventoryRouteLayer,
   gitsSkillInventoryRouteLayer,
+  gitsUsageRouteLayer,
 } from "./gits/http.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
 import { VisualPlanMcpServiceLive } from "./gits/mcp/VisualPlanMcpRegistry.ts";
@@ -486,6 +487,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   gitsBuildInfoRouteLayer,
   gitsSkillInventoryRouteLayer,
   gitsMcpInventoryRouteLayer,
+  gitsUsageRouteLayer,
   visualPlanMcpRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
