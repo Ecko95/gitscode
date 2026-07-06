@@ -4,6 +4,7 @@ import {
   type OrchestrationEvent,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -84,6 +85,19 @@ interface AttachmentSideEffects {
   readonly deletedThreadIds: Set<string>;
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
 }
+
+const POST_COMMIT_ATTACHMENT_DRAIN_ATTEMPTS = 100;
+const POST_COMMIT_ATTACHMENT_DRAIN_INITIAL_DELAY_MS = 100;
+const POST_COMMIT_ATTACHMENT_DRAIN_RETRY_MS = 10;
+
+function hasAttachmentSideEffects(sideEffects: AttachmentSideEffects): boolean {
+  return sideEffects.deletedThreadIds.size > 0 || sideEffects.prunedThreadRelativePaths.size > 0;
+}
+
+const realSleep = (milliseconds: number) =>
+  // Real event-loop timer so detached cleanup can run independently of Effect test clocks.
+  // @effect-diagnostics-next-line globalTimers:off
+  Effect.promise<void>(() => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
   (input: { readonly attachments: ReadonlyArray<ChatAttachment> }) =>
@@ -1047,7 +1061,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
-          if (turnId === null || event.payload.session.status !== "running") {
+          if (turnId === null) {
+            return;
+          }
+          const failedWithoutAssistantOutput =
+            event.payload.session.status === "error" || event.payload.session.lastError !== null;
+          if (event.payload.session.status !== "running" && !failedWithoutAssistantOutput) {
             return;
           }
 
@@ -1060,9 +1079,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           if (Option.isSome(existingTurn)) {
             const nextState =
-              existingTurn.value.state === "completed" || existingTurn.value.state === "error"
+              existingTurn.value.state === "completed" ||
+              existingTurn.value.state === "interrupted" ||
+              existingTurn.value.state === "error"
                 ? existingTurn.value.state
-                : "running";
+                : failedWithoutAssistantOutput
+                  ? "error"
+                  : "running";
+            const completedAt =
+              nextState === "error"
+                ? (existingTurn.value.completedAt ?? event.payload.session.updatedAt)
+                : existingTurn.value.completedAt;
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
               state: nextState,
@@ -1089,6 +1116,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 (Option.isSome(pendingTurnStart)
                   ? pendingTurnStart.value.requestedAt
                   : event.occurredAt),
+              completedAt,
             });
           } else {
             yield* projectionTurnRepository.upsertByTurnId({
@@ -1104,14 +1132,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 ? pendingTurnStart.value.sourceProposedPlanId
                 : null,
               assistantMessageId: null,
-              state: "running",
+              state: failedWithoutAssistantOutput ? "error" : "running",
               requestedAt: Option.isSome(pendingTurnStart)
                 ? pendingTurnStart.value.requestedAt
                 : event.occurredAt,
               startedAt: Option.isSome(pendingTurnStart)
                 ? pendingTurnStart.value.requestedAt
                 : event.occurredAt,
-              completedAt: null,
+              completedAt: failedWithoutAssistantOutput ? event.payload.session.updatedAt : null,
               checkpointTurnCount: null,
               checkpointRef: null,
               checkpointStatus: null,
@@ -1455,6 +1483,98 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       },
     ];
 
+    const isProjectionCommitVisible = Effect.fn("isProjectionCommitVisible")(function* (
+      projector: ProjectorDefinition,
+      event: OrchestrationEvent,
+    ) {
+      const eventRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS "count"
+        FROM orchestration_events
+        WHERE sequence = ${event.sequence}
+          AND event_id = ${event.eventId}
+      `;
+      if ((eventRows[0]?.count ?? 0) === 0) {
+        return false;
+      }
+
+      const stateRows = yield* sql<{ readonly lastAppliedSequence: number | null }>`
+        SELECT last_applied_sequence AS "lastAppliedSequence"
+        FROM projection_state
+        WHERE projector = ${projector.name}
+      `;
+      return (stateRows[0]?.lastAppliedSequence ?? -1) >= event.sequence;
+    });
+
+    const runCommittedAttachmentSideEffects = Effect.fn("runCommittedAttachmentSideEffects")(
+      function* (
+        projector: ProjectorDefinition,
+        event: OrchestrationEvent,
+        attachmentSideEffects: AttachmentSideEffects,
+      ) {
+        yield* realSleep(POST_COMMIT_ATTACHMENT_DRAIN_INITIAL_DELAY_MS);
+        for (let attempt = 0; attempt < POST_COMMIT_ATTACHMENT_DRAIN_ATTEMPTS; attempt += 1) {
+          const committed = yield* isProjectionCommitVisible(projector, event).pipe(
+            Effect.catch(() => Effect.succeed(false)),
+          );
+          if (committed) {
+            yield* runAttachmentSideEffects(attachmentSideEffects).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to apply projected attachment side-effects", {
+                  projector: projector.name,
+                  sequence: event.sequence,
+                  eventType: event.type,
+                  cause,
+                }),
+              ),
+            );
+            return;
+          }
+          yield* realSleep(POST_COMMIT_ATTACHMENT_DRAIN_RETRY_MS);
+        }
+
+        yield* Effect.logWarning("skipping projected attachment side-effects before commit", {
+          projector: projector.name,
+          sequence: event.sequence,
+          eventId: event.eventId,
+          eventType: event.type,
+        });
+      },
+    );
+
+    const drainAttachmentSideEffects = Effect.fn("drainAttachmentSideEffects")(function* (
+      projector: ProjectorDefinition,
+      event: OrchestrationEvent,
+      attachmentSideEffects: AttachmentSideEffects,
+    ) {
+      if (!hasAttachmentSideEffects(attachmentSideEffects)) {
+        return;
+      }
+
+      const activeTransaction = yield* Effect.serviceOption(sql.transactionService);
+      if (Option.isNone(activeTransaction)) {
+        yield* runAttachmentSideEffects(attachmentSideEffects).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to apply projected attachment side-effects", {
+              projector: projector.name,
+              sequence: event.sequence,
+              eventType: event.type,
+              cause,
+            }),
+          ),
+        );
+        return;
+      }
+
+      // ponytail: bounded in-memory deferral; process crash before drain can leave stale files.
+      const services = yield* Effect.context();
+      const detachedServices = Context.omit(sql.transactionService)(services);
+      yield* runCommittedAttachmentSideEffects(projector, event, attachmentSideEffects).pipe(
+        Effect.provideContext(detachedServices),
+        Effect.forkDetach({ startImmediately: true }),
+        Effect.asVoid,
+      );
+    });
+
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
       projector: ProjectorDefinition,
       event: OrchestrationEvent,
@@ -1476,16 +1596,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         ),
       );
 
-      yield* runAttachmentSideEffects(attachmentSideEffects).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("failed to apply projected attachment side-effects", {
-            projector: projector.name,
-            sequence: event.sequence,
-            eventType: event.type,
-            cause,
-          }),
-        ),
-      );
+      yield* drainAttachmentSideEffects(projector, event, attachmentSideEffects);
     });
 
     const bootstrapProjector = (projector: ProjectorDefinition) =>
