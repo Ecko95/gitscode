@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
+  ChangeRequestChecks,
   ChangeRequestState,
   SourceControlProviderError,
   SourceControlProviderInfo,
@@ -64,6 +65,11 @@ export interface SourceControlProviderShape {
     readonly context?: SourceControlProviderContext;
     readonly reference: string;
   }) => Effect.Effect<ChangeRequest, SourceControlProviderError>;
+  readonly getChangeRequestChecks: (input: {
+    readonly cwd: string;
+    readonly context?: SourceControlProviderContext;
+    readonly reference: string;
+  }) => Effect.Effect<ChangeRequestChecks | null, SourceControlProviderError>;
   readonly createChangeRequest: (input: {
     readonly cwd: string;
     readonly context?: SourceControlProviderContext;

@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsStatusRemoteResult,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeVcsStatusRemoteResult = Schema.decodeUnknownSync(VcsStatusRemoteResult);
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -58,6 +60,39 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+});
+
+describe("VcsStatusRemoteResult", () => {
+  it("decodes optional pull request checks", () => {
+    const parsed = decodeVcsStatusRemoteResult({
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: {
+        number: 42,
+        title: "Checks pane",
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+        baseRef: "main",
+        headRef: "feature/checks-pane",
+        state: "open",
+      },
+      prChecks: {
+        summary: {
+          passed: 1,
+          failed: 0,
+          pending: 1,
+        },
+        checks: [
+          { name: "lint", state: "passed", detailUrl: null },
+          { name: "test", state: "pending" },
+        ],
+        mergeable: "unknown",
+      },
+    });
+
+    expect(parsed.prChecks?.summary.pending).toBe(1);
+    expect(parsed.prChecks?.checks).toHaveLength(2);
   });
 });
 

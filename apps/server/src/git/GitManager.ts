@@ -753,22 +753,26 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       return null;
     }
 
-    const pr =
+    const latestPr =
       details.branch !== null
         ? yield* findLatestPr(cwd, {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
-          }).pipe(
-            Effect.map((latest) => {
-              if (!latest) return null;
-              // On the default branch, only surface open PRs.
-              // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
-              if (details.isDefaultBranch && latest.state !== "open") return null;
-              return toStatusPr(latest);
-            }),
-            Effect.catch(() => Effect.succeed(null)),
-          )
+          }).pipe(Effect.catch(() => Effect.succeed(null)))
         : null;
+    const pr =
+      latestPr === null || (details.isDefaultBranch && latestPr.state !== "open")
+        ? null
+        : toStatusPr(latestPr);
+    const prChecks =
+      pr === null
+        ? null
+        : yield* (yield* sourceControlProvider(cwd))
+            .getChangeRequestChecks({
+              cwd,
+              reference: String(pr.number),
+            })
+            .pipe(Effect.catch(() => Effect.succeed(null)));
 
     return {
       hasUpstream: details.hasUpstream,
@@ -776,6 +780,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       behindCount: details.behindCount,
       aheadOfDefaultCount: details.aheadOfDefaultCount,
       pr,
+      prChecks,
     } satisfies VcsStatusRemoteResult;
   });
   const remoteStatusResultCache = yield* Cache.makeWith(readRemoteStatus, {

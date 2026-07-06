@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
@@ -35,6 +35,36 @@ export const ChangeRequest = Schema.Struct({
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
+
+export const ChangeRequestCheckState = Schema.Literals([
+  "passed",
+  "failed",
+  "pending",
+  "skipped",
+  "unknown",
+]);
+export type ChangeRequestCheckState = typeof ChangeRequestCheckState.Type;
+
+export const ChangeRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
+export type ChangeRequestMergeability = typeof ChangeRequestMergeability.Type;
+
+export const ChangeRequestChecks = Schema.Struct({
+  summary: Schema.Struct({
+    passed: NonNegativeInt,
+    failed: NonNegativeInt,
+    pending: NonNegativeInt,
+  }),
+  checks: Schema.Array(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      state: ChangeRequestCheckState,
+      detailUrl: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  mergeable: Schema.optional(Schema.NullOr(ChangeRequestMergeability)),
+  unresolvedReviewThreads: Schema.optional(NonNegativeInt),
+});
+export type ChangeRequestChecks = typeof ChangeRequestChecks.Type;
 
 export const SourceControlRepositoryCloneUrls = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,

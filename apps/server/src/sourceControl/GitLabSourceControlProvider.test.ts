@@ -76,6 +76,19 @@ it.effect("lists GitLab MRs through provider-neutral input names", () =>
   }),
 );
 
+it.effect("returns null for provider-neutral change request checks", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({});
+
+    const checks = yield* provider.getChangeRequestChecks({
+      cwd: "/repo",
+      reference: "42",
+    });
+
+    assert.strictEqual(checks, null);
+  }),
+);
+
 it.effect("creates GitLab MRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput: Parameters<GitLabCli.GitLabCliShape["createMergeRequest"]>[0] | null = null;

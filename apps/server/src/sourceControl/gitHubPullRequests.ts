@@ -4,7 +4,13 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  PositiveInt,
+  TrimmedNonEmptyString,
+  type ChangeRequestCheckState,
+  type ChangeRequestChecks,
+  type ChangeRequestMergeability,
+} from "@t3tools/contracts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 
 export interface NormalizedGitHubPullRequestRecord {
@@ -44,6 +50,23 @@ const GitHubPullRequestSchema = Schema.Struct({
       }),
     ),
   ),
+});
+
+const GitHubPullRequestChecksSchema = Schema.Struct({
+  mergeable: Schema.optional(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+});
+
+const GitHubStatusCheckRollupEntrySchema = Schema.Struct({
+  __typename: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  workflowName: Schema.optional(Schema.NullOr(Schema.String)),
+  context: Schema.optional(Schema.NullOr(Schema.String)),
+  status: Schema.optional(Schema.NullOr(Schema.String)),
+  conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  detailsUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  targetUrl: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 function trimOptionalString(value: string | null | undefined): string | null {
@@ -96,7 +119,11 @@ function normalizeGitHubPullRequestRecord(
 
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequest = decodeJsonResult(GitHubPullRequestSchema);
+const decodeGitHubPullRequestChecks = decodeJsonResult(GitHubPullRequestChecksSchema);
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
+const decodeGitHubStatusCheckRollupEntry = Schema.decodeUnknownExit(
+  GitHubStatusCheckRollupEntrySchema,
+);
 
 export const formatGitHubJsonDecodeError = formatSchemaError;
 
@@ -129,4 +156,83 @@ export function decodeGitHubPullRequestJson(
     return Result.succeed(normalizeGitHubPullRequestRecord(result.success));
   }
   return Result.fail(result.failure);
+}
+
+function normalizeMergeability(value: string | null | undefined): ChangeRequestMergeability | null {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === "MERGEABLE") return "mergeable";
+  if (normalized === "CONFLICTING") return "conflicting";
+  if (normalized === "UNKNOWN") return "unknown";
+  return null;
+}
+
+function normalizeCheckState(input: {
+  readonly state?: string | null | undefined;
+  readonly status?: string | null | undefined;
+  readonly conclusion?: string | null | undefined;
+}): ChangeRequestCheckState {
+  const state = input.state?.trim().toUpperCase();
+  if (state === "SUCCESS") return "passed";
+  if (state === "FAILURE" || state === "ERROR") return "failed";
+  if (state === "PENDING" || state === "EXPECTED") return "pending";
+
+  const conclusion = input.conclusion?.trim().toUpperCase();
+  if (conclusion === "SUCCESS") return "passed";
+  if (
+    conclusion === "FAILURE" ||
+    conclusion === "TIMED_OUT" ||
+    conclusion === "CANCELLED" ||
+    conclusion === "ACTION_REQUIRED" ||
+    conclusion === "STARTUP_FAILURE"
+  ) {
+    return "failed";
+  }
+  if (conclusion === "SKIPPED" || conclusion === "NEUTRAL") return "skipped";
+
+  const status = input.status?.trim().toUpperCase();
+  if (status === "QUEUED" || status === "IN_PROGRESS" || status === "WAITING") {
+    return "pending";
+  }
+  if (status === "COMPLETED") return "unknown";
+  return "unknown";
+}
+
+export function decodeGitHubPullRequestChecksJson(
+  raw: string,
+): Result.Result<ChangeRequestChecks, Cause.Cause<Schema.SchemaError>> {
+  const result = decodeGitHubPullRequestChecks(raw);
+  if (Result.isFailure(result)) {
+    return Result.fail(result.failure);
+  }
+
+  const checks: Array<ChangeRequestChecks["checks"][number]> = [];
+  for (const entry of result.success.statusCheckRollup ?? []) {
+    const decodedEntry = decodeGitHubStatusCheckRollupEntry(entry);
+    if (Exit.isFailure(decodedEntry)) {
+      continue;
+    }
+    const rawEntry = decodedEntry.value;
+    const name =
+      trimOptionalString(rawEntry.name) ??
+      trimOptionalString(rawEntry.context) ??
+      trimOptionalString(rawEntry.workflowName);
+    if (!name) {
+      continue;
+    }
+    checks.push({
+      name,
+      state: normalizeCheckState(rawEntry),
+      detailUrl: trimOptionalString(rawEntry.detailsUrl) ?? trimOptionalString(rawEntry.targetUrl),
+    });
+  }
+
+  return Result.succeed({
+    summary: {
+      passed: checks.filter((check) => check.state === "passed").length,
+      failed: checks.filter((check) => check.state === "failed").length,
+      pending: checks.filter((check) => check.state === "pending").length,
+    },
+    checks,
+    mergeable: normalizeMergeability(result.success.mergeable),
+  });
 }
