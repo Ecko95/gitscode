@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
@@ -22,6 +23,7 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
+  type OrchestrationThread,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
@@ -56,7 +58,10 @@ import { Keybindings } from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   observeRpcEffect,
   observeRpcStream,
@@ -197,6 +202,18 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 //   - Slow clients degrade to snapshot-cycling; nobody silently goes stale.
 // ponytail: 512 covers ~1s of burst at typical shell/thread event rates.
 const WS_PUSH_SUBSCRIBER_BUFFER = 512;
+const GIT_ACTION_STREAM_BUFFER = WS_PUSH_SUBSCRIBER_BUFFER;
+// ponytail: sliding drops oldest PTY bytes for slow consumers; terminal manager keeps scrollback.
+export const TERMINAL_STREAM_BUFFER = 512;
+
+export function terminalCallbackStream<A, E = never, R = never>(
+  register: (queue: Queue.Queue<A, E | Cause.Done>) => Effect.Effect<unknown, E, R | Scope.Scope>,
+): Stream.Stream<A, E, Exclude<R, Scope.Scope>> {
+  return Stream.callback<A, E, R>(register, {
+    bufferSize: TERMINAL_STREAM_BUFFER,
+    strategy: "sliding",
+  });
+}
 
 /**
  * bufferOrTerminate — drop-in for `Stream.buffer({ dropping })` with fail-on-overflow.
@@ -234,6 +251,44 @@ function bufferOrTerminate<A, E, R>(
       ),
     { bufferSize: capacity, strategy: "dropping" },
   );
+}
+
+export function readThreadDetailSnapshot(
+  threadId: ThreadId,
+  projectionSnapshotQuery: Pick<
+    ProjectionSnapshotQueryShape,
+    "getSnapshotSequence" | "getThreadDetailById"
+  >,
+): Effect.Effect<
+  {
+    readonly snapshotSequence: number;
+    readonly threadDetail: Option.Option<OrchestrationThread>;
+  },
+  OrchestrationGetSnapshotError
+> {
+  return Effect.gen(function* () {
+    const snapshotSequence = yield* projectionSnapshotQuery.getSnapshotSequence().pipe(
+      Effect.map(({ snapshotSequence }) => snapshotSequence),
+      Effect.mapError(
+        (cause) =>
+          new OrchestrationGetSnapshotError({
+            message: "Failed to load orchestration snapshot sequence",
+            cause,
+          }),
+      ),
+    );
+    const threadDetail = yield* projectionSnapshotQuery.getThreadDetailById(threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestrationGetSnapshotError({
+            message: `Failed to load thread ${threadId}`,
+            cause,
+          }),
+      ),
+    );
+
+    return { snapshotSequence, threadDetail };
+  });
 }
 
 function toAuthAccessStreamEvent(
@@ -1024,27 +1079,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const [threadDetail, snapshotSequence] = yield* Effect.all([
-                projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: `Failed to load thread ${input.threadId}`,
-                        cause,
-                      }),
-                  ),
-                ),
-                projectionSnapshotQuery.getSnapshotSequence().pipe(
-                  Effect.map(({ snapshotSequence }) => snapshotSequence),
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: "Failed to load orchestration snapshot sequence",
-                        cause,
-                      }),
-                  ),
-                ),
-              ]);
+              const { threadDetail, snapshotSequence } = yield* readThreadDetailSnapshot(
+                input.threadId,
+                projectionSnapshotQuery,
+              );
 
               if (Option.isNone(threadDetail)) {
                 return yield* new OrchestrationGetSnapshotError({
@@ -1329,23 +1367,25 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.gitRunStackedAction]: (input) =>
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
-            Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
-                  }),
-                ),
+            Stream.callback<GitActionProgressEvent, GitManagerServiceError>(
+              (queue) =>
+                gitWorkflow
+                  .runStackedAction(input, {
+                    actionId: input.actionId,
+                    progressReporter: {
+                      publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                    },
+                  })
+                  .pipe(
+                    Effect.matchCauseEffect({
+                      onFailure: (cause) => Queue.failCause(queue, cause),
+                      onSuccess: () =>
+                        refreshGitStatus(input.cwd).pipe(
+                          Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                        ),
+                    }),
+                  ),
+              { bufferSize: GIT_ACTION_STREAM_BUFFER, strategy: "dropping" },
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -1750,7 +1790,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.terminalAttach]: (input) =>
           observeRpcStream(
             WS_METHODS.terminalAttach,
-            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+            terminalCallbackStream<TerminalAttachStreamEvent, TerminalError>((queue) =>
               Effect.acquireRelease(
                 terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
                 (unsubscribe) => Effect.sync(unsubscribe),
@@ -1781,7 +1821,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,
-            Stream.callback<TerminalEvent>((queue) =>
+            terminalCallbackStream<TerminalEvent>((queue) =>
               Effect.acquireRelease(
                 terminalManager.subscribe((event) => Queue.offer(queue, event)),
                 (unsubscribe) => Effect.sync(unsubscribe),
@@ -1792,7 +1832,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalMetadata,
-            Stream.callback<TerminalMetadataStreamEvent>((queue) =>
+            terminalCallbackStream<TerminalMetadataStreamEvent>((queue) =>
               Effect.acquireRelease(
                 terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
                 (unsubscribe) => Effect.sync(unsubscribe),
