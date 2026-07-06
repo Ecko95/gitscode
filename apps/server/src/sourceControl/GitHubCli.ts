@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 
 import {
+  type ChangeRequestChecks,
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
   type VcsError,
@@ -61,6 +62,11 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly reference: string;
   }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+
+  readonly getPullRequestChecks: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<ChangeRequestChecks, GitHubCliError>;
 
   readonly getRepositoryCloneUrls: (input: {
     readonly cwd: string;
@@ -211,7 +217,11 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 function decodeGitHubJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "listOpenPullRequests" | "getPullRequest" | "getRepositoryCloneUrls",
+  operation:
+    | "listOpenPullRequests"
+    | "getPullRequest"
+    | "getPullRequestChecks"
+    | "getRepositoryCloneUrls",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -309,6 +319,30 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
               return Effect.succeed(
                 (({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success),
               );
+            }),
+          ),
+        ),
+      ),
+    getPullRequestChecks: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "view", input.reference, "--json", "statusCheckRollup,mergeable"],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          Effect.sync(() => GitHubPullRequests.decodeGitHubPullRequestChecksJson(raw)).pipe(
+            Effect.flatMap((decoded) => {
+              if (!Result.isSuccess(decoded)) {
+                return Effect.fail(
+                  new GitHubCliError({
+                    operation: "getPullRequestChecks",
+                    detail: `GitHub CLI returned invalid pull request checks JSON: ${GitHubPullRequests.formatGitHubJsonDecodeError(decoded.failure)}`,
+                    cause: decoded.failure,
+                  }),
+                );
+              }
+
+              return Effect.succeed(decoded.success);
             }),
           ),
         ),

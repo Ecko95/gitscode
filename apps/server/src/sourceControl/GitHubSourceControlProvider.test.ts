@@ -113,6 +113,38 @@ it.effect("uses gh json listing for non-open change request state queries", () =
   }),
 );
 
+it.effect("maps GitHub PR checks into provider-neutral checks", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      getPullRequestChecks: () =>
+        Effect.succeed({
+          summary: { passed: 2, failed: 1, pending: 0 },
+          checks: [
+            { name: "lint", state: "passed", detailUrl: null },
+            { name: "test", state: "failed", detailUrl: "https://github.com/checks/2" },
+            { name: "types", state: "passed", detailUrl: null },
+          ],
+          mergeable: "mergeable",
+        }),
+    });
+
+    const checks = yield* provider.getChangeRequestChecks({
+      cwd: "/repo",
+      reference: "42",
+    });
+
+    assert.deepStrictEqual(checks, {
+      summary: { passed: 2, failed: 1, pending: 0 },
+      checks: [
+        { name: "lint", state: "passed", detailUrl: null },
+        { name: "test", state: "failed", detailUrl: "https://github.com/checks/2" },
+        { name: "types", state: "passed", detailUrl: null },
+      ],
+      mergeable: "mergeable",
+    });
+  }),
+);
+
 it.effect("treats empty non-open change request listing output as no results", () =>
   Effect.gen(function* () {
     const provider = yield* makeProvider({
