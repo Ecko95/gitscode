@@ -26,6 +26,7 @@ import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 
 import * as ProcessRunner from "../../processRunner.ts";
+import { sessionPortEnv } from "../../provider/sessionPort.ts";
 import type { TerminalManagerShape } from "../Services/Manager.ts";
 import {
   type PtyAdapterShape,
@@ -1226,6 +1227,23 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+    }),
+  );
+
+  it.effect("injects deterministic GITS_PORT into spawned terminals", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(
+        openInput({
+          threadId: "thread-terminal-port",
+          env: { GITS_PORT: "9999" },
+        }),
+      );
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      assert.equal(spawnInput.env.GITS_PORT, sessionPortEnv("thread-terminal-port").GITS_PORT);
     }),
   );
 

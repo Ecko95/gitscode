@@ -48,6 +48,7 @@ import {
   type PtyExitEvent,
   type PtyProcess,
 } from "../Services/PTY.ts";
+import { sessionPortEnv } from "../../provider/sessionPort.ts";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
@@ -1632,7 +1633,10 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           Effect.andThen(
             Effect.gen(function* () {
               const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
-              const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+              const portEnv = sessionPortEnv(session.threadId);
+              const terminalRuntimeEnv =
+                session.runtimeEnv === null ? portEnv : { ...session.runtimeEnv, ...portEnv };
+              const terminalEnv = createTerminalSpawnEnv(baseEnv, terminalRuntimeEnv);
               const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
               ptyProcess = spawnResult.process;
               startedShell = spawnResult.shellLabel;

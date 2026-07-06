@@ -27,6 +27,7 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
+import { sessionPortEnv } from "../sessionPort.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
@@ -73,6 +74,18 @@ printf '%s\t' "$@" >> ${JSON.stringify(argvLogPath)}
 printf '\n' >> ${JSON.stringify(argvLogPath)}
 export T3_ACP_REQUEST_LOG_PATH=${JSON.stringify(requestLogPath)}
 ${envExports}
+exec ${JSON.stringify(bunExe)} ${JSON.stringify(mockAgentPath)} "$@"
+`;
+  await writeFile(wrapperPath, script, "utf8");
+  await chmod(wrapperPath, 0o755);
+  return wrapperPath;
+}
+
+async function makeEnvProbeWrapper(envLogPath: string) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cursor-acp-env-probe-"));
+  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const script = `#!/bin/sh
+printf '%s\n' "\${GITS_PORT:-}" > ${JSON.stringify(envLogPath)}
 exec ${JSON.stringify(bunExe)} ${JSON.stringify(mockAgentPath)} "$@"
 `;
   await writeFile(wrapperPath, script, "utf8");
@@ -227,6 +240,32 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         ]);
       }
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("injects GITS_PORT into spawned ACP process env", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-gits-port-thread");
+      const tempDir = yield* Effect.promise(() =>
+        mkdtemp(path.join(os.tmpdir(), "cursor-gits-port-")),
+      );
+      const envLogPath = path.join(tempDir, "env.log");
+
+      const wrapperPath = yield* Effect.promise(() => makeEnvProbeWrapper(envLogPath));
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const raw = yield* Effect.promise(() => waitForFileContent(envLogPath));
+      assert.equal(raw.trim(), sessionPortEnv(threadId).GITS_PORT);
       yield* adapter.stopSession(threadId);
     }),
   );

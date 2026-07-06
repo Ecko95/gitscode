@@ -81,6 +81,7 @@ import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
+import { sessionPortEnv } from "../sessionPort.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -559,14 +560,16 @@ export function makeCursorAdapter(
           if (options?.gitShimManager && Object.keys(cursorShimEnv).length > 0) {
             yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
           }
-          const cursorSessionEnv: NodeJS.ProcessEnv | undefined =
-            options?.environment != null || Object.keys(cursorShimEnv).length > 0
-              ? { ...(options?.environment ?? {}), ...cursorShimEnv }
-              : undefined;
+          const cursorSessionEnv: NodeJS.ProcessEnv = Object.assign(
+            {},
+            options?.environment,
+            sessionPortEnv(input.threadId),
+            cursorShimEnv,
+          );
 
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
-            ...(cursorSessionEnv != null ? { environment: cursorSessionEnv } : {}),
+            environment: cursorSessionEnv,
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),

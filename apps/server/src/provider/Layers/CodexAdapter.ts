@@ -67,6 +67,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
+import { sessionPortEnv } from "../sessionPort.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -1440,10 +1441,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         if (options?.gitShimManager && Object.keys(shimEnv).length > 0) {
           yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
         }
-        const sessionEnv: NodeJS.ProcessEnv | undefined =
-          options?.environment != null || Object.keys(shimEnv).length > 0
-            ? { ...(options?.environment ?? {}), ...shimEnv }
-            : undefined;
+        const sessionEnv: NodeJS.ProcessEnv = Object.assign(
+          {},
+          options?.environment,
+          sessionPortEnv(input.threadId),
+          shimEnv,
+        );
 
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
@@ -1451,7 +1454,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           cwd: sessionCwd,
           binaryPath: codexConfig.binaryPath,
           visualPlanMcpUrl: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
-          ...(sessionEnv != null ? { environment: sessionEnv } : {}),
+          environment: sessionEnv,
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
