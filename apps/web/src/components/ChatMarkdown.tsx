@@ -1,4 +1,11 @@
-import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
+import {
+  DiffsHighlighter,
+  FileRenderer,
+  getSharedHighlighter,
+  SupportedLanguages,
+  type FileContents,
+} from "@pierre/diffs";
+import { useWorkerPool } from "@pierre/diffs/react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import React, {
@@ -35,6 +42,11 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import {
+  createStreamingMarkdownBlockCache,
+  getStreamingMarkdownBlocks,
+  type StreamingMarkdownBlockCache,
+} from "./ChatMarkdown.streaming";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -74,6 +86,21 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+const STREAMING_CODE_FILE_NAME_BY_LANGUAGE: Record<string, string> = {
+  javascript: "snippet.js",
+  typescript: "snippet.ts",
+  tsx: "snippet.tsx",
+  jsx: "snippet.jsx",
+  json: "snippet.json",
+  shell: "snippet.sh",
+  bash: "snippet.sh",
+  sh: "snippet.sh",
+  python: "snippet.py",
+  py: "snippet.py",
+  rust: "snippet.rs",
+  go: "snippet.go",
+  text: "snippet.txt",
+};
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -123,6 +150,19 @@ function createHighlightCacheKey(code: string, language: string, themeName: Diff
 
 function estimateHighlightedSize(html: string, code: string): number {
   return Math.max(html.length * 2, code.length * 3);
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+}
+
+function createStreamingCodeFile(code: string, language: string, cacheKey: string): FileContents {
+  return {
+    name: STREAMING_CODE_FILE_NAME_BY_LANGUAGE[language] ?? `snippet.${language}`,
+    contents: code,
+    lang: language as SupportedLanguages,
+    cacheKey,
+  };
 }
 
 function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
@@ -229,6 +269,80 @@ function SuspenseShikiCodeBlock({
       isStreaming={isStreaming}
     />
   );
+}
+
+interface WorkerHighlightedCodeBlockProps {
+  className: string | undefined;
+  code: string;
+  children: ReactNode;
+  themeName: DiffThemeName;
+}
+
+function WorkerHighlightedCodeBlock({
+  className,
+  code,
+  children,
+  themeName,
+}: WorkerHighlightedCodeBlockProps) {
+  const workerPool = useWorkerPool();
+  const language = extractFenceLanguage(className);
+  const cacheKey = createHighlightCacheKey(code, language, themeName);
+  const cachedHighlightedHtml = highlightedCodeCache.get(cacheKey);
+  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(cachedHighlightedHtml);
+
+  useEffect(() => {
+    setHighlightedHtml(cachedHighlightedHtml);
+  }, [cachedHighlightedHtml, cacheKey]);
+
+  useEffect(() => {
+    if (cachedHighlightedHtml != null || workerPool?.isWorkingPool() !== true) {
+      // ponytail: ChatMarkdown only consumes the existing pool; unwrapped routes stay plain while streaming.
+      return;
+    }
+
+    let disposed = false;
+    const file = createStreamingCodeFile(code, language, cacheKey);
+    const publishHighlightedHtml = (renderer: FileRenderer) => {
+      if (disposed) return;
+      const result = renderer.renderFile(file);
+      if (!result) return;
+      const contentHtml = renderer.renderPartialHTML(result.contentAST);
+      const html = `<pre class="shiki" style="${escapeHtmlAttribute(result.themeStyles)}"><code>${contentHtml}</code></pre>`;
+      highlightedCodeCache.set(cacheKey, html, estimateHighlightedSize(html, code));
+      setHighlightedHtml(html);
+    };
+    let renderer: FileRenderer;
+    renderer = new FileRenderer(
+      {
+        disableFileHeader: true,
+        disableLineNumbers: true,
+        overflow: "scroll",
+        theme: themeName,
+        tokenizeMaxLineLength: 1_000,
+      },
+      () => publishHighlightedHtml(renderer),
+      workerPool,
+    );
+
+    renderer.hydrate(file);
+    if (workerPool.getFileResultCache(file) != null) {
+      publishHighlightedHtml(renderer);
+    }
+
+    return () => {
+      disposed = true;
+      workerPool.cleanUpPendingTasks(renderer);
+      renderer.cleanUp();
+    };
+  }, [cacheKey, cachedHighlightedHtml, code, language, themeName, workerPool]);
+
+  if (highlightedHtml != null) {
+    return (
+      <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+    );
+  }
+
+  return <pre>{children}</pre>;
 }
 
 interface UncachedShikiCodeBlockProps {
@@ -520,6 +634,87 @@ function ChatMarkdown({
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const streamingBlockCacheRef = useRef<StreamingMarkdownBlockCache>(
+    createStreamingMarkdownBlockCache(),
+  );
+  const streamingBlocks = useMemo(
+    () => (isStreaming ? getStreamingMarkdownBlocks(text, streamingBlockCacheRef.current) : []),
+    [isStreaming, text],
+  );
+
+  if (isStreaming) {
+    return (
+      <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
+        {streamingBlocks.map((block) => (
+          <StreamingMarkdownBlock
+            key={block.key}
+            text={block.text}
+            cwd={cwd}
+            skills={skills}
+            resolvedTheme={resolvedTheme}
+            diffThemeName={diffThemeName}
+            isComplete={block.isComplete}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
+      <MarkdownRenderUnit
+        text={text}
+        cwd={cwd}
+        skills={skills}
+        resolvedTheme={resolvedTheme}
+        diffThemeName={diffThemeName}
+        isStreaming={false}
+        isComplete={true}
+      />
+    </div>
+  );
+}
+
+interface MarkdownRenderUnitProps {
+  text: string;
+  cwd: string | undefined;
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  resolvedTheme: "light" | "dark";
+  diffThemeName: DiffThemeName;
+  isStreaming: boolean;
+  isComplete: boolean;
+}
+
+const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({
+  text,
+  cwd,
+  skills,
+  resolvedTheme,
+  diffThemeName,
+  isComplete,
+}: Omit<MarkdownRenderUnitProps, "isStreaming">) {
+  return (
+    <MarkdownRenderUnit
+      text={text}
+      cwd={cwd}
+      skills={skills}
+      resolvedTheme={resolvedTheme}
+      diffThemeName={diffThemeName}
+      isStreaming={true}
+      isComplete={isComplete}
+    />
+  );
+});
+
+function MarkdownRenderUnit({
+  text,
+  cwd,
+  skills,
+  resolvedTheme,
+  diffThemeName,
+  isStreaming,
+  isComplete,
+}: MarkdownRenderUnitProps) {
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -589,14 +784,28 @@ function ChatMarkdown({
         return (
           <MarkdownCodeBlock code={codeBlock.code}>
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
+              {isStreaming ? (
+                isComplete ? (
+                  <WorkerHighlightedCodeBlock
+                    className={codeBlock.className}
+                    code={codeBlock.code}
+                    themeName={diffThemeName}
+                  >
+                    {children}
+                  </WorkerHighlightedCodeBlock>
+                ) : (
+                  <pre {...props}>{children}</pre>
+                )
+              ) : (
+                <Suspense fallback={<pre {...props}>{children}</pre>}>
+                  <SuspenseShikiCodeBlock
+                    className={codeBlock.className}
+                    code={codeBlock.code}
+                    themeName={diffThemeName}
+                    isStreaming={isStreaming}
+                  />
+                </Suspense>
+              )}
             </CodeHighlightErrorBoundary>
           </MarkdownCodeBlock>
         );
@@ -605,6 +814,7 @@ function ChatMarkdown({
     [
       diffThemeName,
       fileLinkParentSuffixByPath,
+      isComplete,
       isStreaming,
       markdownFileLinkMetaByHref,
       resolvedTheme,
@@ -613,15 +823,13 @@ function ChatMarkdown({
   );
 
   return (
-    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={markdownComponents}
+      urlTransform={markdownUrlTransform}
+    >
+      {text}
+    </ReactMarkdown>
   );
 }
 
