@@ -1,5 +1,7 @@
 import {
   CheckpointRef,
+  CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
   ProjectId,
@@ -14,20 +16,40 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
+import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
+import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
+import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { RepositoryIdentityResolver } from "../../project/Services/RepositoryIdentityResolver.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { decideOrchestrationCommand } from "../decider.ts";
+import { MAX_THREAD_MESSAGES } from "../projector.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
+const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
+const isoAtSecondOffset = (date: string, offsetSeconds: number): string => {
+  const hours = Math.floor(offsetSeconds / 3_600);
+  const minutes = Math.floor((offsetSeconds % 3_600) / 60);
+  const seconds = offsetSeconds % 60;
+  return `${date}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(
+    seconds,
+  ).padStart(2, "0")}.000Z`;
+};
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provideMerge(ProjectionProjectRepositoryLive),
+    Layer.provideMerge(ProjectionThreadRepositoryLive),
+    Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
     Layer.provideMerge(RepositoryIdentityResolverLive),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
@@ -1308,6 +1330,344 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const fullSnapshot = yield* snapshotQuery.getSnapshot();
       assert.equal(fullSnapshot.threads[0]?.latestTurn?.turnId, asTurnId("turn-running"));
       assert.equal(fullSnapshot.threads[0]?.latestTurn?.state, "running");
+    }),
+  );
+
+  it.effect("hydrates command read model messages so restart fork copies a complete prefix", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const messageRepository = yield* ProjectionThreadMessageRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-04-06T00:00:00.000Z";
+      const projectId = asProjectId("project-command-fork");
+      const sourceThreadId = ThreadId.make("thread-command-fork-source");
+      const newThreadId = ThreadId.make("thread-command-fork-child");
+      const anchorMessageId = asMessageId("message-command-fork-assistant-2");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      };
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Command Fork Project",
+        workspaceRoot: "/tmp/command-fork-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId: sourceThreadId,
+        projectId,
+        title: "Command Fork Source",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: "feature/command-fork",
+        worktreePath: "/tmp/command-fork-project",
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: "2026-04-06T00:00:03.000Z",
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      const sourceMessages = [
+        {
+          messageId: asMessageId("message-command-fork-user-1"),
+          role: "user" as const,
+          text: "first",
+          providerMessageId: null,
+        },
+        {
+          messageId: asMessageId("message-command-fork-assistant-1"),
+          role: "assistant" as const,
+          text: "answer one",
+          providerMessageId: "provider-command-fork-assistant-1",
+        },
+        {
+          messageId: asMessageId("message-command-fork-user-2"),
+          role: "user" as const,
+          text: "second",
+          providerMessageId: null,
+        },
+        {
+          messageId: anchorMessageId,
+          role: "assistant" as const,
+          text: "answer two",
+          providerMessageId: "provider-command-fork-assistant-2",
+        },
+        {
+          messageId: asMessageId("message-command-fork-user-3"),
+          role: "user" as const,
+          text: "after anchor",
+          providerMessageId: null,
+        },
+      ];
+
+      yield* Effect.forEach(
+        sourceMessages,
+        (message, index) =>
+          messageRepository.upsert({
+            ...message,
+            threadId: sourceThreadId,
+            turnId: null,
+            isStreaming: false,
+            createdAt: isoAtSecondOffset("2026-04-06", index),
+            updatedAt: isoAtSecondOffset("2026-04-06", index),
+          }),
+        { concurrency: 1 },
+      );
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const sourceThread = commandReadModel.threads.find((thread) => thread.id === sourceThreadId);
+      assert.deepEqual(
+        sourceThread?.messages.map((message) => String(message.id)),
+        sourceMessages.map((message) => String(message.messageId)),
+      );
+      assert.equal(
+        sourceThread?.messages[3]?.providerMessageId,
+        "provider-command-fork-assistant-2",
+      );
+
+      const decision = yield* decideOrchestrationCommand({
+        readModel: commandReadModel,
+        command: {
+          type: "thread.fork",
+          commandId: asCommandId("cmd-command-fork"),
+          threadId: sourceThreadId,
+          newThreadId,
+          messageId: anchorMessageId,
+          mode: "full",
+          createdAt: now,
+        },
+      });
+      const events = Array.isArray(decision) ? decision : [decision];
+
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "thread.created",
+          "thread.message-sent",
+          "thread.message-sent",
+          "thread.message-sent",
+          "thread.message-sent",
+          "thread.forked",
+        ],
+      );
+      assert.deepEqual(
+        events
+          .filter((event) => event.type === "thread.message-sent")
+          .map((event) => event.payload.text),
+        ["first", "answer one", "second", "answer two"],
+      );
+      assert.deepEqual(
+        events
+          .filter((event) => event.type === "thread.message-sent")
+          .map((event) => event.payload.providerMessageId),
+        [
+          undefined,
+          "provider-command-fork-assistant-1",
+          undefined,
+          "provider-command-fork-assistant-2",
+        ],
+      );
+    }),
+  );
+
+  it.effect("caps command read model message hydration to the newest projector window", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const messageRepository = yield* ProjectionThreadMessageRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-04-07T00:00:00.000Z";
+      const projectId = asProjectId("project-command-cap");
+      const threadId = ThreadId.make("thread-command-cap");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Command Cap Project",
+        workspaceRoot: "/tmp/command-cap-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId,
+        projectId,
+        title: "Command Cap Thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      yield* Effect.forEach(
+        Array.from({ length: MAX_THREAD_MESSAGES + 5 }, (_, index) => index),
+        (index) =>
+          messageRepository.upsert({
+            messageId: asMessageId(`message-command-cap-${String(index).padStart(4, "0")}`),
+            threadId,
+            turnId: null,
+            role: index % 2 === 0 ? "user" : "assistant",
+            text: `message ${index}`,
+            providerMessageId: null,
+            isStreaming: false,
+            createdAt: isoAtSecondOffset("2026-04-07", index),
+            updatedAt: isoAtSecondOffset("2026-04-07", index),
+          }),
+        { concurrency: 1 },
+      );
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const thread = commandReadModel.threads.find((entry) => entry.id === threadId);
+
+      assert.equal(thread?.messages.length, MAX_THREAD_MESSAGES);
+      assert.equal(String(thread?.messages[0]?.id), "message-command-cap-0005");
+      assert.equal(
+        String(thread?.messages.at(-1)?.id),
+        `message-command-cap-${String(MAX_THREAD_MESSAGES + 4).padStart(4, "0")}`,
+      );
+    }),
+  );
+
+  it.effect("hydrates pre-restart user messages used by revert-user-message mapping", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const messageRepository = yield* ProjectionThreadMessageRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-04-08T00:00:00.000Z";
+      const projectId = asProjectId("project-command-revert");
+      const threadId = ThreadId.make("thread-command-revert");
+      const userMessageId = asMessageId("message-command-revert-user-1");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Command Revert Project",
+        workspaceRoot: "/tmp/command-revert-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId,
+        projectId,
+        title: "Command Revert Thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: asTurnId("turn-command-revert-1"),
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: now,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+      yield* messageRepository.upsert({
+        messageId: userMessageId,
+        threadId,
+        turnId: asTurnId("turn-command-revert-1"),
+        role: "user",
+        text: "please revert from this pre-restart message",
+        providerMessageId: null,
+        isStreaming: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const thread = commandReadModel.threads.find((entry) => entry.id === threadId);
+      const userMessage = thread?.messages.find((message) => message.id === userMessageId);
+      assert.equal(userMessage?.turnId, asTurnId("turn-command-revert-1"));
+
+      const decision = yield* decideOrchestrationCommand({
+        readModel: commandReadModel,
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: asCommandId("cmd-command-revert"),
+          threadId,
+          turnCount: 0,
+          createdAt: now,
+        },
+      });
+
+      const events = Array.isArray(decision) ? decision : [decision];
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["thread.checkpoint-revert-requested"],
+      );
     }),
   );
 
