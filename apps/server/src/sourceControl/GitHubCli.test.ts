@@ -135,6 +135,81 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("parses pull request check rollup output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeable: "CONFLICTING",
+              statusCheckRollup: [
+                {
+                  __typename: "CheckRun",
+                  name: "test",
+                  status: "COMPLETED",
+                  conclusion: "SUCCESS",
+                  detailsUrl: "https://github.com/checks/1",
+                },
+                {
+                  __typename: "CheckRun",
+                  name: "lint",
+                  status: "COMPLETED",
+                  conclusion: "FAILURE",
+                },
+                {
+                  __typename: "StatusContext",
+                  context: "deploy",
+                  state: "PENDING",
+                  targetUrl: "https://ci.example/deploy",
+                },
+              ],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequestChecks({
+        cwd: "/repo",
+        reference: "42",
+      });
+
+      assert.deepStrictEqual(result, {
+        summary: {
+          passed: 1,
+          failed: 1,
+          pending: 1,
+        },
+        checks: [
+          {
+            name: "test",
+            state: "passed",
+            detailUrl: "https://github.com/checks/1",
+          },
+          {
+            name: "lint",
+            state: "failed",
+            detailUrl: null,
+          },
+          {
+            name: "deploy",
+            state: "pending",
+            detailUrl: "https://ci.example/deploy",
+          },
+        ],
+        mergeable: "conflicting",
+      });
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "42", "--json", "statusCheckRollup,mergeable"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("skips invalid entries when parsing pr lists", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

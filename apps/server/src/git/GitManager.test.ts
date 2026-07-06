@@ -614,6 +614,12 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary)),
+      getPullRequestChecks: () =>
+        Effect.succeed({
+          summary: { passed: 0, failed: 0, pending: 0 },
+          checks: [],
+          mergeable: null,
+        }),
       getRepositoryCloneUrls: (input) =>
         execute({
           cwd: input.cwd,
@@ -766,6 +772,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-open-pr",
         state: "open",
+      });
+      expect(status.prChecks).toEqual({
+        summary: { passed: 0, failed: 0, pending: 0 },
+        checks: [],
+        mergeable: null,
       });
     }),
   );
@@ -934,6 +945,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         behindCount: 0,
         aheadOfDefaultCount: 0,
         pr: null,
+        prChecks: null,
       });
     }),
   );
@@ -964,6 +976,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         behindCount: 0,
         aheadOfDefaultCount: 0,
         pr: null,
+        prChecks: null,
       });
     }),
   );

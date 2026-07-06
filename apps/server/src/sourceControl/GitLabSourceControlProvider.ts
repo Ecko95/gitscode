@@ -110,6 +110,7 @@ export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
         Effect.map(toChangeRequest),
         Effect.mapError((error) => providerError("getChangeRequest", error)),
       ),
+    getChangeRequestChecks: () => Effect.succeed(null),
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return gitlab

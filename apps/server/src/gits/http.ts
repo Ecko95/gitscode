@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Data from "effect/Data";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
@@ -7,6 +8,7 @@ import { browserApiCorsHeaders } from "../httpCors.ts";
 import { GitsBuildInfoResolver } from "./Services/GitsBuildInfo.ts";
 import { GitsMcpInventoryResolver } from "./Services/GitsMcpInventory.ts";
 import { GitsSkillInventoryResolver } from "./Services/GitsSkillInventory.ts";
+import { readUsageSummary } from "./Layers/GitsUsageReader.ts";
 
 const authenticateGitsSession = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -20,6 +22,10 @@ const authenticateGitsSession = Effect.gen(function* () {
   }
   return session;
 });
+
+class GitsUsageRouteError extends Data.TaggedError("GitsUsageRouteError")<{
+  readonly cause: unknown;
+}> {}
 
 export const gitsBuildInfoRouteLayer = HttpRouter.add(
   "GET",
@@ -101,6 +107,36 @@ export const gitsMcpInventoryRouteLayer = HttpRouter.add(
           });
           return HttpServerResponse.jsonUnsafe(
             { error: error.message },
+            { status: 500, headers: browserApiCorsHeaders },
+          );
+        }),
+    }),
+  ),
+);
+
+export const gitsUsageRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/gits/usage",
+  Effect.gen(function* () {
+    yield* authenticateGitsSession;
+    const summary = yield* Effect.try({
+      try: () => readUsageSummary(),
+      catch: (cause) => new GitsUsageRouteError({ cause }),
+    });
+    return HttpServerResponse.jsonUnsafe(summary, {
+      status: 200,
+      headers: browserApiCorsHeaders,
+    });
+  }).pipe(
+    Effect.catchTags({
+      AuthError: respondToAuthError,
+      GitsUsageRouteError: (error) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("gits usage route failed", {
+            cause: error.cause,
+          });
+          return HttpServerResponse.jsonUnsafe(
+            { error: "Failed to read local usage logs." },
             { status: 500, headers: browserApiCorsHeaders },
           );
         }),

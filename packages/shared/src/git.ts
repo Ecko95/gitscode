@@ -208,6 +208,7 @@ const EMPTY_GIT_STATUS_REMOTE: VcsStatusRemoteResult = {
   behindCount: 0,
   aheadOfDefaultCount: 0,
   pr: null,
+  prChecks: null,
 };
 
 export function mergeGitStatusParts(
@@ -229,6 +230,7 @@ function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
       ? {}
       : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
     pr: status.pr,
+    prChecks: status.prChecks ?? null,
   };
 }
 

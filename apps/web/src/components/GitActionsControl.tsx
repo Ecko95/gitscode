@@ -43,6 +43,7 @@ import {
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 import { AnimatedHeight } from "./AnimatedHeight";
+import { GitChecksPane } from "./GitChecksPane";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import {
@@ -1671,6 +1672,7 @@ export default function GitActionsControl({
               <ChevronDownIcon aria-hidden="true" className="size-4" />
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
+              <GitChecksPane gitStatus={gitStatusForActions} />
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason({
                   item,
