@@ -58,6 +58,7 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionFullThreadDiffContext,
   type ProjectionSnapshotCounts,
+  type ProjectionThreadDetailSnapshot,
   type ProjectionThreadCheckpointContext,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
@@ -2057,7 +2058,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       } satisfies OrchestrationThreadShell);
     });
 
-  const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
+  const readThreadDetailById = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const [
         threadRow,
@@ -2194,6 +2195,44 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
+    readThreadDetailById(threadId);
+
+  const getThreadDetailSnapshot: ProjectionSnapshotQueryShape["getThreadDetailSnapshot"] = (
+    threadId,
+  ) =>
+    sql
+      .withTransaction(
+        Effect.all([
+          listProjectionStateRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadDetailSnapshot:getSnapshotSequence:query",
+                "ProjectionSnapshotQuery.getThreadDetailSnapshot:getSnapshotSequence:decodeRows",
+              ),
+            ),
+          ),
+          readThreadDetailById(threadId),
+        ]).pipe(
+          Effect.map(
+            ([stateRows, threadDetail]): ProjectionThreadDetailSnapshot => ({
+              snapshotSequence: computeSnapshotSequence(stateRows),
+              threadDetail,
+            }),
+          ),
+        ),
+      )
+      .pipe(
+        Effect.mapError((error) => {
+          if (isPersistenceError(error)) {
+            return error;
+          }
+          return toPersistenceSqlError("ProjectionSnapshotQuery.getThreadDetailSnapshot:query")(
+            error,
+          );
+        }),
+      );
+
   // Graveyard: reads worktree_path + branch even for deleted threads (plan 21 W2.2)
   const WorktreeInfoRowSchema = Schema.Struct({
     worktreePath: Schema.NullOr(Schema.String),
@@ -2272,6 +2311,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getThreadDetailSnapshot,
     getThreadWorktreeInfo,
     hasLiveThreadForWorktreePath,
   } satisfies ProjectionSnapshotQueryShape;

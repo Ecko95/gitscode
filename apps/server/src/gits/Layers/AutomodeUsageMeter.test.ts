@@ -61,6 +61,8 @@ function makeProjectionLayer(readModel: OrchestrationReadModel) {
     getFullThreadDiffContext: () => Effect.succeed(Option.none()),
     getThreadShellById: () => Effect.succeed(Option.none()),
     getThreadDetailById: () => Effect.succeed(Option.none()),
+    getThreadDetailSnapshot: () =>
+      Effect.succeed({ snapshotSequence: readModel.snapshotSequence, threadDetail: Option.none() }),
     getThreadWorktreeInfo: () => Effect.succeed(Option.none()),
     hasLiveThreadForWorktreePath: () => Effect.succeed(false),
   });
