@@ -138,4 +138,18 @@ describe("ChatMarkdown", () => {
       await screen.unmount();
     }
   });
+
+  it("renders streaming code fences as plain pre blocks before highlighting resolves", async () => {
+    const screen = await render(
+      <ChatMarkdown text={"```ts\nconst value = 1;\n```"} cwd="/repo/project" isStreaming />,
+    );
+
+    try {
+      const code = page.getByText("const value = 1;");
+      await expect.element(code).toBeInTheDocument();
+      expect(document.querySelector(".chat-markdown-shiki")).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
 });
