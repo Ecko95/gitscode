@@ -1254,6 +1254,32 @@ describe("OrchestrationEngine", () => {
       ),
     ).rejects.toThrow();
 
+    const publishedEvents = await system.run(
+      Effect.gen(function* () {
+        const eventQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        yield* Effect.forkScoped(
+          engine.streamDomainEvents.pipe(
+            Stream.runForEach((event) => Queue.offer(eventQueue, event).pipe(Effect.asVoid)),
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+        yield* Effect.flip(
+          engine.dispatch(
+            {
+              type: "thread.delete",
+              commandId: CommandId.make("cmd-denied-thread-delete-publish-once"),
+              threadId: ThreadId.make("thread-denied"),
+            },
+            "delamain",
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+        const drained = yield* Queue.takeAll(eventQueue).pipe(Effect.timeoutOption("100 millis"));
+        return Option.isSome(drained) ? Array.from(drained.value) : [];
+      }).pipe(Effect.scoped),
+    );
+    expect(publishedEvents.filter((event) => event.type === "command.denied")).toHaveLength(1);
+
     // The command.denied event must be durably persisted in the event store
     const events = await system.run(
       Stream.runCollect(engine.readEvents(0)).pipe(

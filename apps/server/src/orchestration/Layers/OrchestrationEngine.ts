@@ -209,9 +209,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               deniedAt,
             },
           };
-          // Store denial event (audit-only, not projected) — fire-and-forget on store failure
+          // ponytail: reconcile publishes the persisted denial once on the failure path.
           yield* eventStore.append(denialEvent, "server").pipe(
-            Effect.flatMap((stored) => PubSub.publish(eventPubSub, stored)),
             Effect.catch(() =>
               Effect.logWarning("failed to persist command.denied event", {
                 commandId: envelope.command.commandId,
