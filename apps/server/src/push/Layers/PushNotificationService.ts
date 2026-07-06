@@ -105,6 +105,9 @@ const makePushNotificationService = Effect.gen(function* () {
             ),
           ),
         );
+      // Serialize the known notification payload to the wire string the push
+      // service delivers; not a persisted/decoded shape.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
       const body = JSON.stringify(payload);
 
       yield* Effect.forEach(
