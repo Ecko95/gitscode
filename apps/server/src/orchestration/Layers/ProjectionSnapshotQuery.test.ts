@@ -369,6 +369,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
       ]);
 
+      // thread.fork validation reads messages from the command read model —
+      // they must hydrate from projections on boot, not only from live events.
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.equal(commandReadModel.threads[0]?.messages.length, 1);
+      assert.equal(commandReadModel.threads[0]?.messages[0]?.id, asMessageId("message-1"));
+      assert.equal(commandReadModel.threads[0]?.messages[0]?.text, "hello from projection");
+
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.snapshotSequence, 5);
       assert.deepEqual(shellSnapshot.projects, [

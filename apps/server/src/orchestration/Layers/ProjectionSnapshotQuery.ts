@@ -28,6 +28,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
+import { MAX_THREAD_MESSAGES } from "../projector.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1328,6 +1329,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listThreadMessageRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadMessages:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadMessages:decodeRows",
+              ),
+            ),
+          ),
           listThreadProposedPlanRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1375,6 +1384,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ([
             projectRows,
             threadRows,
+            messageRows,
             proposedPlanRows,
             visualPlanRows,
             sessionRows,
@@ -1453,6 +1463,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 }
                 latestTurnByThread.set(row.threadId, mapLatestTurn(row));
               }
+              const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
+              for (const row of messageRows) {
+                updatedAt = maxIso(updatedAt, row.updatedAt);
+                const threadMessages = messagesByThread.get(row.threadId) ?? [];
+                threadMessages.push({
+                  id: row.messageId,
+                  role: row.role,
+                  text: row.text,
+                  ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+                  ...(row.providerMessageId !== null
+                    ? { providerMessageId: row.providerMessageId }
+                    : {}),
+                  turnId: row.turnId,
+                  streaming: row.isStreaming === 1,
+                  createdAt: row.createdAt,
+                  updatedAt: row.updatedAt,
+                });
+                messagesByThread.set(row.threadId, threadMessages);
+              }
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const visualPlansByThread = new Map<string, Array<OrchestrationVisualPlan>>();
               const sessionByThread = new Map<string, OrchestrationSession>();
@@ -1506,7 +1535,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
                   deletedAt: row.deletedAt,
-                  messages: [],
+                  // ponytail: cap mirrors projector MAX_THREAD_MESSAGES so boot
+                  // hydration matches what in-memory folding would have retained.
+                  messages: (messagesByThread.get(row.threadId) ?? []).slice(-MAX_THREAD_MESSAGES),
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   visualPlans: visualPlansByThread.get(row.threadId) ?? [],
                   activities: [],
