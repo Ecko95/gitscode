@@ -1,5 +1,14 @@
 # TODO
 
+## Audit backlog (2026-07-06 — `docs/audits/2026-07-06-full-audit.md`)
+
+- [x] 5 HIGH server bugs fixed (shared-worktree deletion, rebuild sentinel, git-shim PATH, stream-freeze resubscribe, snapshot/live double-append)
+- [ ] Server MEDs: attachment delete inside txn (S6), commands on deleted threads (S7), rebuild WAL guard (S8), HTTP dispatch startup gate (S9), unbounded PTY stream buffers (S12)
+- [ ] Web HIGH cluster: cross-thread bleed (composer/optimistic/undo, W3–W5), Enter-while-running (W6 → becomes queueing), settings hydration wipe (W7), dead recovery coordinator (W1)
+- [ ] Security hardening: narrow `/etc` bind in verify profile; rlimits around confine call sites (egress = existing H0c)
+- [ ] Notifications (title badge → web push → Electron) — biggest GUI gap
+- [ ] Conductor-inspired: Checks pane on verifier pipeline, diff-line comments → agent, contextual next-action buttons
+
 ## Small things
 
 - [ ] Submitting new messages should scroll to bottom

@@ -176,9 +176,14 @@ export interface ProjectionSnapshotQueryShape {
    * Used by GraveyardReaper to block pruning of pre-W2.5 worktrees that
    * have no owner-recorded events but are still referenced in the projection.
    * ARCHIVED threads block (deleted_at IS NULL covers them).
+   *
+   * `excludeThreadId` ignores that thread — used by worktree retirement to ask
+   * "does any OTHER live thread share this worktree?" (forks share the source
+   * thread's worktree path).
    */
   readonly hasLiveThreadForWorktreePath: (
     worktreePath: string,
+    excludeThreadId?: string,
   ) => Effect.Effect<boolean, ProjectionRepositoryError>;
 }
 

@@ -24,7 +24,10 @@ import { ServerConfig, type ServerConfigShape } from "../config.ts";
 import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionPipeline } from "../orchestration/Services/ProjectionPipeline.ts";
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  REBUILD_SENTINEL_PROJECTOR,
+} from "../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
 import * as NodeSqliteClient from "../persistence/NodeSqliteClient.ts";
 import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
@@ -70,8 +73,8 @@ const assertServerNotRunning = (dbPath: string): Effect.Effect<void> =>
 
 // ── Rebuild sentinel + table list ─────────────────────────────────────────────
 
-// Sentinel row in projection_state: server startup refuses if this exists.
-const REBUILD_SENTINEL_PROJECTOR = "__rebuild__";
+// Sentinel row in projection_state: server startup refuses if this exists
+// (AssertNoInterruptedRebuildLive in persistence/Layers/Sqlite.ts).
 
 // Child tables before parent tables to respect future FK constraints.
 // AutomodeEpisodeLedger is NOT a projection table — excluded per plan 22.
@@ -215,22 +218,24 @@ const runRebuild = Effect.fn("runRebuild")(function* (includeArchive: boolean) {
 
   yield* Console.log("Starting cold projection rebuild...");
 
-  // Write rebuild sentinel so server startup refuses to start if interrupted.
-  yield* sql`
-    INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
-    VALUES (${REBUILD_SENTINEL_PROJECTOR}, 0, datetime('now'))
-    ON CONFLICT (projector) DO UPDATE SET
-      last_applied_sequence = excluded.last_applied_sequence,
-      updated_at = excluded.updated_at
-  `.pipe(Effect.orDie);
-
-  // Truncate all projection tables in dependency order.
+  // Truncate all projection tables in dependency order, then write the rebuild
+  // sentinel INSIDE the same transaction. projection_state is itself truncated,
+  // so the sentinel must be inserted after the deletes — a crash before commit
+  // rolls everything back; a crash after commit leaves the sentinel for the
+  // startup guard (assertNoInterruptedRebuild) to refuse on.
   yield* sql
     .withTransaction(
       Effect.forEach(
         PROJECTION_TABLES,
         (table) => sql`DELETE FROM ${sql(table)}`.pipe(Effect.orDie),
         { concurrency: 1 },
+      ).pipe(
+        Effect.andThen(
+          sql`
+            INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+            VALUES (${REBUILD_SENTINEL_PROJECTOR}, 0, datetime('now'))
+          `,
+        ),
       ),
     )
     .pipe(Effect.orDie);

@@ -104,15 +104,18 @@ const makeGitShimManager: Effect.Effect<
   // Resolve the real git binary from the server's own PATH once at
   // startup. The shim child env gets GITS_REAL_GIT pointing here.
   // ponytail: resolve once — git path never changes at runtime for us.
-  const realGit = yield* Effect.sync(() => {
+  const realGit = yield* Effect.gen(function* () {
     // Walk the server's PATH entries to find the first `git` binary.
     // Cannot use `which` here (no shell); replicate it manually.
     const pathDirs = (process.env["PATH"] ?? "").split(":");
     for (const dir of pathDirs) {
       if (!dir) continue;
       const candidate = path.join(dir, "git");
-      // Return the first non-shims-root candidate to avoid self-reference.
-      if (!candidate.startsWith(shimsRoot)) return candidate;
+      // Skip shims-root candidates (self-reference) and dirs without an
+      // actual git binary — otherwise the shim execs a nonexistent path (127).
+      if (candidate.startsWith(shimsRoot)) continue;
+      const exists = yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+      if (exists) return candidate;
     }
     return "/usr/bin/git"; // safe fallback
   });

@@ -119,6 +119,7 @@ export const GraveyardOrphanAdopterLive: Layer.Layer<
       Layer.succeed(GitVcsDriver, gitDriver),
       Layer.succeed(RuntimeReceiptBus, receiptBus),
       Layer.succeed(Crypto.Crypto, crypto),
+      Layer.succeed(ProjectionSnapshotQuery, projectionQuery),
     );
 
     const enumeratePaths = (): Effect.Effect<WorktreePathInfo[], never, never> =>

@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 
 import { CheckpointStore } from "../checkpointing/Services/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../orchestration/Services/RuntimeReceiptBus.ts";
 import { GitVcsDriver } from "./GitVcsDriver.ts";
 
@@ -66,6 +67,30 @@ export const retireWorktree = Effect.fn("retireWorktree")(function* (input: Reti
   const checkpointStore = yield* CheckpointStore;
   const gitDriver = yield* GitVcsDriver;
   const receiptBus = yield* RuntimeReceiptBus;
+  const projectionQuery = yield* ProjectionSnapshotQuery;
+
+  // Step 0: forks share the source thread's worktree path (decider thread.fork).
+  // If any OTHER live thread still references this worktree, removing it would
+  // destroy that thread's cwd mid-session — skip retirement entirely.
+  // Fail-safe: if the check errors, assume shared and skip (never remove on doubt).
+  const sharedWithLiveThread = yield* projectionQuery
+    .hasLiveThreadForWorktreePath(input.worktreePath, input.threadId)
+    .pipe(
+      Effect.catch((_err) =>
+        Effect.logWarning("worktree.retirement.live-thread-check-failed", {
+          threadId: input.threadId,
+          worktreePath: input.worktreePath,
+        }).pipe(Effect.as(true)),
+      ),
+    );
+  if (sharedWithLiveThread) {
+    yield* Effect.logInfo("worktree.retirement.skipped-shared-worktree", {
+      threadId: input.threadId,
+      worktreePath: input.worktreePath,
+      trigger: input.trigger,
+    });
+    return;
+  }
 
   const nowIso = () => Effect.map(DateTime.now, DateTime.formatIso);
 
