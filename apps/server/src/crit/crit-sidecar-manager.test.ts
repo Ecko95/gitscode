@@ -10,6 +10,7 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -316,6 +317,49 @@ it.layer(CritSidecarTestLayer, { excludeTestServices: true })(
           expect(issuedHere.length).toBe(1);
           expect(stubAuth.revokedSessionIds.slice(revokedBefore)).toContain(issuedHere[0]);
         }),
+    );
+
+    it.effect("propagates a failed cold start to concurrent reusers", () =>
+      Effect.gen(function* () {
+        const manager = yield* CritSidecarManager;
+        const noportBinary = writeNonListeningCritBinary();
+        const workspaceRoot = mkdtempSync(join(tmpdir(), "crit-sidecar-concurrent-fail-ws-"));
+
+        const issuedBefore = stubAuth.issuedSessionIds.length;
+
+        const ensureInput = {
+          workspaceRoot,
+          branch: "main",
+          threadId: "th",
+          origin: "http://127.0.0.1:1",
+          wrapperCommand: "node /x",
+          binaryPath: noportBinary,
+          readinessTimeoutMs: 800,
+        };
+
+        const firstFiber = yield* Effect.exit(manager.ensure_sidecar(ensureInput)).pipe(
+          Effect.forkChild,
+        );
+        yield* Effect.sleep(50);
+
+        const starting = yield* manager.sidecar_status(workspaceRoot);
+        expect(starting.status).toBe("starting");
+
+        const secondExit = yield* Effect.exit(manager.ensure_sidecar(ensureInput));
+        const firstExit = yield* Fiber.join(firstFiber);
+
+        for (const exit of [firstExit, secondExit]) {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.squash(exit.cause)).toBeInstanceOf(CritSidecarError);
+          }
+        }
+
+        expect(stubAuth.issuedSessionIds.length).toBe(issuedBefore + 1);
+        const status = yield* manager.sidecar_status(workspaceRoot);
+        expect(status.status).toBe("stopped");
+        expect(status.url).toBeNull();
+      }),
     );
   },
 );

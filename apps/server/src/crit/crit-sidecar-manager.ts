@@ -4,6 +4,7 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -108,6 +109,8 @@ interface CritSidecarEntry {
   status: CritSidecarStatus;
   refCount: number;
   scope: Scope.Closeable | null;
+  // ponytail: one readiness gate is enough to propagate cold-start success/failure to reusers.
+  readiness: Deferred.Deferred<CritSidecarHandle, CritSidecarError>;
 }
 
 const DEFAULT_CRIT_HOST = "127.0.0.1";
@@ -175,11 +178,25 @@ const makeCritSidecarManager = Effect.gen(function* () {
       // or insert a "starting" reservation. Effect fibers are cooperative, so a
       // re-entrant ensure_sidecar for the same workspaceRoot cannot interleave
       // between the get and the reservation insert below.
+      const readiness = yield* Deferred.make<CritSidecarHandle, CritSidecarError>();
       const map = yield* Ref.get(entries);
       const existing = map.get(input.workspaceRoot);
-      if (existing && (existing.status === "ready" || existing.status === "starting")) {
+      if (existing?.status === "ready") {
         existing.refCount += 1;
         return { status: existing.status, url: existing.url } satisfies CritSidecarHandle;
+      }
+      if (existing?.status === "starting") {
+        existing.refCount += 1;
+        return yield* Deferred.await(existing.readiness).pipe(
+          Effect.onInterrupt(() =>
+            Ref.update(entries, (current) => {
+              if (current.get(input.workspaceRoot) === existing && existing.status === "starting") {
+                existing.refCount -= 1;
+              }
+              return current;
+            }),
+          ),
+        );
       }
 
       // No usable entry — insert the "starting" reservation immediately so a
@@ -190,6 +207,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
         status: "starting",
         refCount: 1,
         scope: null,
+        readiness,
       };
       const reserved = new Map(map);
       if (existing) {
@@ -222,10 +240,12 @@ const makeCritSidecarManager = Effect.gen(function* () {
       // Tear down the scope and drop the reservation when start-up bails out before
       // the entry is healthy, so a later ensure_sidecar can retry from scratch.
       // Closing the scope also runs the session-revoke finalizer registered below.
-      const abortStartup = Effect.gen(function* () {
-        yield* Scope.close(scope, Exit.void);
-        yield* removeReservation;
-      });
+      const abortStartup = (error: CritSidecarError) =>
+        Effect.gen(function* () {
+          yield* Deferred.fail(entry.readiness, error).pipe(Effect.ignore);
+          yield* Scope.close(scope, Exit.void);
+          yield* removeReservation;
+        });
 
       // Mint the wrapper's bearer token ONLY on the spawn path (reuse increments
       // refCount above and never reaches here), with a bounded TTL. The session is
@@ -260,7 +280,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
                 cause,
               }),
           ),
-          Effect.tapError(() => abortStartup),
+          Effect.tapError((error) => abortStartup(error)),
         );
       yield* Scope.addFinalizer(
         scope,
@@ -276,7 +296,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
               cause,
             }),
         ),
-        Effect.tapError(() => abortStartup),
+        Effect.tapError((error) => abortStartup(error)),
       );
 
       // Private HOME so crit reads OUR global config (with the wrapper as
@@ -291,7 +311,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
               cause,
             }),
         ),
-        Effect.tapError(() => abortStartup),
+        Effect.tapError((error) => abortStartup(error)),
       );
       yield* Scope.addFinalizer(
         scope,
@@ -309,7 +329,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
               cause,
             }),
         ),
-        Effect.tapError(() => abortStartup),
+        Effect.tapError((error) => abortStartup(error)),
       );
 
       const spec = build_crit_spawn_spec({
@@ -341,7 +361,7 @@ const makeCritSidecarManager = Effect.gen(function* () {
                 cause,
               }),
           ),
-          Effect.tapError(() => abortStartup),
+          Effect.tapError((error) => abortStartup(error)),
         );
 
       const terminateChild = child
@@ -382,29 +402,32 @@ const makeCritSidecarManager = Effect.gen(function* () {
       if (Exit.isSuccess(readyExit)) {
         // Transition the existing reservation in place — keep its refCount/scope.
         entry.status = "ready";
-        return { status: "ready", url: spec.url } satisfies CritSidecarHandle;
+        const handle = { status: "ready", url: spec.url } satisfies CritSidecarHandle;
+        yield* Deferred.succeed(entry.readiness, handle).pipe(Effect.ignore);
+        return handle;
       }
-
-      // Timed out or the process crashed: tear down and remove the entry so a
-      // later ensure_sidecar can retry from scratch.
-      entry.status = "crashed";
-      yield* Scope.close(scope, Exit.void);
-      yield* removeReservation;
 
       // Mirror opencodeRuntime's readiness-failure idiom: squash the cause to a
       // single value. If it already IS a CritSidecarError (the crash watcher's
       // failure), surface it as-is; otherwise wrap it (e.g. the timeout case,
       // where `Effect.timeout` injects a `Cause.TimeoutError`).
       const squashed = Cause.squash(readyExit.cause);
-      if (squashed instanceof CritSidecarError) {
-        return yield* squashed;
-      }
+      const error =
+        squashed instanceof CritSidecarError
+          ? squashed
+          : new CritSidecarError({
+              operation: "ensure_sidecar",
+              detail: `Timed out waiting for the crit sidecar to become ready after ${readinessTimeoutMs}ms: ${String(squashed)}`,
+              cause: squashed,
+            });
+      yield* Deferred.fail(entry.readiness, error).pipe(Effect.ignore);
 
-      return yield* new CritSidecarError({
-        operation: "ensure_sidecar",
-        detail: `Timed out waiting for the crit sidecar to become ready after ${readinessTimeoutMs}ms: ${String(squashed)}`,
-        cause: squashed,
-      });
+      // Timed out or the process crashed: tear down and remove the entry so a
+      // later ensure_sidecar can retry from scratch.
+      entry.status = "crashed";
+      yield* Scope.close(scope, Exit.void);
+      yield* removeReservation;
+      return yield* error;
     });
 
   return {
