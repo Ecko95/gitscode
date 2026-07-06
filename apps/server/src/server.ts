@@ -64,6 +64,7 @@ import { GitsReviewPipelineLive } from "./gits/Layers/GitsReviewPipeline.ts";
 import { AutomodeLandingLive } from "./gits/Layers/AutomodeLanding.ts";
 import { AutomodeHeldPrLive } from "./gits/Layers/AutomodeHeldPr.ts";
 import { AutomodeEpisodeLedgerLive } from "./persistence/Layers/AutomodeEpisodeLedger.ts";
+import { WebPushSubscriptionRepositoryLive } from "./persistence/Layers/WebPushSubscriptions.ts";
 import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
@@ -130,6 +131,14 @@ import {
 } from "./gits/http.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
 import { VisualPlanMcpServiceLive } from "./gits/mcp/VisualPlanMcpRegistry.ts";
+import { WebPushSenderLive } from "./push/Layers/WebPushSender.ts";
+import { PushNotificationServiceLive } from "./push/Layers/PushNotificationService.ts";
+import { PushNotificationReactorLive } from "./push/Layers/PushNotificationReactor.ts";
+import {
+  pushPublicConfigRouteLayer,
+  pushRegisterRouteLayer,
+  pushUnregisterRouteLayer,
+} from "./push/http.ts";
 
 const SERVER_PID_FILE_NAME = "server.pid";
 
@@ -203,12 +212,17 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
+const PushNotificationLayerLive = PushNotificationServiceLive.pipe(
+  Layer.provide(WebPushSenderLive),
+);
+
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(PushNotificationReactorLive.pipe(Layer.provide(PushNotificationLayerLive))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
@@ -229,6 +243,10 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 
 const PersistenceLayerLive = AssertNoInterruptedRebuildLive.pipe(
   Layer.provideMerge(SqlitePersistenceLayerLive),
+);
+
+const WebPushSubscriptionRepositoryLayerLive = WebPushSubscriptionRepositoryLive.pipe(
+  Layer.provide(PersistenceLayerLive),
 );
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
@@ -375,6 +393,13 @@ const AuthLayerLive = ServerAuthLive.pipe(
   Layer.provide(ServerSecretStoreLive),
 );
 
+const RuntimePersistenceSupportLive = Layer.mergeAll(
+  PersistenceLayerLive,
+  WebPushSubscriptionRepositoryLayerLive,
+  KeybindingsLive,
+  ProviderRegistryLive,
+);
+
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
@@ -388,9 +413,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(Layer.merge(ProviderRuntimeLayerLive, ProviderSessionDirectoryLayerLive)),
   Layer.provideMerge(TerminalLayerLive),
-  Layer.provideMerge(PersistenceLayerLive),
-  Layer.provideMerge(KeybindingsLive),
-  Layer.provideMerge(ProviderRegistryLive),
+  Layer.provideMerge(RuntimePersistenceSupportLive),
   // The instance registry is the new routing keystone — text generation,
   // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
@@ -470,7 +493,7 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(RuntimeDependenciesLive),
 );
 
-export const makeRoutesLayer = Layer.mergeAll(
+const AuthRoutesLayer = Layer.mergeAll(
   authBearerBootstrapRouteLayer,
   authBootstrapRouteLayer,
   authClientsRevokeOthersRouteLayer,
@@ -481,18 +504,33 @@ export const makeRoutesLayer = Layer.mergeAll(
   authPairingCredentialRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
-  attachmentsRouteLayer,
-  critTurnRouteLayer,
-  critTurnStatusRouteLayer,
+);
+
+const GitsRoutesLayer = Layer.mergeAll(
   gitsBuildInfoRouteLayer,
   gitsSkillInventoryRouteLayer,
   gitsMcpInventoryRouteLayer,
   gitsUsageRouteLayer,
   visualPlanMcpRouteLayer,
+);
+
+const PushRoutesLayer = Layer.mergeAll(
+  pushPublicConfigRouteLayer,
+  pushRegisterRouteLayer,
+  pushUnregisterRouteLayer,
+);
+
+export const makeRoutesLayer = Layer.mergeAll(
+  AuthRoutesLayer,
+  attachmentsRouteLayer,
+  critTurnRouteLayer,
+  critTurnStatusRouteLayer,
+  GitsRoutesLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
+  PushRoutesLayer,
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,

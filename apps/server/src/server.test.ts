@@ -129,6 +129,7 @@ import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAd
 import { setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
+import { WebPushSubscriptionRepository } from "./persistence/Services/WebPushSubscriptions.ts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -1227,9 +1228,16 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(TerminalManager)({
-          ...options?.layers?.terminalManager,
-        }),
+        Layer.mergeAll(
+          Layer.mock(TerminalManager)({
+            ...options?.layers?.terminalManager,
+          }),
+          Layer.mock(WebPushSubscriptionRepository)({
+            upsert: () => Effect.void,
+            deleteByEndpoint: () => Effect.void,
+            list: () => Effect.succeed([]),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(OrchestrationEngineService)({
