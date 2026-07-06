@@ -4,8 +4,8 @@
  * t3 db archive-events       — move eligible closed-thread events to archive table
  * t3 db rebuild-projections  — cold-rebuild all projection tables from event stream
  *
- * Both commands require the server to be stopped. A BEGIN EXCLUSIVE attempt is made
- * and the command refuses to run if the lock cannot be acquired.
+ * Both commands require the server to be stopped. A same-host pidfile check is
+ * made first; BEGIN EXCLUSIVE is kept as a secondary busy-writer probe.
  */
 import { DatabaseSync } from "node:sqlite";
 
@@ -45,30 +45,108 @@ const dbCommandFlags = {
 
 // ── Server-running guard ──────────────────────────────────────────────────────
 
+export const SERVER_PID_FILE_NAME = "server.pid";
+
+export const getServerPidFilePath = (
+  config: Pick<ServerConfigShape, "stateDir">,
+  path: Path.Path,
+): string => path.join(config.stateDir, SERVER_PID_FILE_NAME);
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ESRCH"
+    ) {
+      return false;
+    }
+
+    // ponytail: same-host maintenance guard; EPERM/unknown means "assume live"
+    // because a false negative is the corruption path this check exists to stop.
+    return true;
+  }
+};
+
+const readLiveServerPid = (
+  pidFilePath: string,
+): Effect.Effect<number | undefined, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const exists = yield* fs.exists(pidFilePath).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) return undefined;
+
+    const raw = yield* fs
+      .readFileString(pidFilePath)
+      .pipe(
+        Effect.catch((error: unknown) =>
+          Effect.die(new Error(`Cannot read server pidfile '${pidFilePath}': ${String(error)}`)),
+        ),
+      );
+
+    const trimmed = raw.trim();
+    if (!/^[1-9]\d*$/.test(trimmed)) {
+      return yield* Effect.die(
+        new Error(`Invalid server pidfile '${pidFilePath}': expected a positive PID.`),
+      );
+    }
+
+    const pid = Number(trimmed);
+    if (!Number.isSafeInteger(pid)) {
+      return yield* Effect.die(
+        new Error(`Invalid server pidfile '${pidFilePath}': PID is out of range.`),
+      );
+    }
+
+    return isProcessAlive(pid) ? pid : undefined;
+  });
+
 /**
  * Attempt BEGIN EXCLUSIVE; ROLLBACK on the target DB.
  * Dies (not fails) if the server is holding a WAL write lock — CLI can't recover.
  *
- * ponytail: zero new infrastructure — SQLite exclusive lock is the cheapest
- * "is a writer present?" probe available.
+ * ponytail: pidfile is intentionally same-host only; SQLite remains the cheap
+ * secondary "is a writer present?" probe.
  */
-const assertServerNotRunning = (dbPath: string): Effect.Effect<void> =>
-  Effect.sync(() => {
-    // DB may not exist yet (first run) — skip the lock check in that case.
-    try {
-      const db = new DatabaseSync(dbPath);
-      try {
-        db.exec("BEGIN EXCLUSIVE; ROLLBACK;");
-      } finally {
-        db.close();
-      }
-    } catch (err) {
-      const msg =
-        `Cannot acquire exclusive lock on '${dbPath}'.\n` +
-        `The GITS server appears to be running — stop it before running db maintenance.\n` +
-        `Detail: ${String(err)}`;
-      throw new Error(msg);
+export const assertServerNotRunning = (
+  config: Pick<ServerConfigShape, "stateDir">,
+  dbPath: string,
+): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const pidFilePath = getServerPidFilePath(config, path);
+    const livePid = yield* readLiveServerPid(pidFilePath);
+    if (livePid !== undefined) {
+      return yield* Effect.die(
+        new Error(
+          `The GITS server appears to be running (pid ${livePid}).\n` +
+            `Stop it before running db maintenance.\n` +
+            `Detail: live pidfile '${pidFilePath}'`,
+        ),
+      );
     }
+
+    yield* Effect.sync(() => {
+      // DB may not exist yet (first run) — skip the lock check in that case.
+      try {
+        const db = new DatabaseSync(dbPath);
+        try {
+          db.exec("BEGIN EXCLUSIVE; ROLLBACK;");
+        } finally {
+          db.close();
+        }
+      } catch (err) {
+        const msg =
+          `Cannot acquire exclusive lock on '${dbPath}'.\n` +
+          `The GITS server appears to be running — stop it before running db maintenance.\n` +
+          `Detail: ${String(err)}`;
+        throw new Error(msg, { cause: err });
+      }
+    });
   });
 
 // ── Rebuild sentinel + table list ─────────────────────────────────────────────
@@ -119,7 +197,7 @@ const archiveEventsCommand = Command.make("archive-events", {
         return;
       }
 
-      yield* assertServerNotRunning(dbPath);
+      yield* assertServerNotRunning(config, dbPath);
 
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -177,7 +255,7 @@ const rebuildProjectionsCommand = Command.make("rebuild-projections", {
       const includeArchive = Option.getOrElse(flags.includeArchive, () => false);
       const verify = Option.getOrElse(flags.verify, () => false);
 
-      yield* assertServerNotRunning(dbPath);
+      yield* assertServerNotRunning(config, dbPath);
 
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 
-import { ServerConfig } from "./config.ts";
+import { ServerConfig, type ServerConfigShape } from "./config.ts";
 import {
   attachmentsRouteLayer,
   otlpTracesProxyRouteLayer,
@@ -127,6 +129,30 @@ import {
 } from "./gits/http.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
 import { VisualPlanMcpServiceLive } from "./gits/mcp/VisualPlanMcpRegistry.ts";
+
+const SERVER_PID_FILE_NAME = "server.pid";
+
+export const writeServerPidFile = (config: Pick<ServerConfigShape, "stateDir">) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const pidFilePath = path.join(config.stateDir, SERVER_PID_FILE_NAME);
+
+    yield* fs.makeDirectory(config.stateDir, { recursive: true });
+    yield* fs.writeFileString(pidFilePath, `${process.pid}\n`);
+    return pidFilePath;
+  });
+
+export const removeServerPidFile = (pidFilePath: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const raw = yield* fs.readFileString(pidFilePath).pipe(Effect.orElseSucceed(() => ""));
+    if (raw.trim() !== String(process.pid)) {
+      return;
+    }
+
+    yield* fs.remove(pidFilePath, { force: true }).pipe(Effect.ignore({ log: true }));
+  });
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -477,11 +503,15 @@ export const makeServerLayer = Layer.unwrap(
     fixPath();
 
     const httpListeningLayer = Layer.effectDiscard(
-      Effect.gen(function* () {
-        yield* HttpServer.HttpServer;
-        const startup = yield* ServerRuntimeStartup;
-        yield* startup.markHttpListening;
-      }),
+      Effect.acquireRelease(
+        Effect.gen(function* () {
+          yield* HttpServer.HttpServer;
+          const startup = yield* ServerRuntimeStartup;
+          yield* startup.markHttpListening;
+          return yield* writeServerPidFile(config);
+        }),
+        removeServerPidFile,
+      ),
     );
     const runtimeStateLayer = Layer.effectDiscard(
       Effect.acquireRelease(
