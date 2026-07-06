@@ -30,8 +30,9 @@ import { GitsSkillInventoryResolver } from "./Services/GitsSkillInventory.ts";
 import { GitsMcpInventoryResolver } from "./Services/GitsMcpInventory.ts";
 import {
   gitsBuildInfoRouteLayer,
-  gitsSkillInventoryRouteLayer,
   gitsMcpInventoryRouteLayer,
+  gitsSkillInventoryRouteLayer,
+  gitsUsageRouteLayer,
 } from "./http.ts";
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,7 @@ const make_app_layer = (config: ServerConfigShape) => {
     gitsBuildInfoRouteLayer,
     gitsSkillInventoryRouteLayer,
     gitsMcpInventoryRouteLayer,
+    gitsUsageRouteLayer,
   );
 
   return HttpRouter.serve(routesLayer, {
@@ -288,6 +290,21 @@ it.layer(NodeServices.layer)("gits http routes require authentication", (it) => 
           assert.equal(response.status, 200);
           const body = (yield* response.json) as { servers: unknown[] };
           assert.isArray(body.servers);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("GET /api/gits/usage returns 200 with valid session", () =>
+    Effect.gen(function* () {
+      yield* with_app((baseUrl, token) =>
+        Effect.gen(function* () {
+          const bearer = yield* token("user-a");
+          const response = yield* get_route(baseUrl, "/api/gits/usage", bearer);
+          assert.equal(response.status, 200);
+          const body = (yield* response.json) as { currency: string; sources: unknown[] };
+          assert.equal(body.currency, "USD");
+          assert.isArray(body.sources);
         }),
       );
     }).pipe(Effect.provide(FetchHttpClient.layer)),
