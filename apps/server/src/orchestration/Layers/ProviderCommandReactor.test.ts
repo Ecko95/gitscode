@@ -575,6 +575,90 @@ describe("ProviderCommandReactor", () => {
     }
   });
 
+  it("surfaces a full fork cursor seeding failure when the source binding is missing", async () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: claudeInstanceId,
+        model: "claude-sonnet-4-6",
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("cmd-missing-binding-assistant-delta"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: asMessageId("message-assistant-missing-binding-1"),
+          delta: "existing provider context",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("cmd-missing-binding-assistant-complete"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: asMessageId("message-assistant-missing-binding-1"),
+          providerMessageId: "assistant-provider-missing-binding-1",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-missing-binding-thread-fork"),
+          threadId: ThreadId.make("thread-1"),
+          newThreadId: ThreadId.make("thread-missing-binding-forked-1"),
+          messageId: asMessageId("message-assistant-missing-binding-1"),
+          mode: "full",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const forkThread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.make("thread-missing-binding-forked-1"),
+      );
+      return (
+        forkThread?.activities.some((activity) => activity.kind === "thread.fork.failed") ?? false
+      );
+    });
+
+    const binding = await Effect.runPromise(
+      harness.providerSessionDirectory.getBinding(ThreadId.make("thread-missing-binding-forked-1")),
+    );
+    expect(Option.isNone(binding)).toBe(true);
+
+    const readModel = await harness.readModel();
+    const forkThread = readModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-missing-binding-forked-1"),
+    );
+    expect(forkThread?.messages.map((message) => message.text)).toEqual([
+      "existing provider context",
+    ]);
+    expect(forkThread?.activities.at(-1)).toMatchObject({
+      tone: "error",
+      kind: "thread.fork.failed",
+      summary: "Thread fork context failed",
+      payload: {
+        detail: expect.stringContaining("source thread has no provider binding"),
+      },
+    });
+  });
+
   it("seeds a Codex fork cursor from source projection turns", async () => {
     const codexInstanceId = ProviderInstanceId.make("codex");
     const harness = await createHarness({

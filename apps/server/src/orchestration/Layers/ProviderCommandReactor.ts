@@ -481,7 +481,8 @@ const make = Effect.gen(function* () {
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
       | "provider.session.stop.failed"
-      | "thread.fork.summary.failed";
+      | "thread.fork.summary.failed"
+      | "thread.fork.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -1401,6 +1402,21 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const appendFullThreadForkFailureActivity = (input: {
+    readonly event: Extract<ProviderIntentEvent, { type: "thread.forked" }>;
+    readonly forkThreadId: ThreadId;
+    readonly detail: string;
+  }) =>
+    // ponytail: surface the divergence without changing full-fork retry/session semantics.
+    appendProviderFailureActivity({
+      threadId: input.forkThreadId,
+      kind: "thread.fork.failed",
+      summary: "Thread fork context failed",
+      detail: input.detail,
+      turnId: null,
+      createdAt: input.event.occurredAt,
+    });
+
   const processThreadForked = Effect.fn("processThreadForked")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.forked" }>,
   ) {
@@ -1436,6 +1452,12 @@ const make = Effect.gen(function* () {
         forkThreadId,
         reason: "missing-source-provider-binding",
       });
+      yield* appendFullThreadForkFailureActivity({
+        event,
+        forkThreadId: forkThread.id,
+        detail:
+          "Forked thread was created, but provider context could not be seeded because the source thread has no provider binding.",
+      });
       return;
     }
 
@@ -1446,6 +1468,12 @@ const make = Effect.gen(function* () {
           sourceThreadId: sourceThread.id,
           forkThreadId,
           reason: "missing-source-provider-thread-id",
+        });
+        yield* appendFullThreadForkFailureActivity({
+          event,
+          forkThreadId: forkThread.id,
+          detail:
+            "Forked thread was created, but Codex context could not be seeded because the source provider thread id is missing.",
         });
         return;
       }
@@ -1464,6 +1492,12 @@ const make = Effect.gen(function* () {
           sourceThreadId: sourceThread.id,
           forkThreadId,
           reason: "missing-fork-anchor",
+        });
+        yield* appendFullThreadForkFailureActivity({
+          event,
+          forkThreadId: forkThread.id,
+          detail:
+            "Forked thread was created, but Codex context could not be seeded because the fork anchor could not be resolved.",
         });
         return;
       }
@@ -1496,6 +1530,12 @@ const make = Effect.gen(function* () {
         forkThreadId,
         reason: "missing-source-resume-session-id",
       });
+      yield* appendFullThreadForkFailureActivity({
+        event,
+        forkThreadId: forkThread.id,
+        detail:
+          "Forked thread was created, but provider context could not be seeded because the source resume session id is missing.",
+      });
       return;
     }
 
@@ -1508,6 +1548,12 @@ const make = Effect.gen(function* () {
         sourceThreadId: sourceThread.id,
         forkThreadId,
         reason: anchor._tag,
+      });
+      yield* appendFullThreadForkFailureActivity({
+        event,
+        forkThreadId: forkThread.id,
+        detail:
+          "Forked thread was created, but provider context could not be seeded because the fork anchor could not be resolved.",
       });
       return;
     }
