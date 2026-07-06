@@ -42,6 +42,35 @@ const setup = Layer.effectDiscard(
   }),
 );
 
+// Sentinel row written by `t3 db rebuild-projections` before replay and
+// cleared on success. If present at server boot, a rebuild was interrupted
+// and the projections are silently incomplete — refuse to start.
+export const REBUILD_SENTINEL_PROJECTOR = "__rebuild__";
+
+/** Server-only boot guard — NOT part of the shared setup layer, because the
+ * rebuild CLI itself must be able to open the DB while the sentinel exists. */
+export const AssertNoInterruptedRebuildLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ projector: string }>`
+      SELECT projector FROM projection_state
+      WHERE projector = ${REBUILD_SENTINEL_PROJECTOR}
+      LIMIT 1
+    `.pipe(
+      // projection_state may not exist yet on a fresh DB — that's fine.
+      Effect.orElseSucceed(() => []),
+    );
+    if (rows.length > 0) {
+      return yield* Effect.die(
+        new Error(
+          "A projection rebuild was interrupted (rebuild sentinel present). " +
+            "The read model is incomplete. Run `t3 db rebuild-projections` to completion before starting the server.",
+        ),
+      );
+    }
+  }),
+);
+
 export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(function* (
   dbPath: string,
 ) {
