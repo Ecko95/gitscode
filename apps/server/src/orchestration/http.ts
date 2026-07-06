@@ -5,9 +5,12 @@ import {
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import { ServerAuth } from "../auth/Services/ServerAuth.ts";
+import { respondToAuthError } from "../auth/http.ts";
+import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
+import { ServerRuntimeStartup } from "../serverRuntimeStartup.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -32,8 +35,9 @@ const authenticateOwnerSession = Effect.gen(function* () {
   const serverAuth = yield* ServerAuth;
   const session = yield* serverAuth.authenticateHttpRequest(request);
   if (session.role !== "owner") {
-    return yield* new OrchestrationDispatchCommandError({
+    return yield* new AuthError({
       message: "Only owner sessions can manage projects.",
+      status: 403,
     });
   }
   return session;
@@ -59,6 +63,7 @@ export const orchestrationSnapshotRouteLayer = HttpRouter.add(
     });
   }).pipe(
     Effect.catchTags({
+      AuthError: respondToAuthError,
       OrchestrationDispatchCommandError: respondToOrchestrationHttpError,
       OrchestrationGetSnapshotError: respondToOrchestrationHttpError,
     }),
@@ -71,6 +76,7 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     yield* authenticateOwnerSession;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const startup = yield* Effect.serviceOption(ServerRuntimeStartup);
     const command = yield* HttpServerRequest.schemaBodyJson(ClientOrchestrationCommand).pipe(
       Effect.mapError(
         (cause) =>
@@ -81,7 +87,13 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
       ),
     );
     const normalizedCommand = yield* normalizeDispatchCommand(command);
-    const result = yield* orchestrationEngine.dispatch(normalizedCommand, "operator").pipe(
+    const dispatchEffect = orchestrationEngine.dispatch(normalizedCommand, "operator");
+    const gatedDispatchEffect = Option.match(startup, {
+      onNone: () => dispatchEffect,
+      onSome: (serverStartup) => serverStartup.enqueueCommand(dispatchEffect),
+    });
+    // ponytail: old route-only tests do not install ServerRuntimeStartup; production does.
+    const result = yield* gatedDispatchEffect.pipe(
       Effect.mapError(
         (cause) =>
           new OrchestrationDispatchCommandError({
@@ -91,5 +103,10 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
       ),
     );
     return HttpServerResponse.jsonUnsafe(result, { status: 200 });
-  }).pipe(Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError)),
+  }).pipe(
+    Effect.catchTags({
+      AuthError: respondToAuthError,
+      OrchestrationDispatchCommandError: respondToOrchestrationHttpError,
+    }),
+  ),
 );

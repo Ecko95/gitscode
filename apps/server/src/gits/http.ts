@@ -1,26 +1,31 @@
 import * as Effect from "effect/Effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import { ServerAuth } from "../auth/Services/ServerAuth.ts";
+import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "../auth/http.ts";
 import { browserApiCorsHeaders } from "../httpCors.ts";
-import { GitsBuildInfoResolver, GitsBuildInfoResolverError } from "./Services/GitsBuildInfo.ts";
-import {
-  GitsMcpInventoryResolver,
-  GitsMcpInventoryResolverError,
-} from "./Services/GitsMcpInventory.ts";
-import {
-  GitsSkillInventoryResolver,
-  GitsSkillInventoryResolverError,
-} from "./Services/GitsSkillInventory.ts";
+import { GitsBuildInfoResolver } from "./Services/GitsBuildInfo.ts";
+import { GitsMcpInventoryResolver } from "./Services/GitsMcpInventory.ts";
+import { GitsSkillInventoryResolver } from "./Services/GitsSkillInventory.ts";
+
+const authenticateGitsSession = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const serverAuth = yield* ServerAuth;
+  const session = yield* serverAuth.authenticateHttpRequest(request);
+  if (session.role === "thread-scoped") {
+    return yield* new AuthError({
+      message: "Thread-scoped sessions cannot access gits endpoints.",
+      status: 403,
+    });
+  }
+  return session;
+});
 
 export const gitsBuildInfoRouteLayer = HttpRouter.add(
   "GET",
   "/api/gits/build-info",
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* ServerAuth;
-    yield* serverAuth.authenticateHttpRequest(request);
+    yield* authenticateGitsSession;
     const resolver = yield* GitsBuildInfoResolver;
     const buildInfo = yield* resolver.getBuildInfo();
     return HttpServerResponse.jsonUnsafe(buildInfo, {
@@ -49,9 +54,7 @@ export const gitsSkillInventoryRouteLayer = HttpRouter.add(
   "GET",
   "/api/gits/skills",
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* ServerAuth;
-    yield* serverAuth.authenticateHttpRequest(request);
+    yield* authenticateGitsSession;
     const resolver = yield* GitsSkillInventoryResolver;
     const snapshot = yield* resolver.getSnapshot();
     return HttpServerResponse.jsonUnsafe(snapshot, {
@@ -80,9 +83,7 @@ export const gitsMcpInventoryRouteLayer = HttpRouter.add(
   "GET",
   "/api/gits/mcp",
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* ServerAuth;
-    yield* serverAuth.authenticateHttpRequest(request);
+    yield* authenticateGitsSession;
     const resolver = yield* GitsMcpInventoryResolver;
     const snapshot = yield* resolver.getSnapshot();
     return HttpServerResponse.jsonUnsafe(snapshot, {
