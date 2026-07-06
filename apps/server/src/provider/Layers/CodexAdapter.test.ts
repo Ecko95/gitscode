@@ -39,6 +39,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import { sessionPortEnv } from "../sessionPort.ts";
 import {
   type CodexSessionRuntimeOptions,
   type CodexForkResumeCursor,
@@ -292,6 +293,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       assert.deepStrictEqual(validationRuntimeFactory.factory.mock.calls[0]?.[0], {
         binaryPath: "codex",
         cwd: process.cwd(),
+        environment: sessionPortEnv("thread-1"),
         model: "gpt-5.3-codex",
         providerInstanceId: ProviderInstanceId.make("codex"),
         serviceTier: "fast",
@@ -404,6 +406,23 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         effort: "high",
         serviceTier: "fast",
       });
+    }),
+  );
+
+  it.effect("injects GITS_PORT into runtime environment", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("sess-gits-port-codex");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+      assert.equal(runtime.options.environment?.GITS_PORT, sessionPortEnv(threadId).GITS_PORT);
     }),
   );
 

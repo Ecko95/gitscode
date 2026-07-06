@@ -24,6 +24,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import { sessionPortEnv } from "../sessionPort.ts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
@@ -55,6 +56,7 @@ const runtimeMock = {
     startCalls: [] as string[],
     sessionCreateUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
+    connectEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
     abortCalls: [] as string[],
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
@@ -68,6 +70,7 @@ const runtimeMock = {
     this.state.startCalls.length = 0;
     this.state.sessionCreateUrls.length = 0;
     this.state.authHeaders.length = 0;
+    this.state.connectEnvironments.length = 0;
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
@@ -97,8 +100,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         exitCode: Effect.never,
       };
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
+  connectToOpenCodeServer: ({ serverUrl, environment }) =>
     Effect.gen(function* () {
+      runtimeMock.state.connectEnvironments.push(environment);
       const url = serverUrl ?? "http://127.0.0.1:4301";
       // Unconditionally register a scope finalizer for test observability —
       // preserves the `closeCalls` / `closeError` probes that the existing
@@ -245,6 +249,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       assert.deepEqual(runtimeMock.state.authHeaders, [
         `Basic ${btoa("opencode:secret-password")}`,
       ]);
+      assert.equal(
+        runtimeMock.state.connectEnvironments[0]?.GITS_PORT,
+        sessionPortEnv("thread-opencode").GITS_PORT,
+      );
     }),
   );
 

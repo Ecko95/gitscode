@@ -28,6 +28,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
+import { sessionPortEnv } from "../sessionPort.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -1052,10 +1053,12 @@ export function makeOpenCodeAdapter(
               .allocate(input.threadId, directory)
               .pipe(Effect.mapError((cause) => toProcessError(input.threadId, cause)))).vars
           : {};
-        const openCodeSessionEnv: NodeJS.ProcessEnv | undefined =
-          options?.environment != null || Object.keys(openCodeShimEnv).length > 0
-            ? { ...(options?.environment ?? {}), ...openCodeShimEnv }
-            : undefined;
+        const openCodeSessionEnv: NodeJS.ProcessEnv = Object.assign(
+          {},
+          options?.environment,
+          sessionPortEnv(input.threadId),
+          openCodeShimEnv,
+        );
 
         const started = yield* Effect.gen(function* () {
           const sessionScope = yield* Scope.make();
@@ -1070,7 +1073,7 @@ export function makeOpenCodeAdapter(
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
                 serverUrl,
-                ...(openCodeSessionEnv != null ? { environment: openCodeSessionEnv } : {}),
+                environment: openCodeSessionEnv,
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
