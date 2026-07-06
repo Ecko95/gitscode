@@ -21,6 +21,7 @@ import {
   type CaptureCheckpointInput,
 } from "../checkpointing/Services/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   RuntimeReceiptBus,
   type OrchestrationRuntimeReceipt,
@@ -91,11 +92,17 @@ const makeGitLayer = (fail: boolean) =>
     }),
   );
 
+const makeProjectionLayer = (sharedWithLiveThread: boolean) =>
+  Layer.succeed(ProjectionSnapshotQuery, {
+    hasLiveThreadForWorktreePath: () => Effect.succeed(sharedWithLiveThread),
+  } as never);
+
 // helper that runs retirement and returns dispatched/published counts
 async function runRetirement({
   failCp = false,
   failGit = false,
-}: { failCp?: boolean; failGit?: boolean } = {}) {
+  sharedWorktree = false,
+}: { failCp?: boolean; failGit?: boolean; sharedWorktree?: boolean } = {}) {
   const { layer: engineLayer, dispatched } = makeEngineLayer();
   const { layer: receiptLayer, published } = makeReceiptLayer();
   const layer = Layer.mergeAll(
@@ -103,6 +110,7 @@ async function runRetirement({
     receiptLayer,
     makeCheckpointLayer(failCp),
     makeGitLayer(failGit),
+    makeProjectionLayer(sharedWorktree),
     NodeServices.layer,
   );
 
@@ -161,6 +169,13 @@ describe("retireWorktree", () => {
     expect(dispatched).toContain("worktree.retire.start");
     expect(dispatched).not.toContain("worktree.bury");
     expect(published).not.toContain("worktree.buried");
+  });
+
+  it("skips retirement entirely when another live thread shares the worktree", async () => {
+    const { dispatched, published } = await runRetirement({ sharedWorktree: true });
+    // fork shares the source worktree — removing it would destroy the survivor's cwd
+    expect(dispatched).toEqual([]);
+    expect(published).toEqual([]);
   });
 });
 

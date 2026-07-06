@@ -2238,12 +2238,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // events but are still referenced by a live (non-deleted) thread in the projection.
   // ARCHIVED threads block too — deleted_at IS NULL covers them (plan 21 W2.4 fix).
   const hasLiveThreadForWorktreePath: ProjectionSnapshotQueryShape["hasLiveThreadForWorktreePath"] =
-    (worktreePath) =>
+    // ponytail: `thread_id <> ''` when no exclusion — always true for real ids,
+    // avoids dynamic SQL branching.
+    (worktreePath, excludeThreadId) =>
       sql<{ exists_flag: number }>`
         SELECT 1 AS exists_flag
         FROM projection_threads
         WHERE worktree_path = ${worktreePath}
           AND deleted_at IS NULL
+          AND thread_id <> ${excludeThreadId ?? ""}
         LIMIT 1
       `.pipe(
         Effect.map((rows) => rows.length > 0),
