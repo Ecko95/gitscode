@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
@@ -105,12 +105,13 @@ function mockHandle(result: {
   readonly stderr?: string;
   readonly code?: number;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly kill?: (options?: ChildProcess.KillOptions | undefined) => Effect.Effect<void, never>;
 }) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     exitCode: result.exitCode ?? Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
     isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
+    kill: result.kill ?? (() => Effect.void),
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
     stdout: Stream.make(encoder.encode(result.stdout ?? "")),
@@ -590,6 +591,43 @@ describe("providerMaintenanceRunner", () => {
           mockSpawnerLayer((_command, args) => {
             calls.push(args.join(" "));
             return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("requests SIGKILL escalation when interrupting a hung update child", () => {
+    const killOptions: Array<ChildProcess.KillOptions | undefined> = [];
+    const startedLatch: { resolve: () => void } = { resolve: () => {} };
+    const started = new Promise<void>((resolve) => {
+      startedLatch.resolve = resolve;
+    });
+
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner(registry);
+
+      const fiber = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => started);
+      yield* Fiber.interrupt(fiber);
+
+      assert.lengthOf(killOptions, 1);
+      assert.strictEqual(killOptions[0]?.killSignal, "SIGTERM");
+      assert.isDefined(killOptions[0]?.forceKillAfter);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => {
+            startedLatch.resolve();
+            return {
+              exitCode: Effect.never,
+              kill: (options?: ChildProcess.KillOptions | undefined) =>
+                Effect.sync(() => {
+                  killOptions.push(options);
+                }),
+            };
           }),
         ),
       ),

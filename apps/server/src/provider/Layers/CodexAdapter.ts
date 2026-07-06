@@ -1425,7 +1425,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // instance-level env) is never mutated, and server process.env is untouched.
         // The shim dir is released when sessionScope closes (session teardown).
         const shimEnv = options?.gitShimManager
-          ? (yield* options.gitShimManager.allocate(input.threadId, sessionCwd)).vars
+          ? (yield* options.gitShimManager.allocate(input.threadId, sessionCwd).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProcessError({
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            )).vars
           : {};
         if (options?.gitShimManager && Object.keys(shimEnv).length > 0) {
           yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));

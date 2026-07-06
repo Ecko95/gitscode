@@ -3130,7 +3130,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // ponytail: shim denied/warn events log via Codex adapter's stderr pipeline;
       //   Claude SDK stderr is not captured here — add stderr capture when needed.
       if (gitShimManager) {
-        const shimResult = yield* gitShimManager.allocate(threadId, input.cwd ?? "");
+        const shimResult = yield* gitShimManager
+          .allocate(threadId, input.cwd ?? "")
+          .pipe(
+            Effect.mapError((cause) =>
+              toProcessError(cause, "Failed to allocate git confinement shim.", threadId),
+            ),
+          );
         sessionShimEnvs.set(threadId, shimResult.vars);
       }
 
