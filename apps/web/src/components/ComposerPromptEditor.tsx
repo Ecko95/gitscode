@@ -26,6 +26,7 @@ import {
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
   KEY_BACKSPACE_COMMAND,
+  CLEAR_HISTORY_COMMAND,
   $getRoot,
   HISTORY_MERGE_TAG,
   DecoratorNode,
@@ -869,6 +870,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  clearHistory: () => void;
   insertText: (text: string) => void;
   readSnapshot: () => {
     value: string;
@@ -1589,10 +1591,13 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      clearHistory: () => {
+        editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
+      },
       insertText,
       readSnapshot,
     }),
-    [focusAt, insertText, readSnapshot],
+    [editor, focusAt, insertText, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {

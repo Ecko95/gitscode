@@ -404,6 +404,8 @@ export interface ChatComposerHandle {
     prompt?: string;
     detectTrigger?: boolean;
   }) => void;
+  /** Clear Lexical undo/redo history after switching thread-scoped composer state. */
+  clearHistory: () => void;
   /** Insert a terminal context from the terminal drawer. */
   addTerminalContext: (selection: TerminalContextSelection) => void;
   /** Get the current prompt/effort/model state for use in send. */
@@ -1958,6 +1960,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )
             : null,
         );
+      },
+      clearHistory: () => {
+        composerEditorRef.current?.clearHistory();
       },
       addTerminalContext: (selection: TerminalContextSelection) => {
         if (!activeThread) return;

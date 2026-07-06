@@ -1285,12 +1285,17 @@ async function pressComposerUndo(): Promise<void> {
   await waitForLayout();
 }
 
-async function waitForComposerText(expectedText: string): Promise<void> {
+function getComposerDraftPrompt(threadId: ThreadId): string {
+  return useComposerDraftStore.getState().draftsByThreadKey[threadKeyFor(threadId)]?.prompt ?? "";
+}
+
+async function waitForComposerText(
+  expectedText: string,
+  threadId: ThreadId = THREAD_ID,
+): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(useComposerDraftStore.getState().draftsByThreadKey[THREAD_KEY]?.prompt ?? "").toBe(
-        expectedText,
-      );
+      expect(getComposerDraftPrompt(threadId)).toBe(expectedText);
     },
     { timeout: 8_000, interval: 16 },
   );
@@ -3090,6 +3095,128 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps composer undo and optimistic user messages scoped to the active thread", async () => {
+    const secondThreadId = "thread-browser-test-second" as ThreadId;
+    const snapshotWithSecondThread = addThreadToSnapshot(
+      createSnapshotForTargetUser({
+        targetMessageId: "msg-user-thread-scope-base" as MessageId,
+        targetText: "thread scope base",
+      }),
+      secondThreadId,
+    );
+    const optimisticText = "thread scoped optimistic alpha";
+    const dispatchResolver: {
+      current?: (value: { sequence: number }) => void;
+    } = {};
+    const dispatchPromise = new Promise<{ sequence: number }>((resolve) => {
+      dispatchResolver.current = resolve;
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: snapshotWithSecondThread,
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return dispatchPromise;
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByTestId("composer-editor").fill("A");
+      await waitForComposerText("A", THREAD_ID);
+
+      await mounted.router.navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          threadId: secondThreadId,
+        },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(secondThreadId),
+        "Route should switch to the second server thread.",
+      );
+      await pressComposerUndo();
+      await vi.waitFor(
+        () => {
+          expect(getComposerDraftPrompt(secondThreadId)).toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await mounted.router.navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          threadId: THREAD_ID,
+        },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(THREAD_ID),
+        "Route should switch back to the first server thread.",
+      );
+      await waitForComposerText("A", THREAD_ID);
+
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, optimisticText);
+      await waitForComposerText(optimisticText, THREAD_ID);
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(optimisticText);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await mounted.router.navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          threadId: secondThreadId,
+        },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(secondThreadId),
+        "Route should switch to the second server thread after sending.",
+      );
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).not.toContain(optimisticText);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await mounted.router.navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          threadId: THREAD_ID,
+        },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(THREAD_ID),
+        "Route should switch back to the first server thread after sending.",
+      );
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(optimisticText);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      dispatchResolver.current?.({ sequence: fixture.snapshot.snapshotSequence + 1 });
       await mounted.cleanup();
     }
   });
