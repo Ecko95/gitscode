@@ -136,6 +136,18 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  vapidPublicKey: Config.string("T3CODE_VAPID_PUBLIC_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  vapidPrivateKey: Config.string("T3CODE_VAPID_PRIVATE_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  vapidSubject: Config.string("T3CODE_VAPID_SUBJECT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -374,6 +386,9 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      vapidPublicKey: env.vapidPublicKey,
+      vapidPrivateKey: env.vapidPrivateKey,
+      vapidSubject: env.vapidSubject,
     };
 
     return config;

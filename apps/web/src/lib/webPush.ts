@@ -1,0 +1,119 @@
+import type {
+  WebPushPublicConfig,
+  WebPushRegisterInput,
+  WebPushSubscription,
+  WebPushUnregisterInput,
+} from "@t3tools/contracts";
+
+const WEB_PUSH_SCOPE = "[WEB_PUSH]";
+
+function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = `${base64String}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(new ArrayBuffer(rawData.length));
+  for (let index = 0; index < rawData.length; index += 1) {
+    outputArray[index] = rawData.charCodeAt(index);
+  }
+  return outputArray.buffer;
+}
+
+function normalizeSubscription(subscription: PushSubscription): WebPushSubscription | null {
+  const json = subscription.toJSON();
+  if (
+    typeof json.endpoint !== "string" ||
+    !json.keys ||
+    typeof json.keys.p256dh !== "string" ||
+    typeof json.keys.auth !== "string"
+  ) {
+    return null;
+  }
+  return {
+    endpoint: json.endpoint,
+    expirationTime: json.expirationTime ?? null,
+    keys: {
+      p256dh: json.keys.p256dh,
+      auth: json.keys.auth,
+    },
+  };
+}
+
+async function postJson(path: string, body: unknown): Promise<void> {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`${path} failed with HTTP ${response.status}`);
+  }
+}
+
+export function canUseWebPush(): boolean {
+  return (
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window &&
+    window.isSecureContext
+  );
+}
+
+export async function getWebPushPublicConfig(): Promise<WebPushPublicConfig> {
+  const response = await fetch("/api/push/config", { credentials: "include" });
+  if (!response.ok) {
+    throw new Error(`/api/push/config failed with HTTP ${response.status}`);
+  }
+  return (await response.json()) as WebPushPublicConfig;
+}
+
+export async function registerWebPushSubscription(): Promise<void> {
+  if (!canUseWebPush()) {
+    return;
+  }
+  if (Notification.permission !== "granted") {
+    return;
+  }
+
+  const config = await getWebPushPublicConfig();
+  if (!config.enabled || !config.publicKey) {
+    console.info(`${WEB_PUSH_SCOPE} VAPID is not configured on the server`);
+    return;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  const existingSubscription = await registration.pushManager.getSubscription();
+  const subscription =
+    existingSubscription ??
+    (await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToArrayBuffer(config.publicKey),
+    }));
+  const normalized = normalizeSubscription(subscription);
+  if (!normalized) {
+    throw new Error("Browser returned an invalid PushSubscription.");
+  }
+
+  const input: WebPushRegisterInput = {
+    subscription: normalized,
+    userAgent: navigator.userAgent,
+  };
+  await postJson("/api/push/subscriptions", input);
+}
+
+export async function unregisterWebPushSubscription(): Promise<void> {
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    return;
+  }
+  const endpoint = subscription.endpoint;
+  const input: WebPushUnregisterInput = { endpoint };
+  await postJson("/api/push/subscriptions/delete", input).catch((error: unknown) => {
+    console.warn(`${WEB_PUSH_SCOPE} server unregister failed`, error);
+  });
+  await subscription.unsubscribe();
+}

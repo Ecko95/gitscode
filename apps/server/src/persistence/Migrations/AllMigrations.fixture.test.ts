@@ -128,6 +128,7 @@ layer("AllMigrations.fixture", (it) => {
         "projection_thread_visual_plans",
         "automode_episodes",
         "orchestration_events_archive",
+        "web_push_subscriptions",
         "effect_sql_migrations",
       ]) {
         assert.ok(tableNames.has(expected), `Table ${expected} missing after full migration chain`);

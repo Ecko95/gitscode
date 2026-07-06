@@ -73,6 +73,9 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly logWebSocketEvents: boolean;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
+  readonly vapidPublicKey?: string | undefined;
+  readonly vapidPrivateKey?: string | undefined;
+  readonly vapidSubject?: string | undefined;
 }
 
 export const deriveServerPaths = Effect.fn(function* (
@@ -168,6 +171,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           logWebSocketEvents: false,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          vapidPublicKey: undefined,
+          vapidPrivateKey: undefined,
+          vapidSubject: undefined,
           port: 0,
           host: undefined,
           desktopBootstrapToken: undefined,

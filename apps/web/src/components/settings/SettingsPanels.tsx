@@ -14,6 +14,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED,
+  DEFAULT_PUSH_NOTIFICATIONS_ENABLED,
   DEFAULT_UNIFIED_SETTINGS,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -36,6 +37,7 @@ import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hos
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { canUseWebPush } from "../../lib/webPush";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -436,6 +438,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED
         ? ["Desktop notifications"]
         : []),
+      ...((settings.pushNotificationsEnabled ?? DEFAULT_PUSH_NOTIFICATIONS_ENABLED) !==
+      DEFAULT_PUSH_NOTIFICATIONS_ENABLED
+        ? ["Push to phone"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
     ],
     [
@@ -445,6 +451,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.critReviewEnabled,
       settings.desktopNotificationsEnabled,
+      settings.pushNotificationsEnabled,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffIgnoreWhitespace,
@@ -482,6 +489,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       critReviewEnabled: DEFAULT_UNIFIED_SETTINGS.critReviewEnabled,
       desktopNotificationsEnabled: DEFAULT_DESKTOP_NOTIFICATIONS_ENABLED,
+      pushNotificationsEnabled: DEFAULT_PUSH_NOTIFICATIONS_ENABLED,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
@@ -532,7 +540,10 @@ export function GeneralSettingsPanel() {
   const handleDesktopNotificationsCheckedChange = useCallback(
     async (checked: boolean) => {
       if (!checked) {
-        await updateSettings({ desktopNotificationsEnabled: false });
+        await updateSettings({
+          desktopNotificationsEnabled: false,
+          pushNotificationsEnabled: false,
+        });
         return;
       }
 
@@ -559,6 +570,43 @@ export function GeneralSettingsPanel() {
       }
 
       await updateSettings({ desktopNotificationsEnabled: true });
+    },
+    [updateSettings],
+  );
+
+  const handlePushNotificationsCheckedChange = useCallback(
+    async (checked: boolean) => {
+      if (!checked) {
+        await updateSettings({ pushNotificationsEnabled: false });
+        return;
+      }
+
+      if (!canUseWebPush()) {
+        toastManager.add({
+          type: "warning",
+          title: "Phone push unavailable",
+          description: "Install GITS as a secure PWA in a browser that supports Web Push.",
+        });
+        return;
+      }
+
+      let permission = Notification.permission;
+      if (permission === "default") {
+        permission = await Notification.requestPermission();
+      }
+      if (permission !== "granted") {
+        toastManager.add({
+          type: "warning",
+          title: "Notifications blocked",
+          description: "Allow notifications in your browser before enabling phone push.",
+        });
+        return;
+      }
+
+      await updateSettings({
+        desktopNotificationsEnabled: true,
+        pushNotificationsEnabled: true,
+      });
     },
     [updateSettings],
   );
@@ -664,6 +712,37 @@ export function GeneralSettingsPanel() {
                 void handleDesktopNotificationsCheckedChange(Boolean(checked))
               }
               aria-label="Enable desktop notifications"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Push to phone"
+          description="Use Web Push for the same turn-complete and attention events when this installed PWA is closed."
+          resetAction={
+            (settings.pushNotificationsEnabled ?? DEFAULT_PUSH_NOTIFICATIONS_ENABLED) !==
+            DEFAULT_PUSH_NOTIFICATIONS_ENABLED ? (
+              <SettingResetButton
+                label="push to phone"
+                onClick={() =>
+                  updateSettings({
+                    pushNotificationsEnabled: DEFAULT_PUSH_NOTIFICATIONS_ENABLED,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={
+                settings.desktopNotificationsEnabled === true &&
+                settings.pushNotificationsEnabled === true
+              }
+              disabled={settings.desktopNotificationsEnabled !== true}
+              onCheckedChange={(checked) =>
+                void handlePushNotificationsCheckedChange(Boolean(checked))
+              }
+              aria-label="Enable push to phone"
             />
           }
         />

@@ -110,3 +110,4 @@ export type AuthSessionRepositoryError = PersistenceSqlError | PersistenceDecode
 export type ProjectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
 export type AutomodeEpisodeLedgerRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type WebPushSubscriptionRepositoryError = PersistenceSqlError | PersistenceDecodeError;

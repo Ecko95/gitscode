@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { APP_DISPLAY_NAME } from "../branding";
 import { selectSidebarThreadsAcrossEnvironments, useStore, type AppState } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { registerWebPushSubscription, unregisterWebPushSubscription } from "../lib/webPush";
 import { useSettings } from "./useSettings";
 
 interface NotificationThreadState {
@@ -186,6 +187,10 @@ export function useNotifications(): void {
   const desktopNotificationsEnabled = useSettings(
     (settings) => settings.desktopNotificationsEnabled === true,
   );
+  const pushNotificationsEnabled = useSettings(
+    (settings) =>
+      settings.desktopNotificationsEnabled === true && settings.pushNotificationsEnabled === true,
+  );
   const pathname = useLocation({ select: (location) => location.pathname });
   const navigate = useNavigate();
   const desktopNotificationsEnabledRef = useRef(desktopNotificationsEnabled);
@@ -198,6 +203,28 @@ export function useNotifications(): void {
   useEffect(() => {
     focusedThreadKeyRef.current = parseFocusedThreadKey(pathname);
   }, [pathname]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncPushSubscription = async () => {
+      try {
+        if (pushNotificationsEnabled) {
+          await registerWebPushSubscription();
+          return;
+        }
+        await unregisterWebPushSubscription();
+      } catch (error) {
+        if (!cancelled) {
+          console.warn(`${NOTIFICATION_SCOPE} unable to sync web push subscription`, error);
+        }
+      }
+    };
+
+    void syncPushSubscription();
+    return () => {
+      cancelled = true;
+    };
+  }, [pushNotificationsEnabled]);
 
   const notifyThread = useMemo(
     () => (thread: NotificationThreadState, event: "approval" | "input" | "turn") => {
