@@ -115,6 +115,11 @@ function makeProjectionSnapshotQueryLayer(liveThreadIds: Set<string> = new Set()
               liveThreadIds.has(threadId) ? Option.some({ threadId } as never) : Option.none(),
             );
         }
+        if (prop === "hasLiveThreadForWorktreePath") {
+          // retireWorktree's shared-worktree guard — adopter paths are orphaned,
+          // so no live thread references them.
+          return () => Effect.succeed(false);
+        }
         return () => Effect.die(`unused projection method: ${String(prop)}`);
       },
     }),
