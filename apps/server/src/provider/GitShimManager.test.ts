@@ -5,13 +5,15 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { ServerConfig } from "../config.ts";
-import { GitShimManager, GitShimManagerLive } from "./GitShimManager.ts";
+import { GitShimAllocateError, GitShimManager, GitShimManagerLive } from "./GitShimManager.ts";
 
 // ── Shared test layer ─────────────────────────────────────────────────────────
 // Provides GitShimManager + FileSystem + Path + ServerConfig to all tests.
@@ -95,6 +97,34 @@ it.layer(testLayer)("GitShimManager", (it) => {
         }
 
         yield* mgr.release(sessionId);
+      }),
+    );
+
+    it.effect("fails closed when the shim cannot be written", () =>
+      Effect.gen(function* () {
+        const mgr = yield* GitShimManager;
+        const nodeFs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig;
+        const path = yield* Path.Path;
+        const shimsRoot = path.join(config.baseDir, "gits-shims");
+
+        yield* nodeFs.remove(shimsRoot, { recursive: true, force: true });
+        yield* nodeFs.writeFileString(shimsRoot, "not a directory");
+
+        const result = yield* mgr.allocate("test-write-failure", config.baseDir).pipe(Effect.exit);
+        if (!Exit.isFailure(result)) {
+          throw new Error("Expected allocate to fail");
+        }
+
+        const error = Cause.squash(result.cause);
+        if (!(error instanceof GitShimAllocateError)) {
+          throw new Error(`Expected GitShimAllocateError, got ${String(error)}`);
+        }
+        if (error.sessionId !== "test-write-failure") {
+          throw new Error(`Expected session id on error, got ${error.sessionId}`);
+        }
+
+        yield* nodeFs.remove(shimsRoot, { force: true });
       }),
     );
   });

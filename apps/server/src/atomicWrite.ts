@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+const textEncoder = new TextEncoder();
+
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
   readonly contents: string;
@@ -19,7 +21,13 @@ export const writeFileStringAtomically = (input: {
       });
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
+      const tempFile = yield* fs.open(tempPath, { flag: "w" });
+      yield* tempFile.writeAll(textEncoder.encode(input.contents));
+      yield* tempFile.sync;
       yield* fs.rename(tempPath, input.filePath);
+      yield* fs.open(targetDirectory, { flag: "r" }).pipe(
+        Effect.andThen((directory) => directory.sync),
+        Effect.catch(() => Effect.void),
+      );
     }),
   );

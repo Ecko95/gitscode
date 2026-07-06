@@ -54,6 +54,11 @@ const exists = (filePath: string) =>
     return fileInfo._tag === "Success";
   });
 
+const realSleep = (milliseconds: number) =>
+  // Real event-loop timer so detached cleanup fibers progress under @effect/vitest.
+  // @effect-diagnostics-next-line globalTimers:off
+  Effect.promise<void>(() => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+
 const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pipeline-test-");
 
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
@@ -918,6 +923,135 @@ it.layer(
 it.layer(
   Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-rollback-")),
 )("OrchestrationProjectionPipeline", (it) => {
+  it.effect("defers attachment deletion until an outer command transaction commits", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const { attachmentsDir } = yield* ServerConfig;
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-outer-rollback");
+      const attachmentId = "thread-outer-rollback-00000000-0000-4000-8000-000000000001";
+      const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
+
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-outer-rollback-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-outer-rollback"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-outer-rollback-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-outer-rollback-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-outer-rollback"),
+          title: "Project Outer Rollback",
+          workspaceRoot: "/tmp/project-outer-rollback",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-outer-rollback-2"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-outer-rollback-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-outer-rollback-2"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-outer-rollback"),
+          title: "Thread Outer Rollback",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(attachmentPath, "rollback");
+
+      const rollback = yield* Effect.result(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* appendAndProject({
+              type: "thread.deleted",
+              eventId: EventId.make("evt-outer-rollback-3"),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: now,
+              commandId: CommandId.make("cmd-outer-rollback-3"),
+              causationEventId: null,
+              correlationId: CorrelationId.make("cmd-outer-rollback-3"),
+              metadata: {},
+              payload: {
+                threadId,
+                deletedAt: now,
+              },
+            });
+            assert.isTrue(yield* exists(attachmentPath));
+            return yield* Effect.fail("forced outer rollback" as const);
+          }),
+        ),
+      );
+      assert.equal(rollback._tag, "Failure");
+
+      yield* realSleep(200);
+      assert.isTrue(yield* exists(attachmentPath));
+
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* appendAndProject({
+            type: "thread.deleted",
+            eventId: EventId.make("evt-outer-rollback-4"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-01-01T00:00:01.000Z",
+            commandId: CommandId.make("cmd-outer-rollback-4"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-outer-rollback-4"),
+            metadata: {},
+            payload: {
+              threadId,
+              deletedAt: "2026-01-01T00:00:01.000Z",
+            },
+          });
+          assert.isTrue(yield* exists(attachmentPath));
+        }),
+      );
+
+      let removedAfterCommit = false;
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (!(yield* exists(attachmentPath))) {
+          removedAfterCommit = true;
+          break;
+        }
+        yield* realSleep(10);
+      }
+      assert.isTrue(removedAfterCommit);
+    }),
+  );
+
   it.effect("does not persist attachment files when projector transaction rolls back", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -2489,6 +2623,94 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
       ),
     ),
   ),
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-turn-error-")))(
+  "OrchestrationProjectionPipeline turn terminal errors",
+  (it) => {
+    it.effect("marks active turn error when provider fails before assistant output", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-turn-error");
+        const turnId = TurnId.make("turn-error-before-output");
+        const messageId = MessageId.make("message-turn-error");
+        const requestedAt = "2026-03-01T00:00:00.000Z";
+        const failedAt = "2026-03-01T00:00:05.000Z";
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-turn-error-1"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: requestedAt,
+          commandId: CommandId.make("cmd-turn-error-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-turn-error-1"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            createdAt: requestedAt,
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-turn-error-2"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: failedAt,
+          commandId: CommandId.make("cmd-turn-error-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-turn-error-2"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "error",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: "provider failed before output",
+              updatedAt: failedAt,
+            },
+          },
+        });
+
+        const rows = yield* sql<{
+          readonly turnId: string;
+          readonly state: string;
+          readonly pendingMessageId: string | null;
+          readonly completedAt: string | null;
+        }>`
+          SELECT
+            turn_id AS "turnId",
+            state,
+            pending_message_id AS "pendingMessageId",
+            completed_at AS "completedAt"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(rows, [
+          {
+            turnId: "turn-error-before-output",
+            state: "error",
+            pendingMessageId: "message-turn-error",
+            completedAt: failedAt,
+          },
+        ]);
+      }),
+    );
+  },
 );
 
 const engineLayer = it.layer(

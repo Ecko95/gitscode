@@ -29,6 +29,7 @@ const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
+const UPDATE_CHILD_KILL_GRACE_MS = 2_000;
 
 export interface ProviderMaintenanceCommandResult {
   readonly stdout: string;
@@ -86,7 +87,14 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
                 }),
             ),
           );
-        yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+        yield* Effect.addFinalizer(() =>
+          child
+            .kill({
+              killSignal: "SIGTERM",
+              forceKillAfter: Duration.millis(UPDATE_CHILD_KILL_GRACE_MS),
+            })
+            .pipe(Effect.ignore),
+        );
 
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [

@@ -217,6 +217,7 @@ const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_SIDEBAR_THREAD_SUMMARIES: SidebarThreadSummary[] = [];
+const EMPTY_CHAT_MESSAGES: ChatMessage[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
@@ -870,9 +871,37 @@ export default function ChatView(props: ChatViewProps) {
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
-  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
+  const [optimisticUserMessagesByThreadKey, setOptimisticUserMessagesByThreadKey] = useState<
+    Record<string, ChatMessage[]>
+  >({});
+  const optimisticUserMessagesByThreadKeyRef = useRef(optimisticUserMessagesByThreadKey);
+  optimisticUserMessagesByThreadKeyRef.current = optimisticUserMessagesByThreadKey;
+  const optimisticUserMessages =
+    optimisticUserMessagesByThreadKey[routeThreadKey] ?? EMPTY_CHAT_MESSAGES;
+  const setOptimisticUserMessagesForThread = useCallback(
+    (threadKey: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
+      setOptimisticUserMessagesByThreadKey((existing) => {
+        const current = existing[threadKey] ?? [];
+        const nextMessages = updater(current);
+        if (nextMessages === current) {
+          return existing;
+        }
+        if (nextMessages.length === 0) {
+          if (!(threadKey in existing)) {
+            return existing;
+          }
+          const next = { ...existing };
+          delete next[threadKey];
+          return next;
+        }
+        return {
+          ...existing,
+          [threadKey]: nextMessages,
+        };
+      });
+    },
+    [],
+  );
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
@@ -916,7 +945,9 @@ export default function ChatView(props: ChatViewProps) {
   const isAtEndRef = useRef(true);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
-  const sendInFlightRef = useRef(false);
+  const sendInFlightThreadKeysRef = useRef<Set<string>>(new Set());
+  const routeThreadKeyRef = useRef(routeThreadKey);
+  routeThreadKeyRef.current = routeThreadKey;
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   const terminalUiState = useTerminalUiStateStore((state) =>
@@ -1024,6 +1055,21 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+
+  useEffect(() => {
+    routeThreadKeyRef.current = routeThreadKey;
+    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const prompt = draft?.prompt ?? "";
+    promptRef.current = prompt;
+    composerImagesRef.current = draft?.images ?? [];
+    composerTerminalContextsRef.current = draft?.terminalContexts ?? [];
+    composerRef.current?.clearHistory();
+    composerRef.current?.resetCursorState({
+      cursor: collapseExpandedComposerCursor(prompt, prompt.length),
+      prompt,
+      detectTrigger: true,
+    });
+  }, [composerDraftTarget, composerRef, routeThreadKey]);
 
   useEffect(() => {
     if (!activeThreadRef) {
@@ -1667,8 +1713,10 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     return () => {
       clearAttachmentPreviewHandoffs();
-      for (const message of optimisticUserMessagesRef.current) {
-        revokeUserMessagePreviewUrls(message);
+      for (const messages of Object.values(optimisticUserMessagesByThreadKeyRef.current)) {
+        for (const message of messages) {
+          revokeUserMessagePreviewUrls(message);
+        }
       }
     };
   }, [clearAttachmentPreviewHandoffs]);
@@ -2665,7 +2713,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const timer = window.setTimeout(() => {
-      setOptimisticUserMessages((existing) =>
+      setOptimisticUserMessagesForThread(routeThreadKey, (existing) =>
         existing.filter((message) => !serverIds.has(message.id)),
       );
     }, 0);
@@ -2680,15 +2728,16 @@ export default function ChatView(props: ChatViewProps) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
+  }, [
+    activeThread?.id,
+    activeThread?.messages,
+    handoffAttachmentPreviews,
+    optimisticUserMessages,
+    routeThreadKey,
+    setOptimisticUserMessagesForThread,
+  ]);
 
   useEffect(() => {
-    setOptimisticUserMessages((existing) => {
-      for (const message of existing) {
-        revokeUserMessagePreviewUrls(message);
-      }
-      return [];
-    });
     resetLocalDispatch();
     setExpandedImage(null);
   }, [draftId, resetLocalDispatch, threadId]);
@@ -2906,12 +2955,13 @@ export default function ChatView(props: ChatViewProps) {
   const onForkMessage = useCallback(
     async (message: ThreadForkRequest) => {
       const api = readEnvironmentApi(environmentId);
+      const threadKeyForSend = routeThreadKey;
       if (
         !api ||
         !activeThread ||
         !isServerThread ||
         message.role === "system" ||
-        sendInFlightRef.current
+        sendInFlightThreadKeysRef.current.has(threadKeyForSend)
       ) {
         return;
       }
@@ -2930,7 +2980,7 @@ export default function ChatView(props: ChatViewProps) {
 
       const nextThreadId = newThreadId();
       const nextThreadRef = scopeThreadRef(activeThread.environmentId, nextThreadId);
-      sendInFlightRef.current = true;
+      sendInFlightThreadKeysRef.current.add(threadKeyForSend);
       setThreadError(activeThread.id, null);
 
       try {
@@ -2970,7 +3020,7 @@ export default function ChatView(props: ChatViewProps) {
           err instanceof Error ? err.message : "Failed to fork this thread.",
         );
       } finally {
-        sendInFlightRef.current = false;
+        sendInFlightThreadKeysRef.current.delete(threadKeyForSend);
       }
     },
     [
@@ -2983,6 +3033,7 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread,
       navigate,
       phase,
+      routeThreadKey,
       setComposerDraftPrompt,
       setThreadError,
     ],
@@ -3050,13 +3101,14 @@ export default function ChatView(props: ChatViewProps) {
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
+    const threadKeyForSend = routeThreadKey;
     if (
       !api ||
       !activeThread ||
       isSendBusy ||
       isConnecting ||
       activeEnvironmentUnavailable ||
-      sendInFlightRef.current
+      sendInFlightThreadKeysRef.current.has(threadKeyForSend)
     )
       return;
     if (activePendingProgress) {
@@ -3143,7 +3195,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    sendInFlightRef.current = true;
+    sendInFlightThreadKeysRef.current.add(threadKeyForSend);
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
@@ -3186,7 +3238,7 @@ export default function ChatView(props: ChatViewProps) {
     setShowScrollToBottom(false);
     await legendListRef.current?.scrollToEnd?.({ animated: false });
 
-    setOptimisticUserMessages((existing) => [
+    setOptimisticUserMessagesForThread(threadKeyForSend, (existing) => [
       ...existing,
       {
         id: messageIdForSend,
@@ -3312,39 +3364,45 @@ export default function ChatView(props: ChatViewProps) {
       });
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
-      if (
-        !turnStartSucceeded &&
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
+      if (!turnStartSucceeded) {
+        const draftForSend = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+        const canRestoreDraft =
+          !draftForSend ||
+          (draftForSend.prompt.length === 0 &&
+            draftForSend.images.length === 0 &&
+            draftForSend.terminalContexts.length === 0);
+
+        if (canRestoreDraft) {
+          setOptimisticUserMessagesForThread(threadKeyForSend, (existing) => {
+            const removed = existing.filter((message) => message.id === messageIdForSend);
+            for (const message of removed) {
+              revokeUserMessagePreviewUrls(message);
+            }
+            const next = existing.filter((message) => message.id !== messageIdForSend);
+            return next.length === existing.length ? existing : next;
+          });
+          const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+          setComposerDraftPrompt(composerDraftTarget, promptForSend);
+          addComposerDraftImages(composerDraftTarget, retryComposerImages);
+          setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+          if (routeThreadKeyRef.current === threadKeyForSend) {
+            promptRef.current = promptForSend;
+            composerImagesRef.current = retryComposerImages;
+            composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+            composerRef.current?.resetCursorState({
+              cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+              prompt: promptForSend,
+              detectTrigger: true,
+            });
           }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
-        promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-          prompt: promptForSend,
-          detectTrigger: true,
-        });
+        }
       }
       setThreadError(
         threadIdForSend,
         err instanceof Error ? err.message : "Failed to send message.",
       );
     });
-    sendInFlightRef.current = false;
+    sendInFlightThreadKeysRef.current.delete(threadKeyForSend);
     if (!turnStartSucceeded) {
       resetLocalDispatch();
     }
@@ -3532,13 +3590,14 @@ export default function ChatView(props: ChatViewProps) {
       interactionMode: "default" | "plan";
     }) => {
       const api = readEnvironmentApi(environmentId);
+      const threadKeyForSend = routeThreadKey;
       if (
         !api ||
         !activeThread ||
         !isServerThread ||
         isSendBusy ||
         isConnecting ||
-        sendInFlightRef.current
+        sendInFlightThreadKeysRef.current.has(threadKeyForSend)
       ) {
         return;
       }
@@ -3571,7 +3630,7 @@ export default function ChatView(props: ChatViewProps) {
         text: trimmed,
       });
 
-      sendInFlightRef.current = true;
+      sendInFlightThreadKeysRef.current.add(threadKeyForSend);
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
@@ -3581,7 +3640,7 @@ export default function ChatView(props: ChatViewProps) {
       setShowScrollToBottom(false);
       await legendListRef.current?.scrollToEnd?.({ animated: false });
 
-      setOptimisticUserMessages((existing) => [
+      setOptimisticUserMessagesForThread(threadKeyForSend, (existing) => [
         ...existing,
         {
           id: messageIdForSend,
@@ -3639,16 +3698,16 @@ export default function ChatView(props: ChatViewProps) {
           planSidebarDismissedForTurnRef.current = null;
           setPlanSidebarOpen(true);
         }
-        sendInFlightRef.current = false;
+        sendInFlightThreadKeysRef.current.delete(threadKeyForSend);
       } catch (err) {
-        setOptimisticUserMessages((existing) =>
+        setOptimisticUserMessagesForThread(threadKeyForSend, (existing) =>
           existing.filter((message) => message.id !== messageIdForSend),
         );
         setThreadError(
           threadIdForSend,
           err instanceof Error ? err.message : "Failed to send plan follow-up.",
         );
-        sendInFlightRef.current = false;
+        sendInFlightThreadKeysRef.current.delete(threadKeyForSend);
         resetLocalDispatch();
       }
     },
@@ -3663,14 +3722,17 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch,
       runtimeMode,
       setComposerDraftInteractionMode,
+      setOptimisticUserMessagesForThread,
       setThreadError,
       autoOpenPlanSidebar,
       environmentId,
+      routeThreadKey,
     ],
   );
 
   const onImplementPlanInNewThread = useCallback(async () => {
     const api = readEnvironmentApi(environmentId);
+    const threadKeyForSend = routeThreadKey;
     if (
       !api ||
       !activeThread ||
@@ -3680,7 +3742,7 @@ export default function ChatView(props: ChatViewProps) {
       isSendBusy ||
       isConnecting ||
       activeEnvironmentUnavailable ||
-      sendInFlightRef.current
+      sendInFlightThreadKeysRef.current.has(threadKeyForSend)
     ) {
       return;
     }
@@ -3711,10 +3773,10 @@ export default function ChatView(props: ChatViewProps) {
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
 
-    sendInFlightRef.current = true;
+    sendInFlightThreadKeysRef.current.add(threadKeyForSend);
     beginLocalDispatch({ preparingWorktree: false });
     const finish = () => {
-      sendInFlightRef.current = false;
+      sendInFlightThreadKeysRef.current.delete(threadKeyForSend);
       resetLocalDispatch();
     };
 
@@ -3803,6 +3865,7 @@ export default function ChatView(props: ChatViewProps) {
     runtimeMode,
     autoOpenPlanSidebar,
     environmentId,
+    routeThreadKey,
   ]);
 
   const onProviderModelSelect = useCallback(

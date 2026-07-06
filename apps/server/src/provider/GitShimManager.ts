@@ -24,6 +24,7 @@
  * @module provider/GitShimManager
  */
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -55,6 +56,12 @@ export interface GitShimEnv {
   readonly vars: Record<string, string>;
 }
 
+export class GitShimAllocateError extends Data.TaggedError("GitShimAllocateError")<{
+  readonly sessionId: string;
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
 export interface GitShimManagerShape {
   /**
    * Create a shim dir for `sessionId`, write the `git` script that enforces
@@ -64,7 +71,10 @@ export interface GitShimManagerShape {
    * ends. Codex/Cursor/OpenCode adapters do this via a Scope finalizer;
    * ClaudeAdapter calls release explicitly in stopSessionInternal.
    */
-  readonly allocate: (sessionId: string, allowedRoot: string) => Effect.Effect<GitShimEnv>;
+  readonly allocate: (
+    sessionId: string,
+    allowedRoot: string,
+  ) => Effect.Effect<GitShimEnv, GitShimAllocateError>;
 
   /**
    * Remove the shim dir for `sessionId` immediately.
@@ -130,7 +140,10 @@ const makeGitShimManager: Effect.Effect<
     return path.join(shimDirFor(sessionId), "git");
   }
 
-  const allocate = (sessionId: string, allowedRoot: string): Effect.Effect<GitShimEnv> =>
+  const allocate = (
+    sessionId: string,
+    allowedRoot: string,
+  ): Effect.Effect<GitShimEnv, GitShimAllocateError> =>
     Effect.gen(function* () {
       const shimDir = shimDirFor(sessionId);
       const shimPath = shimPathFor(sessionId);
@@ -157,10 +170,18 @@ const makeGitShimManager: Effect.Effect<
       return { vars } satisfies GitShimEnv;
     }).pipe(
       Effect.catch((err) => {
-        // Shim creation failure must not break session startup.
-        // Log and return an empty env (no confinement, but sessions proceed).
+        // Fail closed: without the shim, a confined session would spawn with
+        // unrestricted git. Surface the startup error instead.
         return Effect.logWarning("git-shim.allocate-failed", { sessionId, err }).pipe(
-          Effect.as({ vars: {} } satisfies GitShimEnv),
+          Effect.andThen(
+            Effect.fail(
+              new GitShimAllocateError({
+                sessionId,
+                message: "Failed to allocate git confinement shim.",
+                cause: err,
+              }),
+            ),
+          ),
         );
       }),
     );
