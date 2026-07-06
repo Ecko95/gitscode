@@ -1048,7 +1048,9 @@ export function makeOpenCodeAdapter(
         // CONFINEMENT LINE: only openCodeSessionEnv is modified; options.environment (the
         // instance-level env) is never mutated, and server process.env is untouched.
         const openCodeShimEnv = options?.gitShimManager
-          ? (yield* options.gitShimManager.allocate(input.threadId, directory)).vars
+          ? (yield* options.gitShimManager
+              .allocate(input.threadId, directory)
+              .pipe(Effect.mapError((cause) => toProcessError(input.threadId, cause)))).vars
           : {};
         const openCodeSessionEnv: NodeJS.ProcessEnv | undefined =
           options?.environment != null || Object.keys(openCodeShimEnv).length > 0

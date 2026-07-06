@@ -544,7 +544,17 @@ export function makeCursorAdapter(
           // CONFINEMENT LINE: only sessionEnv is modified; options.environment (the
           // instance-level env) is never mutated, and server process.env is untouched.
           const cursorShimEnv = options?.gitShimManager
-            ? (yield* options.gitShimManager.allocate(input.threadId, cwd)).vars
+            ? (yield* options.gitShimManager.allocate(input.threadId, cwd).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterProcessError({
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      detail: cause.message,
+                      cause,
+                    }),
+                ),
+              )).vars
             : {};
           if (options?.gitShimManager && Object.keys(cursorShimEnv).length > 0) {
             yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
