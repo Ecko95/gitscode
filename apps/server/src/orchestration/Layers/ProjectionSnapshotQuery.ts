@@ -61,6 +61,7 @@ import {
   type ProjectionThreadCheckpointContext,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
+import { MAX_THREAD_MESSAGES } from "../projector.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
@@ -101,6 +102,7 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
+type ProjectionThreadMessageRow = Schema.Schema.Type<typeof ProjectionThreadMessageDbRowSchema>;
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
   turnId: TurnId,
@@ -271,6 +273,20 @@ function mapVisualPlanRow(
     turnId: row.turnId,
     content: row.content,
     comments: row.comments,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mapMessageRow(row: ProjectionThreadMessageRow): OrchestrationMessage {
+  return {
+    id: row.messageId,
+    role: row.role,
+    text: row.text,
+    ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+    ...(row.providerMessageId !== null ? { providerMessageId: row.providerMessageId } : {}),
+    turnId: row.turnId,
+    streaming: row.isStreaming === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -1124,19 +1140,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               for (const row of messageRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
                 const threadMessages = messagesByThread.get(row.threadId) ?? [];
-                threadMessages.push({
-                  id: row.messageId,
-                  role: row.role,
-                  text: row.text,
-                  ...(row.attachments !== null ? { attachments: row.attachments } : {}),
-                  ...(row.providerMessageId !== null
-                    ? { providerMessageId: row.providerMessageId }
-                    : {}),
-                  turnId: row.turnId,
-                  streaming: row.isStreaming === 1,
-                  createdAt: row.createdAt,
-                  updatedAt: row.updatedAt,
-                });
+                threadMessages.push(mapMessageRow(row));
                 messagesByThread.set(row.threadId, threadMessages);
               }
 
@@ -1328,6 +1332,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listThreadMessageRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadMessages:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listThreadMessages:decodeRows",
+              ),
+            ),
+          ),
           listThreadProposedPlanRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1375,6 +1387,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ([
             projectRows,
             threadRows,
+            messageRows,
             proposedPlanRows,
             visualPlanRows,
             sessionRows,
@@ -1405,6 +1418,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               }
               for (let index = 0; index < threadRows.length; index += 1) {
                 const row = threadRows[index];
+                if (!row) {
+                  continue;
+                }
+                updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
+              for (let index = 0; index < messageRows.length; index += 1) {
+                const row = messageRows[index];
                 if (!row) {
                   continue;
                 }
@@ -1456,6 +1476,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const visualPlansByThread = new Map<string, Array<OrchestrationVisualPlan>>();
               const sessionByThread = new Map<string, OrchestrationSession>();
+              const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
 
               for (let index = 0; index < sessionRows.length; index += 1) {
                 const row = sessionRows[index];
@@ -1463,6 +1484,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   continue;
                 }
                 sessionByThread.set(row.threadId, mapSessionRow(row));
+              }
+
+              for (let index = 0; index < messageRows.length; index += 1) {
+                const row = messageRows[index];
+                if (!row) {
+                  continue;
+                }
+                const threadMessages = messagesByThread.get(row.threadId) ?? [];
+                threadMessages.push(mapMessageRow(row));
+                messagesByThread.set(row.threadId, threadMessages);
               }
 
               for (let index = 0; index < proposedPlanRows.length; index += 1) {
@@ -1506,7 +1537,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
                   deletedAt: row.deletedAt,
-                  messages: [],
+                  // ponytail: command boot hydrates all projected messages with the
+                  // projector's MAX_THREAD_MESSAGES newest-row ceiling. If boot cost
+                  // grows, lazy per-thread hydration is the upgrade path.
+                  messages: (messagesByThread.get(row.threadId) ?? []).slice(-MAX_THREAD_MESSAGES),
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   visualPlans: visualPlansByThread.get(row.threadId) ?? [],
                   activities: [],
@@ -2121,24 +2155,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
         deletedAt: null,
-        messages: messageRows.map((row) => {
-          const message = {
-            id: row.messageId,
-            role: row.role,
-            text: row.text,
-            turnId: row.turnId,
-            streaming: row.isStreaming === 1,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          };
-          if (row.providerMessageId !== null) {
-            Object.assign(message, { providerMessageId: row.providerMessageId });
-          }
-          if (row.attachments !== null) {
-            return Object.assign(message, { attachments: row.attachments });
-          }
-          return message;
-        }),
+        messages: messageRows.map(mapMessageRow),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
         visualPlans: visualPlanRows.map(mapVisualPlanRow),
         activities: activityRows.map((row) => {
