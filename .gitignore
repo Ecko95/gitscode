@@ -26,3 +26,6 @@ squashfs-root/
 .gstack/
 dist-electron/
 .electron-runtime/
+
+# Local gitleaks scan output (not committed)
+.gitleaks-report.json
