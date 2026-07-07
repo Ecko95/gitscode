@@ -2,8 +2,9 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 
-import { AutomodeSupervisorError, type AutomodeGoal, type PeerStatus } from "@t3tools/contracts";
+import { type AutomodeGoal, type PeerStatus } from "@t3tools/contracts";
 
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
@@ -26,8 +27,8 @@ const TERMINAL_DONE_STATUSES = new Set<PeerStatus>(["done", "completed"]);
 function oldestQueued(goals: ReadonlyArray<AutomodeGoal>): AutomodeGoal | null {
   // The snapshot sorts goals newest-first; reverse before sorting so that
   // equal-timestamp goals remain in oldest-first (FIFO) order.
-  const queued = [...goals]
-    .reverse()
+  const queued = goals
+    .toReversed()
     .filter((goal) => goal.status === "queued")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   return queued[0] ?? null;
@@ -112,23 +113,28 @@ export const AutomodeDriverLive = Layer.effect(
               return;
             }
 
-            const review = yield* reviewPipeline
+            // Fail closed: a verifier that errors (not a fail verdict) must halt,
+            // not leave the goal running and retry the pipeline every tick.
+            const reviewResult = yield* reviewPipeline
               .review({
                 worktree: peer.worktreePath,
                 baseRef: policy.integrationBranch,
                 sliceId: running.id,
                 verificationCommands: policy.verificationCommands,
               })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new AutomodeSupervisorError({
-                      message: `Verifier failed for ${running.title}.`,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.result);
+            if (Result.isFailure(reviewResult)) {
+              yield* supervisor.failGoal({
+                goalId: running.id,
+                reason: `Verifier errored for ${running.title}.`,
+              });
+              yield* supervisor.haltDriver({
+                reason: `Halted: verifier errored for ${running.title} — manual check needed.`,
+              });
+              return;
+            }
 
+            const review = reviewResult.success;
             const decision = decide_automode_gate(review);
             if (decision.action === "fail") {
               yield* supervisor.failGoal({ goalId: running.id, reason: decision.reason });

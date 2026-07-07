@@ -57,10 +57,20 @@ const defaultBudgetUsage: AutomodeBudgetUsage = {
   note: "No provider cost events observed.",
 };
 
+// Cost telemetry present and well under budget — lets autonomous dispatch proceed.
+const availableBudgetUsage: AutomodeBudgetUsage = {
+  source: "provider-runtime",
+  totalCostUsd: 0,
+  totalProcessedTokens: 0,
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  note: null,
+};
+
 function makeLayer(options?: {
   readonly peers?: ReadonlyArray<DelamainPeer>;
   readonly budgetUsage?: AutomodeBudgetUsage;
   readonly onSpawn?: (input: DelamainSpawnPeerInput) => void;
+  readonly onKill?: () => void;
   readonly baseDir?: string;
 }) {
   return AutomodeSupervisorLive.pipe(
@@ -82,7 +92,11 @@ function makeLayer(options?: {
               task: input.prompt,
             };
           }),
-        killPeer: () => Effect.succeed({ ...peer, status: "killed", rawStatus: "killed" }),
+        killPeer: () =>
+          Effect.sync(() => {
+            options?.onKill?.();
+            return { ...peer, status: "killed", rawStatus: "killed" } as DelamainPeer;
+          }),
       }),
     ),
     Layer.provide(
@@ -179,6 +193,7 @@ describe("AutomodeSupervisorLive", () => {
         allowedRepos: ["/tmp/allowed"],
         allowedModels: ["gpt-5.5"],
         defaultModel: "gpt-5.5",
+        maxBudgetUsd: 10,
         maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
       });
@@ -207,6 +222,7 @@ describe("AutomodeSupervisorLive", () => {
         allowedRepos: ["/tmp/source-repo"],
         allowedModels: ["gpt-5.5"],
         defaultModel: "gpt-5.5",
+        maxBudgetUsd: 10,
         maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
       });
@@ -224,6 +240,7 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(
       Effect.provide(
         makeLayer({
+          budgetUsage: availableBudgetUsage,
           onSpawn: (input) => {
             spawnedRepo = input.repo;
           },
@@ -277,6 +294,8 @@ describe("AutomodeSupervisorLive", () => {
         mode: "autonomous",
         killSwitchEnabled: false,
         maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
         maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
       });
@@ -300,6 +319,7 @@ describe("AutomodeSupervisorLive", () => {
       yield* supervisor.updatePolicy({
         mode: "autonomous",
         killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
         maxBudgetUsd: 10,
         maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
@@ -327,6 +347,7 @@ describe("AutomodeSupervisorLive", () => {
       yield* supervisor.updatePolicy({
         mode: "autonomous",
         killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
         maxBudgetUsd: 1.25,
         maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
@@ -364,6 +385,8 @@ describe("AutomodeSupervisorLive", () => {
         mode: "autonomous",
         killSwitchEnabled: false,
         allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
       });
       const queued = yield* supervisor.enqueueGoal({
@@ -379,7 +402,7 @@ describe("AutomodeSupervisorLive", () => {
 
       const snapshot = yield* supervisor.getSnapshot();
       assert.equal(snapshot.goals.find((g) => g.id === completed.id)?.status, "completed");
-    }).pipe(Effect.provide(makeLayer())),
+    }).pipe(Effect.provide(makeLayer({ budgetUsage: availableBudgetUsage }))),
   );
 
   it.effect("failGoal marks failed with reason; haltDriver/resumeDriver toggle the flag", () =>
@@ -435,6 +458,8 @@ describe("AutomodeSupervisorLive", () => {
         killSwitchEnabled: false,
         maxActivePeers: 1,
         allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
       });
       const queued = yield* supervisor.enqueueGoal({
@@ -449,6 +474,7 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(
       Effect.provide(
         makeLayer({
+          budgetUsage: availableBudgetUsage,
           onSpawn: (input) => {
             spawnInput = input;
           },
@@ -468,6 +494,7 @@ describe("AutomodeSupervisorLive", () => {
           mode: "autonomous",
           killSwitchEnabled: false,
           allowedRepos: ["/tmp/source-repo"],
+          maxBudgetUsd: 10,
           integrationBranch: "auto/gits-self",
           verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
         });
@@ -501,6 +528,8 @@ describe("AutomodeSupervisorLive", () => {
         killSwitchEnabled: false,
         maxActivePeers: 1,
         allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
         integrationBranch: "auto/gits-self",
         verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
         requireApprovalForPeerSpawn: false,
@@ -517,6 +546,7 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(
       Effect.provide(
         makeLayer({
+          budgetUsage: availableBudgetUsage,
           onSpawn: (input) => {
             spawnInput = input;
           },
@@ -566,5 +596,185 @@ describe("AutomodeSupervisorLive", () => {
       assert.equal(snapshot.heldPrNumber, null);
       assert.equal(snapshot.runMerged, false);
     }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("rejects arming autonomous mode without a budget", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const error = yield* supervisor
+        .updatePolicy({
+          mode: "autonomous",
+          killSwitchEnabled: false,
+          allowedRepos: ["/tmp/source-repo"],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "AutomodeSupervisorError");
+      assert.include(error.message, "max budget");
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.policy.mode, "manual");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("rejects arming autonomous mode with an empty repo allowlist", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const error = yield* supervisor
+        .updatePolicy({
+          mode: "autonomous",
+          killSwitchEnabled: false,
+          maxBudgetUsd: 10,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "AutomodeSupervisorError");
+      assert.include(error.message, "allowlist");
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.policy.mode, "manual");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("rejectGoal transitions a waiting-approval goal to rejected", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "supervised",
+        killSwitchEnabled: false,
+        maxRuntimeMinutes: null,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Reject me",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+
+      const held = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(held.goal.status, "waiting-approval");
+
+      const rejected = yield* supervisor.rejectGoal({
+        goalId: held.goal.id,
+        reason: "Not this one.",
+      });
+      assert.equal(rejected.status, "rejected");
+      assert.equal(rejected.blockedReason, "Not this one.");
+      assert.notEqual(rejected.rejectedAt, null);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("autonomous dispatch of a destructive prompt requires approval", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+        requireApprovalBeforeIntegrate: false,
+        requireApprovalBeforeDestructiveAction: true,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Destructive goal",
+        repo: "/tmp/source-repo",
+        prompt: "Clean up: rm -rf the build directory.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.approvalRequired, true);
+      assert.equal(result.peer, null);
+      assert.equal(result.goal.status, "waiting-approval");
+    }).pipe(Effect.provide(makeLayer({ budgetUsage: availableBudgetUsage }))),
+  );
+
+  it.effect("autonomous dispatch of an integration-shaped prompt requires approval", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+        requireApprovalBeforeIntegrate: true,
+        requireApprovalBeforeDestructiveAction: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Integration goal",
+        repo: "/tmp/source-repo",
+        prompt: "Open a pull request with the change.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.approvalRequired, true);
+      assert.equal(result.peer, null);
+      assert.equal(result.goal.status, "waiting-approval");
+    }).pipe(Effect.provide(makeLayer({ budgetUsage: availableBudgetUsage }))),
+  );
+
+  it.effect(
+    "kills the peer and blocks a running goal whose runtime deadline passed while down",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "gits-automode-deadline-test-",
+        });
+        const statePath = `${baseDir}/userdata/gits/automode-state.json`;
+        let killCount = 0;
+
+        const goalId = yield* Effect.gen(function* () {
+          const supervisor = yield* AutomodeSupervisor;
+          yield* supervisor.updatePolicy({
+            mode: "autonomous",
+            killSwitchEnabled: false,
+            allowedRepos: ["/tmp/source-repo"],
+            maxBudgetUsd: 10,
+            maxRuntimeMinutes: 30,
+            requireApprovalForPeerSpawn: false,
+          });
+          const queued = yield* supervisor.enqueueGoal({
+            title: "Long runner",
+            repo: "/tmp/source-repo",
+            prompt: "Run a safe task.",
+          });
+          const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+          assert.equal(dispatched.goal.status, "running");
+          return dispatched.goal.id;
+        }).pipe(Effect.provide(makeLayer({ baseDir, budgetUsage: availableBudgetUsage })));
+
+        // Simulate downtime past the deadline: rewrite the persisted deadline into the past.
+        const raw = yield* fs.readFileString(statePath);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const persisted = JSON.parse(raw) as { runtimeDeadlines: Record<string, number> };
+        assert.isNumber(persisted.runtimeDeadlines[goalId]);
+        persisted.runtimeDeadlines[goalId] = -1;
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        yield* fs.writeFileString(statePath, JSON.stringify(persisted));
+
+        const after = yield* Effect.gen(function* () {
+          const supervisor = yield* AutomodeSupervisor;
+          return yield* supervisor.getSnapshot();
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              baseDir,
+              onKill: () => {
+                killCount += 1;
+              },
+            }),
+          ),
+        );
+
+        assert.equal(killCount, 1);
+        const goal = after.goals.find((g) => g.id === goalId);
+        assert.equal(goal?.status, "blocked");
+        assert.equal(goal?.blockedReason, "Runtime limit reached and peer was terminated.");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
