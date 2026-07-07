@@ -13,8 +13,8 @@ Worktree `gitscode-3b` at `origin/gits` tip `3fa47b0b8` (#130). Read-only audit;
 **Chain A — Motoko/Hermes proposal pipeline. Real; hard-stops at draft.**
 
 1. RPC entry `gits.hermes.chat` / `.proposals.*` / `.schedules.run` — `packages/contracts/src/rpc.ts:247-260`, wired `apps/server/src/ws.ts:1692-1762+`.
-2. `classifyHermesChatAction()` (`apps/server/src/gits/Layers/HermesCliAdapter.ts:655-677`) regex-classifies operator text; "spawn|peer|delamain|worktree|parallel" → `"worktree-spawn"` (L667-668). The chat prompt hard-forbids execution (`HermesCliAdapter.ts:702`): *"Do not edit files, spawn peers, merge, admin-merge, force-push, delete files, or run destructive shell commands."*
-3. Approval gate: `hermesProposalRequiresApproval` / `hermesDirectExecutionBlocked` (`HermesCliAdapter.ts:639-645`) — both are `actionKind !== "read-only"`. On approve, the card is stamped (`HermesCliAdapter.ts:1807-1810`): *"Approved for handoff only. Hermes cannot execute write, integrate, or destructive actions directly."*
+2. `classifyHermesChatAction()` (`apps/server/src/gits/Layers/HermesCliAdapter.ts:655-677`) regex-classifies operator text; "spawn|peer|delamain|worktree|parallel" → `"worktree-spawn"` (L667-668). The chat prompt hard-forbids execution (`HermesCliAdapter.ts:702`): _"Do not edit files, spawn peers, merge, admin-merge, force-push, delete files, or run destructive shell commands."_
+3. Approval gate: `hermesProposalRequiresApproval` / `hermesDirectExecutionBlocked` (`HermesCliAdapter.ts:639-645`) — both are `actionKind !== "read-only"`. On approve, the card is stamped (`HermesCliAdapter.ts:1807-1810`): _"Approved for handoff only. Hermes cannot execute write, integrate, or destructive actions directly."_
 4. `draftFromProposal` (`HermesCliAdapter.ts:1900-1960`) builds a `delamain-peer` / `open-gsd` / `verification` draft object and **returns it to the cockpit**. Not persisted, not enqueued, not spawned. Handler `ws.ts:1759-1762` just relays it.
 5. **Chain stops here.** `HermesCliAdapter.ts` has zero calls to `spawnPeer`, `runAuto`, `initProject`, `enqueueGoal`, `dispatchGoal`. The Hermes adapter holds `DelamainAdapter`/`OpenGsdAdapter`/`AutomodeSupervisor` handles only for read-only context assembly (`makeWriteProjectContext`, `HermesCliAdapter.ts:1830-1862`).
 6. **"Plans complete" trigger: does not exist.** Repo-wide grep for plans-complete concepts hits only the unrelated provider-runtime plan-step enums (`packages/contracts/src/providerRuntime.ts:75`). `GitsPlanningScanner` (`apps/server/src/gits/Services/GitsPlanningScanner.ts:17-21`) is read-only cockpit snapshot data. `OpenGsdCliAdapter.runAuto` runs only on the manual `gits.openGsd.auto` RPC (`ws.ts:1628-1629`).
@@ -37,18 +37,18 @@ Worktree `gitscode-3b` at `origin/gits` tip `3fa47b0b8` (#130). Read-only audit;
 
 ### B2. Verdict on question 1
 
-**Partially.** The autonomous executor loop (dispatch → confined-yolo peer → verify gate → FF land → held PR → human merge) exists, is live, and is well-tested — for goals already in the queue, once the operator sets `mode:"autonomous"`, `killSwitchEnabled:false`, `requireApprovalForPeerSpawn:false`, `integrationBranch`, and `verificationCommands`. The autonomous *plans-done → Motoko assigns peers* trigger does **not** exist: Motoko terminates at a returned draft; goals enter only via manual RPC. Two nuances: the loop's "review" is the mechanical+semantic verifier gate, not a reviewer peer; and "plan" is never a peer role — goals arrive pre-planned as prompts.
+**Partially.** The autonomous executor loop (dispatch → confined-yolo peer → verify gate → FF land → held PR → human merge) exists, is live, and is well-tested — for goals already in the queue, once the operator sets `mode:"autonomous"`, `killSwitchEnabled:false`, `requireApprovalForPeerSpawn:false`, `integrationBranch`, and `verificationCommands`. The autonomous _plans-done → Motoko assigns peers_ trigger does **not** exist: Motoko terminates at a returned draft; goals enter only via manual RPC. Two nuances: the loop's "review" is the mechanical+semantic verifier gate, not a reviewer peer; and "plan" is never a peer role — goals arrive pre-planned as prompts.
 
 ### B3. Doc drift
 
-| HERMES.md claim | Verdict |
-|---|---|
-| L94 non-read-only proposals "remain handoff-only until the operator converts them" | **Code matches** (`HermesCliAdapter.ts:643-645`, `1900-1960`) |
-| L120 spawn-shaped chat → `worktree-spawn`, approval-gated, handoff-only | **Code matches** (`HermesCliAdapter.ts:667-668` + gates above) |
-| L136 "GITS does not spawn Delamain peers or run Open GSD automatically from Motoko approval" | **Code matches exactly** (zero spawn/runAuto/enqueue calls in the adapter) |
-| L77-84 policy block (observe/propose, no YOLO, writes via Delamain) | **Code matches** (`policySnapshot()` `HermesCliAdapter.ts:711-724`; YOLO stripped, test `HermesCliAdapter.test.ts:70`) |
-| — | **One real gap: HERMES.md undersells Automode.** It never mentions that a fully autonomous dispatch→verify→land→held-PR driver exists behind `AutomodePolicy`. Not a contradiction (different module), but it is exactly why "should be automatic" and "handoff-only" both feel true. Doc improvement, not a defect. |
-| ANALYSIS.md L141 (connect approved cards to Automode) / PLAN.md Slice 6 L298 + L409 | **Aspirational by design** — the plan explicitly stopped short of automatic dispatch; code stopped where the plan said to stop. |
+| HERMES.md claim                                                                              | Verdict                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L94 non-read-only proposals "remain handoff-only until the operator converts them"           | **Code matches** (`HermesCliAdapter.ts:643-645`, `1900-1960`)                                                                                                                                                                                                                                                        |
+| L120 spawn-shaped chat → `worktree-spawn`, approval-gated, handoff-only                      | **Code matches** (`HermesCliAdapter.ts:667-668` + gates above)                                                                                                                                                                                                                                                       |
+| L136 "GITS does not spawn Delamain peers or run Open GSD automatically from Motoko approval" | **Code matches exactly** (zero spawn/runAuto/enqueue calls in the adapter)                                                                                                                                                                                                                                           |
+| L77-84 policy block (observe/propose, no YOLO, writes via Delamain)                          | **Code matches** (`policySnapshot()` `HermesCliAdapter.ts:711-724`; YOLO stripped, test `HermesCliAdapter.test.ts:70`)                                                                                                                                                                                               |
+| —                                                                                            | **One real gap: HERMES.md undersells Automode.** It never mentions that a fully autonomous dispatch→verify→land→held-PR driver exists behind `AutomodePolicy`. Not a contradiction (different module), but it is exactly why "should be automatic" and "handoff-only" both feel true. Doc improvement, not a defect. |
+| ANALYSIS.md L141 (connect approved cards to Automode) / PLAN.md Slice 6 L298 + L409          | **Aspirational by design** — the plan explicitly stopped short of automatic dispatch; code stopped where the plan said to stop.                                                                                                                                                                                      |
 
 ### B4. Smallest autonomy change (question 2)
 
@@ -61,7 +61,7 @@ The bridge is ~one policy flag + one hook in the approve handler; no new service
 
 Safety rails already live: kill switch + manual default (`AutomodeSupervisor.ts:174-190`, default `mode:"manual"`, `killSwitchEnabled:true`); USD budget fail-closed when telemetry absent (`AutomodeSupervisor.ts:256-272`, `Layers/AutomodeUsageMeter.ts:62-128`); `maxActivePeers` / repo / model allowlists (`AutomodeSupervisor.ts:201-217, 536-537`); `maxRuntimeMinutes` SIGTERM (`AutomodeSupervisor.ts:376-415`); review gate; idempotent held PR + human merge; episode ledger; Delamain worktree confinement.
 
-The full operator vision — *plans complete → auto-enqueue next phase* — needs a scanner-driven enqueuer watching Open GSD/`.planning` state. Nothing like it exists; that is a new feature, not a small diff.
+The full operator vision — _plans complete → auto-enqueue next phase_ — needs a scanner-driven enqueuer watching Open GSD/`.planning` state. Nothing like it exists; that is a new feature, not a small diff.
 
 ### B5. Safety review of the would-be autonomous path
 
@@ -89,6 +89,7 @@ Cockpit wiring: **in sync on methods, behind on observability.** The UI drives t
 Layout: formatters/atoms (1–776), panels in file order — BuildProvenance/Usage (778–1016), Overview (1018–1259), ResourceVisibility (1261–1380), PeerFleet (1382–1655), Motoko constants+composer+panel (1657–2784), DevCommand (2786–2951), OpenGsd (2953–3138), Skills (3140–3438), McpServers (3440–3742), Automode (3744–4107), Project/Content (4109–4232), then the `GitsCockpit()` orchestrator (4234–5411) holding 24 `useState`, 16 queries (11 RPC `useQuery` + 5 fetch-based), 22 `useMutation`, 5 effects.
 
 Extractions, in value order:
+
 1. **`useGitsCockpitQueries()`** (4285–4505) — all 16 queries share the env-scoped-key + poll pattern; one place to fix the env-scoping inconsistency (A2.7).
 2. **`AutomodeSection`** — panel 3744–4107 + 13 mirrored `useState` (4260–4277) + 6 mutations (4705–4772) + sync effect (5005–5030). The 28-prop drilling exists only because form state lives in the parent.
 3. **`MotokoSection`** — 1689–2784 + transcript/chat state + 9 hermes mutations (4506–4630); ~1,400 lines, only `selectedProjectRoot`/`projects` cross the boundary.
@@ -135,29 +136,29 @@ Positive: no click-only divs; icon buttons labeled; forms labeled; destructive a
 
 Severity: 🔴 fix now · 🟠 fix soon · 🟡 improvement · 📄 doc drift. B = bug, I = improvement.
 
-| # | Finding | Type | Sev | Smallest fix | Files |
-|---|---------|------|-----|--------------|-------|
-| 1 | Dev-terminal Stop closes the wrong thread after project switch; process keeps running | B | 🔴 | Store `threadId` in session state at start; use it in stop | `GitsCockpit.tsx:4783,4863` |
-| 2 | Dev session map + attach subs survive project switches (stale/bleeding rows) | B | 🔴 | Reset map + detach on `selectedProjectRoot` change | `GitsCockpit.tsx:4278-4284,5032-5039` |
-| 3 | Automode budget meter blind to Delamain peer spend; `maxBudgetUsd` null = uncapped | B (safety) | 🔴 | Require non-null budget before autonomous mode arms; document meter scope | `AutomodeSupervisor.ts:182,256-272`, `AutomodeUsageMeter.ts:84-100` |
-| 4 | Dev tab loads forever when no project selected | B | 🟠 | `loading={devCommandsQuery.isFetching}` | `GitsCockpit.tsx:4404-4416,5335,2848-2850` |
-| 5 | Policy form silently clobbered by 5s poll | B | 🟠 | Dirty flag; seed only when pristine | `GitsCockpit.tsx:5005-5023` |
-| 6 | Kill-switch pill vs button can contradict (no error rollback) | B | 🟠 | Derive button from snapshot | `GitsCockpit.tsx:3877-3902,5228-5231,4733-4739` |
-| 7 | Peer/project selection reset on reconnect blips | B | 🟠 | Bail when query `data === undefined` | `GitsCockpit.tsx:4987-5003` |
-| 8 | `maxRuntimeMinutes` timer lost on server restart | B (safety) | 🟠 | Persist deadline; re-arm on supervisor boot (state already persists across restart) | `AutomodeSupervisor.ts:376-415` |
-| 9 | `allowedRepos` empty = allow-all is a footgun for any future auto-enqueue | B (safety) | 🟠 | Require non-empty allowlist in autonomous mode | `AutomodeSupervisor.ts:201-204` |
-| 10 | Cockpit blind to `driverHalted`, held-PR state, episode ledger | I | 🟠 | Render existing snapshot fields (`heldPrUrl`, `runMerged`, halt state) in Automode tab | `GitsCockpit.tsx` Automode panel; fields already in `AutomodeSnapshot` |
-| 11 | Skills/MCP/Usage/Build tabs ignore selected environment | B | 🟠 | Label "local host" or route via env API | `GitsCockpit.tsx:4432-4491` |
-| 12 | No live regions; tablist ARIA contract broken; transcript no auto-scroll | I (a11y) | 🟠 | `aria-live` on transcript+banners; roving tabindex or drop roles; scroll effect | `GitsCockpit.tsx:738-772,2379,2400-2494` |
-| 13 | Whole-tree re-render per 5s poll; spinner ORs all `isFetching` | I (perf) | 🟠 | Memoize per-tab panels; narrow spinner | `GitsCockpit.tsx:5066-5081` |
-| 14 | Prompt-regex approval/destructive gates bypassable by phrasing | I (safety) | 🟡 | Accept as heuristic; note in docs; don't rely on for auto-enqueue | `AutomodeSupervisor.ts:54-55`, `HermesCliAdapter.ts:655-677` |
-| 15 | "Last result" panels show fixed precedence, not recency | B | 🟡 | Single `lastResult` set in `onSuccess` | `GitsCockpit.tsx:4928,4949-4950` |
-| 16 | Peer-log query errors swallowed | B | 🟡 | Pass `logQuery.error` into existing error chain | `GitsCockpit.tsx:4499-4505,1643-1645` |
-| 17 | Silent list truncation (80/160 caps, no indicator) | I | 🟡 | "+N more" row | `GitsCockpit.tsx:2401,2675,3289,3580` |
-| 18 | Non-unique string React keys | B | 🟡 | `key={id}:{index}` | `GitsCockpit.tsx:2697,2367` |
-| 19 | Monolith: extract queries hook, Automode/Motoko/Fleet slices, dev-session hook | I | 🟡 | Per §A1, in that order | `GitsCockpit.tsx` |
-| 20 | HERMES.md never mentions the autonomous Automode driver | 📄 | 🟡 | Add an "Automode relationship" paragraph; doc is otherwise accurate | `docs/gits/HERMES.md` |
-| 21 | Operator mental model ("Motoko auto-assigns peers") vs reality | 📄 | — | Not a defect: deliberately unbuilt per PLAN.md Slice 6 L298/L409; see §B4 for the bridge | `docs/gits/HERMES_MOTOKO_INTEGRATION_PLAN.md` |
+| #   | Finding                                                                               | Type       | Sev | Smallest fix                                                                             | Files                                                                  |
+| --- | ------------------------------------------------------------------------------------- | ---------- | --- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 1   | Dev-terminal Stop closes the wrong thread after project switch; process keeps running | B          | 🔴  | Store `threadId` in session state at start; use it in stop                               | `GitsCockpit.tsx:4783,4863`                                            |
+| 2   | Dev session map + attach subs survive project switches (stale/bleeding rows)          | B          | 🔴  | Reset map + detach on `selectedProjectRoot` change                                       | `GitsCockpit.tsx:4278-4284,5032-5039`                                  |
+| 3   | Automode budget meter blind to Delamain peer spend; `maxBudgetUsd` null = uncapped    | B (safety) | 🔴  | Require non-null budget before autonomous mode arms; document meter scope                | `AutomodeSupervisor.ts:182,256-272`, `AutomodeUsageMeter.ts:84-100`    |
+| 4   | Dev tab loads forever when no project selected                                        | B          | 🟠  | `loading={devCommandsQuery.isFetching}`                                                  | `GitsCockpit.tsx:4404-4416,5335,2848-2850`                             |
+| 5   | Policy form silently clobbered by 5s poll                                             | B          | 🟠  | Dirty flag; seed only when pristine                                                      | `GitsCockpit.tsx:5005-5023`                                            |
+| 6   | Kill-switch pill vs button can contradict (no error rollback)                         | B          | 🟠  | Derive button from snapshot                                                              | `GitsCockpit.tsx:3877-3902,5228-5231,4733-4739`                        |
+| 7   | Peer/project selection reset on reconnect blips                                       | B          | 🟠  | Bail when query `data === undefined`                                                     | `GitsCockpit.tsx:4987-5003`                                            |
+| 8   | `maxRuntimeMinutes` timer lost on server restart                                      | B (safety) | 🟠  | Persist deadline; re-arm on supervisor boot (state already persists across restart)      | `AutomodeSupervisor.ts:376-415`                                        |
+| 9   | `allowedRepos` empty = allow-all is a footgun for any future auto-enqueue             | B (safety) | 🟠  | Require non-empty allowlist in autonomous mode                                           | `AutomodeSupervisor.ts:201-204`                                        |
+| 10  | Cockpit blind to `driverHalted`, held-PR state, episode ledger                        | I          | 🟠  | Render existing snapshot fields (`heldPrUrl`, `runMerged`, halt state) in Automode tab   | `GitsCockpit.tsx` Automode panel; fields already in `AutomodeSnapshot` |
+| 11  | Skills/MCP/Usage/Build tabs ignore selected environment                               | B          | 🟠  | Label "local host" or route via env API                                                  | `GitsCockpit.tsx:4432-4491`                                            |
+| 12  | No live regions; tablist ARIA contract broken; transcript no auto-scroll              | I (a11y)   | 🟠  | `aria-live` on transcript+banners; roving tabindex or drop roles; scroll effect          | `GitsCockpit.tsx:738-772,2379,2400-2494`                               |
+| 13  | Whole-tree re-render per 5s poll; spinner ORs all `isFetching`                        | I (perf)   | 🟠  | Memoize per-tab panels; narrow spinner                                                   | `GitsCockpit.tsx:5066-5081`                                            |
+| 14  | Prompt-regex approval/destructive gates bypassable by phrasing                        | I (safety) | 🟡  | Accept as heuristic; note in docs; don't rely on for auto-enqueue                        | `AutomodeSupervisor.ts:54-55`, `HermesCliAdapter.ts:655-677`           |
+| 15  | "Last result" panels show fixed precedence, not recency                               | B          | 🟡  | Single `lastResult` set in `onSuccess`                                                   | `GitsCockpit.tsx:4928,4949-4950`                                       |
+| 16  | Peer-log query errors swallowed                                                       | B          | 🟡  | Pass `logQuery.error` into existing error chain                                          | `GitsCockpit.tsx:4499-4505,1643-1645`                                  |
+| 17  | Silent list truncation (80/160 caps, no indicator)                                    | I          | 🟡  | "+N more" row                                                                            | `GitsCockpit.tsx:2401,2675,3289,3580`                                  |
+| 18  | Non-unique string React keys                                                          | B          | 🟡  | `key={id}:{index}`                                                                       | `GitsCockpit.tsx:2697,2367`                                            |
+| 19  | Monolith: extract queries hook, Automode/Motoko/Fleet slices, dev-session hook        | I          | 🟡  | Per §A1, in that order                                                                   | `GitsCockpit.tsx`                                                      |
+| 20  | HERMES.md never mentions the autonomous Automode driver                               | 📄         | 🟡  | Add an "Automode relationship" paragraph; doc is otherwise accurate                      | `docs/gits/HERMES.md`                                                  |
+| 21  | Operator mental model ("Motoko auto-assigns peers") vs reality                        | 📄         | —   | Not a defect: deliberately unbuilt per PLAN.md Slice 6 L298/L409; see §B4 for the bridge | `docs/gits/HERMES_MOTOKO_INTEGRATION_PLAN.md`                          |
 
 Doc-drift vs real defect: #20/#21 are doc items; #3/#8/#9/#14 are latent safety gaps that only bite when autonomous mode is armed; everything else is a live UI defect or improvement.
 
@@ -180,6 +181,7 @@ AutomodeDriver 15 ✓ · AutomodeSupervisor 18 ✓ · HermesCliAdapter 12 ✓ ·
 **Lint** — `oxlint` over `GitsCockpit.tsx`, `delamainPeers.ts`, `gits/Services`, `gits/Layers`, `packages/contracts/src`: **15 warnings, 0 errors**. Notables: `GitsCockpit.tsx:3479` useMemo dep `servers` changes every render; `GitsCockpit.tsx:5034,5037` ref `.current` read in effect cleanup (finding A2.2's neighborhood); `AutomodeSupervisor.ts:21,23` unused type imports; `AutomodeDriver.ts:30` `reverse()` mutates (harmless — array is spread-copied first).
 
 **Transitions with NO test** (from reading describe/it blocks):
+
 - waiting-approval → approved → **driver re-dispatch** end-to-end (approval tested only at supervisor level, `AutomodeSupervisor.test.ts:134`)
 - driver halt on `integrationBranch === null` at done-time (`AutomodeDriver.ts:96-100`) and null-worktree/branch arms (108-113) — only empty-`verificationCommands` is covered (`AutomodeDriver.test.ts:394`)
 - runtime-limit SIGTERM path (`AutomodeSupervisor.ts:376-415`)
