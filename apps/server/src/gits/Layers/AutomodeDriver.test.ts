@@ -3,11 +3,12 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type {
-  DelamainPeer,
-  DelamainPeerListResult,
-  GitsReviewResult,
-  PeerStatus,
+import {
+  GitsReviewError,
+  type DelamainPeer,
+  type DelamainPeerListResult,
+  type GitsReviewResult,
+  type PeerStatus,
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
@@ -98,6 +99,7 @@ const emptyList: Omit<DelamainPeerListResult, "peers"> = {
 
 interface MakeLayerOptions {
   readonly review?: GitsReviewResult;
+  readonly reviewError?: GitsReviewError;
   readonly landResult?: AutomodeLandResult;
   readonly openResult?: AutomodeOpenHeldPrResult;
   readonly onOpenHeldPr?: () => void;
@@ -131,17 +133,21 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
     killPeer: () => Effect.succeed({ ...basePeer, status: "killed", rawStatus: "killed" }),
   });
   const usage = Layer.mock(AutomodeUsageMeter)({
+    // Telemetry available and under budget, so an armed autonomous policy can dispatch.
     readBudgetUsage: () =>
       Effect.succeed({
-        source: "unavailable",
-        totalCostUsd: null,
-        totalProcessedTokens: null,
-        updatedAt: null,
-        note: "n/a",
+        source: "provider-runtime",
+        totalCostUsd: 0,
+        totalProcessedTokens: 0,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        note: null,
       }),
   });
   const reviewPipeline = Layer.mock(GitsReviewPipeline)({
-    review: () => Effect.succeed(options?.review ?? passingReview),
+    review: () =>
+      options?.reviewError !== undefined
+        ? Effect.fail(options.reviewError)
+        : Effect.succeed(options?.review ?? passingReview),
   });
   const landing = Layer.mock(AutomodeLanding)({
     land_slice: () => Effect.succeed(options?.landResult ?? { status: "landed" }),
@@ -193,6 +199,8 @@ function armAutonomous(supervisor: AutomodeSupervisorShape) {
     killSwitchEnabled: false,
     maxActivePeers: 1,
     allowedRepos: ["/tmp/source-repo"],
+    maxBudgetUsd: 25,
+    maxRuntimeMinutes: null,
     integrationBranch: "auto/gits-self",
     verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
     requireApprovalForPeerSpawn: false,
@@ -401,6 +409,8 @@ describe("AutomodeDriver", () => {
         killSwitchEnabled: false,
         maxActivePeers: 1,
         allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 25,
+        maxRuntimeMinutes: null,
         integrationBranch: "auto/gits-self",
         verificationCommands: [],
         requireApprovalForPeerSpawn: false,
@@ -526,6 +536,87 @@ describe("AutomodeDriver", () => {
         makeLayer(peerStatus, {
           review: passingReview,
           onRecordEpisode: (episode) => episodes.push(episode),
+        }),
+      ),
+    );
+  });
+
+  it.effect("on done: no integration branch configured → halts (fail-closed)", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 25,
+        maxRuntimeMinutes: null,
+        integrationBranch: null,
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        requireApprovalForPeerSpawn: false,
+        requireApprovalBeforeIntegrate: false,
+        requireApprovalBeforeDestructiveAction: false,
+      });
+      yield* supervisor.enqueueGoal({ title: "No target", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // no integration branch → halt
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.notEqual(snapshot.goals.find((g) => g.title === "No target")?.status, "completed");
+      assert.equal(snapshot.driverHalted, true);
+    }).pipe(Effect.provide(makeLayer(peerStatus)));
+  });
+
+  it.effect("halts when the held PR cannot be opened", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "One", repo: "/tmp/source-repo", prompt: "x" });
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // gate → land → complete
+      peerStatus.current = "absent";
+      yield* driver.tickOnce(); // queue drained → open held PR fails → halt
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.heldPrUrl, null);
+      assert.equal(snapshot.driverHalted, true);
+      assert.include(snapshot.driverHaltedReason ?? "", "could not open held PR");
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          openResult: { status: "rejected", reason: "gh pr create failed" },
+        }),
+      ),
+    );
+  });
+
+  it.effect("verifier pipeline error (throw, not verdict) → goal failed and chain halts", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Throwy", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.find((g) => g.title === "Throwy")?.status, "failed");
+      assert.equal(snapshot.driverHalted, true);
+      assert.include(snapshot.driverHaltedReason ?? "", "verifier errored");
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          reviewError: new GitsReviewError({ message: "verifier exploded" }),
         }),
       ),
     );

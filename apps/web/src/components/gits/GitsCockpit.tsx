@@ -739,6 +739,29 @@ function CockpitTabNav({
         role="tablist"
         aria-label="GITS cockpit sections"
         className="flex min-w-0 gap-1 overflow-x-auto"
+        onKeyDown={(event) => {
+          const count = GITS_COCKPIT_TABS.length;
+          const index = GITS_COCKPIT_TABS.findIndex((tab) => tab.id === activeTab);
+          let nextIndex: number | null = null;
+          if (event.key === "ArrowRight") {
+            nextIndex = (index + 1) % count;
+          } else if (event.key === "ArrowLeft") {
+            nextIndex = (index - 1 + count) % count;
+          } else if (event.key === "Home") {
+            nextIndex = 0;
+          } else if (event.key === "End") {
+            nextIndex = count - 1;
+          }
+          if (nextIndex === null) {
+            return;
+          }
+          event.preventDefault();
+          const nextTab = GITS_COCKPIT_TABS[nextIndex]!;
+          onTabChange(nextTab.id);
+          event.currentTarget
+            .querySelector<HTMLButtonElement>(`#gits-cockpit-tab-${nextTab.id}`)
+            ?.focus();
+        }}
       >
         {GITS_COCKPIT_TABS.map((tab) => {
           const Icon = tab.icon;
@@ -748,7 +771,10 @@ function CockpitTabNav({
               key={tab.id}
               type="button"
               role="tab"
+              id={`gits-cockpit-tab-${tab.id}`}
+              aria-controls={`gits-cockpit-panel-${tab.id}`}
               aria-selected={selected}
+              tabIndex={selected ? 0 : -1}
               className={cn(
                 "inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-xs font-medium transition-colors",
                 selected
@@ -796,6 +822,7 @@ function BuildProvenancePanel({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="truncate text-base font-semibold">Build Provenance</h2>
+            <StatusPill label="local host" tone="default" />
             <StatusPill
               label={
                 loading && !buildInfo
@@ -830,7 +857,10 @@ function BuildProvenancePanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -882,6 +912,7 @@ function UsagePanel({
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="truncate text-base font-semibold">Usage</h2>
+            <StatusPill label="local host" tone="default" />
             <StatusPill label={usage?.costEstimate ? "estimated" : "checking"} tone="warning" />
             <StatusPill label={usage ? formatUsd(usage.estimatedCostUsd) : "..."} tone="default" />
           </div>
@@ -900,7 +931,10 @@ function UsagePanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -1320,7 +1354,10 @@ function ResourceVisibilityPanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -1473,7 +1510,10 @@ function PeerFleetPanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -1754,6 +1794,7 @@ interface MotokoTranscriptEntry {
 }
 
 type DevCommandSessionState = {
+  readonly threadId: string;
   readonly terminalId: string;
   readonly status: "idle" | "starting" | "running" | "exited" | "error" | "closed";
   readonly log: string;
@@ -2098,8 +2139,11 @@ function MotokoCapsuleAvatar({
           style={MOTOKO_CAPSULE_VIDEO_WINDOW_STYLE}
         >
           <video
-            aria-label="Motoko capsule avatar"
-            autoPlay
+            aria-hidden="true"
+            autoPlay={
+              typeof window === "undefined" ||
+              !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            }
             className="size-full object-cover"
             loop
             muted
@@ -2135,6 +2179,13 @@ function makeDevThreadId(projectDir: string): string {
   return `gits-dev:${projectDir}`;
 }
 
+function handleDevOpenPreview(command: GitsDevCommand): void {
+  if (!command.previewUrl) {
+    return;
+  }
+  window.open(command.previewUrl, "_blank", "noopener,noreferrer");
+}
+
 function trimTerminalLog(log: string): string {
   const maxLength = 24_000;
   return log.length <= maxLength ? log : log.slice(log.length - maxLength);
@@ -2146,6 +2197,7 @@ function reduceDevCommandEvent(
 ): DevCommandSessionState {
   if (event.type === "snapshot") {
     return {
+      threadId: current.threadId,
       terminalId: event.snapshot.terminalId,
       status: event.snapshot.status,
       log: trimTerminalLog(event.snapshot.history),
@@ -2171,6 +2223,7 @@ function reduceDevCommandEvent(
   }
   if (event.type === "restarted") {
     return {
+      threadId: current.threadId,
       terminalId: event.snapshot.terminalId,
       status: event.snapshot.status,
       log: trimTerminalLog(event.snapshot.history),
@@ -2295,6 +2348,13 @@ function MotokoPanel({
   onRunSchedule: () => void;
 }) {
   const cards = proposals?.proposals ?? [];
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (node) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, [transcript.length]);
   const errorMessage =
     error instanceof Error
       ? error.message
@@ -2334,7 +2394,10 @@ function MotokoPanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -2364,8 +2427,9 @@ function MotokoPanel({
 
       {status?.setupWarnings.length ? (
         <div className="divide-y divide-border/60 border-b border-border/60">
-          {status.setupWarnings.slice(0, 5).map((warning) => (
-            <div key={warning} className="px-4 py-2 text-xs text-amber-600 sm:px-5">
+          {status.setupWarnings.slice(0, 5).map((warning, index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- warnings can repeat; index keeps keys unique
+            <div key={`warning-${index}`} className="px-4 py-2 text-xs text-amber-600 sm:px-5">
               {warning}
             </div>
           ))}
@@ -2376,7 +2440,11 @@ function MotokoPanel({
         <div className="min-w-0 border-b border-border/60 xl:border-b-0 xl:border-r">
           <div className="flex min-h-[46rem] flex-col bg-background">
             <SectionHeader title="Conversation" count={transcript.length} />
-            <div className="flex-1 overflow-auto bg-[radial-gradient(circle_at_50%_0%,--theme(--color-muted/32%),transparent_36%)] px-4 py-5 text-xs sm:px-5 sm:py-6">
+            <div
+              ref={transcriptRef}
+              aria-live="polite"
+              className="flex-1 overflow-auto bg-[radial-gradient(circle_at_50%_0%,--theme(--color-muted/32%),transparent_36%)] px-4 py-5 text-xs sm:px-5 sm:py-6"
+            >
               {transcript.length === 0 ? (
                 <div className="flex min-h-96 items-center justify-center">
                   <div className="grid justify-items-center gap-3 text-center">
@@ -2398,6 +2466,11 @@ function MotokoPanel({
                 </div>
               ) : (
                 <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+                  {transcript.length > 80 ? (
+                    <div className="text-center text-[11px] text-muted-foreground">
+                      +{formatCount(transcript.length - 80)} earlier messages hidden
+                    </div>
+                  ) : null}
                   {transcript.slice(-80).map((entry) => (
                     <div
                       key={entry.id}
@@ -2694,8 +2767,9 @@ function MotokoPanel({
                             Evidence
                           </div>
                           <ul className="grid gap-1 text-[11px] text-muted-foreground">
-                            {proposal.evidence.slice(0, 3).map((item) => (
-                              <li key={item} className="line-clamp-2">
+                            {proposal.evidence.slice(0, 3).map((item, index) => (
+                              // oxlint-disable-next-line react/no-array-index-key -- evidence lines can repeat; index keeps keys unique
+                              <li key={`evidence-${index}`} className="line-clamp-2">
                                 {item}
                               </li>
                             ))}
@@ -2742,6 +2816,11 @@ function MotokoPanel({
                       </div>
                     </div>
                   ))}
+                  {cards.length > 80 ? (
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground">
+                      +{formatCount(cards.length - 80)} more proposals
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -2839,7 +2918,10 @@ function DevCommandPanel({
           </div>
         ) : null}
         {actionError ? (
-          <div className="rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div
+            aria-live="polite"
+            className="rounded-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
             {actionError}
           </div>
         ) : null}
@@ -2866,7 +2948,7 @@ function DevCommandPanel({
               <div key={command.id} className="grid gap-3 px-4 py-4 sm:px-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div role="status" className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-medium">{command.name}</h3>
                       <StatusPill label={status} tone={devCommandStatusTone(status)} />
                       {command.localPort !== null ? (
@@ -3027,7 +3109,10 @@ function OpenGsdPanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -3205,6 +3290,7 @@ function SkillsPanel({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="truncate text-base font-semibold">Skills Intelligence</h2>
+            <StatusPill label="local host" tone="default" />
             <StatusPill
               label={loading && !snapshot ? "scanning" : "read-only"}
               tone={loading && !snapshot ? "warning" : "success"}
@@ -3223,7 +3309,10 @@ function SkillsPanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -3312,6 +3401,11 @@ function SkillsPanel({
                   </div>
                 </button>
               ))}
+              {visibleSkills.length > 160 ? (
+                <div className="px-4 py-2 text-[11px] text-muted-foreground sm:px-5">
+                  +{formatCount(visibleSkills.length - 160)} more skills
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -3342,7 +3436,11 @@ function SkillsPanel({
                 <div className="text-[11px] font-medium uppercase text-muted-foreground/80">
                   Rating
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div
+                  role="group"
+                  aria-label={`Skill rating: ${selectedSkill.rating ?? 0} of 5`}
+                  className="flex flex-wrap gap-1"
+                >
                   {[1, 2, 3, 4, 5].map((rating) => {
                     const selected = (selectedSkill.rating ?? 0) >= rating;
                     return (
@@ -3357,6 +3455,7 @@ function SkillsPanel({
                           )
                         }
                         aria-label={`Rate ${rating}`}
+                        aria-pressed={selected}
                       >
                         <StarIcon className={cn("size-3.5", selected && "fill-current")} />
                       </Button>
@@ -3437,6 +3536,8 @@ function SkillsPanel({
   );
 }
 
+const NO_MCP_SERVERS: GitsMcpInventorySnapshot["servers"] = [];
+
 function McpServersPanel({
   snapshot,
   loading,
@@ -3455,7 +3556,7 @@ function McpServersPanel({
   const [providerFilter, setProviderFilter] = useState<GitsMcpServerProvider | "all">("all");
   const [search, setSearch] = useState("");
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
-  const servers = snapshot?.servers ?? [];
+  const servers = snapshot?.servers ?? NO_MCP_SERVERS;
   const visibleServers = useMemo(() => {
     const query = search.trim().toLowerCase();
     return servers.filter((server) => {
@@ -3500,6 +3601,7 @@ function McpServersPanel({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="truncate text-base font-semibold">MCP Servers</h2>
+            <StatusPill label="local host" tone="default" />
             <StatusPill
               label={loading && !snapshot ? "scanning" : "read-only"}
               tone={loading && !snapshot ? "warning" : "success"}
@@ -3518,7 +3620,10 @@ function McpServersPanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -3606,6 +3711,11 @@ function McpServersPanel({
                   </button>
                 );
               })}
+              {visibleServers.length > 160 ? (
+                <div className="px-4 py-2 text-[11px] text-muted-foreground sm:px-5">
+                  +{formatCount(visibleServers.length - 160)} more servers
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -3904,8 +4014,36 @@ function AutomodePanel({
       </div>
 
       {errorMessage ? (
-        <div className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5">
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
           {errorMessage}
+        </div>
+      ) : null}
+
+      {snapshot?.driverHalted ? (
+        <div
+          aria-live="polite"
+          className="border-b border-border/60 bg-destructive/5 px-4 py-2 text-xs text-destructive sm:px-5"
+        >
+          Driver halted{snapshot.driverHaltedReason ? `: ${snapshot.driverHaltedReason}` : "."}
+        </div>
+      ) : null}
+      {snapshot && (snapshot.heldPrUrl !== null || snapshot.runMerged) ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-2 text-xs sm:px-5">
+          <span className="font-medium text-muted-foreground">Last run</span>
+          {snapshot.runMerged ? <StatusPill label="run merged" tone="success" /> : null}
+          {snapshot.heldPrUrl ? (
+            <a
+              href={snapshot.heldPrUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary underline-offset-2 hover:underline"
+            >
+              Held PR{snapshot.heldPrNumber !== null ? ` #${snapshot.heldPrNumber}` : ""}
+            </a>
+          ) : null}
         </div>
       ) : null}
 
@@ -4258,7 +4396,7 @@ export function GitsCockpit() {
   const [gsdModel, setGsdModel] = useState("");
   const [gsdMaxBudget, setGsdMaxBudget] = useState("");
   const [automodeMode, setAutomodeMode] = useState<AutomodeSnapshot["policy"]["mode"]>("manual");
-  const [automodeKillSwitch, setAutomodeKillSwitch] = useState(true);
+  const [automodePolicyDirty, setAutomodePolicyDirty] = useState(false);
   const [automodeMaxPeers, setAutomodeMaxPeers] = useState("1");
   const [automodeAllowedRepos, setAutomodeAllowedRepos] = useState("");
   const [automodeAllowedModels, setAutomodeAllowedModels] = useState("");
@@ -4281,6 +4419,12 @@ export function GitsCockpit() {
   const [devActionError, setDevActionError] = useState<string | null>(null);
   const [devActiveCommandId, setDevActiveCommandId] = useState<string | null>(null);
   const [devActionPending, setDevActionPending] = useState(false);
+  const [openGsdCommandResult, setOpenGsdCommandResult] = useState<
+    OpenGsdCommandResult | undefined
+  >(undefined);
+  const [hermesCommandResult, setHermesCommandResult] = useState<HermesCommandResult | undefined>(
+    undefined,
+  );
   const devTerminalDetachByCommandIdRef = useRef(new Map<string, () => void>());
   const readEnvironmentClient = () => {
     if (targetEnvironmentId && targetEnvironmentId !== primaryEnvironmentId) {
@@ -4505,13 +4649,15 @@ export function GitsCockpit() {
   });
   const hermesCheckMutation = useMutation({
     mutationFn: async () => readGitsClient().hermes.check(),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      setHermesCommandResult(result);
       await hermesQuery.refetch();
     },
   });
   const hermesSetupMutation = useMutation({
     mutationFn: async () => readGitsClient().hermes.setupCodexOAuth(),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      setHermesCommandResult(result);
       await Promise.all([hermesQuery.refetch(), hermesLogQuery.refetch()]);
     },
   });
@@ -4520,7 +4666,8 @@ export function GitsCockpit() {
       readGitsClient().hermes.startAcpSession(
         selectedProjectRoot.trim().length > 0 ? { cwd: selectedProjectRoot.trim() } : {},
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      setHermesCommandResult(result);
       await Promise.all([hermesQuery.refetch(), hermesLogQuery.refetch()]);
     },
   });
@@ -4688,7 +4835,8 @@ export function GitsCockpit() {
         ...gsdCommonInput(),
         input: gsdInitInput.trim(),
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      setOpenGsdCommandResult(result);
       await query.refetch();
     },
   });
@@ -4698,17 +4846,19 @@ export function GitsCockpit() {
         ...gsdCommonInput(),
         ...(gsdAutoInitInput.trim().length > 0 ? { initInput: gsdAutoInitInput.trim() } : {}),
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      setOpenGsdCommandResult(result);
       await query.refetch();
     },
   });
+  const automodeKillSwitchEnabled = automodeQuery.data?.policy.killSwitchEnabled ?? true;
   const automodePolicyInput = () => {
     const maxPeers = Math.max(0, Math.floor(Number(automodeMaxPeers)));
     const maxBudget = Number(automodeMaxBudget);
     const maxRuntime = Math.max(0, Math.floor(Number(automodeMaxRuntime)));
     return {
       mode: automodeMode,
-      killSwitchEnabled: automodeKillSwitch,
+      killSwitchEnabled: automodeKillSwitchEnabled,
       maxActivePeers: Number.isFinite(maxPeers) ? maxPeers : 0,
       allowedRepos: parseLines(automodeAllowedRepos),
       allowedModels: parseLines(automodeAllowedModels),
@@ -4727,6 +4877,7 @@ export function GitsCockpit() {
   const automodePolicyMutation = useMutation({
     mutationFn: async () => readGitsClient().automode.updatePolicy(automodePolicyInput()),
     onSuccess: async () => {
+      setAutomodePolicyDirty(false);
       await automodeQuery.refetch();
     },
   });
@@ -4790,6 +4941,7 @@ export function GitsCockpit() {
     setDevSessionStateByCommandId((current) => ({
       ...current,
       [command.id]: {
+        threadId,
         terminalId,
         status: "starting",
         log: "",
@@ -4811,6 +4963,7 @@ export function GitsCockpit() {
             const previous =
               current[command.id] ??
               ({
+                threadId,
                 terminalId,
                 status: "idle",
                 log: "",
@@ -4833,6 +4986,7 @@ export function GitsCockpit() {
       setDevSessionStateByCommandId((current) => ({
         ...current,
         [command.id]: {
+          threadId,
           terminalId,
           status: "error",
           log:
@@ -4860,7 +5014,8 @@ export function GitsCockpit() {
       setDevActionError("Environment API is not available.");
       return;
     }
-    const threadId = makeDevThreadId(selectedProjectRoot);
+    const threadId =
+      devSessionStateByCommandId[command.id]?.threadId ?? makeDevThreadId(selectedProjectRoot);
     const terminalId = makeDevTerminalId(command.id);
     setDevActionPending(true);
     setDevActiveCommandId(command.id);
@@ -4878,6 +5033,7 @@ export function GitsCockpit() {
         ...current,
         [command.id]: {
           ...(current[command.id] ?? {
+            threadId,
             terminalId,
             log: "",
             exitCode: null,
@@ -4905,12 +5061,6 @@ export function GitsCockpit() {
       setDevActionError(error instanceof Error ? error.message : "Failed to copy launch command.");
     }
   };
-  const handleDevOpenPreview = (command: GitsDevCommand) => {
-    if (!command.previewUrl) {
-      return;
-    }
-    window.open(command.previewUrl, "_blank", "noopener,noreferrer");
-  };
   const actionError =
     spawnMutation.error ??
     replyMutation.error ??
@@ -4925,7 +5075,6 @@ export function GitsCockpit() {
     integrateMutation.isPending;
   const openGsdActionError = gsdInitMutation.error ?? gsdAutoMutation.error;
   const openGsdActionPending = gsdInitMutation.isPending || gsdAutoMutation.isPending;
-  const openGsdCommandResult = gsdAutoMutation.data ?? gsdInitMutation.data;
   const hermesActionError =
     hermesCheckMutation.error ??
     hermesSetupMutation.error ??
@@ -4946,8 +5095,6 @@ export function GitsCockpit() {
     hermesDecisionMutation.isPending ||
     hermesDraftMutation.isPending ||
     hermesScheduleMutation.isPending;
-  const hermesCommandResult =
-    hermesAcpMutation.data ?? hermesSetupMutation.data ?? hermesCheckMutation.data;
   const automodeActionError =
     automodePolicyMutation.error ??
     automodeKillSwitchMutation.error ??
@@ -4962,6 +5109,12 @@ export function GitsCockpit() {
     automodeApproveMutation.isPending ||
     automodeRejectMutation.isPending ||
     automodeDispatchMutation.isPending;
+  const setAutomodePolicyField =
+    <T,>(setter: (value: T) => void) =>
+    (value: T) => {
+      setAutomodePolicyDirty(true);
+      setter(value);
+    };
   const updateSkillReview = (
     skillId: string,
     updater: (current: SkillReviewState[string]) => SkillReviewState[string],
@@ -4985,14 +5138,22 @@ export function GitsCockpit() {
   };
 
   useEffect(() => {
+    const peers = delamainQuery.data?.peers;
+    if (peers === undefined) {
+      return;
+    }
     if (selectedPeerId !== null && peerIds.has(selectedPeerId)) {
       return;
     }
-    setSelectedPeerId(delamainQuery.data?.peers[0]?.id ?? null);
+    setSelectedPeerId(peers[0]?.id ?? null);
   }, [delamainQuery.data?.peers, peerIds, selectedPeerId]);
 
   useEffect(() => {
-    const projectRoots = query.data?.projects.map((project) => project.project.rootPath) ?? [];
+    const projects = query.data?.projects;
+    if (projects === undefined) {
+      return;
+    }
+    const projectRoots = projects.map((project) => project.project.rootPath);
     if (
       selectedProjectRoot === MOTOKO_ROOT_ROUTE_VALUE ||
       projectRoots.includes(selectedProjectRoot)
@@ -5004,11 +5165,10 @@ export function GitsCockpit() {
 
   useEffect(() => {
     const policy = automodeQuery.data?.policy;
-    if (!policy) {
+    if (!policy || automodePolicyDirty) {
       return;
     }
     setAutomodeMode(policy.mode);
-    setAutomodeKillSwitch(policy.killSwitchEnabled);
     setAutomodeMaxPeers(String(policy.maxActivePeers));
     setAutomodeAllowedRepos(policy.allowedRepos.join("\n"));
     setAutomodeAllowedModels(policy.allowedModels.join("\n"));
@@ -5020,7 +5180,7 @@ export function GitsCockpit() {
     setAutomodeRequireSpawnApproval(policy.requireApprovalForPeerSpawn);
     setAutomodeRequireIntegrateApproval(policy.requireApprovalBeforeIntegrate);
     setAutomodeRequireDestructiveApproval(policy.requireApprovalBeforeDestructiveAction);
-  }, [automodeQuery.data?.policy]);
+  }, [automodePolicyDirty, automodeQuery.data?.policy]);
 
   useEffect(() => {
     if (automodeGoalRepo.trim().length > 0) {
@@ -5030,13 +5190,15 @@ export function GitsCockpit() {
   }, [automodeGoalRepo, selectedProjectRoot]);
 
   useEffect(() => {
+    const detachByCommandId = devTerminalDetachByCommandIdRef.current;
     return () => {
-      for (const detach of devTerminalDetachByCommandIdRef.current.values()) {
+      for (const detach of detachByCommandId.values()) {
         detach();
       }
-      devTerminalDetachByCommandIdRef.current.clear();
+      detachByCommandId.clear();
+      setDevSessionStateByCommandId({});
     };
-  }, []);
+  }, [selectedProjectRoot]);
 
   const tabCounts = useMemo<Record<GitsCockpitTab, string>>(
     () => ({
@@ -5063,18 +5225,14 @@ export function GitsCockpit() {
       usageQuery.data,
     ],
   );
+  // ponytail: 5s/10s pollers excluded so the header spinner only reflects slower, user-meaningful refreshes
   const isRefreshing =
-    query.isFetching ||
-    delamainQuery.isFetching ||
-    automodeQuery.isFetching ||
     capacityQuery.isFetching ||
     hermesQuery.isFetching ||
     hermesSessionsQuery.isFetching ||
     hermesLogQuery.isFetching ||
-    hermesProposalsQuery.isFetching ||
     devCommandsQuery.isFetching ||
     openGsdQuery.isFetching ||
-    resourceQuery.isFetching ||
     buildInfoQuery.isFetching ||
     skillsQuery.isFetching ||
     mcpQuery.isFetching ||
@@ -5129,280 +5287,289 @@ export function GitsCockpit() {
         ) : query.data ? (
           <>
             <CockpitTabNav activeTab={activeTab} counts={tabCounts} onTabChange={setActiveTab} />
-            {activeTab === "overview" ? (
-              <>
-                <CockpitOverviewPanel
-                  snapshot={query.data}
-                  delamain={delamainQuery.data}
-                  automode={automodeQuery.data}
-                  openGsd={openGsdQuery.data}
-                  hermes={hermesQuery.data}
-                  proposals={hermesProposalsQuery.data}
+            <div
+              role="tabpanel"
+              id={`gits-cockpit-panel-${activeTab}`}
+              aria-labelledby={`gits-cockpit-tab-${activeTab}`}
+            >
+              {activeTab === "overview" ? (
+                <>
+                  <CockpitOverviewPanel
+                    snapshot={query.data}
+                    delamain={delamainQuery.data}
+                    automode={automodeQuery.data}
+                    openGsd={openGsdQuery.data}
+                    hermes={hermesQuery.data}
+                    proposals={hermesProposalsQuery.data}
+                    capacity={capacityQuery.data}
+                    history={resourceQuery.data}
+                    buildInfo={buildInfoQuery.data}
+                  />
+                  <BuildProvenancePanel
+                    buildInfo={buildInfoQuery.data}
+                    loading={buildInfoQuery.isPending || buildInfoQuery.isFetching}
+                    error={buildInfoQuery.error}
+                    onRefresh={() => void buildInfoQuery.refetch()}
+                  />
+                  <ResourceVisibilityPanel
+                    snapshot={query.data}
+                    automode={automodeQuery.data}
+                    history={resourceQuery.data}
+                    loading={resourceQuery.isPending || resourceQuery.isFetching}
+                    error={resourceQuery.error}
+                    onRefresh={() => void resourceQuery.refetch()}
+                  />
+                </>
+              ) : null}
+              {activeTab === "fleet" ? (
+                <PeerFleetPanel
+                  list={delamainQuery.data}
+                  loading={delamainQuery.isPending || delamainQuery.isFetching}
+                  error={delamainQuery.error}
+                  selectedPeerId={selectedPeer?.id ?? selectedPeerId}
+                  logText={logQuery.data?.text}
+                  logLoading={logQuery.isPending || logQuery.isFetching}
+                  actionError={actionError ?? logQuery.error}
+                  spawnRepo={spawnRepo}
+                  spawnName={spawnName}
+                  spawnPrompt={spawnPrompt}
+                  replyText={replyText}
+                  actionPending={actionPending}
+                  onRefresh={() => void delamainQuery.refetch()}
+                  onSelectPeer={setSelectedPeerId}
+                  onSpawnRepoChange={setSpawnRepo}
+                  onSpawnNameChange={setSpawnName}
+                  onSpawnPromptChange={setSpawnPrompt}
+                  onReplyTextChange={setReplyText}
+                  onSpawn={() => void spawnMutation.mutate()}
+                  onReply={() => void replyMutation.mutate()}
+                  onWait={() => void waitMutation.mutate()}
+                  onKill={() => {
+                    if (!selectedPeerId) {
+                      return;
+                    }
+                    if (window.confirm(`Kill Delamain peer ${selectedPeerId}?`)) {
+                      void killMutation.mutate();
+                    }
+                  }}
+                  onIntegrate={() => {
+                    if (!selectedPeerId) {
+                      return;
+                    }
+                    if (
+                      window.confirm(`Open an integration PR for Delamain peer ${selectedPeerId}?`)
+                    ) {
+                      void integrateMutation.mutate();
+                    }
+                  }}
+                />
+              ) : null}
+              {activeTab === "automode" ? (
+                <AutomodePanel
+                  snapshot={automodeQuery.data}
+                  loading={automodeQuery.isPending || automodeQuery.isFetching}
+                  error={automodeQuery.error}
+                  actionError={automodeActionError}
+                  actionPending={automodeActionPending}
+                  policyMode={automodeMode}
+                  killSwitchEnabled={automodeKillSwitchEnabled}
+                  maxActivePeers={automodeMaxPeers}
+                  allowedRepos={automodeAllowedRepos}
+                  allowedModels={automodeAllowedModels}
+                  defaultModel={automodeDefaultModel}
+                  maxBudget={automodeMaxBudget}
+                  maxRuntime={automodeMaxRuntime}
+                  requireSpawnApproval={automodeRequireSpawnApproval}
+                  requireIntegrateApproval={automodeRequireIntegrateApproval}
+                  requireDestructiveApproval={automodeRequireDestructiveApproval}
+                  goalTitle={automodeGoalTitle}
+                  goalRepo={automodeGoalRepo}
+                  goalModel={automodeGoalModel}
+                  goalPrompt={automodeGoalPrompt}
+                  onRefresh={() => void automodeQuery.refetch()}
+                  onPolicyModeChange={setAutomodePolicyField(setAutomodeMode)}
+                  onKillSwitchChange={(next) => void automodeKillSwitchMutation.mutate(next)}
+                  onMaxActivePeersChange={setAutomodePolicyField(setAutomodeMaxPeers)}
+                  onAllowedReposChange={setAutomodePolicyField(setAutomodeAllowedRepos)}
+                  onAllowedModelsChange={setAutomodePolicyField(setAutomodeAllowedModels)}
+                  onDefaultModelChange={setAutomodePolicyField(setAutomodeDefaultModel)}
+                  onMaxBudgetChange={setAutomodePolicyField(setAutomodeMaxBudget)}
+                  onMaxRuntimeChange={setAutomodePolicyField(setAutomodeMaxRuntime)}
+                  onRequireSpawnApprovalChange={setAutomodePolicyField(
+                    setAutomodeRequireSpawnApproval,
+                  )}
+                  onRequireIntegrateApprovalChange={setAutomodePolicyField(
+                    setAutomodeRequireIntegrateApproval,
+                  )}
+                  onRequireDestructiveApprovalChange={setAutomodePolicyField(
+                    setAutomodeRequireDestructiveApproval,
+                  )}
+                  onGoalTitleChange={setAutomodeGoalTitle}
+                  onGoalRepoChange={setAutomodeGoalRepo}
+                  onGoalModelChange={setAutomodeGoalModel}
+                  onGoalPromptChange={setAutomodeGoalPrompt}
+                  onSavePolicy={() => void automodePolicyMutation.mutate()}
+                  onEnqueueGoal={() => void automodeEnqueueMutation.mutate()}
+                  onApproveGoal={(goalId) => void automodeApproveMutation.mutate(goalId)}
+                  onRejectGoal={(goalId) => {
+                    if (window.confirm(`Reject automode goal ${goalId}?`)) {
+                      void automodeRejectMutation.mutate(goalId);
+                    }
+                  }}
+                  onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
+                />
+              ) : null}
+              {activeTab === "usage" ? (
+                <UsagePanel
+                  usage={usageQuery.data}
+                  loading={usageQuery.isPending || usageQuery.isFetching}
+                  error={usageQuery.error}
+                  onRefresh={() => void usageQuery.refetch()}
+                />
+              ) : null}
+              {activeTab === "motoko" ? (
+                <MotokoPanel
+                  status={hermesQuery.data}
                   capacity={capacityQuery.data}
-                  history={resourceQuery.data}
-                  buildInfo={buildInfoQuery.data}
+                  sessions={hermesSessionsQuery.data}
+                  projects={query.data?.projects ?? []}
+                  log={hermesLogQuery.data}
+                  proposals={hermesProposalsQuery.data}
+                  loading={
+                    hermesQuery.isPending ||
+                    hermesQuery.isFetching ||
+                    hermesSessionsQuery.isFetching ||
+                    hermesLogQuery.isFetching ||
+                    hermesProposalsQuery.isFetching ||
+                    capacityQuery.isFetching
+                  }
+                  error={
+                    hermesQuery.error ??
+                    hermesSessionsQuery.error ??
+                    hermesLogQuery.error ??
+                    hermesProposalsQuery.error ??
+                    capacityQuery.error
+                  }
+                  actionError={hermesActionError}
+                  chatResult={hermesChatMutation.data}
+                  commandResult={hermesCommandResult}
+                  draft={hermesDraftMutation.data}
+                  scheduleResult={hermesScheduleMutation.data}
+                  transcript={motokoTranscript}
+                  selectedProjectRoot={selectedProjectRoot}
+                  chatInput={motokoChatInput}
+                  interactionMode={motokoInteractionMode}
+                  scheduleKind={motokoScheduleKind}
+                  actionPending={hermesActionPending}
+                  onRefresh={() => {
+                    void Promise.all([
+                      hermesQuery.refetch(),
+                      hermesSessionsQuery.refetch(),
+                      hermesLogQuery.refetch(),
+                      hermesProposalsQuery.refetch(),
+                      capacityQuery.refetch(),
+                    ]);
+                  }}
+                  onToggleInteractionMode={() =>
+                    setMotokoInteractionMode((mode) => (mode === "plan" ? "default" : "plan"))
+                  }
+                  onProjectRootChange={setSelectedProjectRoot}
+                  onChatInputChange={setMotokoChatInput}
+                  onScheduleKindChange={setMotokoScheduleKind}
+                  onCheck={() => void hermesCheckMutation.mutate()}
+                  onSetupCodexOAuth={() => void hermesSetupMutation.mutate()}
+                  onStartAcp={() => void hermesAcpMutation.mutate()}
+                  onInspectGits={() => void hermesInspectMutation.mutate()}
+                  onChatSubmit={() => {
+                    const message = motokoChatInput.trim();
+                    if (message.length === 0) {
+                      return;
+                    }
+                    void hermesChatMutation.mutate(message);
+                  }}
+                  onDecision={(proposalId, decision) =>
+                    void hermesDecisionMutation.mutate({ proposalId, decision })
+                  }
+                  onWriteContext={() => void hermesContextMutation.mutate()}
+                  onDraft={(proposalId) => void hermesDraftMutation.mutate(proposalId)}
+                  onRunSchedule={() => void hermesScheduleMutation.mutate()}
                 />
-                <BuildProvenancePanel
-                  buildInfo={buildInfoQuery.data}
-                  loading={buildInfoQuery.isPending || buildInfoQuery.isFetching}
-                  error={buildInfoQuery.error}
-                  onRefresh={() => void buildInfoQuery.refetch()}
+              ) : null}
+              {activeTab === "dev" ? (
+                <DevCommandPanel
+                  list={devCommandsQuery.data}
+                  loading={devCommandsQuery.isFetching}
+                  error={devCommandsQuery.error}
+                  selectedProjectRoot={selectedProjectRoot}
+                  onRefresh={() => void devCommandsQuery.refetch()}
+                  sessionStateByCommandId={devSessionStateByCommandId}
+                  activeCommandId={devActiveCommandId}
+                  actionError={devActionError}
+                  actionPending={devActionPending}
+                  onStart={(command) => void handleDevStart(command)}
+                  onStop={(command) => void handleDevStop(command)}
+                  onCopyLaunchCommand={(command) => void handleDevCopyLaunchCommand(command)}
+                  onOpenPreview={handleDevOpenPreview}
                 />
-                <ResourceVisibilityPanel
-                  snapshot={query.data}
-                  automode={automodeQuery.data}
-                  history={resourceQuery.data}
-                  loading={resourceQuery.isPending || resourceQuery.isFetching}
-                  error={resourceQuery.error}
-                  onRefresh={() => void resourceQuery.refetch()}
+              ) : null}
+              {activeTab === "gsd" ? (
+                <OpenGsdPanel
+                  status={openGsdQuery.data}
+                  loading={openGsdQuery.isPending || openGsdQuery.isFetching}
+                  error={openGsdQuery.error}
+                  projects={query.data.projects}
+                  selectedProjectRoot={selectedProjectRoot}
+                  initInput={gsdInitInput}
+                  autoInitInput={gsdAutoInitInput}
+                  model={gsdModel}
+                  maxBudget={gsdMaxBudget}
+                  commandResult={openGsdCommandResult}
+                  actionError={openGsdActionError}
+                  actionPending={openGsdActionPending}
+                  onRefresh={() => void openGsdQuery.refetch()}
+                  onProjectRootChange={setSelectedProjectRoot}
+                  onInitInputChange={setGsdInitInput}
+                  onAutoInitInputChange={setGsdAutoInitInput}
+                  onModelChange={setGsdModel}
+                  onMaxBudgetChange={setGsdMaxBudget}
+                  onInit={() => void gsdInitMutation.mutate()}
+                  onAuto={() => {
+                    if (!selectedProjectRoot) {
+                      return;
+                    }
+                    if (window.confirm(`Run gsd-sdk auto in ${selectedProjectRoot}?`)) {
+                      void gsdAutoMutation.mutate();
+                    }
+                  }}
                 />
-              </>
-            ) : null}
-            {activeTab === "fleet" ? (
-              <PeerFleetPanel
-                list={delamainQuery.data}
-                loading={delamainQuery.isPending || delamainQuery.isFetching}
-                error={delamainQuery.error}
-                selectedPeerId={selectedPeer?.id ?? selectedPeerId}
-                logText={logQuery.data?.text}
-                logLoading={logQuery.isPending || logQuery.isFetching}
-                actionError={actionError}
-                spawnRepo={spawnRepo}
-                spawnName={spawnName}
-                spawnPrompt={spawnPrompt}
-                replyText={replyText}
-                actionPending={actionPending}
-                onRefresh={() => void delamainQuery.refetch()}
-                onSelectPeer={setSelectedPeerId}
-                onSpawnRepoChange={setSpawnRepo}
-                onSpawnNameChange={setSpawnName}
-                onSpawnPromptChange={setSpawnPrompt}
-                onReplyTextChange={setReplyText}
-                onSpawn={() => void spawnMutation.mutate()}
-                onReply={() => void replyMutation.mutate()}
-                onWait={() => void waitMutation.mutate()}
-                onKill={() => {
-                  if (!selectedPeerId) {
-                    return;
+              ) : null}
+              {activeTab === "skills" ? (
+                <SkillsPanel
+                  snapshot={skillsQuery.data}
+                  loading={skillsQuery.isPending || skillsQuery.isFetching}
+                  error={skillsQuery.error}
+                  reviews={skillReviews}
+                  onRefresh={() => void skillsQuery.refetch()}
+                  onRatingChange={(skillId, rating) =>
+                    updateSkillReview(skillId, (current) => ({ ...current, rating }))
                   }
-                  if (window.confirm(`Kill Delamain peer ${selectedPeerId}?`)) {
-                    void killMutation.mutate();
+                  onReviewChange={(skillId, review) =>
+                    updateSkillReview(skillId, (current) => ({ ...current, review }))
                   }
-                }}
-                onIntegrate={() => {
-                  if (!selectedPeerId) {
-                    return;
-                  }
-                  if (
-                    window.confirm(`Open an integration PR for Delamain peer ${selectedPeerId}?`)
-                  ) {
-                    void integrateMutation.mutate();
-                  }
-                }}
-              />
-            ) : null}
-            {activeTab === "automode" ? (
-              <AutomodePanel
-                snapshot={automodeQuery.data}
-                loading={automodeQuery.isPending || automodeQuery.isFetching}
-                error={automodeQuery.error}
-                actionError={automodeActionError}
-                actionPending={automodeActionPending}
-                policyMode={automodeMode}
-                killSwitchEnabled={automodeKillSwitch}
-                maxActivePeers={automodeMaxPeers}
-                allowedRepos={automodeAllowedRepos}
-                allowedModels={automodeAllowedModels}
-                defaultModel={automodeDefaultModel}
-                maxBudget={automodeMaxBudget}
-                maxRuntime={automodeMaxRuntime}
-                requireSpawnApproval={automodeRequireSpawnApproval}
-                requireIntegrateApproval={automodeRequireIntegrateApproval}
-                requireDestructiveApproval={automodeRequireDestructiveApproval}
-                goalTitle={automodeGoalTitle}
-                goalRepo={automodeGoalRepo}
-                goalModel={automodeGoalModel}
-                goalPrompt={automodeGoalPrompt}
-                onRefresh={() => void automodeQuery.refetch()}
-                onPolicyModeChange={setAutomodeMode}
-                onKillSwitchChange={(next) => {
-                  setAutomodeKillSwitch(next);
-                  void automodeKillSwitchMutation.mutate(next);
-                }}
-                onMaxActivePeersChange={setAutomodeMaxPeers}
-                onAllowedReposChange={setAutomodeAllowedRepos}
-                onAllowedModelsChange={setAutomodeAllowedModels}
-                onDefaultModelChange={setAutomodeDefaultModel}
-                onMaxBudgetChange={setAutomodeMaxBudget}
-                onMaxRuntimeChange={setAutomodeMaxRuntime}
-                onRequireSpawnApprovalChange={setAutomodeRequireSpawnApproval}
-                onRequireIntegrateApprovalChange={setAutomodeRequireIntegrateApproval}
-                onRequireDestructiveApprovalChange={setAutomodeRequireDestructiveApproval}
-                onGoalTitleChange={setAutomodeGoalTitle}
-                onGoalRepoChange={setAutomodeGoalRepo}
-                onGoalModelChange={setAutomodeGoalModel}
-                onGoalPromptChange={setAutomodeGoalPrompt}
-                onSavePolicy={() => void automodePolicyMutation.mutate()}
-                onEnqueueGoal={() => void automodeEnqueueMutation.mutate()}
-                onApproveGoal={(goalId) => void automodeApproveMutation.mutate(goalId)}
-                onRejectGoal={(goalId) => {
-                  if (window.confirm(`Reject automode goal ${goalId}?`)) {
-                    void automodeRejectMutation.mutate(goalId);
-                  }
-                }}
-                onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
-              />
-            ) : null}
-            {activeTab === "usage" ? (
-              <UsagePanel
-                usage={usageQuery.data}
-                loading={usageQuery.isPending || usageQuery.isFetching}
-                error={usageQuery.error}
-                onRefresh={() => void usageQuery.refetch()}
-              />
-            ) : null}
-            {activeTab === "motoko" ? (
-              <MotokoPanel
-                status={hermesQuery.data}
-                capacity={capacityQuery.data}
-                sessions={hermesSessionsQuery.data}
-                projects={query.data?.projects ?? []}
-                log={hermesLogQuery.data}
-                proposals={hermesProposalsQuery.data}
-                loading={
-                  hermesQuery.isPending ||
-                  hermesQuery.isFetching ||
-                  hermesSessionsQuery.isFetching ||
-                  hermesLogQuery.isFetching ||
-                  hermesProposalsQuery.isFetching ||
-                  capacityQuery.isFetching
-                }
-                error={
-                  hermesQuery.error ??
-                  hermesSessionsQuery.error ??
-                  hermesLogQuery.error ??
-                  hermesProposalsQuery.error ??
-                  capacityQuery.error
-                }
-                actionError={hermesActionError}
-                chatResult={hermesChatMutation.data}
-                commandResult={hermesCommandResult}
-                draft={hermesDraftMutation.data}
-                scheduleResult={hermesScheduleMutation.data}
-                transcript={motokoTranscript}
-                selectedProjectRoot={selectedProjectRoot}
-                chatInput={motokoChatInput}
-                interactionMode={motokoInteractionMode}
-                scheduleKind={motokoScheduleKind}
-                actionPending={hermesActionPending}
-                onRefresh={() => {
-                  void Promise.all([
-                    hermesQuery.refetch(),
-                    hermesSessionsQuery.refetch(),
-                    hermesLogQuery.refetch(),
-                    hermesProposalsQuery.refetch(),
-                    capacityQuery.refetch(),
-                  ]);
-                }}
-                onToggleInteractionMode={() =>
-                  setMotokoInteractionMode((mode) => (mode === "plan" ? "default" : "plan"))
-                }
-                onProjectRootChange={setSelectedProjectRoot}
-                onChatInputChange={setMotokoChatInput}
-                onScheduleKindChange={setMotokoScheduleKind}
-                onCheck={() => void hermesCheckMutation.mutate()}
-                onSetupCodexOAuth={() => void hermesSetupMutation.mutate()}
-                onStartAcp={() => void hermesAcpMutation.mutate()}
-                onInspectGits={() => void hermesInspectMutation.mutate()}
-                onChatSubmit={() => {
-                  const message = motokoChatInput.trim();
-                  if (message.length === 0) {
-                    return;
-                  }
-                  void hermesChatMutation.mutate(message);
-                }}
-                onDecision={(proposalId, decision) =>
-                  void hermesDecisionMutation.mutate({ proposalId, decision })
-                }
-                onWriteContext={() => void hermesContextMutation.mutate()}
-                onDraft={(proposalId) => void hermesDraftMutation.mutate(proposalId)}
-                onRunSchedule={() => void hermesScheduleMutation.mutate()}
-              />
-            ) : null}
-            {activeTab === "dev" ? (
-              <DevCommandPanel
-                list={devCommandsQuery.data}
-                loading={devCommandsQuery.isPending || devCommandsQuery.isFetching}
-                error={devCommandsQuery.error}
-                selectedProjectRoot={selectedProjectRoot}
-                onRefresh={() => void devCommandsQuery.refetch()}
-                sessionStateByCommandId={devSessionStateByCommandId}
-                activeCommandId={devActiveCommandId}
-                actionError={devActionError}
-                actionPending={devActionPending}
-                onStart={(command) => void handleDevStart(command)}
-                onStop={(command) => void handleDevStop(command)}
-                onCopyLaunchCommand={(command) => void handleDevCopyLaunchCommand(command)}
-                onOpenPreview={handleDevOpenPreview}
-              />
-            ) : null}
-            {activeTab === "gsd" ? (
-              <OpenGsdPanel
-                status={openGsdQuery.data}
-                loading={openGsdQuery.isPending || openGsdQuery.isFetching}
-                error={openGsdQuery.error}
-                projects={query.data.projects}
-                selectedProjectRoot={selectedProjectRoot}
-                initInput={gsdInitInput}
-                autoInitInput={gsdAutoInitInput}
-                model={gsdModel}
-                maxBudget={gsdMaxBudget}
-                commandResult={openGsdCommandResult}
-                actionError={openGsdActionError}
-                actionPending={openGsdActionPending}
-                onRefresh={() => void openGsdQuery.refetch()}
-                onProjectRootChange={setSelectedProjectRoot}
-                onInitInputChange={setGsdInitInput}
-                onAutoInitInputChange={setGsdAutoInitInput}
-                onModelChange={setGsdModel}
-                onMaxBudgetChange={setGsdMaxBudget}
-                onInit={() => void gsdInitMutation.mutate()}
-                onAuto={() => {
-                  if (!selectedProjectRoot) {
-                    return;
-                  }
-                  if (window.confirm(`Run gsd-sdk auto in ${selectedProjectRoot}?`)) {
-                    void gsdAutoMutation.mutate();
-                  }
-                }}
-              />
-            ) : null}
-            {activeTab === "skills" ? (
-              <SkillsPanel
-                snapshot={skillsQuery.data}
-                loading={skillsQuery.isPending || skillsQuery.isFetching}
-                error={skillsQuery.error}
-                reviews={skillReviews}
-                onRefresh={() => void skillsQuery.refetch()}
-                onRatingChange={(skillId, rating) =>
-                  updateSkillReview(skillId, (current) => ({ ...current, rating }))
-                }
-                onReviewChange={(skillId, review) =>
-                  updateSkillReview(skillId, (current) => ({ ...current, review }))
-                }
-              />
-            ) : null}
-            {activeTab === "mcp" ? (
-              <McpServersPanel
-                snapshot={mcpQuery.data}
-                loading={mcpQuery.isPending || mcpQuery.isFetching}
-                error={mcpQuery.error}
-                overrides={mcpOverrides}
-                onRefresh={() => void mcpQuery.refetch()}
-                onToggleServer={toggleMcpServer}
-              />
-            ) : null}
-            {activeTab === "projects" ? <CockpitContent snapshot={query.data} /> : null}
+                />
+              ) : null}
+              {activeTab === "mcp" ? (
+                <McpServersPanel
+                  snapshot={mcpQuery.data}
+                  loading={mcpQuery.isPending || mcpQuery.isFetching}
+                  error={mcpQuery.error}
+                  overrides={mcpOverrides}
+                  onRefresh={() => void mcpQuery.refetch()}
+                  onToggleServer={toggleMcpServer}
+                />
+              ) : null}
+              {activeTab === "projects" ? <CockpitContent snapshot={query.data} /> : null}
+            </div>
           </>
         ) : null}
       </ScrollArea>

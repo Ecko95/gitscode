@@ -18,9 +18,7 @@ import {
   AutomodeSupervisorError,
   type AutomodeBudgetUsage,
   type AutomodeDispatchResult,
-  type AutomodeDriverHaltInput,
   type AutomodeGoal,
-  type AutomodeGoalOutcomeInput,
   type AutomodeGoalStatus,
   type AutomodePolicyUpdateInput,
   type AutomodePolicy,
@@ -41,6 +39,8 @@ import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 interface AutomodeState {
   readonly policy: AutomodePolicy;
   readonly goals: ReadonlyArray<AutomodeGoal>;
+  /** goalId → runtime-limit deadline (epoch ms); persisted so a restart re-arms the peer-kill timer. */
+  readonly runtimeDeadlines: Readonly<Record<string, number>>;
   readonly driverHalted: boolean;
   readonly driverHaltedReason: string | null;
   readonly heldPrUrl: string | null;
@@ -59,6 +59,9 @@ const PersistedAutomodeState = Schema.Struct({
   version: Schema.Literal(1),
   policy: AutomodePolicySchema,
   goals: Schema.Array(AutomodeGoalSchema),
+  runtimeDeadlines: Schema.Record(Schema.String, Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   driverHalted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   driverHaltedReason: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -103,6 +106,7 @@ function toPersistedAutomodeState(state: AutomodeState): PersistedAutomodeState 
     version: 1,
     policy: state.policy,
     goals: [...state.goals],
+    runtimeDeadlines: state.runtimeDeadlines,
     driverHalted: state.driverHalted,
     driverHaltedReason: state.driverHaltedReason,
     heldPrUrl: state.heldPrUrl,
@@ -117,6 +121,7 @@ function fromPersistedAutomodeState(state: PersistedAutomodeState): AutomodeStat
   return {
     policy: state.policy,
     goals: state.goals,
+    runtimeDeadlines: state.runtimeDeadlines,
     driverHalted: state.driverHalted,
     driverHaltedReason: state.driverHaltedReason,
     heldPrUrl: state.heldPrUrl,
@@ -239,6 +244,14 @@ function updateGoal(
   };
 }
 
+function dropDeadline(state: AutomodeState, goalId: string): AutomodeState {
+  if (!(goalId in state.runtimeDeadlines)) {
+    return state;
+  }
+  const { [goalId]: _dropped, ...runtimeDeadlines } = state.runtimeDeadlines;
+  return { ...state, runtimeDeadlines };
+}
+
 function findGoal(state: AutomodeState, goalId: string): AutomodeGoal | null {
   return state.goals.find((goal) => goal.id === goalId) ?? null;
 }
@@ -333,6 +346,7 @@ export const AutomodeSupervisorLive = Layer.effect(
     const initialState = yield* loadAutomodeState(statePath, {
       policy: defaultPolicy(initializedAt),
       goals: [],
+      runtimeDeadlines: {},
       driverHalted: false,
       driverHaltedReason: null,
       heldPrUrl: null,
@@ -373,52 +387,72 @@ export const AutomodeSupervisorLive = Layer.effect(
         }),
       );
 
-    const scheduleRuntimeLimit = (
-      policy: AutomodePolicy,
-      goal: AutomodeGoal,
-      peer: DelamainPeer,
-    ) => {
-      if (!shouldScheduleRuntimeLimit(policy)) {
-        return Effect.void;
-      }
+    // Sleeps until the persisted deadline, then kills the peer and blocks the goal.
+    // Deadline-based (not duration-based) so a restart can re-arm with the remaining time.
+    const enforceRuntimeLimit = (
+      goalId: string,
+      goalTitle: string,
+      peerId: string,
+      deadlineEpochMs: number,
+    ) =>
+      Effect.gen(function* () {
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        yield* Effect.sleep(Duration.millis(Math.max(0, deadlineEpochMs - nowMs)));
+        yield* delamainAdapter.killPeer({ peerId, signal: "SIGTERM" });
+        const updatedAt = yield* nowIso;
+        yield* commitState((state) =>
+          updateGoal(
+            {
+              ...dropDeadline(state, goalId),
+              lastEvent: `Runtime limit reached for ${goalTitle}.`,
+              updatedAt,
+            },
+            goalId,
+            (existing) =>
+              existing.status === "running"
+                ? {
+                    ...existing,
+                    status: "blocked",
+                    blockedReason: "Runtime limit reached and peer was terminated.",
+                    updatedAt,
+                  }
+                : existing,
+          ),
+        );
+      }).pipe(Effect.ignoreCause({ log: true }));
 
-      return Effect.sleep(Duration.minutes(policy.maxRuntimeMinutes)).pipe(
-        Effect.flatMap(() => delamainAdapter.killPeer({ peerId: peer.id, signal: "SIGTERM" })),
-        Effect.tap(() =>
-          Effect.gen(function* () {
-            const updatedAt = yield* nowIso;
-            yield* commitState((state) =>
-              updateGoal(
-                {
-                  ...state,
-                  lastEvent: `Runtime limit reached for ${goal.title}.`,
-                  updatedAt,
-                },
-                goal.id,
-                (existing) =>
-                  existing.status === "running"
-                    ? {
-                        ...existing,
-                        status: "blocked",
-                        blockedReason: "Runtime limit reached and peer was terminated.",
-                        updatedAt,
-                      }
-                    : existing,
-              ),
-            );
-          }),
-        ),
-        Effect.ignoreCause({ log: true }),
-        Effect.forkDetach,
-        Effect.asVoid,
-      );
-    };
+    // Re-arm runtime-limit timers for goals that were running when the server stopped:
+    // the old timer was an in-memory fiber, so without this a restart orphans the peer.
+    const bootMs = DateTime.toEpochMillis(yield* DateTime.now);
+    for (const goal of initialState.goals) {
+      const deadline = initialState.runtimeDeadlines[goal.id];
+      if (goal.status !== "running" || goal.peerId === null || deadline === undefined) {
+        continue;
+      }
+      const enforce = enforceRuntimeLimit(goal.id, goal.title, goal.peerId, deadline);
+      if (deadline <= bootMs) {
+        yield* enforce;
+      } else {
+        yield* enforce.pipe(Effect.forkDetach, Effect.asVoid);
+      }
+    }
 
     const supervisor: AutomodeSupervisorShape = {
       getSnapshot,
       updatePolicy: (input) =>
         Effect.gen(function* () {
           const updatedAt = yield* nowIso;
+          const nextPolicy = applyPolicyUpdate((yield* Ref.get(stateRef)).policy, input, updatedAt);
+          if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
+            return yield* toAutomodeError(
+              "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
+            );
+          }
+          if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
+            return yield* toAutomodeError(
+              "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows every repo.",
+            );
+          }
           const nextState = yield* commitState((state) => ({
             ...state,
             policy: applyPolicyUpdate(state.policy, input, updatedAt),
@@ -619,13 +653,19 @@ export const AutomodeSupervisorLive = Layer.effect(
                 toAutomodeError("Automode failed to spawn a Delamain peer.", cause),
               ),
             );
-          yield* scheduleRuntimeLimit(state.policy, goal, peer);
+          const deadlineEpochMs = shouldScheduleRuntimeLimit(state.policy)
+            ? DateTime.toEpochMillis(yield* DateTime.now) + state.policy.maxRuntimeMinutes * 60_000
+            : null;
 
           const updatedAt = yield* nowIso;
           const nextState = yield* commitState((current) =>
             updateGoal(
               {
                 ...current,
+                runtimeDeadlines:
+                  deadlineEpochMs === null
+                    ? current.runtimeDeadlines
+                    : { ...current.runtimeDeadlines, [goal.id]: deadlineEpochMs },
                 lastEvent: `Spawned peer ${peer.id} for ${goal.title}.`,
                 updatedAt,
               },
@@ -639,6 +679,12 @@ export const AutomodeSupervisorLive = Layer.effect(
               }),
             ),
           );
+          if (deadlineEpochMs !== null) {
+            yield* enforceRuntimeLimit(goal.id, goal.title, peer.id, deadlineEpochMs).pipe(
+              Effect.forkDetach,
+              Effect.asVoid,
+            );
+          }
           const nextGoal = findGoal(nextState, goal.id) ?? goal;
           return {
             snapshot: makeSnapshot(nextState, activePeers + 1, budgetUsage),
@@ -657,7 +703,11 @@ export const AutomodeSupervisorLive = Layer.effect(
               return state;
             }
             return updateGoal(
-              { ...state, lastEvent: `Completed ${goal.title}.`, updatedAt: completedAt },
+              {
+                ...dropDeadline(state, input.goalId),
+                lastEvent: `Completed ${goal.title}.`,
+                updatedAt: completedAt,
+              },
               input.goalId,
               (existing) => ({
                 ...existing,
@@ -683,7 +733,11 @@ export const AutomodeSupervisorLive = Layer.effect(
               return state;
             }
             return updateGoal(
-              { ...state, lastEvent: `Failed ${goal.title}.`, updatedAt: failedAt },
+              {
+                ...dropDeadline(state, input.goalId),
+                lastEvent: `Failed ${goal.title}.`,
+                updatedAt: failedAt,
+              },
               input.goalId,
               (existing) => ({
                 ...existing,

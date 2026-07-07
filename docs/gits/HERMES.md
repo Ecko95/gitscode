@@ -93,6 +93,12 @@ Proposal cards carry an action kind:
 
 Only read-only proposals can be treated as informational. All other action kinds are approval cards and remain handoff-only until the operator converts them into a Delamain or Open GSD draft.
 
+## Relationship to Automode
+
+Motoko remains handoff-only by design: drafts and proposals are returned to the cockpit for an operator to act on, never executed. Separately, the Automode module has a fully autonomous dispatch→verify→land→held-PR driver, gated by AutomodePolicy — mode, kill switch, budget cap, repo/model allowlists, the review gate, and a held PR that only a human merges. Nothing bridges Motoko approval to the automode goal queue today: approving a Motoko proposal does not enqueue or dispatch an automode goal.
+
+Two limits worth knowing: the automode usage meter reads GITS provider-thread cost only — Delamain peer (Codex/Cursor CLI) spend is not metered, so the runtime and peer caps are the effective bound on peer cost. And the INTEGRATION/DESTRUCTIVE prompt patterns used for approval gating are heuristics, not a security boundary.
+
 ## Operations
 
 The cockpit exposes:
