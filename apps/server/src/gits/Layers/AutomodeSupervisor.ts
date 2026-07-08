@@ -189,6 +189,7 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     requireApprovalForPeerSpawn: true,
     requireApprovalBeforeIntegrate: true,
     requireApprovalBeforeDestructiveAction: true,
+    autoEnqueueApprovedProposals: false,
     verificationCommands: [],
     integrationBranch: null,
     updatedAt,
@@ -326,6 +327,8 @@ function applyPolicyUpdate(
       input.requireApprovalBeforeIntegrate ?? policy.requireApprovalBeforeIntegrate,
     requireApprovalBeforeDestructiveAction:
       input.requireApprovalBeforeDestructiveAction ?? policy.requireApprovalBeforeDestructiveAction,
+    autoEnqueueApprovedProposals:
+      input.autoEnqueueApprovedProposals ?? policy.autoEnqueueApprovedProposals,
     verificationCommands: input.verificationCommands ?? policy.verificationCommands,
     integrationBranch:
       input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,

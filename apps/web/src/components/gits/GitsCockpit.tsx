@@ -3888,6 +3888,7 @@ function AutomodePanel({
   requireSpawnApproval,
   requireIntegrateApproval,
   requireDestructiveApproval,
+  autoEnqueueProposals,
   goalTitle,
   goalRepo,
   goalModel,
@@ -3904,6 +3905,7 @@ function AutomodePanel({
   onRequireSpawnApprovalChange,
   onRequireIntegrateApprovalChange,
   onRequireDestructiveApprovalChange,
+  onAutoEnqueueProposalsChange,
   onGoalTitleChange,
   onGoalRepoChange,
   onGoalModelChange,
@@ -3930,6 +3932,7 @@ function AutomodePanel({
   requireSpawnApproval: boolean;
   requireIntegrateApproval: boolean;
   requireDestructiveApproval: boolean;
+  autoEnqueueProposals: boolean;
   goalTitle: string;
   goalRepo: string;
   goalModel: string;
@@ -3946,6 +3949,7 @@ function AutomodePanel({
   onRequireSpawnApprovalChange: (value: boolean) => void;
   onRequireIntegrateApprovalChange: (value: boolean) => void;
   onRequireDestructiveApprovalChange: (value: boolean) => void;
+  onAutoEnqueueProposalsChange: (value: boolean) => void;
   onGoalTitleChange: (value: string) => void;
   onGoalRepoChange: (value: string) => void;
   onGoalModelChange: (value: string) => void;
@@ -4135,6 +4139,14 @@ function AutomodePanel({
                 }
               />
               Destructive approval
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={autoEnqueueProposals}
+                onChange={(event) => onAutoEnqueueProposalsChange(event.currentTarget.checked)}
+              />
+              Auto-enqueue approved Motoko proposals (autonomous mode only)
             </label>
           </div>
 
@@ -4407,6 +4419,7 @@ export function GitsCockpit() {
   const [automodeRequireIntegrateApproval, setAutomodeRequireIntegrateApproval] = useState(true);
   const [automodeRequireDestructiveApproval, setAutomodeRequireDestructiveApproval] =
     useState(true);
+  const [automodeAutoEnqueueProposals, setAutomodeAutoEnqueueProposals] = useState(false);
   const [skillReviews, setSkillReviews] = useState<SkillReviewState>(() => loadSkillReviewState());
   const [mcpOverrides, setMcpOverrides] = useState<McpOverrideState>(() => loadMcpOverrideState());
   const [automodeGoalTitle, setAutomodeGoalTitle] = useState("");
@@ -4872,6 +4885,7 @@ export function GitsCockpit() {
       requireApprovalForPeerSpawn: automodeRequireSpawnApproval,
       requireApprovalBeforeIntegrate: automodeRequireIntegrateApproval,
       requireApprovalBeforeDestructiveAction: automodeRequireDestructiveApproval,
+      autoEnqueueApprovedProposals: automodeAutoEnqueueProposals,
     };
   };
   const automodePolicyMutation = useMutation({
@@ -5180,6 +5194,7 @@ export function GitsCockpit() {
     setAutomodeRequireSpawnApproval(policy.requireApprovalForPeerSpawn);
     setAutomodeRequireIntegrateApproval(policy.requireApprovalBeforeIntegrate);
     setAutomodeRequireDestructiveApproval(policy.requireApprovalBeforeDestructiveAction);
+    setAutomodeAutoEnqueueProposals(policy.autoEnqueueApprovedProposals);
   }, [automodePolicyDirty, automodeQuery.data?.policy]);
 
   useEffect(() => {
@@ -5382,6 +5397,7 @@ export function GitsCockpit() {
                   requireSpawnApproval={automodeRequireSpawnApproval}
                   requireIntegrateApproval={automodeRequireIntegrateApproval}
                   requireDestructiveApproval={automodeRequireDestructiveApproval}
+                  autoEnqueueProposals={automodeAutoEnqueueProposals}
                   goalTitle={automodeGoalTitle}
                   goalRepo={automodeGoalRepo}
                   goalModel={automodeGoalModel}
@@ -5403,6 +5419,9 @@ export function GitsCockpit() {
                   )}
                   onRequireDestructiveApprovalChange={setAutomodePolicyField(
                     setAutomodeRequireDestructiveApproval,
+                  )}
+                  onAutoEnqueueProposalsChange={setAutomodePolicyField(
+                    setAutomodeAutoEnqueueProposals,
                   )}
                   onGoalTitleChange={setAutomodeGoalTitle}
                   onGoalRepoChange={setAutomodeGoalRepo}

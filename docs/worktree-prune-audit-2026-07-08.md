@@ -4,15 +4,15 @@ Audited all `~/dev/projects/gitscode-*` and `t3code-*` worktrees against `origin
 
 ## Safe to prune — fully merged (nothing lost)
 
-| Worktree | Branch | Why safe |
-|---|---|---|
-| `gitscode-resume-cmd-pi-harness-feat` | `pi-harness-feat` | squash-merged (#96/#97/#103) |
-| `t3code-gits-skills-intelligence` | `feat/gits-skills-intelligence` | squash-merged |
-| `t3code-hermes-integration` | `feat/hermes-first-class-module` | ancestor of gits |
-| `t3code-rtk-output-gateway` | `feat/gits-rtk-output-gateway` | ancestor of gits |
-| `gitscode-hosted` | *(detached @ 1dbaca5b9)* | exactly origin/gits |
-| `t3code-work-main-delamain` | `integrate/gits-delamain-split-to-main` | content in gits; **branch targets main** |
-| `t3code-work-main-integrate` | `integrate/gits-pending-to-main` | content in gits; **branch targets main** |
+| Worktree                              | Branch                                  | Why safe                                 |
+| ------------------------------------- | --------------------------------------- | ---------------------------------------- |
+| `gitscode-resume-cmd-pi-harness-feat` | `pi-harness-feat`                       | squash-merged (#96/#97/#103)             |
+| `t3code-gits-skills-intelligence`     | `feat/gits-skills-intelligence`         | squash-merged                            |
+| `t3code-hermes-integration`           | `feat/hermes-first-class-module`        | ancestor of gits                         |
+| `t3code-rtk-output-gateway`           | `feat/gits-rtk-output-gateway`          | ancestor of gits                         |
+| `gitscode-hosted`                     | _(detached @ 1dbaca5b9)_                | exactly origin/gits                      |
+| `t3code-work-main-delamain`           | `integrate/gits-delamain-split-to-main` | content in gits; **branch targets main** |
+| `t3code-work-main-integrate`          | `integrate/gits-pending-to-main`        | content in gits; **branch targets main** |
 
 ## Keep — real unmerged work
 

@@ -91,6 +91,7 @@ import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
 import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
+import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -1747,7 +1748,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.gitsHermesDecideProposal]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesDecideProposal,
-            hermesAdapter.decideProposal(input),
+            decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesWriteProjectContext]: (input) =>
