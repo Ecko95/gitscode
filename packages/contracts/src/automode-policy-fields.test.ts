@@ -41,6 +41,7 @@ describe("AutomodePolicy held-PR fields", () => {
     });
     expect(decoded.verificationCommands).toEqual([]);
     expect(decoded.integrationBranch).toBeNull();
+    expect(decoded.autoEnqueueApprovedProposals).toBe(false);
   });
 
   it("accepts the new fields on the update input", () => {
@@ -48,7 +49,9 @@ describe("AutomodePolicy held-PR fields", () => {
       mode: "autonomous",
       verificationCommands: [{ label: "test", cmd: ["bun", "run", "test"] }],
       integrationBranch: "auto/x",
+      autoEnqueueApprovedProposals: true,
     });
     expect(decoded.integrationBranch).toBe("auto/x");
+    expect(decoded.autoEnqueueApprovedProposals).toBe(true);
   });
 });
