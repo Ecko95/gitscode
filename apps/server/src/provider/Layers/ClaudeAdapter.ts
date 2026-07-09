@@ -331,11 +331,30 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
   if (errors.includes("interrupt")) {
     return true;
   }
+  const errorDiagnosticText = ` ${errors} `;
+  const stopReason =
+    typeof (result as { stop_reason?: unknown }).stop_reason === "string"
+      ? (result as { stop_reason?: unknown }).stop_reason.trim().toLowerCase()
+      : undefined;
+  const resultType =
+    typeof (result as { result_type?: unknown }).result_type === "string"
+      ? (result as { result_type?: unknown }).result_type.trim().toLowerCase()
+      : undefined;
+  const hasResultTypeUserStopDiagnostic =
+    /(?:^|[^a-z0-9_])result_type\s*[:=]\s*["']?user["']?(?=[^a-z0-9_]|$)/.test(
+      errorDiagnosticText,
+    ) &&
+    /(?:^|[^a-z0-9_])stop_reason\s*[:=]\s*["']?tool_use["']?(?=[^a-z0-9_]|$)/.test(
+      errorDiagnosticText,
+    );
+  const isStopByUser = resultType === "user" && stopReason === "tool_use";
 
   return (
     result.subtype === "error_during_execution" &&
     result.is_error === false &&
-    (errors.includes("request was aborted") ||
+    (isStopByUser ||
+      hasResultTypeUserStopDiagnostic ||
+      errors.includes("request was aborted") ||
       errors.includes("interrupted by user") ||
       errors.includes("aborted"))
   );
