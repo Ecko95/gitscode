@@ -8,6 +8,7 @@ import type {
   AutomodeBudgetUsage,
   DelamainPeer,
   DelamainPeerListResult,
+  DelamainSendMessageInput,
   DelamainSpawnPeerInput,
 } from "@t3tools/contracts";
 
@@ -61,6 +62,7 @@ function makeLayer(options?: {
   readonly peers?: ReadonlyArray<DelamainPeer>;
   readonly budgetUsage?: AutomodeBudgetUsage;
   readonly onSpawn?: (input: DelamainSpawnPeerInput) => void;
+  readonly onSend?: (input: DelamainSendMessageInput) => void;
   readonly baseDir?: string;
 }) {
   return AutomodeSupervisorLive.pipe(
@@ -83,6 +85,11 @@ function makeLayer(options?: {
             };
           }),
         killPeer: () => Effect.succeed({ ...peer, status: "killed", rawStatus: "killed" }),
+        sendMessage: (input) =>
+          Effect.sync(() => {
+            options?.onSend?.(input);
+            return { responseId: input.responseId ?? null, delivered: 1, skipped: null };
+          }),
       }),
     ),
     Layer.provide(
@@ -567,4 +574,149 @@ describe("AutomodeSupervisorLive", () => {
       assert.equal(snapshot.runMerged, false);
     }).pipe(Effect.provide(makeLayer())),
   );
+
+  it.effect("sendPeerMessage: observe authority (default) blocks all sends", () => {
+    let sent = false;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const failure = yield* Effect.flip(
+        supervisor.sendPeerMessage({ toPeerId: "peer-x", message: "Hello peer" }),
+      );
+      assert.equal(
+        failure.message,
+        "Motoko authority is observe-only; peer messaging is disabled.",
+      );
+      assert.equal(sent, false);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          onSend: () => {
+            sent = true;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("sendPeerMessage: respond authority blocks a new send but allows a reply", () => {
+    const sent: DelamainSendMessageInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        requireApprovalForPeerSpawn: false,
+        motokoAuthority: "respond",
+      });
+
+      const blocked = yield* Effect.flip(
+        supervisor.sendPeerMessage({ toPeerId: "peer-x", message: "Fresh topic" }),
+      );
+      assert.equal(
+        blocked.message,
+        "Motoko authority allows replies only; new sends require dispatch authority.",
+      );
+      assert.equal(sent.length, 0);
+
+      const reply = yield* supervisor.sendPeerMessage({
+        toPeerId: "peer-x",
+        message: "Re: your question",
+        responseId: "resp-1",
+      });
+      assert.equal(reply.delivered, 1);
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0]?.responseId, "resp-1");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          onSend: (input) => {
+            sent.push(input);
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("sendPeerMessage: dispatch authority reaches the Delamain adapter", () => {
+    const sent: DelamainSendMessageInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        requireApprovalForPeerSpawn: false,
+        motokoAuthority: "dispatch",
+      });
+      const result = yield* supervisor.sendPeerMessage({
+        toPeerId: "peer-x",
+        message: "Hello peer",
+      });
+      assert.equal(result.delivered, 1);
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0]?.toPeerId, "peer-x");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          onSend: (input) => {
+            sent.push(input);
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("sendPeerMessage: shared gate still blocks a send when the kill switch is on", () => {
+    let sent = false;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: true,
+        requireApprovalForPeerSpawn: false,
+        motokoAuthority: "dispatch",
+      });
+      const failure = yield* Effect.flip(
+        supervisor.sendPeerMessage({ toPeerId: "peer-x", message: "Hello peer" }),
+      );
+      assert.equal(failure.message, "Kill switch is enabled.");
+      assert.equal(sent, false);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          onSend: () => {
+            sent = true;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("sendPeerMessage: destructive-shaped content requires human approval", () => {
+    let sent = false;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        requireApprovalForPeerSpawn: false,
+        motokoAuthority: "dispatch",
+      });
+      const failure = yield* Effect.flip(
+        supervisor.sendPeerMessage({ toPeerId: "peer-x", message: "please rm -rf /tmp/scratch" }),
+      );
+      assert.equal(
+        failure.message,
+        "Manual approval required before Motoko can send this message.",
+      );
+      assert.equal(sent, false);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          onSend: () => {
+            sent = true;
+          },
+        }),
+      ),
+    );
+  });
 });
