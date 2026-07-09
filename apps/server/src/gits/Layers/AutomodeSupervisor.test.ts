@@ -665,6 +665,30 @@ describe("AutomodeSupervisorLive", () => {
     );
   });
 
+  it.effect("sendPeerMessage: defaults fromPeerId to motoko for GITS-originated sends", () => {
+    const sent: DelamainSendMessageInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        requireApprovalForPeerSpawn: false,
+        motokoAuthority: "dispatch",
+      });
+      yield* supervisor.sendPeerMessage({ toPeerId: "peer-x", message: "Hello peer" });
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0]?.fromPeerId, "motoko");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          onSend: (input) => {
+            sent.push(input);
+          },
+        }),
+      ),
+    );
+  });
+
   it.effect("sendPeerMessage: shared gate still blocks a send when the kill switch is on", () => {
     let sent = false;
     return Effect.gen(function* () {

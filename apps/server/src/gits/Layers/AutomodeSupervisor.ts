@@ -821,8 +821,12 @@ export const AutomodeSupervisorLive = Layer.effect(
             );
           }
 
+          // R#3: default the sender so the delamain CLI doesn't fall back to cwd-inference
+          // (which never matches the GITS server). ponytail: constant sender id (config later);
+          // documented residual — replies addressed back to "motoko" won't deliver through
+          // delamain since Motoko is not a delamain peer (reply-routing is future work).
           return yield* delamainAdapter
-            .sendMessage(input)
+            .sendMessage({ ...input, fromPeerId: input.fromPeerId ?? "motoko" })
             .pipe(
               Effect.mapError((cause) =>
                 toAutomodeError("Failed to send a Delamain peer message.", cause),
