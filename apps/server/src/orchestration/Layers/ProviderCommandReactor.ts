@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   CommandId,
+  type DelamainMessage,
   EventId,
   MessageId,
   type ModelSelection,
@@ -35,6 +36,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
+import { DelamainAdapter } from "../../gits/Services/DelamainAdapter.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -143,6 +145,26 @@ function buildThreadForkSummaryMessage(input: {
     input.summary.trim(),
     ...(seedPrompt ? ["", "Seed prompt", "", seedPrompt] : []),
   ].join("\n");
+}
+
+const PEER_INBOX_SEED_HEADING = "Peer inbox messages received since this thread's last turn:";
+
+// R5: render a delamain peer's unseen inbox messages as a context seed prepended
+// to the next provider turn. Mirrors delamain `formatInboxPrompt`'s shape (per
+// message: a "[peer message] from <sender>" header, the response-id when present,
+// then the body) — replicated locally rather than imported (cross-repo).
+export function renderPeerInboxContextSeed(messages: ReadonlyArray<DelamainMessage>): string {
+  const rendered = messages
+    .map((message) => {
+      const lines = [`[peer message] from ${message.fromPeerId}`];
+      if (message.responseId) {
+        lines.push(`response-id: ${message.responseId}`);
+      }
+      lines.push("", message.message);
+      return lines.join("\n");
+    })
+    .join("\n\n---\n\n");
+  return [PEER_INBOX_SEED_HEADING, "", rendered].join("\n");
 }
 
 function isThreadForkSummaryMessage(message: OrchestrationMessage): boolean {
@@ -450,6 +472,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerSessionDirectory = yield* ProviderSessionDirectory;
+  const delamainAdapter = yield* DelamainAdapter;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -804,6 +827,83 @@ const make = Effect.gen(function* () {
     return startedSession.threadId;
   });
 
+  // R5 cross-provider context replay. Returns the rendered inbox seed to prepend,
+  // or undefined for a strict no-op (non-peer thread, no unseen messages). Only
+  // spawns the delamain CLI for threads whose worktreePath matches a peer.
+  const buildPeerInboxContextSeedForTurn = Effect.fnUntraced(function* (thread: {
+    readonly id: ThreadId;
+    readonly worktreePath: string | null;
+    readonly modelSelection: ModelSelection;
+  }) {
+    const worktreePath = thread.worktreePath;
+    if (!worktreePath) {
+      return undefined;
+    }
+    const binding = Option.getOrUndefined(yield* providerSessionDirectory.getBinding(thread.id));
+    const runtimePayload =
+      binding?.runtimePayload &&
+      typeof binding.runtimePayload === "object" &&
+      !Array.isArray(binding.runtimePayload)
+        ? (binding.runtimePayload as Record<string, unknown>)
+        : {};
+    const cachedPeerId =
+      typeof runtimePayload.r5PeerId === "string" ? runtimePayload.r5PeerId : undefined;
+    const coveredMessageId =
+      typeof runtimePayload.r5CoveredMessageId === "string"
+        ? runtimePayload.r5CoveredMessageId
+        : undefined;
+
+    let peerId = cachedPeerId;
+    let resolvedNewPeerId = false;
+    if (!peerId) {
+      const { peers } = yield* delamainAdapter.listPeers();
+      const match = peers.find(
+        (peer) => peer.worktreePath !== null && peer.worktreePath === worktreePath,
+      );
+      if (!match) {
+        return undefined;
+      }
+      peerId = match.id;
+      resolvedNewPeerId = true;
+    }
+
+    const inbox = yield* delamainAdapter.readInbox({ peerId, includeDelivered: true });
+    const messages = inbox.messages;
+    // Watermark: everything AFTER the covered id is unseen. Unknown/absent id → all unseen.
+    const coveredIndex = coveredMessageId
+      ? messages.findIndex((message) => message.id === coveredMessageId)
+      : -1;
+    const unseen = messages.slice(coveredIndex + 1);
+
+    const persistRuntimePayload = (payload: Record<string, unknown>) => {
+      if (!binding) {
+        // ponytail: no bound provider-session row to attach the watermark to;
+        // skip the write (re-seeds next turn). A turn always binds a session
+        // first (startSession upserts the directory), so this only trips in
+        // degenerate states.
+        return Effect.void;
+      }
+      return providerSessionDirectory.upsert({
+        threadId: thread.id,
+        provider: binding.provider,
+        providerInstanceId: binding.providerInstanceId ?? thread.modelSelection.instanceId,
+        runtimePayload: payload,
+      });
+    };
+
+    if (unseen.length === 0) {
+      if (resolvedNewPeerId) {
+        // Cache the correlation so later turns skip listPeers.
+        yield* persistRuntimePayload({ r5PeerId: peerId });
+      }
+      return undefined;
+    }
+
+    const newestSeededId = unseen[unseen.length - 1]!.id;
+    yield* persistRuntimePayload({ r5PeerId: peerId, r5CoveredMessageId: newestSeededId });
+    return renderPeerInboxContextSeed(unseen);
+  });
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
@@ -830,12 +930,19 @@ const make = Effect.gen(function* () {
       messages: thread.messages,
       parentThreadId: thread.parentThreadId,
     });
-    const providerMessageText = summarySeedMessage
+    const summarySeededText = summarySeedMessage
       ? buildThreadForkSummarySeededTurnInput({
           summaryMessageText: summarySeedMessage.text,
           userMessageText: input.messageText,
         })
       : input.messageText;
+    // R5: prepend the delamain peer inbox messages this thread has not seen yet
+    // (per-thread watermark). Strict no-op — no delamain CLI spawn — when the
+    // thread has no worktreePath or no peer matches. Coexists with the summary seed.
+    const peerInboxSeed = yield* buildPeerInboxContextSeedForTurn(thread);
+    const providerMessageText = peerInboxSeed
+      ? `${peerInboxSeed}\n\n${summarySeededText}`
+      : summarySeededText;
     const normalizedInput = toNonEmptyProviderInput(providerMessageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
