@@ -67,6 +67,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
+import { resolveSessionEnvWithDirenv } from "../direnvSessionEnv.ts";
 import { sessionPortEnv } from "../sessionPort.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
@@ -1421,29 +1422,41 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
         );
 
+        // direnv (.envrc) delta for this session's cwd, layered under GITS_PORT/shimEnv
+        // below so they always win (#124 invariant). Failure-safe: any direnv error
+        // (not installed, un-allowed .envrc, timeout) collapses to {}. Resolved before
+        // git-shim allocation so the shim's PATH can prepend to the direnv-merged PATH
+        // (#134) instead of silently discarding it.
+        const baseEnvWithDirenv = yield* resolveSessionEnvWithDirenv(
+          sessionCwd,
+          options?.environment ?? {},
+          options?.environment ?? process.env,
+        );
         // Inject git confinement shim for this session.
         // CONFINEMENT LINE: only sessionEnv is modified; options.environment (the
         // instance-level env) is never mutated, and server process.env is untouched.
         // The shim dir is released when sessionScope closes (session teardown).
         const shimEnv = options?.gitShimManager
-          ? (yield* options.gitShimManager.allocate(input.threadId, sessionCwd).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapterProcessError({
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    detail: cause.message,
-                    cause,
-                  }),
-              ),
-            )).vars
+          ? (yield* options.gitShimManager
+              .allocate(input.threadId, sessionCwd, baseEnvWithDirenv.PATH ?? process.env["PATH"])
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterProcessError({
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      detail: cause.message,
+                      cause,
+                    }),
+                ),
+              )).vars
           : {};
         if (options?.gitShimManager && Object.keys(shimEnv).length > 0) {
           yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
         }
         const sessionEnv: NodeJS.ProcessEnv = Object.assign(
           {},
-          options?.environment,
+          baseEnvWithDirenv,
           sessionPortEnv(input.threadId),
           shimEnv,
         );

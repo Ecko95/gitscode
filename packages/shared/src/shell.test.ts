@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+// @effect-diagnostics nodeBuiltinImport:off
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  applyDirenvDelta,
   extractPathFromShellOutput,
   isCommandAvailable,
   listLoginShellCandidates,
@@ -11,6 +16,7 @@ import {
   readPathFromLaunchctl,
   readPathFromLoginShell,
   resolveCommandPath,
+  resolveDirenvEnvironment,
   resolveKnownWindowsCliDirs,
   resolveWindowsEnvironment,
 } from "./shell.ts";
@@ -466,5 +472,124 @@ describe("resolveWindowsEnvironment", () => {
       FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
     });
     expect(commandAvailable).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Creates a real (empty) executable file named "direnv" on a scratch PATH so
+// `isCommandAvailable`'s real fs-based resolution finds it deterministically,
+// without depending on direnv actually being installed on the host. The
+// injected `execFile` stands in for what running it would print.
+function withFakeDirenvOnPath(): { readonly env: NodeJS.ProcessEnv; readonly cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "gits-direnv-test-"));
+  const binPath = join(dir, "direnv");
+  writeFileSync(binPath, "#!/bin/sh\nexit 0\n");
+  chmodSync(binPath, 0o755);
+  return { env: { PATH: dir }, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+describe("resolveDirenvEnvironment", () => {
+  const cleanups: Array<() => void> = [];
+  afterEach(() => {
+    while (cleanups.length > 0) {
+      cleanups.pop()?.();
+    }
+  });
+
+  it("is a no-op on win32 regardless of direnv availability", async () => {
+    expect(
+      await resolveDirenvEnvironment("/tmp/project", { PATH: "/usr/bin" }, { platform: "win32" }),
+    ).toEqual({});
+  });
+
+  it("returns {} when direnv is not on PATH", async () => {
+    expect(
+      await resolveDirenvEnvironment("/tmp/project", { PATH: "" }, { platform: "linux" }),
+    ).toEqual({});
+  });
+
+  it("parses the direnv export json delta when direnv is available", async () => {
+    const fake = withFakeDirenvOnPath();
+    cleanups.push(fake.cleanup);
+    const execFile = vi.fn(() => JSON.stringify({ FOO: "bar", BAZ: null }));
+
+    expect(
+      await resolveDirenvEnvironment("/tmp/project", fake.env, { platform: "linux", execFile }),
+    ).toEqual({ FOO: "bar", BAZ: null });
+    expect(execFile).toHaveBeenCalledWith("direnv", ["export", "json"], {
+      cwd: "/tmp/project",
+      env: fake.env,
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  });
+
+  it("returns {} when execFile throws (e.g. un-allowed .envrc or timeout)", async () => {
+    const fake = withFakeDirenvOnPath();
+    cleanups.push(fake.cleanup);
+    const execFile = vi.fn(() => {
+      throw new Error("direnv: error .envrc is blocked");
+    });
+
+    expect(
+      await resolveDirenvEnvironment("/tmp/project", fake.env, { platform: "linux", execFile }),
+    ).toEqual({});
+  });
+
+  it("returns {} when execFile rejects (async timeout/error path)", async () => {
+    const fake = withFakeDirenvOnPath();
+    cleanups.push(fake.cleanup);
+    const execFile = vi.fn(() => Promise.reject(new Error("direnv: error .envrc is blocked")));
+
+    expect(
+      await resolveDirenvEnvironment("/tmp/project", fake.env, { platform: "linux", execFile }),
+    ).toEqual({});
+  });
+
+  it("returns {} on malformed JSON", async () => {
+    const fake = withFakeDirenvOnPath();
+    cleanups.push(fake.cleanup);
+    const execFile = vi.fn(() => "not json");
+
+    expect(
+      await resolveDirenvEnvironment("/tmp/project", fake.env, { platform: "linux", execFile }),
+    ).toEqual({});
+  });
+});
+
+describe("applyDirenvDelta", () => {
+  it("sets string values and deletes null (unset) values", () => {
+    expect(
+      applyDirenvDelta({ HOME: "/home/x", STALE: "old" }, { FOO: "bar", STALE: null }),
+    ).toEqual({ HOME: "/home/x", FOO: "bar" });
+  });
+
+  it("never mutates the base object", () => {
+    const base = { HOME: "/home/x" };
+    applyDirenvDelta(base, { FOO: "bar" });
+    expect(base).toEqual({ HOME: "/home/x" });
+  });
+
+  it("carries a PATH value from the delta through to the merged env (#134)", () => {
+    expect(
+      applyDirenvDelta(
+        { PATH: "/usr/local/bin:/usr/bin" },
+        { PATH: "/tmp/fake-toolchain:/usr/local/bin:/usr/bin" },
+      ),
+    ).toEqual({ PATH: "/tmp/fake-toolchain:/usr/local/bin:/usr/bin" });
+  });
+
+  it("session-injected vars applied after the delta always win (GITS_PORT survival, #124)", () => {
+    const instanceEnv = { HOME: "/home/x" };
+    // A hostile/coincidental .envrc that tries to set GITS_PORT itself.
+    const direnvDelta = { GITS_PORT: "6666", PROJECT_VAR: "from-envrc" };
+    const sessionVars = { GITS_PORT: "5173" };
+
+    const merged = Object.assign({}, applyDirenvDelta(instanceEnv, direnvDelta), sessionVars);
+
+    expect(merged).toEqual({
+      HOME: "/home/x",
+      PROJECT_VAR: "from-envrc",
+      GITS_PORT: "5173",
+    });
   });
 });

@@ -28,6 +28,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
+import { resolveSessionEnvWithDirenv } from "../direnvSessionEnv.ts";
 import { sessionPortEnv } from "../sessionPort.ts";
 import {
   ProviderAdapterProcessError,
@@ -1045,17 +1046,31 @@ export function makeOpenCodeAdapter(
           sessions.delete(input.threadId);
         }
 
+        // direnv (.envrc) delta for this session's cwd, layered under GITS_PORT/shim
+        // vars below so they always win (#124 invariant). Failure-safe: any direnv
+        // error (not installed, un-allowed .envrc, timeout) collapses to {}. Resolved
+        // before git-shim allocation so the shim's PATH can prepend to the
+        // direnv-merged PATH (#134) instead of silently discarding it.
+        const openCodeBaseEnvWithDirenv = yield* resolveSessionEnvWithDirenv(
+          directory,
+          options?.environment ?? {},
+          options?.environment ?? process.env,
+        );
         // Inject git confinement shim for this session.
         // CONFINEMENT LINE: only openCodeSessionEnv is modified; options.environment (the
         // instance-level env) is never mutated, and server process.env is untouched.
         const openCodeShimEnv = options?.gitShimManager
           ? (yield* options.gitShimManager
-              .allocate(input.threadId, directory)
+              .allocate(
+                input.threadId,
+                directory,
+                openCodeBaseEnvWithDirenv.PATH ?? process.env["PATH"],
+              )
               .pipe(Effect.mapError((cause) => toProcessError(input.threadId, cause)))).vars
           : {};
         const openCodeSessionEnv: NodeJS.ProcessEnv = Object.assign(
           {},
-          options?.environment,
+          openCodeBaseEnvWithDirenv,
           sessionPortEnv(input.threadId),
           openCodeShimEnv,
         );

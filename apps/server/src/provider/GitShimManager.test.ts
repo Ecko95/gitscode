@@ -100,6 +100,28 @@ it.layer(testLayer)("GitShimManager", (it) => {
       }),
     );
 
+    it.effect(
+      "prepends the shim dir to a caller-supplied basePath (#134 direnv PATH survival)",
+      () =>
+        Effect.gen(function* () {
+          const mgr = yield* GitShimManager;
+          const config = yield* ServerConfig;
+          const path = yield* Path.Path;
+
+          const sessionId = "test-alloc-basepath";
+          const allowedRoot = config.baseDir;
+          const basePath = "/scratch/fake-toolchain:/usr/bin:/bin";
+          const result = yield* mgr.allocate(sessionId, allowedRoot, basePath);
+
+          const shimDir = path.join(config.baseDir, "gits-shims", sessionId);
+          if (result.vars["PATH"] !== `${shimDir}:${basePath}`) {
+            throw new Error(`Expected PATH '${shimDir}:${basePath}', got '${result.vars["PATH"]}'`);
+          }
+
+          yield* mgr.release(sessionId);
+        }),
+    );
+
     it.effect("fails closed when the shim cannot be written", () =>
       Effect.gen(function* () {
         const mgr = yield* GitShimManager;
