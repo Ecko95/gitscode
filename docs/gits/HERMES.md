@@ -101,6 +101,8 @@ An opt-in bridge connects the two: when the `autoEnqueueApprovedProposals` polic
 
 Two limits worth knowing: the automode usage meter reads GITS provider-thread cost only — Delamain peer (Codex/Cursor CLI) spend is not metered, so the runtime and peer caps are the effective bound on peer cost. And the INTEGRATION/DESTRUCTIVE prompt patterns used for approval gating are heuristics, not a security boundary.
 
+Automode is opt-in on every server restart (see `docs/gits/ARCHITECTURE.md` § Milestone 4): boot re-arms the kill switch and clears every goal's approval, bridge-enqueued goals included. A bridge-armed run does not resume itself after a restart — the operator must re-enable the kill switch and re-approve.
+
 ## Operations
 
 The cockpit exposes:

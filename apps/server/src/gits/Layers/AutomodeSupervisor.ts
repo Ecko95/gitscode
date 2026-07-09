@@ -132,6 +132,21 @@ function fromPersistedAutomodeState(state: PersistedAutomodeState): AutomodeStat
   };
 }
 
+// Automode must never auto-resume real work on boot: a persisted autonomous +
+// killswitch-off policy with approved goals would otherwise dispatch immediately.
+// Re-arm the kill switch and require every goal to be re-approved by an operator.
+function reArmOnBoot(state: AutomodeState): AutomodeState {
+  return {
+    ...state,
+    policy: { ...state.policy, killSwitchEnabled: true },
+    goals: state.goals.map((goal) =>
+      goal.approvedAt === null ? goal : { ...goal, approvedAt: null },
+    ),
+    lastEvent:
+      "Automode reloaded with kill switch re-armed and approvals cleared; re-enable and re-approve to run.",
+  };
+}
+
 function persistAutomodeState(statePath: string, state: AutomodeState) {
   return writeFileStringAtomically({
     filePath: statePath,
@@ -170,7 +185,7 @@ function loadAutomodeState(statePath: string, fallback: AutomodeState) {
             path: statePath,
             cause: Cause.pretty(cause),
           }).pipe(Effect.as(fallback)),
-        onSuccess: (state) => Effect.succeed(fromPersistedAutomodeState(state)),
+        onSuccess: (state) => Effect.succeed(reArmOnBoot(fromPersistedAutomodeState(state))),
       }),
     );
   });
@@ -205,8 +220,9 @@ function pendingApprovalCount(goals: ReadonlyArray<AutomodeGoal>): number {
 }
 
 function repoAllowed(policy: AutomodePolicy, repo: string): boolean {
+  // ponytail: empty allowlist = deny-all (explicit opt-in), not allow-all.
   if (policy.allowedRepos.length === 0) {
-    return true;
+    return false;
   }
 
   return policy.allowedRepos.some((allowedRepo) => {
@@ -453,7 +469,7 @@ export const AutomodeSupervisorLive = Layer.effect(
           }
           if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
             return yield* toAutomodeError(
-              "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows every repo.",
+              "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows no repos.",
             );
           }
           const nextState = yield* commitState((state) => ({
