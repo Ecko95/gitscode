@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 
 import type {
   DelamainAdapterError,
+  DelamainInboxResult,
   DelamainPeer,
   DelamainPeerIntegrateInput,
   DelamainPeerIntegrateResult,
@@ -11,6 +12,9 @@ import type {
   DelamainPeerLogInput,
   DelamainPeerLogResult,
   DelamainPeerReplyInput,
+  DelamainReadInboxInput,
+  DelamainSendMessageInput,
+  DelamainSendMessageResult,
   DelamainSpawnPeerInput,
   DelamainPeerStatusInput,
   DelamainPeerWaitInput,
@@ -39,6 +43,12 @@ export interface DelamainAdapterShape {
   readonly integratePeer: (
     input: DelamainPeerIntegrateInput,
   ) => Effect.Effect<DelamainPeerIntegrateResult, DelamainAdapterError>;
+  readonly readInbox: (
+    input: DelamainReadInboxInput,
+  ) => Effect.Effect<DelamainInboxResult, DelamainAdapterError>;
+  readonly sendMessage: (
+    input: DelamainSendMessageInput,
+  ) => Effect.Effect<DelamainSendMessageResult, DelamainAdapterError>;
 }
 
 export class DelamainAdapter extends Context.Service<DelamainAdapter, DelamainAdapterShape>()(

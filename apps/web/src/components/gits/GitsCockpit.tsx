@@ -2,6 +2,7 @@ import type {
   AgentSession,
   AutomodeGoal,
   AutomodeSnapshot,
+  DelamainInboxResult,
   DelamainPeer,
   DelamainPeerListResult,
   GitsCapacitySnapshot,
@@ -1390,6 +1391,7 @@ function PeerFleetPanel({
   selectedPeerId,
   logText,
   logLoading,
+  inbox,
   actionError,
   spawnRepo,
   spawnName,
@@ -1414,6 +1416,7 @@ function PeerFleetPanel({
   selectedPeerId: string | null;
   logText: string | undefined;
   logLoading: boolean;
+  inbox: DelamainInboxResult | undefined;
   actionError: unknown;
   spawnRepo: string;
   spawnName: string;
@@ -1588,6 +1591,21 @@ function PeerFleetPanel({
                 <div className="truncate">
                   <span className="text-foreground">Last event:</span>{" "}
                   {selectedPeer.lastEvent ?? "none"}
+                </div>
+                <div>
+                  <span className="text-foreground">Inbox:</span>{" "}
+                  {inbox && inbox.messages.length > 0 ? (
+                    <ul className="mt-1 grid gap-1">
+                      {inbox.messages.map((msg) => (
+                        <li key={msg.id} className="truncate font-mono text-[11px]">
+                          <span className="text-foreground">{msg.fromPeerId}</span>
+                          {msg.deliveredAt ? "" : " (queued)"}: {msg.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    "no messages"
+                  )}
                 </div>
               </div>
               <div className="grid gap-2">
@@ -4503,6 +4521,13 @@ export function GitsCockpit() {
     enabled: selectedPeerId !== null,
     refetchInterval: selectedPeerId ? 5_000 : false,
   });
+  const inboxQuery = useQuery({
+    queryKey: ["gits", "delamain", "peer-inbox", targetEnvironmentId, selectedPeerId],
+    queryFn: async () =>
+      readGitsClient().delamain.messages.inbox({ peerId: selectedPeerId!, includeDelivered: true }),
+    enabled: selectedPeerId !== null,
+    refetchInterval: selectedPeerId ? 5_000 : false,
+  });
   const hermesCheckMutation = useMutation({
     mutationFn: async () => readGitsClient().hermes.check(),
     onSuccess: async () => {
@@ -5166,6 +5191,7 @@ export function GitsCockpit() {
                 selectedPeerId={selectedPeer?.id ?? selectedPeerId}
                 logText={logQuery.data?.text}
                 logLoading={logQuery.isPending || logQuery.isFetching}
+                inbox={inboxQuery.data}
                 actionError={actionError}
                 spawnRepo={spawnRepo}
                 spawnName={spawnName}

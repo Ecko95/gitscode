@@ -1606,6 +1606,18 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             delamainAdapter.integratePeer(input),
             { "rpc.aggregate": "gits" },
           ),
+        [WS_METHODS.gitsDelamainReadInbox]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsDelamainReadInbox, delamainAdapter.readInbox(input), {
+            "rpc.aggregate": "gits",
+          }),
+        // Gated send: routes through the supervisor (motokoAuthority + evaluatePolicyGate),
+        // never delamainAdapter.sendMessage directly.
+        [WS_METHODS.gitsDelamainSendMessage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainSendMessage,
+            automodeSupervisor.sendPeerMessage(input),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsOpenGsdGetStatus]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsOpenGsdGetStatus,

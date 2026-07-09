@@ -20,6 +20,7 @@ import {
   AutomodeSnapshotInput,
   AutomodeSupervisorError,
   DelamainAdapterError,
+  DelamainInboxResult,
   DelamainPeer,
   DelamainPeerIntegrateInput,
   DelamainPeerIntegrateResult,
@@ -29,6 +30,9 @@ import {
   DelamainPeerLogInput,
   DelamainPeerLogResult,
   DelamainPeerReplyInput,
+  DelamainReadInboxInput,
+  DelamainSendMessageInput,
+  DelamainSendMessageResult,
   DelamainSpawnPeerInput,
   DelamainPeerStatusInput,
   DelamainPeerWaitInput,
@@ -234,6 +238,8 @@ export const WS_METHODS = {
   gitsDelamainSendPeerReply: "gits.delamain.peers.reply",
   gitsDelamainWaitForPeer: "gits.delamain.peers.wait",
   gitsDelamainIntegratePeer: "gits.delamain.peers.integrate",
+  gitsDelamainReadInbox: "gits.delamain.messages.inbox",
+  gitsDelamainSendMessage: "gits.delamain.messages.send",
   gitsOpenGsdGetStatus: "gits.openGsd.status",
   gitsOpenGsdInitProject: "gits.openGsd.init",
   gitsOpenGsdRunAuto: "gits.openGsd.auto",
@@ -641,6 +647,20 @@ export const WsGitsDelamainIntegratePeerRpc = Rpc.make(WS_METHODS.gitsDelamainIn
   error: DelamainAdapterError,
 });
 
+export const WsGitsDelamainReadInboxRpc = Rpc.make(WS_METHODS.gitsDelamainReadInbox, {
+  payload: DelamainReadInboxInput,
+  success: DelamainInboxResult,
+  error: DelamainAdapterError,
+});
+
+// Gated send routes through the AutomodeSupervisor (motokoAuthority + policy gate),
+// so its error channel is AutomodeSupervisorError, not DelamainAdapterError.
+export const WsGitsDelamainSendMessageRpc = Rpc.make(WS_METHODS.gitsDelamainSendMessage, {
+  payload: DelamainSendMessageInput,
+  success: DelamainSendMessageResult,
+  error: AutomodeSupervisorError,
+});
+
 export const WsGitsOpenGsdGetStatusRpc = Rpc.make(WS_METHODS.gitsOpenGsdGetStatus, {
   payload: OpenGsdStatusInput,
   success: OpenGsdStatusResult,
@@ -964,6 +984,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsDelamainSendPeerReplyRpc,
   WsGitsDelamainWaitForPeerRpc,
   WsGitsDelamainIntegratePeerRpc,
+  WsGitsDelamainReadInboxRpc,
+  WsGitsDelamainSendMessageRpc,
   WsGitsOpenGsdGetStatusRpc,
   WsGitsOpenGsdInitProjectRpc,
   WsGitsOpenGsdRunAutoRpc,

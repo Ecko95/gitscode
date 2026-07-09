@@ -154,6 +154,10 @@ export interface WsRpcClient {
       readonly sendPeerReply: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSendPeerReply>;
       readonly waitForPeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainWaitForPeer>;
       readonly integratePeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainIntegratePeer>;
+      readonly messages: {
+        readonly inbox: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainReadInbox>;
+        readonly send: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSendMessage>;
+      };
     };
     readonly openGsd: {
       readonly getStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsOpenGsdGetStatus>;
@@ -386,6 +390,12 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsDelamainWaitForPeer](input)),
         integratePeer: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDelamainIntegratePeer](input)),
+        messages: {
+          inbox: (input) =>
+            transport.request((client) => client[WS_METHODS.gitsDelamainReadInbox](input)),
+          send: (input) =>
+            transport.request((client) => client[WS_METHODS.gitsDelamainSendMessage](input)),
+        },
       },
       openGsd: {
         getStatus: () => transport.request((client) => client[WS_METHODS.gitsOpenGsdGetStatus]({})),

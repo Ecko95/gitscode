@@ -10,10 +10,13 @@ import {
   type DelamainCapabilities,
   type DelamainCapability,
   type DelamainEngine,
+  type DelamainInboxResult,
+  type DelamainMessage,
   type DelamainPeer,
   type DelamainPeerIntegrateResult,
   type DelamainPeerListResult,
   type DelamainPeerLogResult,
+  type DelamainSendMessageResult,
   type PeerStatus,
 } from "@t3tools/contracts";
 
@@ -309,6 +312,48 @@ function replyArgs(input: Parameters<DelamainAdapterShape["sendPeerReply"]>[0]):
   return args;
 }
 
+function sendArgs(input: Parameters<DelamainAdapterShape["sendMessage"]>[0]): string[] {
+  const args = ["send", "--to", input.toPeerId, "--message", input.message];
+  if (input.fromPeerId) args.push("--from", input.fromPeerId);
+  if (input.expectReply) args.push("--expect-reply");
+  if (input.responseId) args.push("--response-id", input.responseId);
+  return args;
+}
+
+function normalizeMessage(value: unknown): DelamainMessage {
+  const message = rawRecord(value);
+  return {
+    id: nullableString(message.id) ?? "unknown",
+    fromPeerId: nullableString(message.fromPeerId) ?? "unknown",
+    toPeerId: nullableString(message.toPeerId) ?? "unknown",
+    message: typeof message.message === "string" ? message.message : "",
+    expectReply: Boolean(message.expectReply),
+    responseId: nullableString(message.responseId),
+    createdAt: nullableString(message.createdAt),
+    deliveredAt: nullableString(message.deliveredAt),
+  };
+}
+
+function normalizeInbox(peerId: string, value: unknown): DelamainInboxResult {
+  const record = rawRecord(value);
+  const messages = Array.isArray(record.messages) ? record.messages : [];
+  return {
+    peerId: nullableString(record.peerId) ?? peerId,
+    messages: messages.map(normalizeMessage),
+  };
+}
+
+function normalizeSendResult(value: unknown): DelamainSendMessageResult {
+  const record = rawRecord(value);
+  const delivery = rawRecord(record.delivery);
+  const delivered = typeof delivery.delivered === "number" ? delivery.delivered : 0;
+  return {
+    responseId: nullableString(record.response_id ?? record.responseId),
+    delivered: delivered >= 0 ? Math.trunc(delivered) : 0,
+    skipped: nullableString(delivery.skipped),
+  };
+}
+
 export const makeDelamainCliAdapter = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner;
 
@@ -391,6 +436,16 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
             autoMergeEnabled: Boolean(record.auto_merge_enabled ?? record.autoMergeEnabled),
           } satisfies DelamainPeerIntegrateResult;
         }),
+      ),
+    readInbox: (input) =>
+      runJson<unknown>(processRunner, "delamain.readInbox", [
+        "inbox",
+        input.peerId,
+        ...(input.includeDelivered ? ["--all"] : []),
+      ]).pipe(Effect.map((value) => normalizeInbox(input.peerId, value))),
+    sendMessage: (input) =>
+      runJson<unknown>(processRunner, "delamain.sendMessage", sendArgs(input)).pipe(
+        Effect.map(normalizeSendResult),
       ),
   };
 
