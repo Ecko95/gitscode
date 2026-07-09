@@ -499,7 +499,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ? "Approve actions"
             : currentRuntimeMode === "auto-accept-edits"
               ? "Auto-accept edits"
-              : "Full access",
+              : currentRuntimeMode === "auto"
+                ? "Auto"
+                : "Full access",
         subactions: [
           { id: "options:runtime:approval-required", title: "Approve actions" },
           { id: "options:runtime:auto-accept-edits", title: "Auto-accept edits" },

@@ -176,6 +176,51 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it("maps runtimeMode 'auto' to the same conservative policy as auto-accept-edits", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto",
+        prompt: "Implement it",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        attachments: [
+          {
+            type: "image",
+            url: "data:image/png;base64,abc",
+          },
+        ],
+      }),
+    );
+
+    assert.deepStrictEqual(params, {
+      threadId: "provider-thread-1",
+      approvalPolicy: "on-request",
+      sandboxPolicy: {
+        type: "workspaceWrite",
+      },
+      input: [
+        {
+          type: "text",
+          text: "Implement it",
+        },
+        {
+          type: "image",
+          url: "data:image/png;base64,abc",
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
