@@ -30,6 +30,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import { ErrorBanner } from "../../components/ErrorBanner";
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
@@ -505,6 +506,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         subactions: [
           { id: "options:runtime:approval-required", title: "Approve actions" },
           { id: "options:runtime:auto-accept-edits", title: "Auto-accept edits" },
+          { id: "options:runtime:auto", title: "Auto" },
           { id: "options:runtime:full-access", title: "Full access" },
         ].map((option) => {
           const value = option.id.replace("options:runtime:", "");
@@ -807,6 +809,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             {props.queueCount} queued message{props.queueCount === 1 ? "" : "s"} will send
             automatically.
           </Text>
+        ) : null}
+        {/* ponytail: no reliable client-side model capability registry exists for auto-mode support */}
+        {props.selectedThread.session?.lastError ? (
+          <View style={{ paddingTop: 10 }}>
+            <ErrorBanner message={props.selectedThread.session.lastError} />
+          </View>
         ) : null}
       </View>
 
