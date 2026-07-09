@@ -461,23 +461,25 @@ export const AutomodeSupervisorLive = Layer.effect(
       updatePolicy: (input) =>
         Effect.gen(function* () {
           const updatedAt = yield* nowIso;
-          const nextPolicy = applyPolicyUpdate((yield* Ref.get(stateRef)).policy, input, updatedAt);
-          if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
-            return yield* toAutomodeError(
-              "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
-            );
-          }
-          if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
-            return yield* toAutomodeError(
-              "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows no repos.",
-            );
-          }
-          const nextState = yield* commitState((state) => ({
-            ...state,
-            policy: applyPolicyUpdate(state.policy, input, updatedAt),
-            lastEvent: "Automode policy updated.",
-            updatedAt,
-          }));
+          const nextState = yield* commitState((state) => {
+            const nextPolicy = applyPolicyUpdate(state.policy, input, updatedAt);
+            if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
+              throw toAutomodeError(
+                "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
+              );
+            }
+            if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
+              throw toAutomodeError(
+                "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows no repos.",
+              );
+            }
+            return {
+              ...state,
+              policy: nextPolicy,
+              lastEvent: "Automode policy updated.",
+              updatedAt,
+            };
+          });
           return yield* snapshotFromState(nextState);
         }),
       enqueueGoal: (input) =>
