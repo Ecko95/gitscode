@@ -367,15 +367,13 @@ function shellCandidateFromCommand(
     return { shell: command, args: ["-NoLogo"] };
   }
   if (platform !== "win32" && shellName === "zsh") {
-    return { shell: command, args: ["-o", "nopromptsp"] };
+    return { shell: command, args: ["-l", "-o", "nopromptsp"] };
   }
-  // ponytail: #134 considered adding `-l` (login shell) here so /etc/profile-based
-  // managers (nix) also load. Deferred: direnv already works in this PTY via the
-  // interactive rc-file cd-hook (confirmed in the #134 investigation), and forcing
-  // every terminal session into login-shell semantics is a startup-behavior change
-  // for ALL sessions, not just the nix subset that would benefit — too risky as a
-  // one-liner. Upgrade path: scope it behind a platform/settings check if a real
-  // nix /etc/profile gap is reported, not a blanket flag here.
+  if (platform !== "win32" && shellName === "bash") {
+    return { shell: command, args: ["-l"] };
+  }
+  // ponytail: #134 - keep bash/zsh login loading explicit and POSIX-only.
+  // ponytail: explicit mise/nix shellenv target detection still deferred.
   return { shell: command };
 }
 
