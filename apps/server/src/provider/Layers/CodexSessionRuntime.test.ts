@@ -687,4 +687,20 @@ describe("buildThreadStartParams visual-plan MCP", () => {
     });
     assert.equal(params.config, undefined);
   });
+
+  it("maps runtimeMode 'auto' to the same conservative policy as auto-accept-edits", () => {
+    const params = buildThreadStartParams({
+      cwd: "/tmp/project",
+      runtimeMode: "auto",
+      model: undefined,
+      serviceTier: undefined,
+      visualPlanMcp: undefined,
+    });
+
+    assert.deepStrictEqual(params, {
+      cwd: "/tmp/project",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+    });
+  });
 });
