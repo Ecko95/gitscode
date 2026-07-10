@@ -712,6 +712,44 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect(
+    "applies autonomous policy validation inside serialized commit and preserves invariant under concurrent update",
+    () =>
+      Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.updatePolicy({
+          mode: "supervised",
+          killSwitchEnabled: false,
+          allowedRepos: ["/tmp/source-repo"],
+        });
+
+        const makeAutonomous = Effect.result(
+          supervisor.updatePolicy({
+            mode: "autonomous",
+            killSwitchEnabled: false,
+            maxBudgetUsd: 10,
+          }),
+        );
+        const clearAllowlist = Effect.result(supervisor.updatePolicy({ allowedRepos: [] }));
+
+        const [clearResult, autonomousResult] = yield* Effect.all(
+          [clearAllowlist, makeAutonomous],
+          { concurrency: "unbounded" },
+        );
+
+        assert.equal(clearResult._tag, "Success");
+        if (autonomousResult._tag === "Failure") {
+          assert.include(autonomousResult.failure.message, "allowlist");
+        }
+
+        const snapshot = yield* supervisor.getSnapshot();
+        assert.equal(
+          snapshot.policy.mode === "autonomous" && snapshot.policy.allowedRepos.length === 0,
+          false,
+        );
+      }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("rejectGoal transitions a waiting-approval goal to rejected", () =>
     Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
