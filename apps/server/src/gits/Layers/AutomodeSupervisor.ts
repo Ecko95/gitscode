@@ -406,6 +406,25 @@ export const AutomodeSupervisorLive = Layer.effect(
         }),
       );
 
+    // Same critical section as commitState, but the updater computes nextState and
+    // validates it before anything is written — used where invariants must be checked
+    // against the FINAL state atomically (no unlocked pre-read) yet still fail
+    // recoverably (a typed error, not a thrown defect) when invalid.
+    const commitStateOrFail = (
+      updater: (state: AutomodeState) => Effect.Effect<AutomodeState, AutomodeSupervisorError>,
+    ) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const nextState = yield* updater(yield* Ref.get(stateRef));
+          yield* persistAutomodeState(statePath, nextState).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, pathService),
+          );
+          yield* Ref.set(stateRef, nextState);
+          return nextState;
+        }),
+      );
+
     // Sleeps until the persisted deadline, then kills the peer and blocks the goal.
     // Deadline-based (not duration-based) so a restart can re-arm with the remaining time.
     const enforceRuntimeLimit = (
@@ -461,25 +480,27 @@ export const AutomodeSupervisorLive = Layer.effect(
       updatePolicy: (input) =>
         Effect.gen(function* () {
           const updatedAt = yield* nowIso;
-          const nextState = yield* commitState((state) => {
-            const nextPolicy = applyPolicyUpdate(state.policy, input, updatedAt);
-            if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
-              throw toAutomodeError(
-                "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
-              );
-            }
-            if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
-              throw toAutomodeError(
-                "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows no repos.",
-              );
-            }
-            return {
-              ...state,
-              policy: nextPolicy,
-              lastEvent: "Automode policy updated.",
-              updatedAt,
-            };
-          });
+          const nextState = yield* commitStateOrFail((state) =>
+            Effect.gen(function* () {
+              const nextPolicy = applyPolicyUpdate(state.policy, input, updatedAt);
+              if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
+                return yield* toAutomodeError(
+                  "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
+                );
+              }
+              if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
+                return yield* toAutomodeError(
+                  "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows no repos.",
+                );
+              }
+              return {
+                ...state,
+                policy: nextPolicy,
+                lastEvent: "Automode policy updated.",
+                updatedAt,
+              };
+            }),
+          );
           return yield* snapshotFromState(nextState);
         }),
       enqueueGoal: (input) =>

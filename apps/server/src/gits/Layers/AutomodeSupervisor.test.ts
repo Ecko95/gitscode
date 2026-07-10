@@ -712,37 +712,42 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
-  it.effect("applies autonomous policy validation inside serialized commit and preserves invariant under concurrent update", () =>
-    Effect.gen(function* () {
-      const supervisor = yield* AutomodeSupervisor;
-      yield* supervisor.updatePolicy({
-        mode: "supervised",
-        killSwitchEnabled: false,
-        allowedRepos: ["/tmp/source-repo"],
-      });
-
-      const makeAutonomous = Effect.either(
-        supervisor.updatePolicy({
-          mode: "autonomous",
+  it.effect(
+    "applies autonomous policy validation inside serialized commit and preserves invariant under concurrent update",
+    () =>
+      Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.updatePolicy({
+          mode: "supervised",
           killSwitchEnabled: false,
-          maxBudgetUsd: 10,
-        }),
-      );
-      const clearAllowlist = Effect.either(supervisor.updatePolicy({ allowedRepos: [] }));
+          allowedRepos: ["/tmp/source-repo"],
+        });
 
-      const [clearResult, autonomousResult] = yield* Effect.all(
-        [clearAllowlist, makeAutonomous],
-        { concurrency: "unbounded" },
-      );
+        const makeAutonomous = Effect.result(
+          supervisor.updatePolicy({
+            mode: "autonomous",
+            killSwitchEnabled: false,
+            maxBudgetUsd: 10,
+          }),
+        );
+        const clearAllowlist = Effect.result(supervisor.updatePolicy({ allowedRepos: [] }));
 
-      assert.equal(clearResult._tag, "Right");
-      if (autonomousResult._tag === "Left") {
-        assert.include(autonomousResult.left.message, "allowlist");
-      }
+        const [clearResult, autonomousResult] = yield* Effect.all(
+          [clearAllowlist, makeAutonomous],
+          { concurrency: "unbounded" },
+        );
 
-      const snapshot = yield* supervisor.getSnapshot();
-      assert.equal(snapshot.policy.mode === "autonomous" && snapshot.policy.allowedRepos.length === 0, false);
-    }).pipe(Effect.provide(makeLayer())),
+        assert.equal(clearResult._tag, "Success");
+        if (autonomousResult._tag === "Failure") {
+          assert.include(autonomousResult.failure.message, "allowlist");
+        }
+
+        const snapshot = yield* supervisor.getSnapshot();
+        assert.equal(
+          snapshot.policy.mode === "autonomous" && snapshot.policy.allowedRepos.length === 0,
+          false,
+        );
+      }).pipe(Effect.provide(makeLayer())),
   );
 
   it.effect("rejectGoal transitions a waiting-approval goal to rejected", () =>
