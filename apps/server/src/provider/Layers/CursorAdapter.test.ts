@@ -119,7 +119,10 @@ async function waitForFileContent(filePath: string, attempts = 40) {
         return raw;
       }
     } catch {}
-    await Effect.runPromise(Effect.yieldNow);
+    // ponytail: real delay, not Effect.yieldNow — a microtask-only yield busy-spins and
+    // starves the process writing this file under CPU load. setTimeout yields real time.
+    // @effect-diagnostics-next-line globalTimers:off
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for file content at ${filePath}`);
 }
