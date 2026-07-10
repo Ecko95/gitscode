@@ -2997,6 +2997,33 @@ describe("ProviderCommandReactor", () => {
       expect(sentInput).not.toContain("[peer message]");
     });
 
+    it("clears a stale cached r5PeerId when readInbox fails, so the next turn re-correlates", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      // A cached peerId that no longer resolves (delamain state reset).
+      await seedBinding(harness, { cwd: "/tmp/peer-worktree", r5PeerId: "peer-stale" });
+      harness.readInbox.mockReturnValue(
+        Effect.fail(new DelamainAdapterError({ message: "delamain state reset" })),
+      );
+
+      await startTurn(harness, "turn survives");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      // Self-heal: the stale cache is cleared so the next turn re-correlates via listPeers.
+      await waitFor(async () => {
+        const binding = await Effect.runPromise(
+          harness.providerSessionDirectory.getBinding(ThreadId.make("thread-1")),
+        );
+        const payload = Option.getOrUndefined(binding)?.runtimePayload as
+          | Record<string, unknown>
+          | undefined;
+        return payload?.r5PeerId === null;
+      });
+      // The cached peerId meant listPeers was skipped this turn; only readInbox ran (and failed).
+      expect(harness.listPeers.mock.calls.length).toBe(0);
+      expect(harness.readInbox.mock.calls.length).toBe(1);
+    });
+
     it("injects nothing when the watermark is already at the newest message", async () => {
       const harness = await createHarness();
       await setWorktreePath(harness, "/tmp/peer-worktree");

@@ -867,14 +867,6 @@ const make = Effect.gen(function* () {
       resolvedNewPeerId = true;
     }
 
-    const inbox = yield* delamainAdapter.readInbox({ peerId, includeDelivered: true });
-    const messages = inbox.messages;
-    // Watermark: everything AFTER the covered id is unseen. Unknown/absent id → all unseen.
-    const coveredIndex = coveredMessageId
-      ? messages.findIndex((message) => message.id === coveredMessageId)
-      : -1;
-    const unseen = messages.slice(coveredIndex + 1);
-
     const persistRuntimePayload = (payload: Record<string, unknown>) => {
       if (!binding) {
         // ponytail: no bound provider-session row to attach the watermark to;
@@ -890,6 +882,22 @@ const make = Effect.gen(function* () {
         runtimePayload: payload,
       });
     };
+
+    const inbox = yield* delamainAdapter.readInbox({ peerId, includeDelivered: true }).pipe(
+      // R5 self-heal: a cached r5PeerId that no longer resolves (delamain state
+      // reset) makes readInbox fail every turn. Clear the stale cache so the next
+      // turn re-correlates via listPeers, then let the failure propagate (the
+      // call-site catch degrades this turn to no seed).
+      Effect.tapError(() =>
+        !resolvedNewPeerId ? persistRuntimePayload({ r5PeerId: null }) : Effect.void,
+      ),
+    );
+    const messages = inbox.messages;
+    // Watermark: everything AFTER the covered id is unseen. Unknown/absent id → all unseen.
+    const coveredIndex = coveredMessageId
+      ? messages.findIndex((message) => message.id === coveredMessageId)
+      : -1;
+    const unseen = messages.slice(coveredIndex + 1);
 
     if (unseen.length === 0) {
       if (resolvedNewPeerId) {
