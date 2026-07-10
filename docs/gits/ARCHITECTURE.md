@@ -117,7 +117,7 @@ In `mode: "autonomous"` with the kill switch off, a background driver (`apps/ser
      "killSwitchEnabled": false, // re-armed to true on every server restart
      "allowedRepos": ["/abs/path/to/repo"], // empty = no repo runs
      "integrationBranch": "main",
-     "verificationCommands": [{ "label": "test", "cmd": ["bun", "test"] }],
+     "verificationCommands": [{ "label": "test", "cmd": ["bun", "run", "test"] }],
      "maxBudgetUsd": 20, // required whenever mode is "autonomous"
    }
    ```
@@ -131,7 +131,7 @@ In `mode: "autonomous"` with the kill switch off, a background driver (`apps/ser
 
 **Without Motoko (default, no extra setup):** the operator drives every step above directly through the `gits.automode.*` RPCs. Automode has no dependency on Motoko/Hermes being configured, running, or even installed.
 
-**With Motoko:** approving a Motoko proposal can _additionally_ enqueue an automode goal, but only when the operator opts in — `autoEnqueueApprovedProposals: true` on the policy **and** `mode: "autonomous"`. Even then, Motoko never calls `enqueueGoal` itself: approval runs through the existing Hermes draft rails (`decideProposal` → `draftFromProposal`), and only an approved `delamain-peer` draft becomes a queued goal — same approval gates, same kill switch, same reboot reset as any operator-enqueued goal. See [HERMES.md § Relationship to Automode](./HERMES.md#relationship-to-automode) for the full bridge contract.
+**With Motoko:** approving a Motoko proposal can _additionally_ enqueue an automode goal, but only when the operator opts in — `autoEnqueueApprovedProposals: true` on the policy **and** `mode: "autonomous"`. Even then, Motoko reaches `enqueueGoal` **only** through that opt-in bridge (`apps/server/src/gits/Layers/HermesAutomodeBridge.ts`): approval runs through the existing Hermes draft rails (`decideProposal` → `draftFromProposal`), and only an approved `delamain-peer` draft is handed to `enqueueGoal`. Those bridge-enqueued goals are still gated by the kill switch and `allowedRepos` allowlist at dispatch time — same approval gates, same kill switch, same reboot reset as any operator-enqueued goal. See [HERMES.md § Relationship to Automode](./HERMES.md#relationship-to-automode) for the full bridge contract.
 
 ## Adapter Rule
 
