@@ -132,6 +132,21 @@ function fromPersistedAutomodeState(state: PersistedAutomodeState): AutomodeStat
   };
 }
 
+// Automode must never auto-resume real work on boot: a persisted autonomous +
+// killswitch-off policy with approved goals would otherwise dispatch immediately.
+// Re-arm the kill switch and require every goal to be re-approved by an operator.
+function reArmOnBoot(state: AutomodeState): AutomodeState {
+  return {
+    ...state,
+    policy: { ...state.policy, killSwitchEnabled: true },
+    goals: state.goals.map((goal) =>
+      goal.approvedAt === null ? goal : { ...goal, approvedAt: null },
+    ),
+    lastEvent:
+      "Automode reloaded with kill switch re-armed and approvals cleared; re-enable and re-approve to run.",
+  };
+}
+
 function persistAutomodeState(statePath: string, state: AutomodeState) {
   return writeFileStringAtomically({
     filePath: statePath,
@@ -170,7 +185,7 @@ function loadAutomodeState(statePath: string, fallback: AutomodeState) {
             path: statePath,
             cause: Cause.pretty(cause),
           }).pipe(Effect.as(fallback)),
-        onSuccess: (state) => Effect.succeed(fromPersistedAutomodeState(state)),
+        onSuccess: (state) => Effect.succeed(reArmOnBoot(fromPersistedAutomodeState(state))),
       }),
     );
   });
@@ -205,8 +220,9 @@ function pendingApprovalCount(goals: ReadonlyArray<AutomodeGoal>): number {
 }
 
 function repoAllowed(policy: AutomodePolicy, repo: string): boolean {
+  // ponytail: empty allowlist = deny-all (explicit opt-in), not allow-all.
   if (policy.allowedRepos.length === 0) {
-    return true;
+    return false;
   }
 
   return policy.allowedRepos.some((allowedRepo) => {
@@ -390,6 +406,25 @@ export const AutomodeSupervisorLive = Layer.effect(
         }),
       );
 
+    // Same critical section as commitState, but the updater computes nextState and
+    // validates it before anything is written — used where invariants must be checked
+    // against the FINAL state atomically (no unlocked pre-read) yet still fail
+    // recoverably (a typed error, not a thrown defect) when invalid.
+    const commitStateOrFail = (
+      updater: (state: AutomodeState) => Effect.Effect<AutomodeState, AutomodeSupervisorError>,
+    ) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const nextState = yield* updater(yield* Ref.get(stateRef));
+          yield* persistAutomodeState(statePath, nextState).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, pathService),
+          );
+          yield* Ref.set(stateRef, nextState);
+          return nextState;
+        }),
+      );
+
     // Sleeps until the persisted deadline, then kills the peer and blocks the goal.
     // Deadline-based (not duration-based) so a restart can re-arm with the remaining time.
     const enforceRuntimeLimit = (
@@ -445,23 +480,27 @@ export const AutomodeSupervisorLive = Layer.effect(
       updatePolicy: (input) =>
         Effect.gen(function* () {
           const updatedAt = yield* nowIso;
-          const nextPolicy = applyPolicyUpdate((yield* Ref.get(stateRef)).policy, input, updatedAt);
-          if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
-            return yield* toAutomodeError(
-              "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
-            );
-          }
-          if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
-            return yield* toAutomodeError(
-              "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows every repo.",
-            );
-          }
-          const nextState = yield* commitState((state) => ({
-            ...state,
-            policy: applyPolicyUpdate(state.policy, input, updatedAt),
-            lastEvent: "Automode policy updated.",
-            updatedAt,
-          }));
+          const nextState = yield* commitStateOrFail((state) =>
+            Effect.gen(function* () {
+              const nextPolicy = applyPolicyUpdate(state.policy, input, updatedAt);
+              if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
+                return yield* toAutomodeError(
+                  "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
+                );
+              }
+              if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
+                return yield* toAutomodeError(
+                  "Autonomous mode requires a non-empty repo allowlist (allowedRepos) — an empty list allows no repos.",
+                );
+              }
+              return {
+                ...state,
+                policy: nextPolicy,
+                lastEvent: "Automode policy updated.",
+                updatedAt,
+              };
+            }),
+          );
           return yield* snapshotFromState(nextState);
         }),
       enqueueGoal: (input) =>
