@@ -1258,7 +1258,37 @@ it.layer(
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
-      expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
+      expect(spawnInput.args).toEqual(["-l", "-o", "nopromptsp"]);
+    }),
+  );
+
+  it.effect("starts bash as a login shell on POSIX and without login args on Windows", () =>
+    Effect.gen(function* () {
+      const posixManager = yield* createManager(5, {
+        platform: "linux",
+        shellResolver: () => "/bin/bash",
+      });
+      const windowsManager = yield* createManager(5, {
+        platform: "win32",
+        shellResolver: () => "bash",
+        env: {
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      });
+      yield* posixManager.manager.open(openInput());
+      yield* windowsManager.manager.open(openInput());
+
+      const posixSpawnInput = posixManager.ptyAdapter.spawnInputs[0];
+      expect(posixSpawnInput).toBeDefined();
+      if (!posixSpawnInput) return;
+      expect(posixSpawnInput.args).toEqual(["-l"]);
+
+      const windowsSpawnInput = windowsManager.ptyAdapter.spawnInputs[0];
+      expect(windowsSpawnInput).toBeDefined();
+      if (!windowsSpawnInput) return;
+      expect(windowsSpawnInput.args).toBeUndefined();
     }),
   );
 

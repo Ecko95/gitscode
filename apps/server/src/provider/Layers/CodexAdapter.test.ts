@@ -37,6 +37,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
+import { GitShimManager, GitShimManagerLive } from "../GitShimManager.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { sessionPortEnv } from "../sessionPort.ts";
@@ -1245,4 +1246,104 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   }),
+);
+
+it.effect(
+  "merges the direnv delta below GITS_PORT, and shim-first PATH survives direnv PATH_add (#134/#124)",
+  () =>
+    Effect.gen(function* () {
+      // Real (trivial) executable named "direnv" on a scratch PATH, standing in for
+      // the real binary so `resolveDirenvEnvironment`'s production code path — real
+      // PATH lookup, real execFile — runs unmodified end to end. Its fake .envrc
+      // output deliberately also sets GITS_PORT, to prove the session value still wins,
+      // and a PATH pointing at a scratch toolchain dir, to prove a real `.envrc`
+      // `PATH_add` (nix/mise/asdf shim) survives the git-shim allocation (#134).
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-codex-adapter-direnv-"));
+      const binPath = path.join(tempDir, "direnv");
+      const fakeToolchainDir = path.join(tempDir, "fake-toolchain");
+      fs.mkdirSync(fakeToolchainDir);
+      fs.writeFileSync(
+        binPath,
+        "#!/bin/sh\n" +
+          "printf '%s' " +
+          `'{"DIRENV_TEST_VAR":"present","GITS_PORT":"6666-from-direnv","PATH":"${fakeToolchainDir}:/usr/bin:/bin"}'\n`,
+      );
+      fs.chmodSync(binPath, 0o755);
+      const runtimeFactory = makeRuntimeFactory();
+      const scope = yield* Scope.make("sequential");
+      let scopeClosed = false;
+
+      try {
+        // Real GitShimManager on its own scratch baseDir (independent of the
+        // adapter's own ServerConfig below) — exercises the actual allocate()
+        // basePath-threading fix, not a stand-in.
+        const gitShimLayer = GitShimManagerLive.pipe(
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-direnv-shim-" }),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        );
+        const gitShimContext = yield* Layer.buildWithScope(gitShimLayer, scope);
+        const gitShimManager = yield* Effect.service(GitShimManager).pipe(
+          Effect.provide(gitShimContext),
+        );
+        const gitShimConfig = yield* Effect.service(ServerConfig).pipe(
+          Effect.provide(gitShimContext),
+        );
+
+        const layer = Layer.effect(
+          CodexAdapter,
+          Effect.gen(function* () {
+            const codexConfig = decodeCodexSettings({});
+            return yield* makeCodexAdapter(codexConfig, {
+              makeRuntime: runtimeFactory.factory,
+              environment: { PATH: `${tempDir}:${process.env.PATH ?? ""}` },
+              gitShimManager,
+            });
+          }),
+        ).pipe(
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+          Layer.provideMerge(ServerSettingsService.layerTest()),
+          Layer.provideMerge(providerSessionDirectoryTestLayer),
+          Layer.provideMerge(NodeServices.layer),
+        );
+        const context = yield* Layer.buildWithScope(layer, scope);
+        const adapter = yield* Effect.service(CodexAdapter).pipe(Effect.provide(context));
+
+        const threadId = asThreadId("sess-direnv-codex");
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        const runtime = runtimeFactory.lastRuntime;
+        assert.ok(runtime);
+        assert.equal(runtime.options.environment?.DIRENV_TEST_VAR, "present");
+        assert.equal(runtime.options.environment?.GITS_PORT, sessionPortEnv(threadId).GITS_PORT);
+
+        // PATH survival (#134): shim dir FIRST (confinement preserved), direnv's
+        // toolchain dir PRESENT (PATH_add / nix/mise/asdf shims not discarded).
+        const finalPath = runtime.options.environment?.PATH ?? "";
+        const expectedShimDir = path.join(gitShimConfig.baseDir, "gits-shims", threadId);
+        const pathEntries = finalPath.split(":");
+        assert.equal(
+          pathEntries[0],
+          expectedShimDir,
+          `expected shim dir '${expectedShimDir}' first in PATH, got: ${finalPath}`,
+        );
+        assert.ok(
+          pathEntries.includes(fakeToolchainDir),
+          `expected direnv toolchain dir '${fakeToolchainDir}' in PATH, got: ${finalPath}`,
+        );
+
+        yield* Scope.close(scope, Exit.void);
+        scopeClosed = true;
+      } finally {
+        if (!scopeClosed) {
+          yield* Scope.close(scope, Exit.void);
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
 );

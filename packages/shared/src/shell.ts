@@ -1,8 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
 const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
@@ -14,7 +17,7 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 type ExecFileSyncLike = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { encoding: "utf8"; timeout: number },
+  options: { encoding: "utf8"; timeout: number; cwd?: string; env?: NodeJS.ProcessEnv },
 ) => string;
 
 export interface CommandAvailabilityOptions {
@@ -503,4 +506,101 @@ export function resolveWindowsEnvironment(
   return Object.keys(profiledPatch).length > 0
     ? { ...baselinePatch, ...profiledPatch }
     : baselinePatch;
+}
+
+export type ExecFileAsyncLike = (
+  file: string,
+  args: ReadonlyArray<string>,
+  options: { encoding: "utf8"; timeout: number; cwd?: string; env?: NodeJS.ProcessEnv },
+) => Promise<string> | string;
+
+export interface DirenvEnvironmentOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly execFile?: ExecFileAsyncLike;
+}
+
+async function defaultDirenvExecFile(
+  file: string,
+  args: ReadonlyArray<string>,
+  options: { encoding: "utf8"; timeout: number; cwd?: string; env?: NodeJS.ProcessEnv },
+): Promise<string> {
+  const { stdout } = await execFileAsync(file, [...args], options);
+  return stdout;
+}
+
+/**
+ * Runs `direnv export json` in `cwd` and returns the env delta `.envrc`
+ * would apply: a string value means "set", `null` means "unset".
+ *
+ * direnv's normal hook fires on the shell's PROMPT_COMMAND — it does NOT
+ * fire for a one-shot `bash -lc`/`-ilc` spawn (verified empirically), so a
+ * provider session spawned directly (no shell in the tree) never picks up
+ * `.envrc` on its own. Asking direnv for its diff directly sidesteps that.
+ *
+ * Async so a slow/hung direnv invocation (5s timeout) never blocks the
+ * Node event loop — this runs once per provider session start on a
+ * concurrent multi-session server (#134).
+ *
+ * Failure-safe by design: an agent session must never fail to start because
+ * of direnv. direnv not installed, a non-zero exit (e.g. an un-allowed
+ * `.envrc`), a timeout, or a malformed reply all collapse to `{}`. This
+ * function never rejects.
+ */
+export async function resolveDirenvEnvironment(
+  cwd: string,
+  baseEnv: NodeJS.ProcessEnv,
+  opts: DirenvEnvironmentOptions = {},
+): Promise<Record<string, string | null>> {
+  const platform = opts.platform ?? process.platform;
+  if (platform === "win32") {
+    return {};
+  }
+  if (!isCommandAvailable("direnv", { env: baseEnv, platform })) {
+    return {};
+  }
+
+  const execFile: ExecFileAsyncLike = opts.execFile ?? defaultDirenvExecFile;
+  try {
+    // direnv writes status/diagnostics to stderr; only stdout carries the JSON.
+    const stdout = await execFile("direnv", ["export", "json"], {
+      cwd,
+      env: baseEnv,
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    const parsed: unknown = JSON.parse(stdout);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    const delta: Record<string, string | null> = {};
+    for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string" || value === null) {
+        delta[name] = value;
+      }
+    }
+    return delta;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Applies a `resolveDirenvEnvironment` delta on top of `base`: string values
+ * are set, `null` values are unset (deleted). Returns a new object — `base`
+ * is never mutated, so callers can layer session-injected vars on top of the
+ * result and know they'll win regardless of what the delta contains.
+ */
+export function applyDirenvDelta(
+  base: NodeJS.ProcessEnv,
+  delta: Record<string, string | null>,
+): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = { ...base };
+  for (const [name, value] of Object.entries(delta)) {
+    if (value === null) {
+      delete next[name];
+    } else {
+      next[name] = value;
+    }
+  }
+  return next;
 }
