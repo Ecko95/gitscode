@@ -93,6 +93,16 @@ Proposal cards carry an action kind:
 
 Only read-only proposals can be treated as informational. All other action kinds are approval cards and remain handoff-only until the operator converts them into a Delamain or Open GSD draft.
 
+## Relationship to Automode
+
+Motoko remains handoff-only by default: drafts and proposals are returned to the cockpit for an operator to act on, never executed. Separately, the Automode module has a fully autonomous dispatch→verify→land→held-PR driver, gated by AutomodePolicy — mode, kill switch, budget cap, repo/model allowlists, the review gate, and a held PR that only a human merges.
+
+An opt-in bridge connects the two: when the `autoEnqueueApprovedProposals` policy flag is on (off by default) AND automode is armed autonomous, approving a Motoko proposal converts it through the existing draft rails and enqueues the result as an automode goal. Only `delamain-peer` drafts with status `draft` qualify — open-gsd, verification, and blocked drafts stay handoff-only, and re-approving an already approved proposal never enqueues a duplicate. The bridge does not seed `verificationCommands`; the driver still halts fail-closed until the operator configures them per repo. Human judgment stays in the loop twice: the proposal approval itself, and the held-PR merge at the end of the run.
+
+Two limits worth knowing: the automode usage meter reads GITS provider-thread cost only — Delamain peer (Codex/Cursor CLI) spend is not metered, so the runtime and peer caps are the effective bound on peer cost. And the INTEGRATION/DESTRUCTIVE prompt patterns used for approval gating are heuristics, not a security boundary.
+
+Automode is opt-in on every server restart (see `docs/gits/ARCHITECTURE.md` § Milestone 4): boot re-arms the kill switch and clears every goal's approval, bridge-enqueued goals included. A bridge-armed run does not resume itself after a restart — the operator must re-enable the kill switch and re-approve.
+
 ## Operations
 
 The cockpit exposes:

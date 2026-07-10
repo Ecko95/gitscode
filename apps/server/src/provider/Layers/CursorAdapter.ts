@@ -81,6 +81,7 @@ import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
+import { resolveSessionEnvWithDirenv } from "../direnvSessionEnv.ts";
 import { sessionPortEnv } from "../sessionPort.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -541,28 +542,40 @@ export function makeCursorAdapter(
           const visualPlanMcpToken = visualPlanMcpSvc
             ? yield* visualPlanMcpSvc.issueToken(input.threadId)
             : undefined;
+          // direnv (.envrc) delta for this session's cwd, layered under GITS_PORT/shim
+          // vars below so they always win (#124 invariant). Failure-safe: any direnv
+          // error (not installed, un-allowed .envrc, timeout) collapses to {}. Resolved
+          // before git-shim allocation so the shim's PATH can prepend to the
+          // direnv-merged PATH (#134) instead of silently discarding it.
+          const cursorBaseEnvWithDirenv = yield* resolveSessionEnvWithDirenv(
+            cwd,
+            options?.environment ?? {},
+            options?.environment ?? process.env,
+          );
           // Inject git confinement shim for this session.
           // CONFINEMENT LINE: only sessionEnv is modified; options.environment (the
           // instance-level env) is never mutated, and server process.env is untouched.
           const cursorShimEnv = options?.gitShimManager
-            ? (yield* options.gitShimManager.allocate(input.threadId, cwd).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapterProcessError({
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      detail: cause.message,
-                      cause,
-                    }),
-                ),
-              )).vars
+            ? (yield* options.gitShimManager
+                .allocate(input.threadId, cwd, cursorBaseEnvWithDirenv.PATH ?? process.env["PATH"])
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapterProcessError({
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        detail: cause.message,
+                        cause,
+                      }),
+                  ),
+                )).vars
             : {};
           if (options?.gitShimManager && Object.keys(cursorShimEnv).length > 0) {
             yield* Scope.addFinalizer(sessionScope, options.gitShimManager.release(input.threadId));
           }
           const cursorSessionEnv: NodeJS.ProcessEnv = Object.assign(
             {},
-            options?.environment,
+            cursorBaseEnvWithDirenv,
             sessionPortEnv(input.threadId),
             cursorShimEnv,
           );

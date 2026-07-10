@@ -367,8 +367,13 @@ function shellCandidateFromCommand(
     return { shell: command, args: ["-NoLogo"] };
   }
   if (platform !== "win32" && shellName === "zsh") {
-    return { shell: command, args: ["-o", "nopromptsp"] };
+    return { shell: command, args: ["-l", "-o", "nopromptsp"] };
   }
+  if (platform !== "win32" && shellName === "bash") {
+    return { shell: command, args: ["-l"] };
+  }
+  // ponytail: #134 - keep bash/zsh login loading explicit and POSIX-only.
+  // ponytail: explicit mise/nix shellenv target detection still deferred.
   return { shell: command };
 }
 

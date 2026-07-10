@@ -94,6 +94,7 @@ import {
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
+import { resolveSessionEnvWithDirenv } from "../direnvSessionEnv.ts";
 import { sessionPortEnv } from "../sessionPort.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
@@ -331,11 +332,28 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
   if (errors.includes("interrupt")) {
     return true;
   }
+  const errorDiagnosticText = ` ${errors} `;
+  const rawStopReason = (result as { stop_reason?: unknown }).stop_reason;
+  const stopReason =
+    typeof rawStopReason === "string" ? rawStopReason.trim().toLowerCase() : undefined;
+  const rawResultType = (result as { result_type?: unknown }).result_type;
+  const resultType =
+    typeof rawResultType === "string" ? rawResultType.trim().toLowerCase() : undefined;
+  const hasResultTypeUserStopDiagnostic =
+    /(?:^|[^a-z0-9_])result_type\s*[:=]\s*["']?user["']?(?=[^a-z0-9_]|$)/.test(
+      errorDiagnosticText,
+    ) &&
+    /(?:^|[^a-z0-9_])stop_reason\s*[:=]\s*["']?tool_use["']?(?=[^a-z0-9_]|$)/.test(
+      errorDiagnosticText,
+    );
+  const isStopByUser = resultType === "user" && stopReason === "tool_use";
 
   return (
     result.subtype === "error_during_execution" &&
     result.is_error === false &&
-    (errors.includes("request was aborted") ||
+    (isStopByUser ||
+      hasResultTypeUserStopDiagnostic ||
+      errors.includes("request was aborted") ||
       errors.includes("interrupted by user") ||
       errors.includes("aborted"))
   );
@@ -2980,6 +2998,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const effectiveEffort = getEffectiveClaudeAgentEffort(effort, modelSelection?.model);
       const runtimeModeToPermission: Record<string, PermissionMode> = {
         "auto-accept-edits": "acceptEdits",
+        auto: "auto",
         "full-access": "bypassPermissions",
       };
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
@@ -3006,12 +3025,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // Cleanup happens in stopSessionInternal via gitShimManager.release().
       // ponytail: shim denied/warn events log via Codex adapter's stderr pipeline;
       //   Claude SDK stderr is not captured here — add stderr capture when needed.
+      // direnv (.envrc) delta for this session's cwd, layered under sessionChildEnv
+      // below so GITS_PORT / shim vars always win (#124 invariant). Failure-safe:
+      // any direnv error (not installed, un-allowed .envrc, timeout) collapses to {}.
+      // Resolved before git-shim allocation so the shim's PATH can prepend to the
+      // direnv-merged PATH (#134) instead of silently discarding it.
+      const claudeEnvironmentWithDirenv = yield* resolveSessionEnvWithDirenv(
+        input.cwd ?? process.cwd(),
+        claudeEnvironment,
+      );
       const childEnv = sessionPortEnv(threadId);
       const sessionChildEnv = gitShimManager
         ? {
             ...childEnv,
             ...(yield* gitShimManager
-              .allocate(threadId, input.cwd ?? "")
+              .allocate(
+                threadId,
+                input.cwd ?? "",
+                claudeEnvironmentWithDirenv.PATH ?? process.env["PATH"],
+              )
               .pipe(
                 Effect.mapError((cause) =>
                   toProcessError(cause, "Failed to allocate git confinement shim.", threadId),
@@ -3049,9 +3081,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         ...(visualPlanMcpServers ? { mcpServers: visualPlanMcpServers } : {}),
         // Merge per-session env vars (GITS_PORT, GITS_ALLOWED_ROOT, PATH prepend, etc.)
-        // into the claude env. claudeEnvironment is the instance-level base; child vars
-        // add the per-session policy. Neither object is mutated.
-        env: Object.assign({}, claudeEnvironment, sessionChildEnv),
+        // into the claude env. claudeEnvironmentWithDirenv is the instance-level base
+        // plus the project's direnv delta; child vars add the per-session policy and
+        // always win. Neither input object is mutated.
+        env: Object.assign({}, claudeEnvironmentWithDirenv, sessionChildEnv),
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };

@@ -88,7 +88,11 @@ The cockpit polls `gits.cockpit.get` after Open GSD actions and on its normal re
 
 Automode is a server-owned supervisor surface. The cockpit reads and mutates typed automode state through `gits.automode.*`; the browser never spawns autonomous peers directly.
 
-The supervisor persists policy and queued goal state under the server state directory at `gits/automode-state.json`. Startup schema-decodes this file and falls back to locked defaults if it is missing or invalid, so the kill switch, allowlists, approval gates, and queued work survive server restarts without making `.planning` less authoritative for phase state.
+The supervisor persists policy and queued goal state under the server state directory at `gits/automode-state.json`. On every boot it schema-decodes this file, then **re-arms the kill switch** (`killSwitchEnabled: true`) and **clears every goal's `approvedAt`**, regardless of what was persisted. A missing or invalid state file falls back to locked defaults (`mode: "manual"`, kill switch on, empty allowlists) instead of resuming anything.
+
+Automode is opt-in on every restart, not just on first boot: the policy, repo allowlist, and queued goals survive a reboot, but **execution does not resume** — nothing dispatches until an operator explicitly turns the kill switch back off (`updatePolicy`) and re-approves any goal that needs it (`approveGoal`). This is deliberate: a persisted autonomous, killswitch-off policy with already-approved goals must never auto-resume real work just because the server restarted.
+
+Per-repo opt-in is separate from the kill switch: a repo only runs automode work if its absolute path is in the policy's `allowedRepos` list. **An empty list denies every repo** — it is not an allow-all default (see `repoAllowed` in `apps/server/src/gits/Layers/AutomodeSupervisor.ts`). Arming `mode: "autonomous"` additionally requires a non-empty `allowedRepos` and a non-null `maxBudgetUsd`; `updatePolicy` rejects the update otherwise.
 
 Current supervisor methods:
 
@@ -100,6 +104,34 @@ Current supervisor methods:
 - `gits.automode.goals.dispatch`: checks kill switch, mode, peer limit, repo allowlist, model allowlist, and approval gates before calling the Delamain adapter to spawn a peer.
 
 Destructive and integration-shaped prompts are held for approval when the matching policy gates are enabled. Runtime limits are enforced by scheduling a Delamain peer termination after the configured max runtime. Budget checks read projected provider-runtime usage cost events and fail closed: when a USD budget is configured but provider cost telemetry is unavailable, dispatch is blocked until telemetry is available or the operator clears the budget cap.
+
+In `mode: "autonomous"` with the kill switch off, a background driver (`apps/server/src/gits/Layers/AutomodeDriver.ts`, polling every `GITS_AUTOMODE_DRIVER_TICK_MS`, default 5000ms) dispatches the oldest queued goal itself, then verifies, lands, and opens a held PR without further operator RPC calls. In `manual` or `supervised` mode the driver takes no action at all; goals sit queued until an operator calls `dispatchGoal` by hand. The final merge is always a **held PR opened against `gits`** — the driver never merges it; a human does.
+
+### How to enable automode for a repo
+
+1. Arm the policy for one repo — `gits.automode.policy.update` (`updatePolicy`):
+
+   ```jsonc
+   {
+     "mode": "autonomous", // or "supervised" to force approveGoal on every goal
+     "killSwitchEnabled": false, // re-armed to true on every server restart
+     "allowedRepos": ["/abs/path/to/repo"], // empty = no repo runs
+     "integrationBranch": "main",
+     "verificationCommands": [{ "label": "test", "cmd": ["bun", "run", "test"] }],
+     "maxBudgetUsd": 20, // required whenever mode is "autonomous"
+   }
+   ```
+
+2. Queue work — `gits.automode.goals.enqueue` (`enqueueGoal`): `{ title, prompt, repo, model? }`.
+3. Approve it — `gits.automode.goals.approve` (`approveGoal`): `{ goalId }`. Skip this only if `mode` is `autonomous`, `requireApprovalForPeerSpawn: false`, and the prompt doesn't trip the integration/destructive heuristics (or those gates are off too).
+4. `autonomous` mode: the driver dispatches, verifies, lands, and opens the held PR on its own. `manual`/`supervised`: dispatch by hand with `gits.automode.goals.dispatch` (`dispatchGoal`): `{ goalId }`.
+5. Merge the held PR yourself. There is no auto-merge, in any mode.
+
+### With Motoko vs without Motoko
+
+**Without Motoko (default, no extra setup):** the operator drives every step above directly through the `gits.automode.*` RPCs. Automode has no dependency on Motoko/Hermes being configured, running, or even installed.
+
+**With Motoko:** approving a Motoko proposal can _additionally_ enqueue an automode goal, but only when the operator opts in — `autoEnqueueApprovedProposals: true` on the policy **and** `mode: "autonomous"`. Even then, Motoko reaches `enqueueGoal` **only** through that opt-in bridge (`apps/server/src/gits/Layers/HermesAutomodeBridge.ts`): approval runs through the existing Hermes draft rails (`decideProposal` → `draftFromProposal`), and only an approved `delamain-peer` draft is handed to `enqueueGoal`. Those bridge-enqueued goals are still gated by the kill switch and `allowedRepos` allowlist at dispatch time — same approval gates, same kill switch, same reboot reset as any operator-enqueued goal. See [HERMES.md § Relationship to Automode](./HERMES.md#relationship-to-automode) for the full bridge contract.
 
 ## Adapter Rule
 

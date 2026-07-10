@@ -247,6 +247,7 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     requireApprovalForPeerSpawn: true,
     requireApprovalBeforeIntegrate: true,
     requireApprovalBeforeDestructiveAction: true,
+    autoEnqueueApprovedProposals: false,
     verificationCommands: [],
     integrationBranch: null,
     motokoAuthority: "observe",

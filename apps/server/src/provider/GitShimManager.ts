@@ -67,6 +67,11 @@ export interface GitShimManagerShape {
    * Create a shim dir for `sessionId`, write the `git` script that enforces
    * `allowedRoot` containment, and return the env vars to inject.
    *
+   * `basePath` is the PATH to prepend the shim dir onto — pass the caller's
+   * already direnv-merged PATH here so `.envrc` toolchain additions survive
+   * (#134); omitted callers fall back to the server's own `process.env.PATH`
+   * (unchanged prior behavior).
+   *
    * Callers are responsible for calling `release(sessionId)` when the session
    * ends. Codex/Cursor/OpenCode adapters do this via a Scope finalizer;
    * ClaudeAdapter calls release explicitly in stopSessionInternal.
@@ -74,6 +79,7 @@ export interface GitShimManagerShape {
   readonly allocate: (
     sessionId: string,
     allowedRoot: string,
+    basePath?: string,
   ) => Effect.Effect<GitShimEnv, GitShimAllocateError>;
 
   /**
@@ -143,6 +149,7 @@ const makeGitShimManager: Effect.Effect<
   const allocate = (
     sessionId: string,
     allowedRoot: string,
+    basePath?: string,
   ): Effect.Effect<GitShimEnv, GitShimAllocateError> =>
     Effect.gen(function* () {
       const shimDir = shimDirFor(sessionId);
@@ -154,8 +161,11 @@ const makeGitShimManager: Effect.Effect<
       yield* fs.chmod(shimPath, 0o755);
 
       const vars: Record<string, string> = {
-        // Prepend shim dir to PATH so bare `git` resolves to our script.
-        PATH: `${shimDir}:${process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"}`,
+        // Prepend shim dir to `basePath` (the caller's already direnv-merged
+        // PATH, when given) so bare `git` resolves to our script FIRST while
+        // `.envrc` toolchain additions survive (#134). Falls back to the
+        // server's own PATH when no basePath is supplied.
+        PATH: `${shimDir}:${basePath ?? process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"}`,
         GITS_REAL_GIT: realGit,
         GITS_ALLOWED_ROOT: allowedRoot,
         GITS_PROTECTED_BRANCHES: PROTECTED_BRANCHES,

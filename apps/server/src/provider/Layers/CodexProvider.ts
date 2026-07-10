@@ -44,14 +44,22 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
-const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__ReasoningEffort, string> = {
+// ReasoningEffort is an open string upstream (rust-v0.144.1+) — keep friendly labels for
+// known values and fall back to the raw slug for anything new (e.g. "max", "ultra").
+const REASONING_EFFORT_LABELS: Record<string, string> = {
   none: "None",
   minimal: "Minimal",
   low: "Low",
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra",
 };
+
+function reasoningEffortLabel(effort: CodexSchema.V2ModelListResponse__ReasoningEffort): string {
+  return REASONING_EFFORT_LABELS[effort] ?? effort;
+}
 
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account) return undefined;
@@ -100,12 +108,12 @@ function mapCodexModelCapabilities(
     reasoningEffort === model.defaultReasoningEffort
       ? {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
           isDefault: true,
         }
       : {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;

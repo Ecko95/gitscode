@@ -699,6 +699,11 @@ export const AutomodePolicy = Schema.Struct({
   requireApprovalForPeerSpawn: Schema.Boolean,
   requireApprovalBeforeIntegrate: Schema.Boolean,
   requireApprovalBeforeDestructiveAction: Schema.Boolean,
+  // Motoko→Automode bridge: approved delamain-peer proposals become queued goals.
+  // Off by default so approval stays handoff-only unless the operator opts in.
+  autoEnqueueApprovedProposals: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   verificationCommands: Schema.Array(GitsVerifyCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -771,6 +776,7 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   requireApprovalForPeerSpawn: Schema.optional(Schema.Boolean),
   requireApprovalBeforeIntegrate: Schema.optional(Schema.Boolean),
   requireApprovalBeforeDestructiveAction: Schema.optional(Schema.Boolean),
+  autoEnqueueApprovedProposals: Schema.optional(Schema.Boolean),
   verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   motokoAuthority: Schema.optional(MotokoAuthority),

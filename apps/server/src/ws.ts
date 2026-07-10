@@ -91,6 +91,7 @@ import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
 import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
+import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -1599,6 +1600,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.gitsDelamainReadPeerLog, delamainAdapter.readPeerLog(input), {
             "rpc.aggregate": "gits",
           }),
+        // Human-in-the-loop RPC: spawn is intentionally outside automode's autonomous policy gate
+        // (kill-switch/allowlist), because this is an explicit operator action.
         [WS_METHODS.gitsDelamainSpawnPeer]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsDelamainSpawnPeer,
@@ -1780,7 +1783,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.gitsHermesDecideProposal]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesDecideProposal,
-            hermesAdapter.decideProposal(input),
+            decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesWriteProjectContext]: (input) =>
