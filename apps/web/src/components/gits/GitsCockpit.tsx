@@ -2,6 +2,7 @@ import type {
   AgentSession,
   AutomodeGoal,
   AutomodeSnapshot,
+  DelamainInboxResult,
   DelamainPeer,
   DelamainPeerListResult,
   GitsCapacitySnapshot,
@@ -1427,6 +1428,7 @@ function PeerFleetPanel({
   selectedPeerId,
   logText,
   logLoading,
+  inbox,
   actionError,
   spawnRepo,
   spawnName,
@@ -1444,6 +1446,7 @@ function PeerFleetPanel({
   onWait,
   onKill,
   onIntegrate,
+  killSwitchEnabled,
 }: {
   list: DelamainPeerListResult | undefined;
   loading: boolean;
@@ -1451,6 +1454,7 @@ function PeerFleetPanel({
   selectedPeerId: string | null;
   logText: string | undefined;
   logLoading: boolean;
+  inbox: DelamainInboxResult | undefined;
   actionError: unknown;
   spawnRepo: string;
   spawnName: string;
@@ -1468,18 +1472,30 @@ function PeerFleetPanel({
   onWait: () => void;
   onKill: () => void;
   onIntegrate: () => void;
+  killSwitchEnabled: boolean;
 }) {
   const peers = list?.peers ?? [];
   const selectedPeer = selectedPeerId
     ? (peers.find((peer) => peer.id === selectedPeerId) ?? null)
     : null;
   const supported = new Set(list?.capabilities.supported ?? []);
+  // The automode kill switch (R#1) freezes the guarded manual actions
+  // (spawn/reply/kill/integrate) server-side; disable them here so the block is a
+  // visible, explained state instead of a bare RPC error. `wait` is read-only and
+  // stays enabled.
   const canSpawn =
-    supported.has("spawn") && spawnRepo.trim().length > 0 && spawnPrompt.trim().length > 0;
-  const canReply = supported.has("reply") && selectedPeer !== null && replyText.trim().length > 0;
+    supported.has("spawn") &&
+    spawnRepo.trim().length > 0 &&
+    spawnPrompt.trim().length > 0 &&
+    !killSwitchEnabled;
+  const canReply =
+    supported.has("reply") &&
+    selectedPeer !== null &&
+    replyText.trim().length > 0 &&
+    !killSwitchEnabled;
   const canWait = supported.has("wait") && selectedPeer !== null;
-  const canKill = supported.has("kill") && selectedPeer !== null;
-  const canIntegrate = supported.has("integrate") && selectedPeer !== null;
+  const canKill = supported.has("kill") && selectedPeer !== null && !killSwitchEnabled;
+  const canIntegrate = supported.has("integrate") && selectedPeer !== null && !killSwitchEnabled;
   const errorMessage =
     error instanceof Error
       ? error.message
@@ -1629,8 +1645,29 @@ function PeerFleetPanel({
                   <span className="text-foreground">Last event:</span>{" "}
                   {selectedPeer.lastEvent ?? "none"}
                 </div>
+                <div>
+                  <span className="text-foreground">Inbox:</span>{" "}
+                  {inbox && inbox.messages.length > 0 ? (
+                    <ul className="mt-1 grid gap-1">
+                      {inbox.messages.map((msg) => (
+                        <li key={msg.id} className="truncate font-mono text-[11px]">
+                          <span className="text-foreground">{msg.fromPeerId}</span>
+                          {msg.deliveredAt ? "" : " (queued)"}: {msg.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    "no messages"
+                  )}
+                </div>
               </div>
               <div className="grid gap-2">
+                {killSwitchEnabled ? (
+                  <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
+                    Automode kill switch is on — manual peer actions (spawn, reply, kill, integrate)
+                    are disabled. Turn it off in the Automode tab to re-enable.
+                  </div>
+                ) : null}
                 <Textarea
                   value={replyText}
                   placeholder="Reply to this peer"
@@ -4660,6 +4697,13 @@ export function GitsCockpit() {
     enabled: selectedPeerId !== null,
     refetchInterval: selectedPeerId ? 5_000 : false,
   });
+  const inboxQuery = useQuery({
+    queryKey: ["gits", "delamain", "peer-inbox", targetEnvironmentId, selectedPeerId],
+    queryFn: async () =>
+      readGitsClient().delamain.messages.inbox({ peerId: selectedPeerId!, includeDelivered: true }),
+    enabled: selectedPeerId !== null,
+    refetchInterval: selectedPeerId ? 5_000 : false,
+  });
   const hermesCheckMutation = useMutation({
     mutationFn: async () => readGitsClient().hermes.check(),
     onSuccess: async (result) => {
@@ -5344,12 +5388,14 @@ export function GitsCockpit() {
                   selectedPeerId={selectedPeer?.id ?? selectedPeerId}
                   logText={logQuery.data?.text}
                   logLoading={logQuery.isPending || logQuery.isFetching}
+                  inbox={inboxQuery.data}
                   actionError={actionError ?? logQuery.error}
                   spawnRepo={spawnRepo}
                   spawnName={spawnName}
                   spawnPrompt={spawnPrompt}
                   replyText={replyText}
                   actionPending={actionPending}
+                  killSwitchEnabled={automodeQuery.data?.policy.killSwitchEnabled ?? false}
                   onRefresh={() => void delamainQuery.refetch()}
                   onSelectPeer={setSelectedPeerId}
                   onSpawnRepoChange={setSpawnRepo}

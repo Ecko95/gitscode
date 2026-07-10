@@ -250,6 +250,7 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     autoEnqueueApprovedProposals: false,
     verificationCommands: [],
     integrationBranch: null,
+    motokoAuthority: "observe",
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
   budgetUsage: {
@@ -3969,6 +3970,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 };
               }),
           },
+          // R#1: manual peer actions are gated on the kill switch; keep it off here so
+          // the round-trip exercises the handlers (a dedicated test covers the blocked path).
+          automodeSupervisor: {
+            getSnapshot: () =>
+              Effect.succeed({
+                ...defaultAutomodeSnapshot,
+                policy: { ...defaultAutomodeSnapshot.policy, killSwitchEnabled: false },
+              }),
+          },
         },
       });
 
@@ -4046,6 +4056,39 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "wait:peer-test",
         "integrate:peer-test",
       ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("blocks manual Delamain peer actions when the kill switch is enabled", () =>
+    Effect.gen(function* () {
+      let spawnCalled = false;
+      yield* buildAppUnderTest({
+        layers: {
+          delamainAdapter: {
+            spawnPeer: (input) =>
+              Effect.sync(() => {
+                spawnCalled = true;
+                return { ...defaultDelamainPeer, task: input.prompt };
+              }),
+          },
+          // default snapshot has killSwitchEnabled: true
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainSpawnPeer]({
+            repo: "/tmp/source-repo",
+            prompt: "spawn task",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "DelamainAdapterError");
+      assert.equal(result.failure.message, "Blocked by the automode kill switch.");
+      assert.equal(spawnCalled, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

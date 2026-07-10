@@ -552,6 +552,52 @@ export const DelamainPeerIntegrateResult = Schema.Struct({
 });
 export type DelamainPeerIntegrateResult = typeof DelamainPeerIntegrateResult.Type;
 
+// Peer↔peer mailbox message (delamain `inbox`/`send` JSON envelope). Timestamps
+// are kept as nullable strings — the CLI emits ISO but the adapter normalizes
+// loosely so a malformed value degrades to null instead of failing the RPC.
+export const DelamainMessage = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  fromPeerId: TrimmedNonEmptyString,
+  toPeerId: TrimmedNonEmptyString,
+  message: Schema.String,
+  expectReply: Schema.Boolean,
+  responseId: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: Schema.NullOr(TrimmedNonEmptyString),
+  deliveredAt: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type DelamainMessage = typeof DelamainMessage.Type;
+
+export const DelamainReadInboxInput = Schema.Struct({
+  peerId: TrimmedNonEmptyString,
+  includeDelivered: Schema.optional(Schema.Boolean),
+});
+export type DelamainReadInboxInput = typeof DelamainReadInboxInput.Type;
+
+export const DelamainInboxResult = Schema.Struct({
+  peerId: TrimmedNonEmptyString,
+  messages: Schema.Array(DelamainMessage),
+});
+export type DelamainInboxResult = typeof DelamainInboxResult.Type;
+
+export const DelamainSendMessageInput = Schema.Struct({
+  toPeerId: TrimmedNonEmptyString,
+  message: SummaryString,
+  fromPeerId: Schema.optional(TrimmedNonEmptyString),
+  expectReply: Schema.optional(Schema.Boolean),
+  responseId: Schema.optional(TrimmedNonEmptyString),
+  // recipient repo, used by the automode gate for cross-repo/write-shaped sends
+  repo: Schema.optional(PathString),
+  model: Schema.optional(TrimmedNonEmptyString),
+});
+export type DelamainSendMessageInput = typeof DelamainSendMessageInput.Type;
+
+export const DelamainSendMessageResult = Schema.Struct({
+  responseId: Schema.NullOr(TrimmedNonEmptyString),
+  delivered: NonNegativeInt,
+  skipped: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type DelamainSendMessageResult = typeof DelamainSendMessageResult.Type;
+
 export const OpenGsdCapability = Schema.Literals(["detect", "init", "auto"]);
 export type OpenGsdCapability = typeof OpenGsdCapability.Type;
 
@@ -614,6 +660,12 @@ export type OpenGsdCommandResult = typeof OpenGsdCommandResult.Type;
 export const AutomodeMode = Schema.Literals(["manual", "supervised", "autonomous"]);
 export type AutomodeMode = typeof AutomodeMode.Type;
 
+// Motoko's peer-messaging authority tier (A2A R3). observe = read-only, no sends;
+// respond = replies only (a send carrying a responseId); dispatch = new sends too.
+// integrate/merge/destructive-shell content stays human-gated regardless of tier.
+export const MotokoAuthority = Schema.Literals(["observe", "respond", "dispatch"]);
+export type MotokoAuthority = typeof MotokoAuthority.Type;
+
 export const AutomodeGoalStatus = Schema.Literals([
   "queued",
   "waiting-approval",
@@ -658,6 +710,7 @@ export const AutomodePolicy = Schema.Struct({
   integrationBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  motokoAuthority: MotokoAuthority.pipe(Schema.withDecodingDefault(Effect.succeed("observe"))),
   updatedAt: IsoDateTime,
 });
 export type AutomodePolicy = typeof AutomodePolicy.Type;
@@ -726,6 +779,7 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   autoEnqueueApprovedProposals: Schema.optional(Schema.Boolean),
   verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  motokoAuthority: Schema.optional(MotokoAuthority),
 });
 export type AutomodePolicyUpdateInput = typeof AutomodePolicyUpdateInput.Type;
 

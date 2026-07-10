@@ -13,6 +13,8 @@ import type {
   AutomodeRejectGoalInput,
   AutomodeSnapshot,
   AutomodeSupervisorError,
+  DelamainSendMessageInput,
+  DelamainSendMessageResult,
 } from "@t3tools/contracts";
 
 export interface AutomodeSupervisorShape {
@@ -46,6 +48,9 @@ export interface AutomodeSupervisorShape {
     input: AutomodeRecordHeldPrInput,
   ) => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
   readonly markRunMerged: () => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
+  readonly sendPeerMessage: (
+    input: DelamainSendMessageInput,
+  ) => Effect.Effect<DelamainSendMessageResult, AutomodeSupervisorError>;
 }
 
 export class AutomodeSupervisor extends Context.Service<

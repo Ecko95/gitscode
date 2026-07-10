@@ -1,5 +1,10 @@
 # TODO
 
+## OpenAI model integration (2026-07-10)
+
+- [x] Document the `gpt-5.5` Codex app-server/schema update path in `docs/gits/openai-latest-model-integration-handoff.md`
+- [ ] Update the pinned Codex app-server protocol, verify runtime `model/list`, then promote `gpt-5.5` to the Codex default
+
 ## Audit backlog (2026-07-06 — `docs/audits/2026-07-06-full-audit.md`)
 
 - [x] 5 HIGH server bugs fixed (shared-worktree deletion, rebuild sentinel, git-shim PATH, stream-freeze resubscribe, snapshot/live double-append)

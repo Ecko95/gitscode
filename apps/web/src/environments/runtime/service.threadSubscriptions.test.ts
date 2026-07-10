@@ -158,6 +158,10 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         sendPeerReply: vi.fn(),
         waitForPeer: vi.fn(),
         integratePeer: vi.fn(),
+        messages: {
+          inbox: vi.fn(),
+          send: vi.fn(),
+        },
       },
       openGsd: {
         getStatus: vi.fn(),

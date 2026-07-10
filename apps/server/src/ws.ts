@@ -347,6 +347,29 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const hermesAdapter = yield* HermesAdapter;
       const openGsdAdapter = yield* OpenGsdAdapter;
       const automodeSupervisor = yield* AutomodeSupervisor;
+      // R#1 (kill-switch-only manual gate): manual peer actions stay human-driven, but the
+      // global automode kill switch also freezes them. ponytail: reuse DelamainAdapterError
+      // (these RPC channels already carry it) so no rpc.ts/client contract change is needed.
+      const withKillSwitchGuard = <A, E, R>(
+        action: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | DelamainAdapterError, R> =>
+        automodeSupervisor.getSnapshot().pipe(
+          Effect.mapError(
+            (cause) =>
+              new DelamainAdapterError({
+                message: "Failed to check the automode kill switch.",
+                cause,
+              }),
+          ),
+          Effect.flatMap(
+            (snapshot): Effect.Effect<A, E | DelamainAdapterError, R> =>
+              snapshot.policy.killSwitchEnabled
+                ? Effect.fail(
+                    new DelamainAdapterError({ message: "Blocked by the automode kill switch." }),
+                  )
+                : action,
+          ),
+        );
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
       const critSidecarManager = yield* CritSidecarManager;
@@ -1586,17 +1609,21 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         // Human-in-the-loop RPC: spawn is intentionally outside automode's autonomous policy gate
         // (kill-switch/allowlist), because this is an explicit operator action.
         [WS_METHODS.gitsDelamainSpawnPeer]: (input) =>
-          observeRpcEffect(WS_METHODS.gitsDelamainSpawnPeer, delamainAdapter.spawnPeer(input), {
-            "rpc.aggregate": "gits",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainSpawnPeer,
+            withKillSwitchGuard(delamainAdapter.spawnPeer(input)),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsDelamainKillPeer]: (input) =>
-          observeRpcEffect(WS_METHODS.gitsDelamainKillPeer, delamainAdapter.killPeer(input), {
-            "rpc.aggregate": "gits",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainKillPeer,
+            withKillSwitchGuard(delamainAdapter.killPeer(input)),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsDelamainSendPeerReply]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsDelamainSendPeerReply,
-            delamainAdapter.sendPeerReply(input),
+            withKillSwitchGuard(delamainAdapter.sendPeerReply(input)),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsDelamainWaitForPeer]: (input) =>
@@ -1606,7 +1633,19 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.gitsDelamainIntegratePeer]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsDelamainIntegratePeer,
-            delamainAdapter.integratePeer(input),
+            withKillSwitchGuard(delamainAdapter.integratePeer(input)),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsDelamainReadInbox]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsDelamainReadInbox, delamainAdapter.readInbox(input), {
+            "rpc.aggregate": "gits",
+          }),
+        // Gated send: routes through the supervisor (motokoAuthority + evaluatePolicyGate),
+        // never delamainAdapter.sendMessage directly.
+        [WS_METHODS.gitsDelamainSendMessage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainSendMessage,
+            automodeSupervisor.sendPeerMessage(input),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsOpenGsdGetStatus]: (_input) =>

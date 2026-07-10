@@ -207,6 +207,7 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     autoEnqueueApprovedProposals: false,
     verificationCommands: [],
     integrationBranch: null,
+    motokoAuthority: "observe",
     updatedAt,
   };
 }
@@ -238,16 +239,56 @@ function modelAllowed(policy: AutomodePolicy, model: string | null): boolean {
   return model !== null && policy.allowedModels.includes(model);
 }
 
+function promptNeedsApproval(policy: AutomodePolicy, prompt: string): boolean {
+  return (
+    policy.mode === "supervised" ||
+    policy.requireApprovalForPeerSpawn ||
+    (policy.requireApprovalBeforeIntegrate && INTEGRATION_PATTERN.test(prompt)) ||
+    (policy.requireApprovalBeforeDestructiveAction && DESTRUCTIVE_PATTERN.test(prompt))
+  );
+}
+
 function goalNeedsApproval(policy: AutomodePolicy, goal: AutomodeGoal): boolean {
   if (goal.approvedAt !== null) {
     return false;
   }
-  return (
-    policy.mode === "supervised" ||
-    policy.requireApprovalForPeerSpawn ||
-    (policy.requireApprovalBeforeIntegrate && INTEGRATION_PATTERN.test(goal.prompt)) ||
-    (policy.requireApprovalBeforeDestructiveAction && DESTRUCTIVE_PATTERN.test(goal.prompt))
-  );
+  return promptNeedsApproval(policy, goal.prompt);
+}
+
+type PolicyGateKind = "dispatch" | "send";
+
+// The ONE automode gate. dispatchGoal and the gated peer-message send both call
+// this — do not add a third ungated path. `kind` only gates the active-peer-limit
+// check, which applies to spawns (dispatch) but not to sends.
+function evaluatePolicyGate(
+  policy: AutomodePolicy,
+  args: {
+    readonly repo: string;
+    readonly model: string | null;
+    readonly prompt: string;
+    readonly kind: PolicyGateKind;
+    readonly activePeers: number;
+    readonly budgetUsage: AutomodeBudgetUsage;
+  },
+): { readonly blockedReason: string | null; readonly needsApproval: boolean } {
+  // ponytail: a peer message is not a repo/model/cost operation, so the send gate
+  // enforces only kill-switch, manual-mode, and destructive-content approval — not the
+  // repo allowlist / model allowlist / budget (which govern where peers *operate*).
+  // Without this, gits' empty-allowlist=deny (#139) would block every repo-less send.
+  const resourceScoped = args.kind !== "send";
+  const budgetReason = resourceScoped ? budgetBlockedReason(policy, args.budgetUsage) : null;
+  const blockedReason = policy.killSwitchEnabled
+    ? "Kill switch is enabled."
+    : policy.mode === "manual"
+      ? "Automode is in manual mode."
+      : args.kind === "dispatch" && args.activePeers >= policy.maxActivePeers
+        ? `Active peer limit reached (${policy.maxActivePeers}).`
+        : resourceScoped && !repoAllowed(policy, args.repo)
+          ? "Repository is outside the automode allowlist."
+          : resourceScoped && !modelAllowed(policy, args.model)
+            ? "Model is outside the automode allowlist."
+            : budgetReason;
+  return { blockedReason, needsApproval: promptNeedsApproval(policy, args.prompt) };
 }
 
 function updateGoal(
@@ -348,6 +389,7 @@ function applyPolicyUpdate(
     verificationCommands: input.verificationCommands ?? policy.verificationCommands,
     integrationBranch:
       input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,
+    motokoAuthority: input.motokoAuthority ?? policy.motokoAuthority,
     updatedAt,
   };
 }
@@ -604,18 +646,14 @@ export const AutomodeSupervisorLive = Layer.effect(
           const effectiveModel = goal.model ?? state.policy.defaultModel;
           const activePeers = yield* readActivePeerCount;
           const budgetUsage = yield* readBudgetUsage;
-          const budgetReason = budgetBlockedReason(state.policy, budgetUsage);
-          const blockedReason = state.policy.killSwitchEnabled
-            ? "Kill switch is enabled."
-            : state.policy.mode === "manual"
-              ? "Automode is in manual mode."
-              : activePeers >= state.policy.maxActivePeers
-                ? `Active peer limit reached (${state.policy.maxActivePeers}).`
-                : !repoAllowed(state.policy, goal.repo)
-                  ? "Repository is outside the automode allowlist."
-                  : !modelAllowed(state.policy, effectiveModel)
-                    ? "Model is outside the automode allowlist."
-                    : budgetReason;
+          const blockedReason = evaluatePolicyGate(state.policy, {
+            repo: goal.repo,
+            model: effectiveModel,
+            prompt: goal.prompt,
+            kind: "dispatch",
+            activePeers,
+            budgetUsage,
+          }).blockedReason;
 
           if (blockedReason !== null) {
             const updatedAt = yield* nowIso;
@@ -842,6 +880,57 @@ export const AutomodeSupervisorLive = Layer.effect(
             updatedAt,
           }));
           return yield* snapshotFromState(nextState);
+        }),
+      sendPeerMessage: (input) =>
+        Effect.gen(function* () {
+          const state = yield* Ref.get(stateRef);
+          const authority = state.policy.motokoAuthority;
+          const isReply = input.responseId !== undefined && input.responseId !== null;
+
+          // (a) motokoAuthority tier: observe blocks all sends; respond allows
+          // only replies (a send carrying a responseId); dispatch allows new sends.
+          const tierBlockedReason =
+            authority === "observe"
+              ? "Motoko authority is observe-only; peer messaging is disabled."
+              : authority === "respond" && !isReply
+                ? "Motoko authority allows replies only; new sends require dispatch authority."
+                : null;
+          if (tierBlockedReason !== null) {
+            return yield* toAutomodeError(tierBlockedReason);
+          }
+
+          // (b) shared automode gate: kill switch / mode / repo allowlist / model /
+          // budget, plus integrate/merge/destructive content stays human-gated.
+          const activePeers = yield* readActivePeerCount;
+          const budgetUsage = yield* readBudgetUsage;
+          const gate = evaluatePolicyGate(state.policy, {
+            repo: input.repo ?? "",
+            model: input.model ?? null,
+            prompt: input.message,
+            kind: "send",
+            activePeers,
+            budgetUsage,
+          });
+          if (gate.blockedReason !== null) {
+            return yield* toAutomodeError(gate.blockedReason);
+          }
+          if (gate.needsApproval) {
+            return yield* toAutomodeError(
+              "Manual approval required before Motoko can send this message.",
+            );
+          }
+
+          // R#3: default the sender so the delamain CLI doesn't fall back to cwd-inference
+          // (which never matches the GITS server). ponytail: constant sender id (config later);
+          // documented residual — replies addressed back to "motoko" won't deliver through
+          // delamain since Motoko is not a delamain peer (reply-routing is future work).
+          return yield* delamainAdapter
+            .sendMessage({ ...input, fromPeerId: input.fromPeerId ?? "motoko" })
+            .pipe(
+              Effect.mapError((cause) =>
+                toAutomodeError("Failed to send a Delamain peer message.", cause),
+              ),
+            );
         }),
     };
 

@@ -33,7 +33,7 @@ import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { DelamainAdapterError, TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -44,6 +44,8 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
+import { DelamainAdapter, type DelamainAdapterShape } from "../../gits/Services/DelamainAdapter.ts";
+import type { DelamainMessage, DelamainPeer } from "@t3tools/contracts";
 import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
@@ -53,6 +55,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import {
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
+  renderPeerInboxContextSeed,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -300,6 +303,36 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
+    const delamainCapabilities = {
+      available: false,
+      binaryPath: null,
+      supported: [],
+      unsupported: [],
+      checkedAt: now,
+    };
+    // R5: default no-op — no peers, empty inbox. Existing non-peer tests never
+    // match a peer, so listPeers/readInbox stay side-effect-free. R5 tests
+    // override these via mockReturnValue.
+    const listPeers = vi.fn<DelamainAdapterShape["listPeers"]>(() =>
+      Effect.succeed({ capabilities: delamainCapabilities, peers: [] }),
+    );
+    const readInbox = vi.fn<DelamainAdapterShape["readInbox"]>((input) =>
+      Effect.succeed({ peerId: input.peerId, messages: [] }),
+    );
+    const delamainDie = () => Effect.die(new Error("Unsupported delamain call in test")) as never;
+    const delamainAdapter: DelamainAdapterShape = {
+      listPeers,
+      readInbox,
+      getPeerStatus: delamainDie,
+      readPeerLog: delamainDie,
+      spawnPeer: delamainDie,
+      killPeer: delamainDie,
+      sendPeerReply: delamainDie,
+      waitForPeer: delamainDie,
+      integratePeer: delamainDie,
+      sendMessage: delamainDie,
+    };
+
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
@@ -359,6 +392,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(Layer.succeed(DelamainAdapter, delamainAdapter)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService)({
           renameBranch,
@@ -445,6 +479,8 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       generateThreadForkSummary,
+      listPeers,
+      readInbox,
       runtimeSessions,
       stateDir,
       drain,
@@ -2763,5 +2799,327 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  describe("R5 cross-provider context replay", () => {
+    const makeDelamainPeer = (overrides: Partial<DelamainPeer>): DelamainPeer => ({
+      id: "peer-alpha",
+      name: null,
+      engine: "codex",
+      model: null,
+      status: "running",
+      rawStatus: "running",
+      integrationStatus: null,
+      sourceRepo: null,
+      worktreePath: null,
+      branch: null,
+      baseBranch: null,
+      mergeBranch: null,
+      prUrl: null,
+      task: null,
+      lastEvent: null,
+      startedAt: null,
+      updatedAt: null,
+      finishedAt: null,
+      ...overrides,
+    });
+
+    const makeDelamainMessage = (
+      id: string,
+      overrides?: Partial<DelamainMessage>,
+    ): DelamainMessage => ({
+      id,
+      fromPeerId: "peer-beta",
+      toPeerId: "peer-alpha",
+      message: `inbox body ${id}`,
+      expectReply: false,
+      responseId: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      deliveredAt: null,
+      ...overrides,
+    });
+
+    const setWorktreePath = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      worktreePath: string,
+    ) =>
+      Effect.runPromise(
+        harness.engine.dispatch(
+          {
+            type: "thread.meta.update",
+            commandId: CommandId.make("cmd-r5-worktree"),
+            threadId: ThreadId.make("thread-1"),
+            worktreePath,
+          },
+          "server",
+        ),
+      );
+
+    const seedBinding = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      runtimePayload: Record<string, unknown>,
+    ) =>
+      Effect.runPromise(
+        harness.providerSessionDirectory.upsert({
+          threadId: ThreadId.make("thread-1"),
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "full-access",
+          status: "running",
+          runtimePayload,
+        }),
+      );
+
+    const startTurn = (harness: Awaited<ReturnType<typeof createHarness>>, text: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch(
+          {
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-r5-turn-${text.replace(/\s+/g, "-")}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: asMessageId(`user-r5-${text.replace(/\s+/g, "-")}`),
+              role: "user",
+              text,
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          "server",
+        ),
+      );
+
+    it("prepends unseen peer inbox messages and advances the watermark", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
+      harness.listPeers.mockReturnValue(
+        Effect.succeed({
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+          peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
+        }),
+      );
+      harness.readInbox.mockReturnValue(
+        Effect.succeed({
+          peerId: "peer-alpha",
+          messages: [
+            makeDelamainMessage("msg-1", { message: "first hello" }),
+            makeDelamainMessage("msg-2", { message: "second ping", responseId: "resp-9" }),
+          ],
+        }),
+      );
+
+      await startTurn(harness, "keep working");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const sentInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input ?? "";
+      expect(sentInput).toContain("[peer message] from peer-beta");
+      expect(sentInput).toContain("first hello");
+      expect(sentInput).toContain("second ping");
+      expect(sentInput).toContain("response-id: resp-9");
+      expect(sentInput).toContain("keep working");
+
+      await waitFor(async () => {
+        const binding = await Effect.runPromise(
+          harness.providerSessionDirectory.getBinding(ThreadId.make("thread-1")),
+        );
+        const payload = Option.getOrUndefined(binding)?.runtimePayload as
+          | Record<string, unknown>
+          | undefined;
+        return payload?.r5CoveredMessageId === "msg-2" && payload?.r5PeerId === "peer-alpha";
+      });
+    });
+
+    it("does not advance the watermark when the turn fails to send (correlation still cached)", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
+      harness.listPeers.mockReturnValue(
+        Effect.succeed({
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+          peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
+        }),
+      );
+      harness.readInbox.mockReturnValue(
+        Effect.succeed({
+          peerId: "peer-alpha",
+          messages: [makeDelamainMessage("msg-1"), makeDelamainMessage("msg-2")],
+        }),
+      );
+      // The turn is built + seeded, but sending fails: E2 requires the watermark to
+      // stay put (so these messages re-seed next turn) while the peer correlation,
+      // which is non-lossy, is still cached inline before the send.
+      harness.sendTurn.mockReturnValue(Effect.die(new Error("send failed")));
+
+      await startTurn(harness, "keep working");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      // The inline r5PeerId cache persists before the (failing) send.
+      await waitFor(async () => {
+        const binding = await Effect.runPromise(
+          harness.providerSessionDirectory.getBinding(ThreadId.make("thread-1")),
+        );
+        const payload = Option.getOrUndefined(binding)?.runtimePayload as
+          | Record<string, unknown>
+          | undefined;
+        return payload?.r5PeerId === "peer-alpha";
+      });
+
+      const binding = await Effect.runPromise(
+        harness.providerSessionDirectory.getBinding(ThreadId.make("thread-1")),
+      );
+      const payload = Option.getOrUndefined(binding)?.runtimePayload as
+        | Record<string, unknown>
+        | undefined;
+      // Watermark NOT advanced because the send never succeeded.
+      expect(payload?.r5CoveredMessageId).toBeUndefined();
+    });
+
+    it("degrades to no seed (the turn still starts) when the delamain adapter fails", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
+      harness.listPeers.mockReturnValue(
+        Effect.succeed({
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+          peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
+        }),
+      );
+      // A delamain CLI failure must NOT abort the provider turn — it degrades to no seed.
+      harness.readInbox.mockReturnValue(
+        Effect.fail(new DelamainAdapterError({ message: "delamain unavailable" })),
+      );
+
+      await startTurn(harness, "turn survives");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const sentInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input ?? "";
+      expect(sentInput).toBe("turn survives");
+      expect(sentInput).not.toContain("[peer message]");
+    });
+
+    it("clears a stale cached r5PeerId when readInbox fails, so the next turn re-correlates", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      // A cached peerId that no longer resolves (delamain state reset).
+      await seedBinding(harness, { cwd: "/tmp/peer-worktree", r5PeerId: "peer-stale" });
+      harness.readInbox.mockReturnValue(
+        Effect.fail(new DelamainAdapterError({ message: "delamain state reset" })),
+      );
+
+      await startTurn(harness, "turn survives");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      // Self-heal: the stale cache is cleared so the next turn re-correlates via listPeers.
+      await waitFor(async () => {
+        const binding = await Effect.runPromise(
+          harness.providerSessionDirectory.getBinding(ThreadId.make("thread-1")),
+        );
+        const payload = Option.getOrUndefined(binding)?.runtimePayload as
+          | Record<string, unknown>
+          | undefined;
+        return payload?.r5PeerId === null;
+      });
+      // The cached peerId meant listPeers was skipped this turn; only readInbox ran (and failed).
+      expect(harness.listPeers.mock.calls.length).toBe(0);
+      expect(harness.readInbox.mock.calls.length).toBe(1);
+    });
+
+    it("injects nothing when the watermark is already at the newest message", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      await seedBinding(harness, {
+        cwd: "/tmp/peer-worktree",
+        r5PeerId: "peer-alpha",
+        r5CoveredMessageId: "msg-2",
+      });
+      harness.readInbox.mockReturnValue(
+        Effect.succeed({
+          peerId: "peer-alpha",
+          messages: [makeDelamainMessage("msg-1"), makeDelamainMessage("msg-2")],
+        }),
+      );
+
+      await startTurn(harness, "already caught up");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const sentInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input ?? "";
+      expect(sentInput).toBe("already caught up");
+      expect(sentInput).not.toContain("[peer message]");
+      // r5PeerId cached → listPeers skipped; inbox still checked once.
+      expect(harness.listPeers.mock.calls.length).toBe(0);
+      expect(harness.readInbox.mock.calls.length).toBe(1);
+    });
+
+    it("skips R5 entirely for a thread with no matching peer (no CLI, no injection)", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/not-a-peer");
+      harness.listPeers.mockReturnValue(
+        Effect.succeed({
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+          peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/some-other-worktree" })],
+        }),
+      );
+
+      await startTurn(harness, "no peer here");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const sentInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input ?? "";
+      expect(sentInput).toBe("no peer here");
+      // listPeers ran (worktreePath present) but no match → readInbox never called.
+      expect(harness.readInbox.mock.calls.length).toBe(0);
+    });
+
+    it("skips R5 without any delamain call for a thread with no worktreePath", async () => {
+      const harness = await createHarness();
+
+      await startTurn(harness, "plain thread");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const sentInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input ?? "";
+      expect(sentInput).toBe("plain thread");
+      expect(harness.listPeers.mock.calls.length).toBe(0);
+      expect(harness.readInbox.mock.calls.length).toBe(0);
+    });
+
+    it("renders inbox messages in the delamain formatInboxPrompt shape", () => {
+      const seed = renderPeerInboxContextSeed([
+        makeDelamainMessage("m1", { fromPeerId: "codex-1", message: "hello", responseId: null }),
+        makeDelamainMessage("m2", { fromPeerId: "cursor-2", message: "reply?", responseId: "r-2" }),
+      ]);
+      expect(seed).toContain("[peer message] from codex-1");
+      expect(seed).toContain("[peer message] from cursor-2");
+      expect(seed).toContain("response-id: r-2");
+      expect(seed).not.toContain("response-id: null");
+      expect(seed).toContain("hello");
+      expect(seed).toContain("reply?");
+      expect(seed).toContain("\n\n---\n\n");
+    });
   });
 });

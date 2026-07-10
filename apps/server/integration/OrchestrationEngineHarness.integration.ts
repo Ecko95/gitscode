@@ -53,6 +53,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "../src/orchestration/L
 import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
+import { DelamainAdapter } from "../src/gits/Services/DelamainAdapter.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
@@ -326,6 +327,32 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
       Layer.provideMerge(serverSettingsLayer),
+      // R5 correlation source. No delamain peers in the integration harness →
+      // listPeers returns empty so R5 is a strict no-op on every turn.
+      Layer.provideMerge(
+        Layer.succeed(DelamainAdapter, {
+          listPeers: () =>
+            Effect.succeed({
+              capabilities: {
+                available: false,
+                binaryPath: null,
+                supported: [],
+                unsupported: [],
+                checkedAt: "2026-01-01T00:00:00.000Z",
+              },
+              peers: [],
+            }),
+          readInbox: (input) => Effect.succeed({ peerId: input.peerId, messages: [] }),
+          getPeerStatus: () => Effect.die("delamain not available in integration harness") as never,
+          readPeerLog: () => Effect.die("delamain not available in integration harness") as never,
+          spawnPeer: () => Effect.die("delamain not available in integration harness") as never,
+          killPeer: () => Effect.die("delamain not available in integration harness") as never,
+          sendPeerReply: () => Effect.die("delamain not available in integration harness") as never,
+          waitForPeer: () => Effect.die("delamain not available in integration harness") as never,
+          integratePeer: () => Effect.die("delamain not available in integration harness") as never,
+          sendMessage: () => Effect.die("delamain not available in integration harness") as never,
+        }),
+      ),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
