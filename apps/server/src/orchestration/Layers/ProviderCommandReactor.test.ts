@@ -33,7 +33,7 @@ import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { DelamainAdapterError, TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -2927,6 +2927,29 @@ describe("ProviderCommandReactor", () => {
           | undefined;
         return payload?.r5CoveredMessageId === "msg-2" && payload?.r5PeerId === "peer-alpha";
       });
+    });
+
+    it("degrades to no seed (the turn still starts) when the delamain adapter fails", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
+      harness.listPeers.mockReturnValue(
+        Effect.succeed({
+          capabilities: { available: false, binaryPath: null, supported: [], unsupported: [], checkedAt: "2026-01-01T00:00:00.000Z" },
+          peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
+        }),
+      );
+      // A delamain CLI failure must NOT abort the provider turn — it degrades to no seed.
+      harness.readInbox.mockReturnValue(
+        Effect.fail(new DelamainAdapterError({ message: "delamain unavailable" })),
+      );
+
+      await startTurn(harness, "turn survives");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const sentInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string }).input ?? "";
+      expect(sentInput).toBe("turn survives");
+      expect(sentInput).not.toContain("[peer message]");
     });
 
     it("injects nothing when the watermark is already at the newest message", async () => {

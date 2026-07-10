@@ -937,9 +937,19 @@ const make = Effect.gen(function* () {
         })
       : input.messageText;
     // R5: prepend the delamain peer inbox messages this thread has not seen yet
-    // (per-thread watermark). Strict no-op — no delamain CLI spawn — when the
-    // thread has no worktreePath or no peer matches. Coexists with the summary seed.
-    const peerInboxSeed = yield* buildPeerInboxContextSeedForTurn(thread);
+    // (per-thread watermark). No delamain CLI spawn when the thread has no
+    // worktreePath or an r5PeerId is cached; a worktree thread with no matching
+    // peer pays one listPeers spawn per turn. Best-effort: any delamain error is
+    // caught here and degrades to no seed — it NEVER aborts the provider turn.
+    // Coexists with the summary seed.
+    const peerInboxSeed = yield* buildPeerInboxContextSeedForTurn(thread).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("R5 peer inbox seed skipped due to a delamain error", {
+          threadId: input.threadId,
+          error,
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
     const providerMessageText = peerInboxSeed
       ? `${peerInboxSeed}\n\n${summarySeededText}`
       : summarySeededText;
