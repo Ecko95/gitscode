@@ -487,6 +487,9 @@ describe("VcsStatusBroadcaster", () => {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
         // Set up latches so we can trigger one explicit refresh and observe counts
+        const snapshotA = yield* Deferred.make<VcsStatusStreamEvent>();
+        const snapshotB = yield* Deferred.make<VcsStatusStreamEvent>();
+        const snapshotOther = yield* Deferred.make<VcsStatusStreamEvent>();
         const remoteUpdatedA = yield* Deferred.make<VcsStatusStreamEvent>();
         const remoteUpdatedB = yield* Deferred.make<VcsStatusStreamEvent>();
         const remoteUpdatedOther = yield* Deferred.make<VcsStatusStreamEvent>();
@@ -499,10 +502,13 @@ describe("VcsStatusBroadcaster", () => {
             { cwd: "/repos/shared/wt-a" },
             { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
           ),
-          (event) =>
-            event._tag === "remoteUpdated"
-              ? Deferred.succeed(remoteUpdatedA, event).pipe(Effect.ignore)
-              : Effect.void,
+          (event) => {
+            if (event._tag === "snapshot")
+              return Deferred.succeed(snapshotA, event).pipe(Effect.ignore);
+            if (event._tag === "remoteUpdated")
+              return Deferred.succeed(remoteUpdatedA, event).pipe(Effect.ignore);
+            return Effect.void;
+          },
         ).pipe(Effect.forkIn(streamScope));
 
         yield* Stream.runForEach(
@@ -510,10 +516,13 @@ describe("VcsStatusBroadcaster", () => {
             { cwd: "/repos/shared/wt-b" },
             { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
           ),
-          (event) =>
-            event._tag === "remoteUpdated"
-              ? Deferred.succeed(remoteUpdatedB, event).pipe(Effect.ignore)
-              : Effect.void,
+          (event) => {
+            if (event._tag === "snapshot")
+              return Deferred.succeed(snapshotB, event).pipe(Effect.ignore);
+            if (event._tag === "remoteUpdated")
+              return Deferred.succeed(remoteUpdatedB, event).pipe(Effect.ignore);
+            return Effect.void;
+          },
         ).pipe(Effect.forkIn(streamScope));
 
         yield* Stream.runForEach(
@@ -521,11 +530,26 @@ describe("VcsStatusBroadcaster", () => {
             { cwd: "/repos/other/wt" },
             { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
           ),
-          (event) =>
-            event._tag === "remoteUpdated"
-              ? Deferred.succeed(remoteUpdatedOther, event).pipe(Effect.ignore)
-              : Effect.void,
+          (event) => {
+            if (event._tag === "snapshot")
+              return Deferred.succeed(snapshotOther, event).pipe(Effect.ignore);
+            if (event._tag === "remoteUpdated")
+              return Deferred.succeed(remoteUpdatedOther, event).pipe(Effect.ignore);
+            return Effect.void;
+          },
         ).pipe(Effect.forkIn(streamScope));
+
+        // Each subscription's "snapshot" event is only emitted once streamStatus has
+        // subscribed to the change PubSub AND registered with the repo poller (see
+        // VcsStatusBroadcaster.streamStatus). Waiting for all three here — the same
+        // signal the other tests in this file wait on — makes the refreshes below race
+        // free: without it, under CPU load the forked subscriptions above are not
+        // guaranteed to have subscribed before refreshStatus publishes, and a
+        // remoteUpdated event published before a subscriber exists is simply never
+        // delivered, hanging the Deferred.await calls below until the test timeout.
+        yield* Deferred.await(snapshotA);
+        yield* Deferred.await(snapshotB);
+        yield* Deferred.await(snapshotOther);
 
         const remoteBeforeRefresh = state.remoteStatusCalls;
 

@@ -74,7 +74,7 @@ const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  timeoutMs = 2000,
+  timeoutMs = 15_000,
 ): Promise<void> {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
   const poll = async (): Promise<void> => {
@@ -84,7 +84,10 @@ async function waitFor(
     if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
       throw new Error("Timed out waiting for expectation.");
     }
-    await Effect.runPromise(Effect.yieldNow);
+    // ponytail: real delay, not Effect.yieldNow — a microtask-only yield busy-spins and
+    // starves the fibers this is waiting on under CPU load. setTimeout yields real time.
+    // @effect-diagnostics-next-line globalTimers:off
+    await new Promise((resolve) => setTimeout(resolve, 10));
     return poll();
   };
 
