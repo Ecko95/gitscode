@@ -1,5 +1,46 @@
 # TODO
 
+## Session log — 2026-07-10 (A2A + hardening shipped to `gits`)
+
+`origin/gits` @ `da97a62fe`. All work below is **merged into `gits`**; no open PRs.
+
+- [x] **A2A peer messaging (#142)** — R3 surfacing + residuals (R#1 kill-switch guard / R#3 default `fromPeerId:"motoko"`) + R5 cross-provider context replay (per-thread watermark) + E2 (advance watermark only after `sendTurn` succeeds) + self-heal (clear stale `r5PeerId` on inbox failure) + cockpit kill-switch indicator. Consolidated in `docs/gits/A2A.md`.
+- [x] **Flaky-poll test hardening (#143)** — `waitFor` busy-spin → real `setTimeout`, 2s→15s timeout (ProviderCommandReactor + ProviderSessionReaper + CursorAdapter); `VcsStatusBroadcaster` subscribe-before-publish race fixed deterministically.
+- [x] **Semantic merge fix** — gits #139 made empty-allowlist = **deny**, which would block every repo-less Motoko peer-send. `evaluatePolicyGate` now skips repo/model/budget for `kind:"send"` (a message isn't a repo/cost op); kill-switch / manual-mode / destructive-content still gate. See `AutomodeSupervisor.ts` (`resourceScoped`).
+- [x] Docs shipped: `docs/gits/openai-latest-model-integration-handoff.md` + this TODO's OpenAI section.
+- Note: **#141** (codex `0.144` schema regen + `DEFAULT_MODEL = gpt-5.6-sol` + `max`/`ultra` effort labels) already in `gits` from the prior batch — see the OpenAI section below; the handoff doc still says `gpt-5.5`, reconcile when promoting the default.
+
+### Worktrees (state as of 2026-07-10)
+
+**Merged → safe to prune** (`git worktree remove <path>` + `git branch -D <branch>`):
+
+| Worktree                                                  | Branch                             | Merged as        |
+| --------------------------------------------------------- | ---------------------------------- | ---------------- |
+| `gitscode` _(main — keep the worktree, on merged branch)_ | `a2a-r3-gits-surfacing`            | #142 (squash)    |
+| `gitscode-harden-polls`                                   | `test/harden-flaky-poll-timeouts`  | #143 (squash)    |
+| `gitscode-134-login-shell`                                | `feat/login-shell-env-propagation` | merged (0 ahead) |
+| `gitscode-135-auto-mode`                                  | `feat/claude-auto-permission-mode` | merged (0 ahead) |
+| `gitscode-automode-optin`                                 | `feat/automode-explicit-optin`     | #139 (0 ahead)   |
+| `gitscode-codex-schema`                                   | `feat/codex-0144-schema-regen`     | #141 (0 ahead)   |
+
+**Active — in progress, do NOT prune:**
+
+| Worktree                        | Branch                          | Ahead/behind | Note                                                                                                                        |
+| ------------------------------- | ------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `automated-browser-integration` | `automated-browser-integration` | 0 / 2        | in-progress work; branched off old `gits` tip, clean — `git -C … merge origin/gits` (or rebase) to refresh onto `da97a62fe` |
+
+**Unmerged — decide keep/continue/drop** (all lack open PRs; counts = commits ahead / behind `gits`):
+
+| Worktree                | Branch                     | Ahead/behind | Note                                                 |
+| ----------------------- | -------------------------- | ------------ | ---------------------------------------------------- |
+| `gitscode-headless`     | `feat/gits-headless`       | 6 / 287      | headless verify harness (very stale)                 |
+| `gitscode-audit-events` | `feat/audit-events`        | 1 / 72       | audit-backlog spike (stale)                          |
+| `gitscode-resume-cmd`   | `feat/copy-resume-command` | 1 / 65       | copy-resume-command (stale)                          |
+| `gitscode-visual-plan`  | `feat/visual-plan`         | 1514 / 1823  | separate lineage (#30 track), not off current `gits` |
+| `gitscode-3b`           | `gits`                     | 0 / 25       | spare `gits` checkout — just `git pull` to refresh   |
+
+> To continue on `gits`: branch fresh off `origin/gits` (local `main` is orphaned), one issue = one worktree = one PR, PR base = `gits`, pass `--repo Ecko95/gitscode` on every `gh` call. Verify locally with forced `turbo run typecheck` + targeted `vitest` + repo-wide `oxfmt --check` before pushing (CI's Format step is repo-wide).
+
 ## OpenAI model integration (2026-07-10)
 
 - [x] Document the `gpt-5.5` Codex app-server/schema update path in `docs/gits/openai-latest-model-integration-handoff.md`
