@@ -1409,6 +1409,7 @@ function PeerFleetPanel({
   onWait,
   onKill,
   onIntegrate,
+  killSwitchEnabled,
 }: {
   list: DelamainPeerListResult | undefined;
   loading: boolean;
@@ -1434,18 +1435,31 @@ function PeerFleetPanel({
   onWait: () => void;
   onKill: () => void;
   onIntegrate: () => void;
+  killSwitchEnabled: boolean;
 }) {
   const peers = list?.peers ?? [];
   const selectedPeer = selectedPeerId
     ? (peers.find((peer) => peer.id === selectedPeerId) ?? null)
     : null;
   const supported = new Set(list?.capabilities.supported ?? []);
+  // The automode kill switch (R#1) freezes the guarded manual actions
+  // (spawn/reply/kill/integrate) server-side; disable them here so the block is a
+  // visible, explained state instead of a bare RPC error. `wait` is read-only and
+  // stays enabled.
   const canSpawn =
-    supported.has("spawn") && spawnRepo.trim().length > 0 && spawnPrompt.trim().length > 0;
-  const canReply = supported.has("reply") && selectedPeer !== null && replyText.trim().length > 0;
+    supported.has("spawn") &&
+    spawnRepo.trim().length > 0 &&
+    spawnPrompt.trim().length > 0 &&
+    !killSwitchEnabled;
+  const canReply =
+    supported.has("reply") &&
+    selectedPeer !== null &&
+    replyText.trim().length > 0 &&
+    !killSwitchEnabled;
   const canWait = supported.has("wait") && selectedPeer !== null;
-  const canKill = supported.has("kill") && selectedPeer !== null;
-  const canIntegrate = supported.has("integrate") && selectedPeer !== null;
+  const canKill = supported.has("kill") && selectedPeer !== null && !killSwitchEnabled;
+  const canIntegrate =
+    supported.has("integrate") && selectedPeer !== null && !killSwitchEnabled;
   const errorMessage =
     error instanceof Error
       ? error.message
@@ -1609,6 +1623,12 @@ function PeerFleetPanel({
                 </div>
               </div>
               <div className="grid gap-2">
+                {killSwitchEnabled ? (
+                  <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
+                    Automode kill switch is on — manual peer actions (spawn, reply, kill,
+                    integrate) are disabled. Turn it off in the Automode tab to re-enable.
+                  </div>
+                ) : null}
                 <Textarea
                   value={replyText}
                   placeholder="Reply to this peer"
@@ -5198,6 +5218,7 @@ export function GitsCockpit() {
                 spawnPrompt={spawnPrompt}
                 replyText={replyText}
                 actionPending={actionPending}
+                killSwitchEnabled={automodeQuery.data?.policy.killSwitchEnabled ?? false}
                 onRefresh={() => void delamainQuery.refetch()}
                 onSelectPeer={setSelectedPeerId}
                 onSpawnRepoChange={setSpawnRepo}
