@@ -1231,14 +1231,12 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value.request)
-      .pipe(
-        // R5/E2: advance the watermark only after the turn actually sends.
-        Effect.tap(() => sendTurnRequest.value.commitWatermark),
-        Effect.catchCause(recoverTurnStartFailure),
-        Effect.forkScoped,
-      );
+    yield* providerService.sendTurn(sendTurnRequest.value.request).pipe(
+      // R5/E2: advance the watermark only after the turn actually sends.
+      Effect.tap(() => sendTurnRequest.value.commitWatermark),
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

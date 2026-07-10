@@ -4078,7 +4078,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.gitsDelamainSpawnPeer]({ repo: "/tmp/source-repo", prompt: "spawn task" }),
+          client[WS_METHODS.gitsDelamainSpawnPeer]({
+            repo: "/tmp/source-repo",
+            prompt: "spawn task",
+          }),
         ).pipe(Effect.result),
       );
 

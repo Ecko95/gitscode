@@ -44,10 +44,7 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
-import {
-  DelamainAdapter,
-  type DelamainAdapterShape,
-} from "../../gits/Services/DelamainAdapter.ts";
+import { DelamainAdapter, type DelamainAdapterShape } from "../../gits/Services/DelamainAdapter.ts";
 import type { DelamainMessage, DelamainPeer } from "@t3tools/contracts";
 import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
@@ -2842,7 +2839,10 @@ describe("ProviderCommandReactor", () => {
       ...overrides,
     });
 
-    const setWorktreePath = (harness: Awaited<ReturnType<typeof createHarness>>, worktreePath: string) =>
+    const setWorktreePath = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      worktreePath: string,
+    ) =>
       Effect.runPromise(
         harness.engine.dispatch(
           {
@@ -2897,7 +2897,13 @@ describe("ProviderCommandReactor", () => {
       await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
       harness.listPeers.mockReturnValue(
         Effect.succeed({
-          capabilities: { available: false, binaryPath: null, supported: [], unsupported: [], checkedAt: "2026-01-01T00:00:00.000Z" },
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
           peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
         }),
       );
@@ -2938,7 +2944,13 @@ describe("ProviderCommandReactor", () => {
       await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
       harness.listPeers.mockReturnValue(
         Effect.succeed({
-          capabilities: { available: false, binaryPath: null, supported: [], unsupported: [], checkedAt: "2026-01-01T00:00:00.000Z" },
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
           peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
         }),
       );
@@ -2983,7 +2995,13 @@ describe("ProviderCommandReactor", () => {
       await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
       harness.listPeers.mockReturnValue(
         Effect.succeed({
-          capabilities: { available: false, binaryPath: null, supported: [], unsupported: [], checkedAt: "2026-01-01T00:00:00.000Z" },
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
           peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
         }),
       );
@@ -3058,7 +3076,13 @@ describe("ProviderCommandReactor", () => {
       await setWorktreePath(harness, "/tmp/not-a-peer");
       harness.listPeers.mockReturnValue(
         Effect.succeed({
-          capabilities: { available: false, binaryPath: null, supported: [], unsupported: [], checkedAt: "2026-01-01T00:00:00.000Z" },
+          capabilities: {
+            available: false,
+            binaryPath: null,
+            supported: [],
+            unsupported: [],
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
           peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/some-other-worktree" })],
         }),
       );

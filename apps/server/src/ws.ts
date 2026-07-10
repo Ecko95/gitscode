@@ -356,12 +356,18 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         automodeSupervisor.getSnapshot().pipe(
           Effect.mapError(
             (cause) =>
-              new DelamainAdapterError({ message: "Failed to check the automode kill switch.", cause }),
+              new DelamainAdapterError({
+                message: "Failed to check the automode kill switch.",
+                cause,
+              }),
           ),
-          Effect.flatMap((snapshot): Effect.Effect<A, E | DelamainAdapterError, R> =>
-            snapshot.policy.killSwitchEnabled
-              ? Effect.fail(new DelamainAdapterError({ message: "Blocked by the automode kill switch." }))
-              : action,
+          Effect.flatMap(
+            (snapshot): Effect.Effect<A, E | DelamainAdapterError, R> =>
+              snapshot.policy.killSwitchEnabled
+                ? Effect.fail(
+                    new DelamainAdapterError({ message: "Blocked by the automode kill switch." }),
+                  )
+                : action,
           ),
         );
       const serverEnvironment = yield* ServerEnvironment;
