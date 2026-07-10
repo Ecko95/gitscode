@@ -2929,6 +2929,51 @@ describe("ProviderCommandReactor", () => {
       });
     });
 
+    it("does not advance the watermark when the turn fails to send (correlation still cached)", async () => {
+      const harness = await createHarness();
+      await setWorktreePath(harness, "/tmp/peer-worktree");
+      await seedBinding(harness, { cwd: "/tmp/peer-worktree" });
+      harness.listPeers.mockReturnValue(
+        Effect.succeed({
+          capabilities: { available: false, binaryPath: null, supported: [], unsupported: [], checkedAt: "2026-01-01T00:00:00.000Z" },
+          peers: [makeDelamainPeer({ id: "peer-alpha", worktreePath: "/tmp/peer-worktree" })],
+        }),
+      );
+      harness.readInbox.mockReturnValue(
+        Effect.succeed({
+          peerId: "peer-alpha",
+          messages: [makeDelamainMessage("msg-1"), makeDelamainMessage("msg-2")],
+        }),
+      );
+      // The turn is built + seeded, but sending fails: E2 requires the watermark to
+      // stay put (so these messages re-seed next turn) while the peer correlation,
+      // which is non-lossy, is still cached inline before the send.
+      harness.sendTurn.mockReturnValue(Effect.die(new Error("send failed")));
+
+      await startTurn(harness, "keep working");
+
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      // The inline r5PeerId cache persists before the (failing) send.
+      await waitFor(async () => {
+        const binding = await Effect.runPromise(
+          harness.providerSessionDirectory.getBinding(ThreadId.make("thread-1")),
+        );
+        const payload = Option.getOrUndefined(binding)?.runtimePayload as
+          | Record<string, unknown>
+          | undefined;
+        return payload?.r5PeerId === "peer-alpha";
+      });
+
+      const binding = await Effect.runPromise(
+        harness.providerSessionDirectory.getBinding(ThreadId.make("thread-1")),
+      );
+      const payload = Option.getOrUndefined(binding)?.runtimePayload as
+        | Record<string, unknown>
+        | undefined;
+      // Watermark NOT advanced because the send never succeeded.
+      expect(payload?.r5CoveredMessageId).toBeUndefined();
+    });
+
     it("degrades to no seed (the turn still starts) when the delamain adapter fails", async () => {
       const harness = await createHarness();
       await setWorktreePath(harness, "/tmp/peer-worktree");

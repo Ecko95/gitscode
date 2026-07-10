@@ -837,7 +837,7 @@ const make = Effect.gen(function* () {
   }) {
     const worktreePath = thread.worktreePath;
     if (!worktreePath) {
-      return undefined;
+      return { seed: undefined, commitWatermark: Effect.void };
     }
     const binding = Option.getOrUndefined(yield* providerSessionDirectory.getBinding(thread.id));
     const runtimePayload =
@@ -861,7 +861,7 @@ const make = Effect.gen(function* () {
         (peer) => peer.worktreePath !== null && peer.worktreePath === worktreePath,
       );
       if (!match) {
-        return undefined;
+        return { seed: undefined, commitWatermark: Effect.void };
       }
       peerId = match.id;
       resolvedNewPeerId = true;
@@ -896,12 +896,23 @@ const make = Effect.gen(function* () {
         // Cache the correlation so later turns skip listPeers.
         yield* persistRuntimePayload({ r5PeerId: peerId });
       }
-      return undefined;
+      return { seed: undefined, commitWatermark: Effect.void };
     }
 
     const newestSeededId = unseen[unseen.length - 1]!.id;
-    yield* persistRuntimePayload({ r5PeerId: peerId, r5CoveredMessageId: newestSeededId });
-    return renderPeerInboxContextSeed(unseen);
+    // The correlation cache is non-lossy: persist r5PeerId now so a turn that
+    // fails to send doesn't force a listPeers re-resolve next turn.
+    if (resolvedNewPeerId) {
+      yield* persistRuntimePayload({ r5PeerId: peerId });
+    }
+    // R5/E2: defer the watermark advance until AFTER the turn sends. A turn that
+    // fails to send leaves r5CoveredMessageId put, so these messages re-seed next
+    // turn (benign) instead of being marked covered without ever being injected.
+    const commitWatermark = persistRuntimePayload({
+      r5PeerId: peerId,
+      r5CoveredMessageId: newestSeededId,
+    });
+    return { seed: renderPeerInboxContextSeed(unseen), commitWatermark };
   });
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
@@ -942,16 +953,16 @@ const make = Effect.gen(function* () {
     // peer pays one listPeers spawn per turn. Best-effort: any delamain error is
     // caught here and degrades to no seed — it NEVER aborts the provider turn.
     // Coexists with the summary seed.
-    const peerInboxSeed = yield* buildPeerInboxContextSeedForTurn(thread).pipe(
+    const peerInboxResult = yield* buildPeerInboxContextSeedForTurn(thread).pipe(
       Effect.catch((error) =>
         Effect.logWarning("R5 peer inbox seed skipped due to a delamain error", {
           threadId: input.threadId,
           error,
-        }).pipe(Effect.as(undefined)),
+        }).pipe(Effect.as({ seed: undefined, commitWatermark: Effect.void })),
       ),
     );
-    const providerMessageText = peerInboxSeed
-      ? `${peerInboxSeed}\n\n${summarySeededText}`
+    const providerMessageText = peerInboxResult.seed
+      ? `${peerInboxResult.seed}\n\n${summarySeededText}`
       : summarySeededText;
     const normalizedInput = toNonEmptyProviderInput(providerMessageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -984,11 +995,14 @@ const make = Effect.gen(function* () {
         : input.modelSelection;
 
     return {
-      threadId: input.threadId,
-      ...(normalizedInput ? { input: normalizedInput } : {}),
-      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
-      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      request: {
+        threadId: input.threadId,
+        ...(normalizedInput ? { input: normalizedInput } : {}),
+        ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
+        ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
+        ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      },
+      commitWatermark: peerInboxResult.commitWatermark,
     };
   });
 
@@ -1210,8 +1224,13 @@ const make = Effect.gen(function* () {
     }
 
     yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+      .sendTurn(sendTurnRequest.value.request)
+      .pipe(
+        // R5/E2: advance the watermark only after the turn actually sends.
+        Effect.tap(() => sendTurnRequest.value.commitWatermark),
+        Effect.catchCause(recoverTurnStartFailure),
+        Effect.forkScoped,
+      );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
