@@ -17,6 +17,8 @@ import type {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
@@ -54,9 +56,26 @@ export interface OrchestrationEngineShape {
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
+   * Acquire a domain-event subscription synchronously in the caller's scope.
+   *
+   * Startup and snapshot consumers should acquire this before announcing
+   * readiness or reading a snapshot, then consume it with
+   * `Stream.fromSubscription`. This avoids the lazy `Stream.fromPubSub`
+   * subscription window where a hot event can be published before the
+   * consumer fiber starts running.
+   */
+  readonly subscribeDomainEvents: Effect.Effect<
+    PubSub.Subscription<OrchestrationEvent>,
+    never,
+    Scope.Scope
+  >;
+
+  /**
    * Stream persisted domain events in dispatch order.
    *
    * This is a hot runtime stream (new events only), not a historical replay.
+   * Consumers that must be ready before returning should use
+   * `subscribeDomainEvents` instead.
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
 }

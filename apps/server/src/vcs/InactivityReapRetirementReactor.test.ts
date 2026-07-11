@@ -65,6 +65,7 @@ function makeEngineLayer(domainEvents: OrchestrationEvent[] = []): {
           return { sequence: dispatched.length };
         }),
       readEvents: () => Stream.fromIterable(domainEvents) as Stream.Stream<OrchestrationEvent>,
+      subscribeDomainEvents: Effect.die("unused"),
       streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
     }),
     dispatched,

@@ -168,36 +168,6 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   );
 }
 
-/**
- * logSequenceGap - detects and logs a gap between the snapshot boundary and
- * the first live event on a subscriber's hot stream.
- *
- * Called once per subscription at the point where the live stream is wired in.
- * A gap (firstLiveSequence > snapshotSequence + 1) means events were emitted
- * between snapshot-read and stream-subscription and will never be delivered to
- * this subscriber — silent event loss on reconnect.
- *
- * Recovery chosen: log structured warning and continue. Crashing the socket
- * or forcibly refetching the snapshot here would require redesigning the
- * stream contract; the warn gives the operator enough context to detect
- * and address this at the architectural level (e.g. subscribe-then-snapshot).
- *
- * ponytail: first-event check only — per-event monotonicity is a separate concern.
- */
-export function logSequenceGap(
-  label: string,
-  snapshotSequence: number,
-  firstLiveSequence: number,
-): Effect.Effect<void> {
-  if (firstLiveSequence <= snapshotSequence + 1) return Effect.void;
-  return Effect.logWarning("subscribe-sequence-gap: live stream skips past snapshot boundary", {
-    label,
-    snapshotSequence,
-    firstLiveSequence,
-    gapSize: firstLiveSequence - snapshotSequence - 1,
-  });
-}
-
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // ponytail: per-WS-subscriber event buffer cap for UI push streams.
@@ -1032,6 +1002,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
+              const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
@@ -1045,8 +1016,15 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 ),
               );
 
-              const liveStream = bufferOrTerminate(
-                orchestrationEngine.streamDomainEvents,
+              const liveStream = Stream.fromSubscription(domainEvents).pipe(
+                Stream.filter((event) => event.sequence > snapshot.snapshotSequence),
+                Stream.mapEffect(toShellStreamEvent),
+                Stream.flatMap((event) =>
+                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                ),
+              );
+              const bufferedLiveStream = bufferOrTerminate(
+                liveStream,
                 WS_PUSH_SUBSCRIBER_BUFFER,
                 () =>
                   new OrchestrationGetSnapshotError({
@@ -1054,24 +1032,6 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                       "subscribeShell: subscriber buffer overflow — resubscribe for fresh snapshot",
                     cause: "overflow",
                   }),
-              ).pipe(
-                // ponytail: gap check on raw stream before toShellStreamEvent filters
-                // may drop the event.
-                Stream.mapAccumEffect(
-                  () => false as boolean,
-                  (checked, event: OrchestrationEvent) =>
-                    checked
-                      ? Effect.succeed([true, [event]] as const)
-                      : logSequenceGap(
-                          "subscribeShell",
-                          snapshot.snapshotSequence,
-                          event.sequence,
-                        ).pipe(Effect.as([true, [event]] as const)),
-                ),
-                Stream.mapEffect(toShellStreamEvent),
-                Stream.flatMap((event) =>
-                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
-                ),
               );
 
               return Stream.concat(
@@ -1079,7 +1039,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                   kind: "snapshot" as const,
                   snapshot,
                 }),
-                liveStream,
+                bufferedLiveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1105,6 +1065,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
+              const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
               const { threadDetail, snapshotSequence } = yield* readThreadDetailSnapshot(
                 input.threadId,
                 projectionSnapshotQuery,
@@ -1117,29 +1078,8 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 });
               }
 
-              const liveStream = bufferOrTerminate(
-                orchestrationEngine.streamDomainEvents,
-                WS_PUSH_SUBSCRIBER_BUFFER,
-                () =>
-                  new OrchestrationGetSnapshotError({
-                    message: `subscribeThread:${input.threadId}: subscriber buffer overflow — resubscribe for fresh snapshot`,
-                    cause: "overflow",
-                  }),
-              ).pipe(
-                // ponytail: gap check on raw stream before thread filter so the first
-                // event arriving after snapshot-read (even for other aggregates) sets
-                // the checked flag — the sequence space is global, not per-thread.
-                Stream.mapAccumEffect(
-                  () => false as boolean,
-                  (checked, event: OrchestrationEvent) =>
-                    checked
-                      ? Effect.succeed([true, [event]] as const)
-                      : logSequenceGap(
-                          `subscribeThread:${input.threadId}`,
-                          snapshotSequence,
-                          event.sequence,
-                        ).pipe(Effect.as([true, [event]] as const)),
-                ),
+              const liveStream = Stream.fromSubscription(domainEvents).pipe(
+                Stream.filter((event) => event.sequence > snapshotSequence),
                 Stream.filter(
                   (event) =>
                     event.aggregateKind === "thread" &&
@@ -1151,6 +1091,15 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                   event,
                 })),
               );
+              const bufferedLiveStream = bufferOrTerminate(
+                liveStream,
+                WS_PUSH_SUBSCRIBER_BUFFER,
+                () =>
+                  new OrchestrationGetSnapshotError({
+                    message: `subscribeThread:${input.threadId}: subscriber buffer overflow — resubscribe for fresh snapshot`,
+                    cause: "overflow",
+                  }),
+              );
 
               return Stream.concat(
                 Stream.make({
@@ -1160,7 +1109,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                     thread: threadDetail.value,
                   },
                 }),
-                liveStream,
+                bufferedLiveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },

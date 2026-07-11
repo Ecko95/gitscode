@@ -56,10 +56,12 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -1245,6 +1247,10 @@ const buildAppUnderTest = (options?: {
         Layer.mock(OrchestrationEngineService)({
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
           streamDomainEvents: Stream.empty,
           ...options?.layers?.orchestrationEngine,
         }),
@@ -5337,6 +5343,96 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
       assertTrue(result.failure.cause instanceof Error);
       assert.include(result.failure.cause.message, projectionError.message);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers shell events published while the snapshot is loading", () =>
+    Effect.gen(function* () {
+      const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const snapshotStarted = yield* Deferred.make<void>();
+      const releaseSnapshot = yield* Deferred.make<void>();
+      const lazyStreamSubscribed = yield* Deferred.make<void>();
+      const threadId = ThreadId.make("thread-during-shell-snapshot");
+      const event = {
+        sequence: 11,
+        eventId: EventId.make("event-during-shell-snapshot"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-04-05T00:00:00.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.deleted",
+        payload: {
+          threadId,
+          deletedAt: "2026-04-05T00:00:00.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+      const fallbackEvent = {
+        ...event,
+        sequence: 12,
+        eventId: EventId.make("event-after-shell-snapshot"),
+      } satisfies Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            subscribeDomainEvents: PubSub.subscribe(domainEvents),
+            streamDomainEvents: Stream.unwrap(
+              Effect.gen(function* () {
+                const subscription = yield* PubSub.subscribe(domainEvents);
+                yield* Deferred.succeed(lazyStreamSubscribed, undefined);
+                return Stream.fromSubscription(subscription);
+              }),
+            ),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(snapshotStarted, undefined);
+                yield* Deferred.await(releaseSnapshot);
+                return {
+                  snapshotSequence: 10,
+                  projects: [],
+                  threads: [],
+                  updatedAt: "2026-04-05T00:00:00.000Z",
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const streamFiber = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
+            Stream.take(2),
+            Stream.runCollect,
+          ),
+        ),
+      ).pipe(Effect.forkScoped);
+
+      yield* Deferred.await(snapshotStarted);
+      yield* PubSub.publish(domainEvents, event);
+      yield* Deferred.succeed(releaseSnapshot, undefined);
+
+      const usedLazyStream = yield* Effect.race(
+        Deferred.await(lazyStreamSubscribed).pipe(Effect.as(true)),
+        Fiber.await(streamFiber).pipe(Effect.as(false)),
+      );
+      if (usedLazyStream) {
+        yield* PubSub.publish(domainEvents, fallbackEvent);
+      }
+
+      const output = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("2 seconds")));
+      assert.deepEqual(
+        output.map((item) => item.kind),
+        ["snapshot", "thread-removed"],
+      );
+      const liveEvent = output[1];
+      assertTrue(liveEvent?.kind === "thread-removed");
+      assert.equal(liveEvent.sequence, 11);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

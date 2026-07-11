@@ -9,8 +9,9 @@ export const PushNotificationReactorLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const orchestrationEngine = yield* OrchestrationEngineService;
     const pushNotifications = yield* PushNotificationService;
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
 
-    yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+    yield* Stream.runForEach(Stream.fromSubscription(domainEvents), (event) =>
       pushNotifications.sendForOrchestrationEvent(event).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("web push notification reactor failed", {
