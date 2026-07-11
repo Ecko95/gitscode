@@ -14,9 +14,9 @@
  *   - Archived-but-not-deleted threads BLOCK pruning — parked work stays on
  *     disk. `thread.deleted` is the only signal that frees the worktree.
  *
- *   Layer 2 — projection DB (covers pre-W2.5 worktrees with NO owner-recorded events):
- *   - When layer 1 sees no ownership events (pure-orphan case), check the projection:
- *     does any non-deleted thread have this worktree_path? If yes → BLOCK (skip-rebound).
+ *   Layer 2 — projection DB (final guard for every candidate):
+ *   - Check whether any non-deleted thread still has this worktree_path. If yes →
+ *     BLOCK (skip-rebound), including when a deleted historical owner has a live fork.
  *   - Uses ProjectionSnapshotQuery.hasLiveThreadForWorktreePath which queries
  *     `projection_threads WHERE worktree_path = ? AND deleted_at IS NULL`.
  *   - ARCHIVED threads block because deleted_at IS NULL covers them.
@@ -27,7 +27,7 @@
  *   3. Emit worktree.buried (trigger: "reaper", finalCheckpointRef from step 1)
  *
  *   Failure modes:
- *   - captureCheckpoint fails → buried with null ref (removal proceeds)
+ *   - captureCheckpoint fails → skip removal and retry next sweep
  *   - removeWorktree fails → warn, NO buried event, retry next sweep
  *   - hasLiveThreadForWorktreePath fails → warn, skip (fail-safe: don't prune on error)
  *
@@ -213,31 +213,28 @@ export const runSweepOnce = Effect.gen(function* () {
     const adoptedMs = Date.parse(entry.adoptedAt);
     if (Number.isNaN(adoptedMs) || now - adoptedMs <= maxAgeMs) continue;
 
-    // REBINDING GUARD — two layers checked immediately before pruning.
-    // Layer 1: event-store (post-W2.5 worktrees with owner-recorded events)
+    // REBINDING GUARD — event history can prove an owner is still active.
     if (!isStillUnbound(worktreePath, allEvents)) {
       yield* Effect.logInfo("graveyard.reaper.skip-rebound", { worktreePath });
       continue;
     }
 
-    // Layer 2: projection DB (pre-W2.5 worktrees — no owner-recorded events exist).
-    // isStillUnbound returns true for "no owner events" (pure-orphan path), but a live
-    // thread may still reference this path via the projection. Block if so.
+    // Final liveness guard: always consult the projection immediately before destructive
+    // work. Forks share the source thread's path, so a deleted historical owner does not
+    // prove the path is unbound while another live thread still references it.
     // Fail-safe: treat query errors as "live thread present" (don't prune on uncertainty).
-    if (getOwnerThreadId(worktreePath, allEvents) === null) {
-      const projBound: boolean = yield* projectionQuery
-        .hasLiveThreadForWorktreePath(worktreePath)
-        .pipe(
-          Effect.catch((_err) =>
-            Effect.logWarning("graveyard.reaper.projection-check-failed", { worktreePath }).pipe(
-              Effect.as(true), // fail-safe: assume bound
-            ),
+    const projBound: boolean = yield* projectionQuery
+      .hasLiveThreadForWorktreePath(worktreePath)
+      .pipe(
+        Effect.catch((_err) =>
+          Effect.logWarning("graveyard.reaper.projection-check-failed", { worktreePath }).pipe(
+            Effect.as(true), // fail-safe: assume bound
           ),
-        );
-      if (projBound) {
-        yield* Effect.logInfo("graveyard.reaper.skip-rebound", { worktreePath });
-        continue;
-      }
+        ),
+      );
+    if (projBound) {
+      yield* Effect.logInfo("graveyard.reaper.skip-rebound", { worktreePath });
+      continue;
     }
 
     // Disk presence check (may have been removed externally)
@@ -250,7 +247,8 @@ export const runSweepOnce = Effect.gen(function* () {
       continue;
     }
 
-    // Step 1: capture raw checkpoint ref
+    // Step 1: capture raw checkpoint ref. A failed capture leaves the worktree
+    // untouched so a later sweep can retry without risking uncheckpointed data.
     const checkpointRef = graveyardCheckpointRef(worktreePath);
     const capturedRef: CheckpointRef | null = yield* checkpointStore
       .captureCheckpoint({ cwd: worktreePath, checkpointRef })
@@ -262,6 +260,9 @@ export const runSweepOnce = Effect.gen(function* () {
           ),
         ),
       );
+    if (capturedRef === null) {
+      continue;
+    }
 
     // Step 2: remove worktree (force: true — orphans are likely dirty)
     const removed: boolean = yield* gitDriver
