@@ -807,6 +807,75 @@ function retainThreadScopedRecord<T>(
   ) as Record<ThreadId, T>;
 }
 
+function removeThreadScopedRecordValue<T>(
+  record: Record<ThreadId, T>,
+  threadId: ThreadId,
+): Record<ThreadId, T> {
+  if (!(threadId in record)) {
+    return record;
+  }
+
+  const { [threadId]: _removed, ...remaining } = record;
+  return remaining as Record<ThreadId, T>;
+}
+
+function clearEnvironmentThreadDetail(
+  state: EnvironmentState,
+  threadId: ThreadId,
+): EnvironmentState {
+  const messageIdsByThreadId = removeThreadScopedRecordValue(state.messageIdsByThreadId, threadId);
+  const messageByThreadId = removeThreadScopedRecordValue(state.messageByThreadId, threadId);
+  const activityIdsByThreadId = removeThreadScopedRecordValue(
+    state.activityIdsByThreadId,
+    threadId,
+  );
+  const activityByThreadId = removeThreadScopedRecordValue(state.activityByThreadId, threadId);
+  const proposedPlanIdsByThreadId = removeThreadScopedRecordValue(
+    state.proposedPlanIdsByThreadId,
+    threadId,
+  );
+  const proposedPlanByThreadId = removeThreadScopedRecordValue(
+    state.proposedPlanByThreadId,
+    threadId,
+  );
+  const visualPlanByThreadId = removeThreadScopedRecordValue(state.visualPlanByThreadId, threadId);
+  const turnDiffIdsByThreadId = removeThreadScopedRecordValue(
+    state.turnDiffIdsByThreadId,
+    threadId,
+  );
+  const turnDiffSummaryByThreadId = removeThreadScopedRecordValue(
+    state.turnDiffSummaryByThreadId,
+    threadId,
+  );
+
+  if (
+    messageIdsByThreadId === state.messageIdsByThreadId &&
+    messageByThreadId === state.messageByThreadId &&
+    activityIdsByThreadId === state.activityIdsByThreadId &&
+    activityByThreadId === state.activityByThreadId &&
+    proposedPlanIdsByThreadId === state.proposedPlanIdsByThreadId &&
+    proposedPlanByThreadId === state.proposedPlanByThreadId &&
+    visualPlanByThreadId === state.visualPlanByThreadId &&
+    turnDiffIdsByThreadId === state.turnDiffIdsByThreadId &&
+    turnDiffSummaryByThreadId === state.turnDiffSummaryByThreadId
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    messageIdsByThreadId,
+    messageByThreadId,
+    activityIdsByThreadId,
+    activityByThreadId,
+    proposedPlanIdsByThreadId,
+    proposedPlanByThreadId,
+    visualPlanByThreadId,
+    turnDiffIdsByThreadId,
+    turnDiffSummaryByThreadId,
+  };
+}
+
 function removeThreadState(state: EnvironmentState, threadId: ThreadId): EnvironmentState {
   const shell = state.threadShellById[threadId];
   if (!shell) {
@@ -1185,6 +1254,19 @@ export function syncServerThreadDetail(
     state,
     environmentId,
     writeThreadState(environmentState, mapThread(thread, environmentId), previousThread),
+  );
+}
+
+export function clearServerThreadDetail(state: AppState, threadRef: ScopedThreadRef): AppState {
+  const environmentState = state.environmentStateById[threadRef.environmentId];
+  if (!environmentState) {
+    return state;
+  }
+
+  return commitEnvironmentState(
+    state,
+    threadRef.environmentId,
+    clearEnvironmentThreadDetail(environmentState, threadRef.threadId),
   );
 }
 
@@ -2033,6 +2115,7 @@ interface AppStore extends AppState {
     environmentId: EnvironmentId,
   ) => void;
   syncServerThreadDetail: (thread: OrchestrationThread, environmentId: EnvironmentId) => void;
+  clearServerThreadDetail: (threadRef: ScopedThreadRef) => void;
   applyOrchestrationEvent: (event: OrchestrationEvent, environmentId: EnvironmentId) => void;
   applyOrchestrationEvents: (
     events: ReadonlyArray<OrchestrationEvent>,
@@ -2057,6 +2140,7 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => syncServerShellSnapshot(state, snapshot, environmentId)),
   syncServerThreadDetail: (thread, environmentId) =>
     set((state) => syncServerThreadDetail(state, thread, environmentId)),
+  clearServerThreadDetail: (threadRef) => set((state) => clearServerThreadDetail(state, threadRef)),
   applyOrchestrationEvent: (event, environmentId) =>
     set((state) => applyOrchestrationEvent(state, event, environmentId)),
   applyOrchestrationEvents: (events, environmentId) =>

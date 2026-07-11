@@ -476,6 +476,7 @@ function disposeThreadDetailSubscriptionByKey(key: string): boolean {
   threadDetailSubscriptions.delete(key);
   entry.unsubscribe();
   entry.unsubscribe = NOOP;
+  useStore.getState().clearServerThreadDetail(scopeThreadRef(entry.environmentId, entry.threadId));
   return true;
 }
 

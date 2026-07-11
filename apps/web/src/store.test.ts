@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyOrchestrationEvent,
   applyOrchestrationEvents,
+  clearServerThreadDetail,
   removeEnvironmentState,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
@@ -293,6 +294,55 @@ describe("environment state removal", () => {
   });
 });
 
+describe("thread detail removal", () => {
+  it("releases detail payload maps without removing shell or sidebar state", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "assistant",
+          text: "heavy payload",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const state = makeState(thread);
+    const previousEnvironmentState = environmentStateOf(state, thread.environmentId);
+    const next = clearServerThreadDetail(state, scopeThreadRef(thread.environmentId, thread.id));
+    const nextEnvironmentState = environmentStateOf(next, thread.environmentId);
+
+    expect(nextEnvironmentState.messageIdsByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.messageByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.activityIdsByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.activityByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.proposedPlanIdsByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.proposedPlanByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.visualPlanByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.turnDiffIdsByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.turnDiffSummaryByThreadId).not.toHaveProperty(thread.id);
+    expect(nextEnvironmentState.threadShellById).toBe(previousEnvironmentState.threadShellById);
+    expect(nextEnvironmentState.threadSessionById).toBe(previousEnvironmentState.threadSessionById);
+    expect(nextEnvironmentState.threadTurnStateById).toBe(
+      previousEnvironmentState.threadTurnStateById,
+    );
+    expect(nextEnvironmentState.sidebarThreadSummaryById).toBe(
+      previousEnvironmentState.sidebarThreadSummaryById,
+    );
+    expect(nextEnvironmentState.threadIds).toBe(previousEnvironmentState.threadIds);
+    expect(nextEnvironmentState.threadIdsByProjectId).toBe(
+      previousEnvironmentState.threadIdsByProjectId,
+    );
+    expect(selectThreadByRef(next, scopeThreadRef(thread.environmentId, thread.id))).toMatchObject({
+      title: "Thread",
+      messages: [],
+    });
+    expect(clearServerThreadDetail(next, scopeThreadRef(thread.environmentId, thread.id))).toBe(
+      next,
+    );
+  });
+});
+
 describe("thread selection memoization", () => {
   it("returns stable thread references for repeated reads of the same state", () => {
     const thread = makeThread({
@@ -482,9 +532,9 @@ describe("setError", () => {
       "remote next error",
     );
 
-    expect(
-      selectThreadByRef(next, scopeThreadRef(localEnvironmentId, sharedThreadId))?.error,
-    ).toBe("local error");
+    expect(selectThreadByRef(next, scopeThreadRef(localEnvironmentId, sharedThreadId))?.error).toBe(
+      "local error",
+    );
     expect(
       selectThreadByRef(next, scopeThreadRef(remoteEnvironmentId, sharedThreadId))?.error,
     ).toBe("remote next error");
