@@ -99,10 +99,7 @@ type ThreadDetailSubscriptionEntry = {
   // ponytail: tracks the snapshotSequence from the most recent detail snapshot so
   // stale events replayed after a resubscribe are discarded (W3.1).
   lastDetailSnapshotSequence: number;
-  // ponytail: legacy web cache keeps its own detail stream gate until it is
-  // migrated to the shared runtime manager.
-  lastAppliedDetailSequence: number;
-  // W4.4b: true while a server-failure-triggered resubscribe is in progress;
+  // True while a server-failure-triggered resubscribe is in progress;
   // gates further incoming events so a burst can't loop into a refetch storm.
   gapRefetchPending: boolean;
   resubscribeTimeoutId: ReturnType<typeof setTimeout> | null;
@@ -406,16 +403,14 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
   // Reset sequence gate on each (re)subscribe so the fresh snapshot's sequence
   // becomes the new floor — events with sequence ≤ that value are stale (W3.1).
   entry.lastDetailSnapshotSequence = -1;
-  entry.lastAppliedDetailSequence = -1;
 
   entry.unsubscribe = connection.client.orchestration.subscribeThread(
     { threadId: entry.threadId },
     (item) => {
       if (item.kind === "snapshot") {
         entry.lastDetailSnapshotSequence = item.snapshot.snapshotSequence;
-        entry.lastAppliedDetailSequence = item.snapshot.snapshotSequence;
         entry.resubscribeRetryDelayMs = THREAD_DETAIL_RESUBSCRIBE_INITIAL_BACKOFF_MS;
-        // W4.4b: gate resets once fresh snapshot arrives.
+        // The explicit stream-failure gate resets once a fresh snapshot arrives.
         entry.gapRefetchPending = false;
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId);
         return;
@@ -429,18 +424,7 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
       if (entry.gapRefetchPending) {
         return;
       }
-      if (
-        entry.lastAppliedDetailSequence >= 0 &&
-        item.event.sequence > entry.lastAppliedDetailSequence + 1
-      ) {
-        entry.gapRefetchPending = true;
-        entry.unsubscribe();
-        entry.unsubscribe = NOOP;
-        attachThreadDetailSubscription(entry);
-        return;
-      }
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
-      entry.lastAppliedDetailSequence = item.event.sequence;
     },
     {
       // W4.4b: on server-side subscription failure (e.g. buffer overflow), resubscribe
@@ -649,7 +633,6 @@ export function retainThreadDetailSubscription(
     lastAccessedAt: Date.now(),
     evictionTimeoutId: null,
     lastDetailSnapshotSequence: -1,
-    lastAppliedDetailSequence: -1,
     gapRefetchPending: false,
     resubscribeTimeoutId: null,
     resubscribeRetryDelayMs: THREAD_DETAIL_RESUBSCRIBE_INITIAL_BACKOFF_MS,

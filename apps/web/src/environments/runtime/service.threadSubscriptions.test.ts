@@ -903,8 +903,9 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  // W1: missing detail deltas must not be applied over a stale local thread.
-  it("resubscribes for a fresh snapshot when the live detail stream skips a sequence", async () => {
+  // The server filters a global sequence stream by thread, so unrelated events
+  // legitimately create gaps between relevant thread-detail events.
+  it("applies non-contiguous relevant events without resubscribing", async () => {
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-gap");
 
@@ -977,23 +978,13 @@ describe("retainThreadDetailSubscription", () => {
       snapshot: { snapshotSequence: 10, thread: makeThread() },
     } as StreamItem);
 
-    firstCallback(makeEvent(11, "contiguous") as StreamItem);
+    firstCallback(makeEvent(11, "first relevant event") as StreamItem);
     expect(applyEventsSpy).toHaveBeenCalledTimes(1);
 
-    firstCallback(makeEvent(13, "gapped") as StreamItem);
-    expect(applyEventsSpy).toHaveBeenCalledTimes(1);
-    expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
-
-    firstCallback(makeEvent(14, "old-callback") as StreamItem);
-    expect(applyEventsSpy).toHaveBeenCalledTimes(1);
-
-    const refetchCallback = capturedCallbacks[1]!;
-    refetchCallback({
-      kind: "snapshot",
-      snapshot: { snapshotSequence: 20, thread: makeThread() },
-    } as StreamItem);
-    refetchCallback(makeEvent(21, "post-refetch") as StreamItem);
+    firstCallback(makeEvent(13, "second relevant event") as StreamItem);
     expect(applyEventsSpy).toHaveBeenCalledTimes(2);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
 
     stop();
     await resetEnvironmentServiceForTests();
