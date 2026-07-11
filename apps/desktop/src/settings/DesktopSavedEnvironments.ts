@@ -81,6 +81,16 @@ export class DesktopSavedEnvironmentsWriteError extends Data.TaggedError(
   }
 }
 
+export class DesktopSavedEnvironmentsReadError extends Data.TaggedError(
+  "DesktopSavedEnvironmentsReadError",
+)<{
+  readonly cause: PlatformError.PlatformError | Schema.SchemaError;
+}> {
+  override get message() {
+    return `Failed to read desktop saved environments: ${this.cause.message}`;
+  }
+}
+
 export class DesktopSavedEnvironmentSecretDecodeError extends Data.TaggedError(
   "DesktopSavedEnvironmentSecretDecodeError",
 )<{
@@ -92,20 +102,25 @@ export class DesktopSavedEnvironmentSecretDecodeError extends Data.TaggedError(
 }
 
 export type DesktopSavedEnvironmentsGetSecretError =
+  | DesktopSavedEnvironmentsReadError
   | DesktopSavedEnvironmentSecretDecodeError
   | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
   | ElectronSafeStorage.ElectronSafeStorageDecryptError;
 
 export type DesktopSavedEnvironmentsSetSecretError =
+  | DesktopSavedEnvironmentsReadError
   | DesktopSavedEnvironmentsWriteError
   | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
   | ElectronSafeStorage.ElectronSafeStorageEncryptError;
 
 export interface DesktopSavedEnvironmentsShape {
-  readonly getRegistry: Effect.Effect<readonly PersistedSavedEnvironmentRecord[]>;
+  readonly getRegistry: Effect.Effect<
+    readonly PersistedSavedEnvironmentRecord[],
+    DesktopSavedEnvironmentsReadError
+  >;
   readonly setRegistry: (
     records: readonly PersistedSavedEnvironmentRecord[],
-  ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
+  ) => Effect.Effect<void, DesktopSavedEnvironmentsReadError | DesktopSavedEnvironmentsWriteError>;
   readonly getSecret: (
     environmentId: string,
   ) => Effect.Effect<Option.Option<string>, DesktopSavedEnvironmentsGetSecretError>;
@@ -115,7 +130,7 @@ export interface DesktopSavedEnvironmentsShape {
   }) => Effect.Effect<boolean, DesktopSavedEnvironmentsSetSecretError>;
   readonly removeSecret: (
     environmentId: string,
-  ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
+  ) => Effect.Effect<void, DesktopSavedEnvironmentsReadError | DesktopSavedEnvironmentsWriteError>;
 }
 
 export class DesktopSavedEnvironments extends Context.Service<
@@ -178,16 +193,21 @@ function normalizeSavedEnvironmentRegistryDocument(
 function readRegistryDocument(
   fileSystem: FileSystem.FileSystem,
   registryPath: string,
-): Effect.Effect<SavedEnvironmentRegistryDocument> {
+): Effect.Effect<SavedEnvironmentRegistryDocument, DesktopSavedEnvironmentsReadError> {
   return fileSystem.readFileString(registryPath).pipe(
-    Effect.option,
+    Effect.map(Option.some),
+    Effect.catch((cause: PlatformError.PlatformError) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.succeed(Option.none<string>())
+        : Effect.fail(new DesktopSavedEnvironmentsReadError({ cause })),
+    ),
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.succeed({ version: 1, records: [] }),
         onSome: (raw) =>
           decodeSavedEnvironmentRegistryDocumentJson(raw).pipe(
             Effect.map(normalizeSavedEnvironmentRegistryDocument),
-            Effect.catch(() => Effect.succeed({ version: 1, records: [] })),
+            Effect.mapError((cause) => new DesktopSavedEnvironmentsReadError({ cause })),
           ),
       }),
     ),

@@ -1,10 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -90,6 +94,7 @@ function makeLayer(
     readonly availabilityError?: unknown;
     readonly encryptError?: unknown;
     readonly decryptError?: unknown;
+    readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
   },
 ) {
   const environmentLayer = DesktopEnvironment.layer({
@@ -108,6 +113,10 @@ function makeLayer(
     ),
   );
 
+  const platformLayer = options?.fileSystemLayer
+    ? Layer.mergeAll(options.fileSystemLayer, NodeCrypto.layer, NodePath.layer)
+    : NodeServices.layer;
+
   return DesktopSavedEnvironments.layer.pipe(
     Layer.provideMerge(environmentLayer),
     Layer.provideMerge(
@@ -118,7 +127,7 @@ function makeLayer(
         decryptError: options?.decryptError,
       }),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(platformLayer),
   );
 }
 
@@ -129,6 +138,7 @@ const withSavedEnvironments = <A, E, R>(
     readonly availabilityError?: unknown;
     readonly encryptError?: unknown;
     readonly decryptError?: unknown;
+    readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
   },
 ) =>
   Effect.gen(function* () {
@@ -140,6 +150,18 @@ const withSavedEnvironments = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopSavedEnvironments", () => {
+  it.effect("treats a missing registry as empty and allows the first write", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+
+        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
+        yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+        assert.deepEqual(yield* savedEnvironments.getRegistry, [savedRegistryRecord]);
+      }),
+    ),
+  );
+
   it.effect("persists and reloads saved environment metadata", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
@@ -289,22 +311,72 @@ describe("DesktopSavedEnvironments", () => {
     ),
   );
 
-  it.effect("treats malformed saved environment documents as empty", () =>
+  it.effect("fails closed and preserves malformed saved environment documents", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        const malformedDocument = "{not-json";
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{not-json");
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          malformedDocument,
+        );
 
-        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
-        assert.isTrue(
-          Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
+        const readExit = yield* Effect.exit(savedEnvironments.getRegistry);
+        assert.equal(readExit._tag, "Failure");
+
+        const mutationExit = yield* Effect.exit(
+          savedEnvironments.setRegistry([savedRegistryRecord]),
+        );
+        assert.equal(mutationExit._tag, "Failure");
+        assert.equal(
+          yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath),
+          malformedDocument,
         );
       }),
     ),
   );
+
+  it.effect("fails a mutation without writing when the registry cannot be read", () => {
+    const readError = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFileString",
+      description: "permission denied",
+      pathOrDescriptor: "saved-environments.json",
+    });
+    const writeAttempts: string[] = [];
+    let storedBytes = "persisted registry bytes";
+    const fileSystemLayer = FileSystem.layerNoop({
+      readFileString: () => Effect.fail(readError),
+      writeFileString: (path, bytes) =>
+        Effect.sync(() => {
+          writeAttempts.push(path);
+          storedBytes = bytes;
+        }),
+    });
+
+    return withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        const mutationExit = yield* Effect.exit(
+          savedEnvironments.setRegistry([savedRegistryRecord]),
+        );
+
+        assert.equal(mutationExit._tag, "Failure");
+        if (mutationExit._tag === "Failure") {
+          const error = Cause.squash(mutationExit.cause);
+          assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentsReadError);
+          assert.equal(error.cause, readError);
+        }
+        assert.deepEqual(writeAttempts, []);
+        assert.equal(storedBytes, "persisted registry bytes");
+      }),
+      { fileSystemLayer },
+    );
+  });
 
   it.effect("returns false when writing a secret without metadata", () =>
     withSavedEnvironments(
