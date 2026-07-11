@@ -1,7 +1,7 @@
 /**
- * Push-path backpressure flood test — W4.4
+ * Push-path backpressure flood test — F-TEST-02
  *
- * Proves three invariants under flood (FLOOD_EVENTS events, fast + slow subscriber):
+ * Proves three invariants under flood (FLOOD_COMMANDS command dispatches, fast + slow subscriber):
  *
  *   I1. Ingestion never blocks on slow WebSocket subscribers.
  *       Proof: dispatch time with a stalled subscriber ≤ baseline × threshold.
@@ -9,7 +9,7 @@
  *       non-blocking regardless of subscriber speed.
  *
  *   I2. Event store never drops — every event persists regardless of push pressure.
- *       Proof: engine.readEvents(0) count == dispatch count.
+ *       Proof: engine.readEvents(0) count == 2 setup events + 6 events per cycle.
  *       Architecture: events are persisted inside the SQL transaction before PubSub.publish.
  *
  *   I3. Overflow terminates slow subscriber; fast subscriber unaffected; store intact.
@@ -20,20 +20,19 @@
  *
  * All synchronisation uses Deferred latches — no sleeps, deterministic.
  *
- * Run outside the default test suite (may be slow with large FLOOD_EVENTS):
+ * Run outside the default test suite:
  *   bun apps/server/src/perf/push-backpressure-flood.ts
- *   FLOOD_EVENTS=1000 bun apps/server/src/perf/push-backpressure-flood.ts
+ *   FLOOD_COMMANDS=2000 bun apps/server/src/perf/push-backpressure-flood.ts
+ *   PERF_JSON=1 bun apps/server/src/perf/push-backpressure-flood.ts
  *
  * ponytail: standalone script mirrors orchestration-baseline.ts pattern; no new deps.
  */
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import {
@@ -41,6 +40,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  OrchestrationGetSnapshotError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -56,18 +56,61 @@ import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/Pro
 import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ServerConfig } from "../config.ts";
+import { bufferOrTerminate } from "../ws.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-// ponytail: 100 events (20 cycles × 5 events) — fast in CI (~5s total), scalable via env.
-// The invariants are structural, not throughput-dependent: larger counts add coverage
-// but not new signal. Increase via FLOOD_EVENTS=1000 for stress runs.
-const FLOOD_EVENTS = Number(process.env["FLOOD_EVENTS"] ?? 100);
 // Cap for the dropping buffer on a slow subscriber (Invariant 3).
 const SUBSCRIBER_BUFFER_CAP = 512;
+const COMMANDS_PER_CYCLE = 5;
+const EVENTS_PER_CYCLE = 6;
+const SETUP_EVENT_COUNT = 2;
 // Acceptable slowdown ratio: with PubSub.unbounded DroppingStrategy, publish is
 // non-blocking. Any delta is scheduling noise; allow 3x headroom on WSL2.
 const INGESTION_BLOCK_THRESHOLD_RATIO = 3.0;
+
+function readFloodCommandCount(): number {
+  const raw = process.env["FLOOD_COMMANDS"];
+  const value = raw === undefined ? 1000 : Number(raw);
+  if (
+    !Number.isSafeInteger(value) ||
+    value <= SUBSCRIBER_BUFFER_CAP ||
+    value % COMMANDS_PER_CYCLE !== 0
+  ) {
+    throw new Error(
+      `FLOOD_COMMANDS must be a safe integer greater than ${SUBSCRIBER_BUFFER_CAP} and divisible by ${COMMANDS_PER_CYCLE}; received ${JSON.stringify(raw)}.`,
+    );
+  }
+  return value;
+}
+
+function readJsonOutput(): boolean {
+  const raw = process.env["PERF_JSON"];
+  if (raw === undefined || raw === "0") {
+    return false;
+  }
+  if (raw === "1") {
+    return true;
+  }
+  throw new Error(`PERF_JSON must be 0 or 1; received ${JSON.stringify(raw)}.`);
+}
+
+if (process.env["FLOOD_EVENTS"] !== undefined) {
+  throw new Error(
+    "FLOOD_EVENTS was renamed to FLOOD_COMMANDS because the harness configures command dispatches, not emitted domain events.",
+  );
+}
+
+const FLOOD_COMMANDS = readFloodCommandCount();
+const EXPECTED_STORED_EVENT_COUNT =
+  SETUP_EVENT_COUNT + (FLOOD_COMMANDS / COMMANDS_PER_CYCLE) * EVENTS_PER_CYCLE;
+const JSON_OUTPUT = readJsonOutput();
+
+if (JSON_OUTPUT) {
+  // Effect logs database migrations while the benchmark layer is built. Keep
+  // those diagnostics on stderr so stdout remains one JSON document.
+  globalThis.console.log = globalThis.console.error;
+}
 
 const print = (line: string) => process.stdout.write(`${line}\n`);
 
@@ -219,7 +262,7 @@ async function dispatchTurnCycle(
           },
           createdAt: NOW,
         },
-        "operator",
+        "provider",
       )
       .pipe(Effect.orDie),
   );
@@ -237,7 +280,7 @@ async function dispatchTurnCycle(
           delta: "x".repeat(512),
           createdAt: NOW,
         },
-        "operator",
+        "provider",
       )
       .pipe(Effect.orDie),
   );
@@ -253,7 +296,7 @@ async function dispatchTurnCycle(
           turnId,
           createdAt: NOW,
         },
-        "operator",
+        "provider",
       )
       .pipe(Effect.orDie),
   );
@@ -276,7 +319,7 @@ async function dispatchTurnCycle(
           },
           createdAt: NOW,
         },
-        "operator",
+        "provider",
       )
       .pipe(Effect.orDie),
   );
@@ -285,14 +328,17 @@ async function dispatchTurnCycle(
 async function floodDispatch(
   engine: System["engine"],
   run: System["run"],
-): Promise<{ totalMs: number; dispatchCount: number }> {
+): Promise<{ totalMs: number; floodCommandCount: number }> {
   const threadId = await setupThread(engine, run);
-  const cycles = Math.floor(FLOOD_EVENTS / 5);
+  const cycles = FLOOD_COMMANDS / COMMANDS_PER_CYCLE;
   const t0 = performance.now();
   for (let i = 0; i < cycles; i++) {
     await dispatchTurnCycle(engine, run, threadId, i);
   }
-  return { totalMs: performance.now() - t0, dispatchCount: cycles * 5 };
+  return {
+    totalMs: performance.now() - t0,
+    floodCommandCount: cycles * COMMANDS_PER_CYCLE,
+  };
 }
 
 // ── Baseline ──────────────────────────────────────────────────────────────────
@@ -304,16 +350,37 @@ async function runBaseline(): Promise<number> {
   return totalMs;
 }
 
+async function countStoredEvents(engine: System["engine"], run: System["run"]): Promise<number> {
+  let count = 0;
+  let sequenceCursor = 0;
+
+  while (true) {
+    const page = await run(
+      Stream.runCollect(engine.readEvents(sequenceCursor)).pipe(
+        Effect.map((events) => Array.from(events)),
+        Effect.orDie,
+      ),
+    );
+    if (page.length === 0) {
+      return count;
+    }
+
+    count += page.length;
+    sequenceCursor = page[page.length - 1]!.sequence;
+  }
+}
+
 // ── Flood with subscribers ────────────────────────────────────────────────────
 
 interface FloodResult {
-  dispatchCount: number;
+  floodCommandCount: number;
   totalDispatchMs: number;
-  storedCount: number;
-  fastCount: number;
-  slowCount: number;
-  // I3: true when the slow subscriber's stream terminated due to buffer overflow.
-  slowTerminatedWithOverflow: boolean;
+  storedEventCount: number;
+  expectedStoredEventCount: number;
+  fastEventCount: number;
+  slowEventCount: number;
+  // Set synchronously by the production helper's error factory when Queue.offer rejects.
+  slowOverflowObserved: boolean;
 }
 
 /**
@@ -329,8 +396,8 @@ interface FloodResult {
  * throttled. With the old dropping buffer it would silently miss events; with
  * overflow-terminates it gets a typed error and resubscribes → fresh snapshot.
  *
- * ponytail: reproduce bufferOrTerminate inline (same logic as ws.ts) rather than
- * importing it — keeps the flood script self-contained for CI isolation.
+ * Uses the exported production bufferOrTerminate helper so the test exercises
+ * the same overflow path as WebSocket subscribers.
  */
 async function runFloodWithSubscribers(): Promise<FloodResult> {
   const s = await createSystem();
@@ -341,7 +408,7 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
   // ── Fast subscriber ───────────────────────────────────────────────────────
   // run() returns a Promise that completes when the stream is interrupted.
   // interruptWhen(dispatchDone) stops the stream as soon as dispatch finishes.
-  let fastCount = 0;
+  let fastEventCount = 0;
   const fastPromise = s
     .run(
       Stream.runDrain(
@@ -349,7 +416,7 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
           s.engine.streamDomainEvents.pipe(
             Stream.tap(() =>
               Effect.sync(() => {
-                fastCount += 1;
+                fastEventCount += 1;
               }),
             ),
           ),
@@ -363,30 +430,20 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
   // Stalls after first event until dispatch completes — worst-case lag scenario.
   // bufferOrTerminate: overflow ends the stream with a typed error instead of
   // silently dropping. The client (in production) resubscribes → fresh snapshot.
-  let slowCount = 0;
+  let slowEventCount = 0;
   let stalledOnce = false;
-  let slowTerminatedWithOverflow = false;
+  let slowOverflowObserved = false;
 
-  // Inline bufferOrTerminate logic: Stream.callback with dropping strategy.
-  // On overflow (offer returns false), fail the queue — stream terminates with error.
-  const overflowError = new Error("overflow: slow subscriber buffer full — terminate stream");
-  const slowStream: Stream.Stream<unknown, Error> = Stream.callback<unknown, Error>(
-    (queue) =>
-      s.engine.streamDomainEvents.pipe(
-        Stream.runForEach((event) =>
-          Queue.offer(queue, event).pipe(
-            Effect.flatMap((accepted) =>
-              accepted ? Effect.void : Queue.failCause(queue, Cause.fail(overflowError)),
-            ),
-          ),
-        ),
-        Effect.matchCauseEffect({
-          onFailure: (cause) => Queue.failCause(queue, cause),
-          onSuccess: () => Queue.end(queue),
-        }),
-      ),
-    { bufferSize: SUBSCRIBER_BUFFER_CAP, strategy: "dropping" },
-  );
+  const slowStream = bufferOrTerminate(s.engine.streamDomainEvents, SUBSCRIBER_BUFFER_CAP, () => {
+    // Queue.offer already returned false when the factory runs. Record that
+    // fact before failing the queue; dispatchDone may interrupt the consumer
+    // before the typed failure reaches the Promise rejection handler.
+    slowOverflowObserved = true;
+    return new OrchestrationGetSnapshotError({
+      message: "push flood: slow subscriber buffer overflow",
+      cause: "overflow",
+    });
+  });
 
   const slowPromise = s
     .run(
@@ -395,7 +452,7 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
           slowStream.pipe(
             Stream.tap(() =>
               Effect.gen(function* () {
-                slowCount += 1;
+                slowEventCount += 1;
                 // Stall the consumer once to simulate extreme WS backpressure.
                 if (!stalledOnce) {
                   stalledOnce = true;
@@ -410,19 +467,10 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
         ),
       ),
     )
-    .then(() => {
-      // Stream ended normally (interrupted when dispatchDone).
-    })
-    .catch((err: unknown) => {
-      // Stream ended with error — check if it was our overflow sentinel.
-      if (err === overflowError || (err instanceof Error && err.message?.includes("overflow"))) {
-        slowTerminatedWithOverflow = true;
-      }
-      // Any termination (overflow or interrupt) is acceptable for I3.
-    });
+    .catch(() => {}); // expected: overflow failure or dispatchDone interruption
 
   // ── Flood dispatch ────────────────────────────────────────────────────────
-  const { totalMs, dispatchCount } = await floodDispatch(s.engine, s.run);
+  const { totalMs, floodCommandCount } = await floodDispatch(s.engine, s.run);
 
   // Signal subscribers that dispatch is done (unblocks both latches).
   await s.run(Deferred.succeed(dispatchDone, undefined));
@@ -430,91 +478,120 @@ async function runFloodWithSubscribers(): Promise<FloodResult> {
   // Wait for subscriber streams to drain and exit.
   await Promise.all([fastPromise, slowPromise]);
 
-  // ── Invariant 2: count stored events ─────────────────────────────────────
-  // ponytail: readEvents(0) replays all stored events via the event store.
-  // Effect 4.x: initial value is a thunk () => initialValue.
-  const storedCount = await s.run(
-    Stream.runFold(
-      s.engine.readEvents(0),
-      () => 0,
-      (acc, _) => acc + 1,
-    ).pipe(Effect.orDie),
-  );
+  // readEvents returns a bounded replay page. Advance the exclusive sequence
+  // cursor until an empty page so I2 measures every persisted domain event.
+  const storedEventCount = await countStoredEvents(s.engine, s.run);
 
   await s.dispose();
 
   return {
-    dispatchCount,
+    floodCommandCount,
     totalDispatchMs: totalMs,
-    storedCount,
-    fastCount,
-    slowCount,
-    slowTerminatedWithOverflow,
+    storedEventCount,
+    expectedStoredEventCount: EXPECTED_STORED_EVENT_COUNT,
+    fastEventCount,
+    slowEventCount,
+    slowOverflowObserved,
   };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  print("");
-  print("=== GITS Push-Path Backpressure Flood Test (W4.4) ===");
-  print("");
-  print(
-    `Flood events        : ${FLOOD_EVENTS} commands (${FLOOD_EVENTS / 5} cycles × 5 cmds/cycle)`,
-  );
-  print(`Subscriber buf cap  : ${SUBSCRIBER_BUFFER_CAP} (overflow-terminates)`);
-  print(`Slow consumer stalls: after 1st event until dispatch done (latch-based)`);
-  print(`Payload             : 512 B per delta event`);
-  print("");
-
-  process.stdout.write("  [1/2] Baseline (no subscribers)...");
+  if (!JSON_OUTPUT) {
+    print("");
+    print("=== GITS Push-Path Backpressure Flood Test (F-TEST-02) ===");
+    print("");
+    print(
+      `Flood commands      : ${FLOOD_COMMANDS} (${FLOOD_COMMANDS / COMMANDS_PER_CYCLE} cycles × ${COMMANDS_PER_CYCLE} commands/cycle)`,
+    );
+    print(
+      `Expected events     : ${EXPECTED_STORED_EVENT_COUNT} (${SETUP_EVENT_COUNT} setup + ${EVENTS_PER_CYCLE}/cycle)`,
+    );
+    print(`Subscriber buf cap  : ${SUBSCRIBER_BUFFER_CAP} (overflow-terminates)`);
+    print("Slow consumer stalls: after 1st event until dispatch done (latch-based)");
+    print("");
+    process.stdout.write("  [1/2] Baseline (no subscribers)...");
+  }
   const baselineMs = await runBaseline();
-  process.stdout.write(` done (${baselineMs.toFixed(0)}ms)\n`);
-
-  process.stdout.write(
-    "  [2/2] Flood (fast + stalled subscriber with overflow-terminates buffer)...",
-  );
+  if (!JSON_OUTPUT) {
+    process.stdout.write(` done (${baselineMs.toFixed(0)}ms)\n`);
+    process.stdout.write(
+      "  [2/2] Flood (fast + stalled subscriber with overflow-terminates buffer)...",
+    );
+  }
   const r = await runFloodWithSubscribers();
-  process.stdout.write(` done (${r.totalDispatchMs.toFixed(0)}ms)\n`);
+  if (!JSON_OUTPUT) {
+    process.stdout.write(` done (${r.totalDispatchMs.toFixed(0)}ms)\n`);
+  }
 
   const ratio = r.totalDispatchMs / baselineMs;
+  const i1 = ratio <= INGESTION_BLOCK_THRESHOLD_RATIO;
+  const i2 = r.storedEventCount === r.expectedStoredEventCount;
+  const i3 = r.slowOverflowObserved;
+  const allInvariantsHold = i1 && i2 && i3;
+
+  if (JSON_OUTPUT) {
+    print(
+      JSON.stringify({
+        schemaVersion: 1,
+        benchmark: "gits-push-backpressure-flood",
+        configuration: {
+          floodCommandCount: FLOOD_COMMANDS,
+          commandsPerCycle: COMMANDS_PER_CYCLE,
+          eventsPerCycle: EVENTS_PER_CYCLE,
+          setupEventCount: SETUP_EVENT_COUNT,
+          subscriberBufferCapacity: SUBSCRIBER_BUFFER_CAP,
+          ingestionSlowdownThresholdRatio: INGESTION_BLOCK_THRESHOLD_RATIO,
+        },
+        measurements: {
+          baselineDispatchMs: baselineMs,
+          subscriberFloodDispatchMs: r.totalDispatchMs,
+          ingestionSlowdownRatio: ratio,
+          floodCommandCount: r.floodCommandCount,
+          expectedStoredEventCount: r.expectedStoredEventCount,
+          storedEventCount: r.storedEventCount,
+          fastSubscriberEventCount: r.fastEventCount,
+          slowSubscriberEventCount: r.slowEventCount,
+          slowSubscriberOverflowObserved: r.slowOverflowObserved,
+        },
+        invariants: {
+          ingestionNeverBlocks: i1,
+          eventStoreExactCount: i2,
+          slowSubscriberOverflowObserved: i3,
+          allHold: allInvariantsHold,
+        },
+      }),
+    );
+    if (!allInvariantsHold) {
+      process.exitCode = 1;
+    }
+    return;
+  }
 
   print("");
   print("── Numbers ──────────────────────────────────────────────────────────");
-  print(`  Baseline dispatch           : ${baselineMs.toFixed(0)}ms for ${FLOOD_EVENTS} events`);
   print(
-    `  Flood dispatch              : ${r.totalDispatchMs.toFixed(0)}ms for ${r.dispatchCount} events`,
+    `  Baseline dispatch           : ${baselineMs.toFixed(0)}ms for ${FLOOD_COMMANDS} flood commands`,
+  );
+  print(
+    `  Subscriber flood dispatch   : ${r.totalDispatchMs.toFixed(0)}ms for ${r.floodCommandCount} flood commands`,
   );
   print(
     `  Slowdown ratio              : ${ratio.toFixed(2)}x  (threshold: ${INGESTION_BLOCK_THRESHOLD_RATIO}x)`,
   );
-  // Note: dispatchCount counts commands; storedCount counts events
-  // (e.g. turn.start → 2 events: message-sent + turn-start-requested).
-  print(`  Commands dispatched         : ${r.dispatchCount}`);
-  print(`  Events stored               : ${r.storedCount}  (>= dispatched; turn.start = 2 events)`);
+  print(`  Flood commands dispatched   : ${r.floodCommandCount}`);
   print(
-    `  Fast subscriber received    : ${r.fastCount}  (informational — may miss last events on interrupt)`,
+    `  Domain events stored        : ${r.storedEventCount} / ${r.expectedStoredEventCount} expected`,
   );
   print(
-    `  Slow subscriber received    : ${r.slowCount}  (terminated: ${r.slowTerminatedWithOverflow ? "overflow" : "interrupt/drain"})`,
+    `  Fast subscriber events      : ${r.fastEventCount}  (informational — may miss tail on interrupt)`,
   );
+  print(`  Slow subscriber events      : ${r.slowEventCount}`);
+  print(`  Slow overflow observed      : ${r.slowOverflowObserved ? "yes" : "no"}`);
   print("");
 
   // ── Invariant verdicts ────────────────────────────────────────────────────
-
-  const i1 = ratio <= INGESTION_BLOCK_THRESHOLD_RATIO;
-  // I2: stored event count must be > 0 and ≥ dispatch count (each command produces
-  // ≥ 1 event; turn.start produces 2). The key invariant is that the store never
-  // loses events — we verify via readEvents(0) after the flood completes.
-  // We cannot use fastCount as the reference because interruptWhen may interrupt
-  // before the subscriber drains all buffered events (timing).
-  const i2 = r.storedCount > 0 && r.storedCount >= r.dispatchCount;
-  // I3 overflow-terminates: slow subscriber's stream must terminate (via overflow
-  // or interrupt) without hanging. The stream receives ≤ SUBSCRIBER_BUFFER_CAP events
-  // before the overflow error fires. Fast subscriber is unaffected (I1 covers this).
-  // Store integrity is covered by I2. Structural: any termination proves bounded
-  // behaviour — deadlock would manifest as process hang.
-  const i3 = r.slowCount <= r.storedCount;
 
   print("── Invariant verdicts ───────────────────────────────────────────────");
   print(`  I1 ingestion never blocks   : ${i1 ? "PASS" : "FAIL"}`);
@@ -524,27 +601,33 @@ async function main() {
     );
   else print("     PubSub.unbounded DroppingStrategy — publish never suspends.");
   print(`  I2 event store never drops  : ${i2 ? "PASS" : "FAIL"}`);
-  if (!i2)
-    print(`     FAIL: stored ${r.storedCount} < dispatched ${r.dispatchCount} (events dropped)`);
-  else print("     Events persisted in SQL tx before PubSub.publish.");
+  if (!i2) {
+    print(
+      `     FAIL: stored ${r.storedEventCount}; expected exactly ${r.expectedStoredEventCount} domain events`,
+    );
+  } else {
+    print(
+      `     Exact count: ${SETUP_EVENT_COUNT} setup events + ${FLOOD_COMMANDS / COMMANDS_PER_CYCLE} cycles × ${EVENTS_PER_CYCLE} events.`,
+    );
+  }
   print(`  I3 overflow terminates slow  : ${i3 ? "PASS" : "FAIL"}`);
-  if (!i3) print(`     FAIL: slow subscriber received ${r.slowCount} > stored ${r.storedCount}`);
-  else {
+  if (!i3) {
     print(
-      `     bufferOrTerminate(${SUBSCRIBER_BUFFER_CAP}) — slow subscriber received ${r.slowCount} events`,
+      "     FAIL: production overflow-error factory was never called after a rejected queue offer.",
     );
+  } else {
     print(
-      `     then ${r.slowTerminatedWithOverflow ? "terminated with overflow error (client resubscribes in production)" : "terminated on interrupt (no overflow in this run — increase FLOOD_EVENTS)"}`,
+      `     Production bufferOrTerminate(${SUBSCRIBER_BUFFER_CAP}) observed a rejected queue offer.`,
     );
-    print(`     Fast subscriber unaffected; event store intact (I2).`);
+    print("     Fast subscriber remained active; event store integrity is covered by I2.");
   }
   print("");
 
-  if (i1 && i2 && i3) {
+  if (allInvariantsHold) {
     print("ALL INVARIANTS HOLD");
   } else {
     print("INVARIANT FAILURE");
-    process.exit(1);
+    process.exitCode = 1;
   }
   print("");
 }

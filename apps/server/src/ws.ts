@@ -208,7 +208,7 @@ export function terminalCallbackStream<A, E = never, R = never>(
  * ponytail: Queue.dropping offer is non-blocking; failCause on overflow is
  * idempotent (already done). Stream.callback manages queue scope and lifetime.
  */
-function bufferOrTerminate<A, E, R>(
+export function bufferOrTerminate<A, E, R>(
   self: Stream.Stream<A, E, R>,
   capacity: number,
   overflowError: () => OrchestrationGetSnapshotError,
