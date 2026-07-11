@@ -2844,6 +2844,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("marks authenticated attachment responses private and non-cacheable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "thread-private-cache-attachment";
+
+      const { config } = yield* buildAppUnderTest();
+      const attachmentPath = resolveAttachmentRelativePath({
+        attachmentsDir: config.attachmentsDir,
+        relativePath: `${attachmentId}.bin`,
+      });
+      assert.isNotNull(attachmentPath, "Attachment path should be resolvable");
+
+      yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
+      yield* fileSystem.writeFileString(attachmentPath, "sensitive-attachment");
+
+      const response = yield* HttpClient.get(`/attachments/${attachmentId}`, {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["cache-control"], "private, no-store");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("serves attachment files for URL-encoded paths", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
