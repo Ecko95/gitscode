@@ -2609,6 +2609,117 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("denies auth access stream to paired clients without closing their websocket", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const clientPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({ label: "Paired client" }),
+      });
+      const clientPairing = (yield* clientPairingResponse.json) as {
+        readonly credential: string;
+      };
+      assert.equal(clientPairingResponse.status, 200);
+
+      const clientBootstrap = yield* bootstrapBrowserSession(clientPairing.credential);
+      const clientCookie = clientBootstrap.cookie?.split(";")[0];
+      assert.equal(clientBootstrap.response.status, 200);
+      assert.isDefined(clientCookie);
+
+      const protectedPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({ label: "Protected active link" }),
+      });
+      assert.equal(protectedPairingResponse.status, 200);
+
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        clientCookie ?? "",
+      );
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const authAccessResult = yield* client[WS_METHODS.subscribeAuthAccess]({}).pipe(
+              Stream.take(1),
+              Stream.runCollect,
+              Effect.result,
+            );
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            return { authAccessResult, config };
+          }),
+        ),
+      );
+
+      assertTrue(response.authAccessResult._tag === "Failure");
+      assert.equal(response.authAccessResult.failure._tag, "AuthAccessDeniedError");
+      assert.equal(
+        response.authAccessResult.failure.message,
+        "Only owner sessions can manage network access.",
+      );
+      assert.equal(
+        response.config.environment.environmentId,
+        testEnvironmentDescriptor.environmentId,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("streams auth access snapshot to owner sessions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({ label: "Owner-visible link" }),
+      });
+      const pairing = (yield* pairingResponse.json) as {
+        readonly id: string;
+        readonly credential: string;
+      };
+      assert.equal(pairingResponse.status, 200);
+
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        ownerCookie,
+      );
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeAuthAccess]({}).pipe(Stream.take(1), Stream.runCollect),
+        ),
+      );
+
+      const snapshot = Array.from(events)[0];
+      assert.equal(snapshot?.type, "snapshot");
+      if (snapshot?.type === "snapshot") {
+        const listedPairing = snapshot.payload.pairingLinks.find(
+          (entry) => entry.id === pairing.id,
+        );
+        assert.equal(listedPairing?.credential, pairing.credential);
+        assert.isTrue(
+          snapshot.payload.clientSessions.some(
+            (session) => session.role === "owner" && session.current,
+          ),
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("serves attachment files from state dir", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
