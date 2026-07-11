@@ -156,65 +156,78 @@ export class WsTransport {
       }
     };
     this.streamRequestStartListeners.add(onStreamRequestStart);
+    const deactivate = () => {
+      if (!active) {
+        return;
+      }
+      active = false;
+      this.streamRequestStartListeners.delete(onStreamRequestStart);
+    };
 
     void (async () => {
-      for (;;) {
-        if (!active || this.disposed) {
-          return;
-        }
-
-        const session = this.session;
-        try {
-          const runningStream = this.runStreamOnSession(
-            session,
-            connect,
-            listener,
-            () => active,
-            () => {
-              this.hasReportedTransportDisconnect = false;
-              hasReceivedValue = true;
-            },
-          );
-          cancelCurrentStream = runningStream.cancel;
-          await runningStream.completed;
-          cancelCurrentStream = NOOP;
-        } catch (error) {
-          cancelCurrentStream = NOOP;
+      try {
+        for (;;) {
           if (!active || this.disposed) {
             return;
           }
 
-          // Skip retry if the session has already been replaced by a reconnect.
-          if (session !== this.session) {
-            continue;
-          }
-
-          const formattedError = formatErrorMessage(error);
-          if (!isTransportConnectionErrorMessage(formattedError)) {
-            this.logWarning("WebSocket RPC subscription failed", { error: formattedError });
-            try {
-              options?.onEnd?.(error);
-            } catch {
-              // Ignore onEnd hook failures.
+          const session = this.session;
+          try {
+            const runningStream = this.runStreamOnSession(
+              session,
+              connect,
+              listener,
+              () => active,
+              () => {
+                this.hasReportedTransportDisconnect = false;
+                hasReceivedValue = true;
+              },
+            );
+            cancelCurrentStream = runningStream.cancel;
+            await runningStream.completed;
+            cancelCurrentStream = NOOP;
+          } catch (error) {
+            cancelCurrentStream = NOOP;
+            if (!active || this.disposed) {
+              return;
             }
-            return;
-          }
 
-          if (!this.hasReportedTransportDisconnect) {
-            this.logWarning("WebSocket RPC subscription disconnected", {
-              error: formattedError,
-            });
+            // Skip retry if the session has already been replaced by a reconnect.
+            if (session !== this.session) {
+              continue;
+            }
+
+            const formattedError = formatErrorMessage(error);
+            if (!isTransportConnectionErrorMessage(formattedError)) {
+              this.logWarning("WebSocket RPC subscription failed", { error: formattedError });
+              deactivate();
+              try {
+                options?.onEnd?.(error);
+              } catch {
+                // Ignore onEnd hook failures.
+              }
+              return;
+            }
+
+            if (!this.hasReportedTransportDisconnect) {
+              this.logWarning("WebSocket RPC subscription disconnected", {
+                error: formattedError,
+              });
+            }
+            this.hasReportedTransportDisconnect = true;
+            await sleep(retryDelayMs);
           }
-          this.hasReportedTransportDisconnect = true;
-          await sleep(retryDelayMs);
         }
+      } finally {
+        deactivate();
       }
     })();
 
     return () => {
-      active = false;
-      this.streamRequestStartListeners.delete(onStreamRequestStart);
-      cancelCurrentStream();
+      deactivate();
+      const cancel = cancelCurrentStream;
+      cancelCurrentStream = NOOP;
+      cancel();
     };
   }
 

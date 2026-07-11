@@ -779,6 +779,140 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
+  it("unregisters resubscribe hooks before ending on an application failure", async () => {
+    const transport = createTransport("ws://localhost:3020", undefined, {
+      logWarning: vi.fn(),
+    });
+    const onEnd = vi.fn();
+    const onResubscribe = vi.fn();
+    const unsubscribeEnded = transport.subscribe(
+      () =>
+        Stream.make("initial").pipe(
+          Stream.concat(Stream.fail(new Error("Git command failed in GitCore.statusDetails"))),
+        ),
+      vi.fn(),
+      {
+        onEnd,
+        onResubscribe,
+        tag: WS_METHODS.subscribeServerLifecycle,
+      },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+    const socket = getSocket();
+    socket.open();
+
+    await waitFor(() => {
+      expect(onEnd).toHaveBeenCalledOnce();
+    });
+
+    const unsubscribeReplacement = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      vi.fn(),
+      { tag: WS_METHODS.subscribeServerLifecycle },
+    );
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    expect(onResubscribe).not.toHaveBeenCalled();
+
+    unsubscribeEnded();
+    unsubscribeReplacement();
+    await transport.dispose();
+  });
+
+  it("keeps a single resubscribe hook active across transport retries", async () => {
+    const transport = createTransport("ws://localhost:3020", undefined, {
+      logWarning: vi.fn(),
+    });
+    const onEnd = vi.fn();
+    const onResubscribe = vi.fn();
+    let attempts = 0;
+    const unsubscribeRetrying = transport.subscribe(
+      () =>
+        Stream.suspend(() => {
+          attempts += 1;
+          const failure = Stream.fail(new Error("SocketCloseError: WebSocket closed"));
+          return attempts === 1 ? Stream.make("initial").pipe(Stream.concat(failure)) : failure;
+        }),
+      vi.fn(),
+      {
+        onEnd,
+        onResubscribe,
+        retryDelay: 20,
+        tag: WS_METHODS.subscribeServerLifecycle,
+      },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+    const socket = getSocket();
+    socket.open();
+    await waitFor(() => {
+      expect(attempts).toBeGreaterThanOrEqual(2);
+    });
+
+    const unsubscribeReplacement = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      vi.fn(),
+      { tag: WS_METHODS.subscribeServerLifecycle },
+    );
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    expect(onResubscribe).toHaveBeenCalledOnce();
+    expect(onEnd).not.toHaveBeenCalled();
+
+    unsubscribeRetrying();
+    unsubscribeReplacement();
+    await transport.dispose();
+  });
+
+  it("unregisters resubscribe hooks on explicit unsubscribe", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const listener = vi.fn();
+    const onResubscribe = vi.fn();
+    const unsubscribe = transport.subscribe(
+      () => Stream.make("initial").pipe(Stream.concat(Stream.never)),
+      listener,
+      {
+        onResubscribe,
+        tag: WS_METHODS.subscribeServerLifecycle,
+      },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+    const socket = getSocket();
+    socket.open();
+    await waitFor(() => {
+      expect(listener).toHaveBeenCalledWith("initial");
+    });
+
+    unsubscribe();
+    unsubscribe();
+
+    const unsubscribeReplacement = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      vi.fn(),
+      { tag: WS_METHODS.subscribeServerLifecycle },
+    );
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    expect(onResubscribe).not.toHaveBeenCalled();
+
+    unsubscribeReplacement();
+    await transport.dispose();
+  });
+
   it("keeps retrying stream subscriptions after transport failures", async () => {
     const warnSpy = vi.fn();
     const transport = createTransport("ws://localhost:3020", undefined, { logWarning: warnSpy });
