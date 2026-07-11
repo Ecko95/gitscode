@@ -24,6 +24,7 @@ import {
   selectProjectsAcrossEnvironments,
   selectThreadByRef,
   selectThreadExistsByRef,
+  setError,
   setThreadBranch,
   selectThreadsAcrossEnvironments,
   syncServerShellSnapshot,
@@ -451,6 +452,42 @@ describe("setThreadBranch", () => {
     expect(
       environmentStateOf(next, remoteEnvironmentId).threadShellById[sharedThreadId]?.worktreePath,
     ).toBe("/tmp/remote-worktree");
+  });
+});
+
+describe("setError", () => {
+  it("updates only the scoped thread environment when thread IDs collide", () => {
+    const sharedThreadId = ThreadId.make("thread-shared");
+    const localThread = makeThread({
+      id: sharedThreadId,
+      environmentId: localEnvironmentId,
+      error: "local error",
+    });
+    const remoteThread = makeThread({
+      id: sharedThreadId,
+      environmentId: remoteEnvironmentId,
+      error: "remote error",
+    });
+    const state: AppState = {
+      activeEnvironmentId: localEnvironmentId,
+      environmentStateById: {
+        [localEnvironmentId]: environmentStateOf(makeState(localThread), localEnvironmentId),
+        [remoteEnvironmentId]: environmentStateOf(makeState(remoteThread), remoteEnvironmentId),
+      },
+    };
+
+    const next = setError(
+      state,
+      scopeThreadRef(remoteEnvironmentId, sharedThreadId),
+      "remote next error",
+    );
+
+    expect(
+      selectThreadByRef(next, scopeThreadRef(localEnvironmentId, sharedThreadId))?.error,
+    ).toBe("local error");
+    expect(
+      selectThreadByRef(next, scopeThreadRef(remoteEnvironmentId, sharedThreadId))?.error,
+    ).toBe("remote next error");
   });
 });
 
