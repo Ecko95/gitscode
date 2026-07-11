@@ -6,7 +6,29 @@ import * as Option from "effect/Option";
 import {
   aggregateProcessResourceHistory,
   collectMonitoredSamples,
+  type ProcessResourceSample,
 } from "./ProcessResourceMonitor.ts";
+
+function makeSample(input: {
+  readonly sampledAtMs: number;
+  readonly processKey?: string;
+  readonly pid?: number;
+  readonly cpuPercent: number;
+  readonly rssBytes: number;
+}): ProcessResourceSample {
+  return {
+    sampledAt: DateTime.makeUnsafe(input.sampledAtMs),
+    sampledAtMs: input.sampledAtMs,
+    processKey: input.processKey ?? "100:t3 server",
+    pid: input.pid ?? 100,
+    ppid: 1,
+    command: input.processKey ?? "t3 server",
+    cpuPercent: input.cpuPercent,
+    rssBytes: input.rssBytes,
+    depth: 0,
+    isServerRoot: true,
+  };
+}
 
 describe("ProcessResourceMonitor", () => {
   it.effect("samples the server root process and descendants", () =>
@@ -226,6 +248,103 @@ describe("ProcessResourceMonitor", () => {
 
       expect(result.topProcesses).toHaveLength(36);
       expect(result.topProcesses.some((process) => process.command === "worker 34")).toBe(true);
+    }),
+  );
+
+  it.effect("clamps adversarial durations and returns at most 720 buckets", () =>
+    Effect.sync(() => {
+      const readAtMs = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"));
+      const result = aggregateProcessResourceHistory({
+        samples: [],
+        readAt: DateTime.makeUnsafe(readAtMs),
+        readAtMs,
+        windowMs: 3_600_001,
+        bucketMs: 4_999,
+        lastError: null,
+      });
+
+      expect(result.windowMs).toBe(3_600_000);
+      expect(result.bucketMs).toBe(5_000);
+      expect(result.bucketMs).toBeLessThanOrEqual(result.windowMs);
+      expect(result.buckets).toHaveLength(720);
+    }),
+  );
+
+  it.effect("includes a sample exactly on the final window boundary", () =>
+    Effect.sync(() => {
+      const readAtMs = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"));
+      const result = aggregateProcessResourceHistory({
+        samples: [makeSample({ sampledAtMs: readAtMs, cpuPercent: 42, rssBytes: 4_200 })],
+        readAt: DateTime.makeUnsafe(readAtMs),
+        readAtMs,
+        windowMs: 10_000,
+        bucketMs: 5_000,
+        lastError: null,
+      });
+
+      expect(result.buckets).toHaveLength(2);
+      expect(result.buckets[1]).toMatchObject({
+        avgCpuPercent: 42,
+        maxCpuPercent: 42,
+        maxRssBytes: 4_200,
+        maxProcessCount: 1,
+      });
+    }),
+  );
+
+  it.effect("preserves per-read aggregation metrics across normal buckets", () =>
+    Effect.sync(() => {
+      const readAtMs = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"));
+      const samples = [
+        makeSample({
+          sampledAtMs: readAtMs - 20_000,
+          processKey: "100:t3 server",
+          pid: 100,
+          cpuPercent: 10,
+          rssBytes: 100,
+        }),
+        makeSample({
+          sampledAtMs: readAtMs - 20_000,
+          processKey: "101:worker",
+          pid: 101,
+          cpuPercent: 20,
+          rssBytes: 200,
+        }),
+        makeSample({
+          sampledAtMs: readAtMs - 15_000,
+          cpuPercent: 30,
+          rssBytes: 150,
+        }),
+        makeSample({
+          sampledAtMs: readAtMs - 10_000,
+          cpuPercent: 40,
+          rssBytes: 250,
+        }),
+        makeSample({ sampledAtMs: readAtMs, cpuPercent: 50, rssBytes: 300 }),
+      ];
+
+      const result = aggregateProcessResourceHistory({
+        samples,
+        readAt: DateTime.makeUnsafe(readAtMs),
+        readAtMs,
+        windowMs: 20_000,
+        bucketMs: 10_000,
+        lastError: null,
+      });
+
+      expect(result.buckets).toHaveLength(2);
+      expect(result.buckets[0]).toMatchObject({
+        avgCpuPercent: 30,
+        maxCpuPercent: 30,
+        maxRssBytes: 300,
+        maxProcessCount: 2,
+      });
+      expect(result.buckets[1]).toMatchObject({
+        avgCpuPercent: 45,
+        maxCpuPercent: 50,
+        maxRssBytes: 300,
+        maxProcessCount: 1,
+      });
     }),
   );
 });
