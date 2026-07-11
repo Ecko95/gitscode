@@ -91,6 +91,67 @@ Restart=on-failure
 RestartSec=3
 ```
 
+## gsd-browser MCP (Claude And Codex)
+
+Install the CLI into the user NVM prefix without root:
+
+```bash
+npm install -g @opengsd/gsd-browser@latest
+command -v gsd-browser
+gsd-browser --version
+```
+
+Subject28 currently uses the Playwright-cached Chrome binary in headless mode:
+
+```bash
+export GSD_BROWSER_BROWSER_PATH=/home/joshua/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome
+export GSD_BROWSER_BROWSER_HEADLESS=true
+```
+
+Merge this server into the existing top-level `mcpServers` object in `~/.claude.json`:
+
+```json
+{
+  "gsd-browser": {
+    "type": "stdio",
+    "command": "gsd-browser",
+    "args": ["mcp"],
+    "env": {
+      "GSD_BROWSER_BROWSER_PATH": "/home/joshua/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome",
+      "GSD_BROWSER_BROWSER_HEADLESS": "true"
+    }
+  }
+}
+```
+
+Merge these tables into `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.gsd-browser]
+command = "gsd-browser"
+args = ["mcp"]
+
+[mcp_servers.gsd-browser.env]
+GSD_BROWSER_BROWSER_PATH = "/home/joshua/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome"
+GSD_BROWSER_BROWSER_HEADLESS = "true"
+```
+
+The Codex runtime currently used by GITScode supports reasoning effort through `xhigh`; an `ultra` value prevents the runtime from loading any MCP configuration.
+
+Verify public and localhost React browsing before starting provider sessions:
+
+```bash
+GSD_BROWSER_BROWSER_PATH=/home/joshua/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome \
+GSD_BROWSER_BROWSER_HEADLESS=true \
+gsd-browser navigate https://example.com && gsd-browser snapshot
+
+gsd-browser navigate http://127.0.0.1:13773 && gsd-browser snapshot
+```
+
+Start fresh Claude and Codex sessions so each CLI reloads its MCP configuration, then verify `browser_navigate` followed by `browser_snapshot`. The cockpit MCP inventory must show enabled `claude:gsd-browser` and `codex:gsd-browser` stdio entries.
+
+The cached Playwright Chrome path can be garbage-collected or move after Playwright updates. The durability follow-up is to install a stable system Chrome or Chromium package and repoint `GSD_BROWSER_BROWSER_PATH`; this requires sudo and separate approval.
+
 ## Windows Tailscale Serve
 
 Use Windows Tailscale Serve as the Tailnet entrypoint. The hardened default does not create a Windows portproxy because Windows localhost forwarding can reach the WSL loopback listener directly.
