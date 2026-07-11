@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { ServerConfigShape } from "../../config.ts";
@@ -146,6 +147,35 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
       expect(afterRevoke).toHaveLength(1);
       expect(afterRevoke[0]?.sessionId).toBe(owner.sessionId);
       expect(revokedClient.message).toContain("revoked");
+    }).pipe(Effect.provide(makeSessionCredentialLayer())),
+  );
+
+  it.effect("buffers revocation for every pre-acquired change subscription", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionCredentialService;
+      const issued = yield* sessions.issue({
+        subject: "multi-socket-client",
+        method: "bearer-session-token",
+      });
+      const firstSubscription = yield* sessions.subscribeChanges;
+      const secondSubscription = yield* sessions.subscribeChanges;
+
+      const revoked = yield* sessions.revoke(issued.sessionId);
+      const awaitRemoval = (subscription: typeof firstSubscription) =>
+        Stream.fromSubscription(subscription).pipe(
+          Stream.filter(
+            (change) => change.type === "clientRemoved" && change.sessionId === issued.sessionId,
+          ),
+          Stream.runHead,
+        );
+      const [firstRemoval, secondRemoval] = yield* Effect.all(
+        [awaitRemoval(firstSubscription), awaitRemoval(secondSubscription)],
+        { concurrency: "unbounded" },
+      );
+
+      expect(revoked).toBe(true);
+      expect(firstRemoval._tag).toBe("Some");
+      expect(secondRemoval._tag).toBe("Some");
     }).pipe(Effect.provide(makeSessionCredentialLayer())),
   );
 

@@ -1368,16 +1368,21 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
-const wsRpcProtocolLayer = (wsUrl: string) => {
+const wsRpcProtocolLayer = (wsUrl: string, options?: { readonly onClose?: () => void }) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
-    (socketUrl, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(
+    (socketUrl, protocols) => {
+      const socket = new NodeSocket.NodeWS.WebSocket(
         socketUrl,
         protocols,
         cookie ? { headers: { cookie } } : undefined,
-      ) as unknown as globalThis.WebSocket,
+      );
+      if (options?.onClose) {
+        socket.once("close", options.onClose);
+      }
+      return socket as unknown as globalThis.WebSocket;
+    },
   );
 
   return RpcClient.layerProtocolSocket().pipe(
@@ -1393,7 +1398,8 @@ type WsRpcClient =
 const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
-) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
+  options?: { readonly onClose?: () => void },
+) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, options)));
 
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
@@ -2717,6 +2723,98 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("disconnects an active websocket when its authenticated session is revoked", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const pairingBody = (yield* pairingResponse.json) as {
+        readonly credential: string;
+      };
+      const pairedSessionCookie = yield* getAuthenticatedSessionCookieHeader(
+        pairingBody.credential,
+      );
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly current: boolean;
+      }>;
+      const pairedSessionId = clients.find((entry) => !entry.current)?.sessionId;
+      assert.isDefined(pairedSessionId);
+
+      const socketClosed = yield* Effect.sync(() => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((complete) => {
+          resolve = complete;
+        });
+        return { promise, resolve } as const;
+      });
+      const pairedWsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        pairedSessionCookie,
+      );
+      const postRevokeResult = yield* Effect.scoped(
+        withWsRpcClient(
+          pairedWsUrl,
+          (client) =>
+            Effect.gen(function* () {
+              const beforeRevoke = yield* client[WS_METHODS.serverGetConfig]({});
+              assert.equal(
+                beforeRevoke.environment.environmentId,
+                testEnvironmentDescriptor.environmentId,
+              );
+
+              const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+                headers: {
+                  cookie: ownerCookie,
+                },
+                body: yield* HttpBody.json({ sessionId: pairedSessionId }),
+              });
+              assert.equal(revokeResponse.status, 200);
+
+              yield* Effect.raceFirst(
+                Effect.promise(() => socketClosed.promise),
+                Effect.sleep(Duration.seconds(2)).pipe(
+                  Effect.andThen(
+                    Effect.die(new Error("Timed out waiting for the revoked websocket to close.")),
+                  ),
+                ),
+              );
+
+              return yield* client[WS_METHODS.serverGetConfig]({}).pipe(Effect.result);
+            }),
+          {
+            onClose: socketClosed.resolve,
+          },
+        ),
+      );
+
+      assertTrue(postRevokeResult._tag === "Failure");
+      assertInclude(String(postRevokeResult.failure), "SocketCloseError");
+
+      const reconnectResult = yield* Effect.scoped(
+        withWsRpcClient(pairedWsUrl, (client) => client[WS_METHODS.serverGetConfig]({})).pipe(
+          Effect.result,
+        ),
+      );
+      assertTrue(reconnectResult._tag === "Failure");
+      assertInclude(String(reconnectResult.failure), "SocketOpenError");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

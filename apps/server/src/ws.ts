@@ -51,7 +51,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
@@ -2034,6 +2034,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const serverAuth = yield* ServerAuth;
         const sessions = yield* SessionCredentialService;
+        const sessionChanges = yield* sessions.subscribeChanges;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
@@ -2066,9 +2067,17 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ),
           ),
         );
+        const sessionRevoked = Stream.fromSubscription(sessionChanges).pipe(
+          Stream.filter(
+            (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.as(HttpServerResponse.empty()),
+        );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () => Effect.raceFirst(rpcWebSocketHttpEffect, sessionRevoked),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
