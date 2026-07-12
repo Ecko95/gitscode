@@ -355,7 +355,7 @@ export function buildThreadStartParams(input: {
     // visual-plan MCP as a streamable-HTTP server scoped to this thread's token.
     config: {
       mcp_servers: {
-        "gits-browser": {
+        "gsd-browser": {
           command: "gsd-browser",
           args: browser_preview_mcp_args(input.threadId),
           env: browser_preview_mcp_env(),

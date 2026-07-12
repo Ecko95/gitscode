@@ -590,7 +590,7 @@ export function makeCursorAdapter(
             clientInfo: { name: "t3-code", version: "0.0.0" },
             mcpServers: [
               {
-                name: "gits-browser",
+                name: "gsd-browser",
                 command: "gsd-browser",
                 args: [...browser_preview_mcp_args(input.threadId)],
                 env: Object.entries(browser_preview_mcp_env()).map(([name, value]) => ({

@@ -3007,7 +3007,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? yield* visualPlanMcpSvc.issueToken(threadId)
         : undefined;
       const visualPlanMcpServers = {
-        "gits-browser": {
+        "gsd-browser": {
           type: "stdio" as const,
           command: "gsd-browser",
           args: [...browser_preview_mcp_args(threadId)],

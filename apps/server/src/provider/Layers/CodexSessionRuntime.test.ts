@@ -689,7 +689,7 @@ describe("buildThreadStartParams visual-plan MCP", () => {
     });
     const servers = (params.config as { mcp_servers: Record<string, { args?: readonly string[] }> })
       .mcp_servers;
-    assert.deepEqual(servers["gits-browser"]?.args, [
+    assert.deepEqual(servers["gsd-browser"]?.args, [
       "--session",
       "gits-thread-browser-test",
       "mcp",
