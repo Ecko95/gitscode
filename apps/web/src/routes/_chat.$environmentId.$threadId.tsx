@@ -301,6 +301,7 @@ function ChatThreadRouteView() {
     <BrowserPreviewPanel
       environmentId={threadRef.environmentId}
       threadId={threadRef.threadId}
+      cwd={activeWorkspaceRoot}
       onClose={closeBrowser}
     />
   ) : shouldRenderDiffContent ? (

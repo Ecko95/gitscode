@@ -37,12 +37,23 @@ describe("browser preview contracts", () => {
     ).toMatchObject({ action: "navigate", url: "http://localhost:8080" });
   });
 
+  it("decodes a direct browser instruction", () => {
+    expect(
+      decode_control_input({
+        threadId: "thread-1",
+        action: "instruct",
+        instruction: "click Continue",
+      }),
+    ).toMatchObject({ action: "instruct", instruction: "click Continue" });
+  });
+
   it("decodes a live preview status", () => {
     expect(
       decode_status({
         available: true,
         status: "live",
         previewPath: "/api/browser-preview/thread-1",
+        terminalUrl: "http://localhost:39369",
         expiresAt: "2026-07-12T12:00:00.000Z",
         message: null,
       }),

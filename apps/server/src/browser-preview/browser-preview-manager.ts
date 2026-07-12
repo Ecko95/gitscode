@@ -10,11 +10,12 @@ import type {
   BrowserPreviewStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { sessionPortForSessionId } from "../provider/sessionPort.ts";
 
 const exec_file = promisify(execFile);
 const TICKET_TTL_MS = 2 * 60 * 1000;
 const SESSION_PREFIX = "gits-";
-const CONTROL_COMMANDS: Record<Exclude<BrowserPreviewAction, "navigate">, string> = {
+const CONTROL_COMMANDS: Record<Exclude<BrowserPreviewAction, "navigate" | "instruct">, string> = {
   pause: "pause",
   resume: "resume",
   step: "step",
@@ -141,7 +142,14 @@ export class BrowserPreviewManager {
   async status(thread_id: ThreadId): Promise<BrowserPreviewStatus> {
     const session = this.#sessions.get(thread_id);
     if (!session) {
-      return { available: true, status: "idle", previewPath: null, expiresAt: null, message: null };
+      return {
+        available: true,
+        status: "idle",
+        previewPath: null,
+        terminalUrl: `http://localhost:${sessionPortForSessionId(thread_id)}`,
+        expiresAt: null,
+        message: null,
+      };
     }
 
     try {
@@ -159,6 +167,7 @@ export class BrowserPreviewManager {
     thread_id: ThreadId,
     action: BrowserPreviewAction,
     requested_url?: string,
+    instruction?: string,
   ): Promise<BrowserPreviewStatus> {
     const session = this.#sessions.get(thread_id);
     if (!session) {
@@ -170,6 +179,12 @@ export class BrowserPreviewManager {
         throw new Error("Browser URLs must use http or https.");
       }
       await this.#run(session.session_name, "navigate", [url.toString()]);
+    } else if (action === "instruct") {
+      const browser_instruction = instruction?.trim();
+      if (!browser_instruction) {
+        throw new Error("A browser instruction is required.");
+      }
+      await this.#run(session.session_name, "act-instruction", [browser_instruction]);
     } else {
       await this.#run(session.session_name, CONTROL_COMMANDS[action]);
     }
@@ -217,6 +232,7 @@ export class BrowserPreviewManager {
       available: true,
       status: session.status,
       previewPath: `/api/browser-preview/view?${preview_params.toString()}`,
+      terminalUrl: `http://localhost:${sessionPortForSessionId(session.thread_id)}`,
       expiresAt: new Date(expires_at_ms).toISOString(),
       message: session.message,
     };
@@ -227,6 +243,7 @@ export class BrowserPreviewManager {
       available: true,
       status: session.status,
       previewPath: null,
+      terminalUrl: `http://localhost:${sessionPortForSessionId(session.thread_id)}`,
       expiresAt: null,
       message: session.message,
     };

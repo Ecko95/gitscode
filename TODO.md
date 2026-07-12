@@ -7,6 +7,9 @@
 - [x] Add responsive chat preview UI with pause, resume, step, abort, takeover, and release controls.
 - [x] Add an editable URL bar that navigates the chat session's supervised browser.
 - [x] Instruct every provider to verify local dev-server URLs and use the supervised browser session.
+- [x] Reset the URL bar to the active chat terminal's deterministic localhost port.
+- [x] Add a per-chat Browser mode that sends composer text directly to `gsd-browser`.
+- [x] Add a Browser Supervision action that launches `npm run dev` in a chat-scoped terminal.
 - [x] Add header, `/browser`, and configurable `browser.toggle` command surfaces.
 - [x] Stop the isolated browser daemon when its chat is archived.
 - [ ] Add OpenCode dynamic MCP registration once its shared server exposes per-session MCP configuration.

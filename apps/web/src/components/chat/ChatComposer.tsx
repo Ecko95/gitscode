@@ -93,6 +93,7 @@ import {
   LockOpenIcon,
   PenLineIcon,
   SparklesIcon,
+  GlobeIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -488,6 +489,7 @@ export interface ChatComposerProps {
   // Mode
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  browserDirectMode: boolean;
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
@@ -536,6 +538,7 @@ export interface ChatComposerProps {
 
   onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
   toggleInteractionMode: () => void;
+  toggleBrowserDirectMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   onToggleBrowser: () => void;
@@ -591,6 +594,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     delamainSidebarOpen,
     runtimeMode,
     interactionMode,
+    browserDirectMode,
     lockedProvider,
     providerStatuses,
     activeProjectDefaultModelSelection,
@@ -617,6 +621,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onChangeActivePendingUserInputCustomAnswer,
     onProviderModelSelect,
     toggleInteractionMode,
+    toggleBrowserDirectMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
     onToggleBrowser,
@@ -2509,6 +2514,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={browserDirectMode ? "default" : "ghost"}
+                  onClick={toggleBrowserDirectMode}
+                  title={
+                    browserDirectMode
+                      ? "Browser mode: messages control gsd-browser"
+                      : "Send messages to gsd-browser"
+                  }
+                  aria-pressed={browserDirectMode}
+                >
+                  <GlobeIcon className="size-4" />
+                  <span className="hidden sm:inline">Browser</span>
+                </Button>
                 <ComposerVoiceButton
                   state={voiceTranscription.state}
                   missingApiKey={voiceTranscription.missingApiKey}

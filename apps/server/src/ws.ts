@@ -1548,7 +1548,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(
             WS_METHODS.browserPreviewControl,
             Effect.tryPromise({
-              try: () => browser_preview_manager.control(input.threadId, input.action, input.url),
+              try: () =>
+                browser_preview_manager.control(
+                  input.threadId,
+                  input.action,
+                  input.url,
+                  input.instruction,
+                ),
               catch: to_browser_preview_error,
             }),
             { "rpc.aggregate": "browserPreview" },

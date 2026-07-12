@@ -800,6 +800,8 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
+  const [browser_direct_mode, set_browser_direct_mode] = useState(false);
+  useEffect(() => set_browser_direct_mode(false), [threadId]);
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -3360,6 +3362,30 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
+    if (browser_direct_mode) {
+      if (composerImages.length > 0 || sendableComposerTerminalContexts.length > 0) {
+        setThreadError(activeThread.id, "Browser mode accepts text instructions only.");
+        return;
+      }
+      try {
+        await api.browserPreview.open({ threadId: activeThread.id });
+        await api.browserPreview.control({
+          threadId: activeThread.id,
+          action: "instruct",
+          instruction: trimmed,
+        });
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        setThreadError(activeThread.id, null);
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Browser instruction failed.",
+        );
+      }
+      return;
+    }
     if (!activeProject) return;
     const isSendQueued =
       phase === "running" || isSendBusy || sendInFlightThreadKeysRef.current.has(threadKeyForSend);
@@ -4424,6 +4450,7 @@ export default function ChatView(props: ChatViewProps) {
                   delamainSidebarOpen={delamainSidebarOpen}
                   runtimeMode={runtimeMode}
                   interactionMode={interactionMode}
+                  browserDirectMode={browser_direct_mode}
                   lockedProvider={lockedProvider}
                   providerStatuses={providerStatuses as ServerProvider[]}
                   activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
@@ -4453,6 +4480,7 @@ export default function ChatView(props: ChatViewProps) {
                   }
                   onProviderModelSelect={onProviderModelSelect}
                   toggleInteractionMode={toggleInteractionMode}
+                  toggleBrowserDirectMode={() => set_browser_direct_mode((value) => !value)}
                   handleRuntimeModeChange={handleRuntimeModeChange}
                   handleInteractionModeChange={handleInteractionModeChange}
                   onToggleBrowser={onToggleBrowser}

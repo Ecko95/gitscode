@@ -10,6 +10,7 @@ export const BrowserPreviewAction = Schema.Literals([
   "takeover",
   "release",
   "navigate",
+  "instruct",
 ]);
 export type BrowserPreviewAction = typeof BrowserPreviewAction.Type;
 
@@ -33,6 +34,7 @@ export const BrowserPreviewControlInput = Schema.Struct({
   threadId: ThreadId,
   action: BrowserPreviewAction,
   url: Schema.optional(TrimmedNonEmptyString),
+  instruction: Schema.optional(TrimmedNonEmptyString),
 });
 export type BrowserPreviewControlInput = typeof BrowserPreviewControlInput.Type;
 
@@ -40,6 +42,7 @@ export const BrowserPreviewStatus = Schema.Struct({
   available: Schema.Boolean,
   status: BrowserPreviewLifecycleStatus,
   previewPath: Schema.NullOr(TrimmedNonEmptyString),
+  terminalUrl: Schema.NullOr(TrimmedNonEmptyString),
   expiresAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),
 });

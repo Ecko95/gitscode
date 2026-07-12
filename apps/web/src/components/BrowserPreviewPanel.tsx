@@ -21,16 +21,20 @@ import { Button } from "./ui/button";
 interface BrowserPreviewPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly cwd: string | null;
   readonly onClose: () => void;
 }
 
 export function BrowserPreviewPanel({
   environmentId,
   threadId,
+  cwd,
   onClose,
 }: BrowserPreviewPanelProps) {
   const [preview_status, set_preview_status] = useState<BrowserPreviewStatus | null>(null);
-  const [busy_action, set_busy_action] = useState<BrowserPreviewAction | "open" | null>("open");
+  const [busy_action, set_busy_action] = useState<BrowserPreviewAction | "open" | "run-dev" | null>(
+    "open",
+  );
   const [browser_url, set_browser_url] = useState("");
   const [control_error, set_control_error] = useState<string | null>(null);
 
@@ -39,12 +43,15 @@ export function BrowserPreviewPanel({
     try {
       const api = readEnvironmentApi(environmentId);
       if (!api) throw new Error("The environment connection is unavailable.");
-      set_preview_status(await api.browserPreview.open({ threadId }));
+      const status = await api.browserPreview.open({ threadId });
+      set_preview_status(status);
+      set_browser_url(status.terminalUrl ?? "");
     } catch (cause) {
       set_preview_status({
         available: false,
         status: "error",
         previewPath: null,
+        terminalUrl: null,
         expiresAt: null,
         message: cause instanceof Error ? cause.message : "Browser preview failed to start.",
       });
@@ -78,6 +85,25 @@ export function BrowserPreviewPanel({
 
   const is_paused = preview_status?.status === "paused";
   const is_takeover = preview_status?.status === "takeover";
+
+  const run_dev = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !cwd) return;
+    set_busy_action("run-dev");
+    set_control_error(null);
+    try {
+      await api.terminal.open({ threadId, terminalId: "browser-dev", cwd });
+      await api.terminal.write({
+        threadId,
+        terminalId: "browser-dev",
+        data: 'npm run dev -- --port "$GITS_PORT"\r',
+      });
+    } catch (cause) {
+      set_control_error(cause instanceof Error ? cause.message : "Failed to start npm run dev.");
+    } finally {
+      set_busy_action(null);
+    }
+  }, [cwd, environmentId, threadId]);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-card" aria-label="Live browser preview">
@@ -126,6 +152,16 @@ export function BrowserPreviewPanel({
           disabled={busy_action !== null}
           required
         />
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={busy_action !== null || !cwd}
+          onClick={() => void run_dev()}
+        >
+          <PlayIcon className="size-3" />
+          Run dev
+        </Button>
         <Button
           type="submit"
           size="xs"
