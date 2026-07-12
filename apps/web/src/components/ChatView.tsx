@@ -2119,7 +2119,7 @@ export default function ChatView(props: ChatViewProps) {
         targetThreadId,
       });
       if (isCurrentServerThread) {
-        setStoreThreadError(targetThreadId, nextError);
+        setStoreThreadError(routeThreadRef, nextError);
         return;
       }
       const localDraftErrorKey = draftId ?? targetThreadId;

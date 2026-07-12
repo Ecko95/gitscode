@@ -145,7 +145,6 @@ export const terminalSessionMetadataAtom = Atom.family((environmentId: Environme
 
 export const terminalSessionBufferAtom = Atom.family((target: KnownTerminalSessionTarget) => {
   const key = keyFromKnownTarget(target);
-  knownTerminalBufferTargets.set(key, target);
   return Atom.make(EMPTY_TERMINAL_BUFFER_STATE).pipe(
     Atom.keepAlive,
     Atom.withLabel(`terminal-session:buffer:${key}`),
@@ -390,7 +389,19 @@ export function createTerminalSessionManager(config: TerminalSessionManagerConfi
   }
 
   function setBuffer(target: KnownTerminalSessionTarget, next: TerminalBufferState): void {
+    knownTerminalBufferTargets.set(keyFromKnownTarget(target), target);
     config.getRegistry().set(terminalSessionBufferAtom(target), next);
+  }
+
+  function removeBuffer(target: KnownTerminalSessionTarget): void {
+    const targetKey = keyFromKnownTarget(target);
+    const knownTarget = knownTerminalBufferTargets.get(targetKey);
+    if (!knownTarget) {
+      return;
+    }
+
+    config.getRegistry().set(terminalSessionBufferAtom(knownTarget), EMPTY_TERMINAL_BUFFER_STATE);
+    knownTerminalBufferTargets.delete(targetKey);
   }
 
   function getSnapshot(target: TerminalSessionTarget): TerminalSessionState {
@@ -450,6 +461,12 @@ export function createTerminalSessionManager(config: TerminalSessionManagerConfi
         }
       }
 
+      for (const [key, knownTarget] of knownTerminalBufferTargets) {
+        if (knownTarget.environmentId === environmentId && !retainedKeys.has(key)) {
+          removeBuffer(knownTarget);
+        }
+      }
+
       setMetadata(environmentId, next);
       return;
     }
@@ -479,6 +496,7 @@ export function createTerminalSessionManager(config: TerminalSessionManagerConfi
     const next = { ...getMetadata(environmentId) };
     delete next[keyFromKnownTarget(knownTarget)];
     setMetadata(environmentId, next);
+    removeBuffer(knownTarget);
   }
 
   function applyAttachEvent(
@@ -558,7 +576,7 @@ export function createTerminalSessionManager(config: TerminalSessionManagerConfi
         const next = { ...getMetadata(knownTarget.environmentId) };
         delete next[targetKey];
         setMetadata(knownTarget.environmentId, next);
-        setBuffer(knownTarget, EMPTY_TERMINAL_BUFFER_STATE);
+        removeBuffer(knownTarget);
       }
       return;
     }
@@ -580,7 +598,7 @@ export function createTerminalSessionManager(config: TerminalSessionManagerConfi
     const prefix = `${environmentId}:`;
     for (const [key, target] of knownTerminalBufferTargets) {
       if (key.startsWith(prefix)) {
-        setBuffer(target, EMPTY_TERMINAL_BUFFER_STATE);
+        removeBuffer(target);
       }
     }
   }

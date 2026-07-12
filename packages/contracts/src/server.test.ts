@@ -1,9 +1,12 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
-import { ServerProvider } from "./server.ts";
+import { ServerProcessResourceHistoryInput, ServerProvider } from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerProcessResourceHistoryInput = Schema.decodeUnknownSync(
+  ServerProcessResourceHistoryInput,
+);
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
@@ -70,5 +73,23 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
+  });
+});
+
+describe("ServerProcessResourceHistoryInput", () => {
+  it.each([
+    { windowMs: 999, bucketMs: 5_000 },
+    { windowMs: 3_600_001, bucketMs: 5_000 },
+    { windowMs: 60_000, bucketMs: 4_999 },
+    { windowMs: 60_000, bucketMs: 3_600_001 },
+  ])("rejects durations outside the supported bounds", (input) => {
+    expect(() => decodeServerProcessResourceHistoryInput(input)).toThrow();
+  });
+
+  it.each([
+    { windowMs: 1_000, bucketMs: 5_000 },
+    { windowMs: 3_600_000, bucketMs: 3_600_000 },
+  ])("accepts inclusive duration bounds", (input) => {
+    expect(decodeServerProcessResourceHistoryInput(input)).toEqual(input);
   });
 });

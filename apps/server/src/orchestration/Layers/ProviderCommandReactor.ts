@@ -1788,6 +1788,7 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         event.type === "thread.runtime-mode-set" ||
@@ -1803,7 +1804,7 @@ const make = Effect.gen(function* () {
     });
 
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+      Stream.runForEach(Stream.fromSubscription(domainEvents), processEvent),
     );
   });
 

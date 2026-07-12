@@ -2,11 +2,13 @@ import { QueryClient } from "@tanstack/react-query";
 import type { WsRpcClient } from "@t3tools/client-runtime";
 import {
   EnvironmentId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
   type OrchestrationShellSnapshot,
+  type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -300,6 +302,56 @@ function makeThreadShellSnapshot(params: {
   };
 }
 
+function makeThreadDetailSnapshot(params: {
+  readonly threadId: ThreadId;
+  readonly messageId: string;
+  readonly messageText: string;
+  readonly snapshotSequence: number;
+}): OrchestrationThreadStreamItem {
+  const timestamp = "2026-04-13T00:00:00.000Z";
+
+  return {
+    kind: "snapshot",
+    snapshot: {
+      snapshotSequence: params.snapshotSequence,
+      thread: {
+        id: params.threadId,
+        projectId: ProjectId.make("project-1"),
+        title: "Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        archivedAt: null,
+        deletedAt: null,
+        session: null,
+        messages: [
+          {
+            id: MessageId.make(params.messageId),
+            role: "assistant",
+            text: params.messageText,
+            turnId: null,
+            streaming: false,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        proposedPlans: [],
+        visualPlans: [],
+        activities: [],
+        checkpoints: [],
+      },
+    },
+  };
+}
+
 describe("retainThreadDetailSubscription", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -386,7 +438,16 @@ describe("retainThreadDetailSubscription", () => {
     vi.useRealTimers();
   });
 
-  it("keeps thread detail subscriptions warm across releases until idle eviction", async () => {
+  it("evicts idle detail payloads and reacquires them from a fresh snapshot", async () => {
+    const capturedCallbacks: Array<(item: OrchestrationThreadStreamItem) => void> = [];
+    mockSubscribeThread.mockImplementation(
+      (_input: unknown, callback: (item: OrchestrationThreadStreamItem) => void) => {
+        capturedCallbacks.push(callback);
+        return mockThreadUnsubscribe;
+      },
+    );
+
+    const { selectThreadByRef, useStore } = await import("~/store");
     const {
       retainThreadDetailSubscription,
       startEnvironmentConnectionService,
@@ -396,9 +457,24 @@ describe("retainThreadDetailSubscription", () => {
     const stop = startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-1");
+    const threadRef = { environmentId, threadId };
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(makeThreadShellSnapshot({ threadId }), environmentId);
 
     const releaseFirst = retainThreadDetailSubscription(environmentId, threadId);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+    capturedCallbacks[0]?.(
+      makeThreadDetailSnapshot({
+        threadId,
+        messageId: "message-stale",
+        messageText: "stale cached payload",
+        snapshotSequence: 1,
+      }),
+    );
+    expect(selectThreadByRef(useStore.getState(), threadRef)?.messages).toMatchObject([
+      { text: "stale cached payload" },
+    ]);
 
     releaseFirst();
     expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
@@ -412,6 +488,28 @@ describe("retainThreadDetailSubscription", () => {
 
     await vi.advanceTimersByTimeAsync(28 * 60 * 1000);
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(selectThreadByRef(useStore.getState(), threadRef)?.messages).toEqual([]);
+    expect(selectThreadByRef(useStore.getState(), threadRef)?.title).toBe("Thread");
+    expect(
+      useStore.getState().environmentStateById[environmentId]?.sidebarThreadSummaryById[threadId]
+        ?.title,
+    ).toBe("Thread");
+
+    const releaseThird = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    expect(selectThreadByRef(useStore.getState(), threadRef)?.messages).toEqual([]);
+    capturedCallbacks[1]?.(
+      makeThreadDetailSnapshot({
+        threadId,
+        messageId: "message-fresh",
+        messageText: "fresh snapshot payload",
+        snapshotSequence: 2,
+      }),
+    );
+    expect(selectThreadByRef(useStore.getState(), threadRef)?.messages).toMatchObject([
+      { text: "fresh snapshot payload" },
+    ]);
+    releaseThird();
 
     stop();
     await resetEnvironmentServiceForTests();
@@ -662,7 +760,18 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  it("allows a larger idle cache before capacity eviction starts", async () => {
+  it("evicts the oldest idle detail payload when the cache reaches capacity", async () => {
+    const capturedCallbacks = new Map<ThreadId, (item: OrchestrationThreadStreamItem) => void>();
+    mockSubscribeThread.mockImplementation(
+      (
+        input: { readonly threadId: ThreadId },
+        callback: (item: OrchestrationThreadStreamItem) => void,
+      ) => {
+        capturedCallbacks.set(input.threadId, callback);
+        return mockThreadUnsubscribe;
+      },
+    );
+    const { selectThreadByRef, useStore } = await import("~/store");
     const {
       retainThreadDetailSubscription,
       startEnvironmentConnectionService,
@@ -671,22 +780,63 @@ describe("retainThreadDetailSubscription", () => {
 
     const stop = startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
+    const threadIds = Array.from({ length: 33 }, (_, index) =>
+      ThreadId.make(`thread-${index + 1}`),
+    );
 
-    for (let index = 0; index < 12; index += 1) {
-      const release = retainThreadDetailSubscription(
-        environmentId,
-        ThreadId.make(`thread-${index + 1}`),
+    for (const [index, threadId] of threadIds.entries()) {
+      const release = retainThreadDetailSubscription(environmentId, threadId);
+      capturedCallbacks.get(threadId)?.(
+        makeThreadDetailSnapshot({
+          threadId,
+          messageId: `message-${index + 1}`,
+          messageText: `payload-${index + 1}`,
+          snapshotSequence: index + 1,
+        }),
       );
       release();
+      await vi.advanceTimersByTimeAsync(1);
     }
 
-    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
+    expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(
+      selectThreadByRef(useStore.getState(), {
+        environmentId,
+        threadId: threadIds[0]!,
+      })?.messages,
+    ).toEqual([]);
+    expect(
+      selectThreadByRef(useStore.getState(), {
+        environmentId,
+        threadId: threadIds[0]!,
+      })?.title,
+    ).toBe("Thread");
+    expect(
+      selectThreadByRef(useStore.getState(), {
+        environmentId,
+        threadId: threadIds[1]!,
+      })?.messages,
+    ).toMatchObject([{ text: "payload-2" }]);
+    expect(
+      selectThreadByRef(useStore.getState(), {
+        environmentId,
+        threadId: threadIds[32]!,
+      })?.messages,
+    ).toMatchObject([{ text: "payload-33" }]);
 
     stop();
     await resetEnvironmentServiceForTests();
   });
 
-  it("disposes cached thread detail subscriptions when the environment service resets", async () => {
+  it("disposes cached subscriptions and detail payloads when the environment service resets", async () => {
+    const capturedCallbacks: Array<(item: OrchestrationThreadStreamItem) => void> = [];
+    mockSubscribeThread.mockImplementation(
+      (_input: unknown, callback: (item: OrchestrationThreadStreamItem) => void) => {
+        capturedCallbacks.push(callback);
+        return mockThreadUnsubscribe;
+      },
+    );
+    const { selectThreadByRef, useStore } = await import("~/store");
     const {
       retainThreadDetailSubscription,
       startEnvironmentConnectionService,
@@ -698,10 +848,27 @@ describe("retainThreadDetailSubscription", () => {
     const threadId = ThreadId.make("thread-2");
 
     const release = retainThreadDetailSubscription(environmentId, threadId);
+    capturedCallbacks[0]?.(
+      makeThreadDetailSnapshot({
+        threadId,
+        messageId: "message-reset",
+        messageText: "reset payload",
+        snapshotSequence: 1,
+      }),
+    );
+    expect(
+      selectThreadByRef(useStore.getState(), { environmentId, threadId })?.messages,
+    ).toMatchObject([{ text: "reset payload" }]);
     release();
 
     await resetEnvironmentServiceForTests();
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(selectThreadByRef(useStore.getState(), { environmentId, threadId })?.messages).toEqual(
+      [],
+    );
+    expect(selectThreadByRef(useStore.getState(), { environmentId, threadId })?.title).toBe(
+      "Thread",
+    );
 
     stop();
   });
@@ -903,8 +1070,9 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  // W1: missing detail deltas must not be applied over a stale local thread.
-  it("resubscribes for a fresh snapshot when the live detail stream skips a sequence", async () => {
+  // The server filters a global sequence stream by thread, so unrelated events
+  // legitimately create gaps between relevant thread-detail events.
+  it("applies non-contiguous relevant events without resubscribing", async () => {
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-gap");
 
@@ -977,23 +1145,13 @@ describe("retainThreadDetailSubscription", () => {
       snapshot: { snapshotSequence: 10, thread: makeThread() },
     } as StreamItem);
 
-    firstCallback(makeEvent(11, "contiguous") as StreamItem);
+    firstCallback(makeEvent(11, "first relevant event") as StreamItem);
     expect(applyEventsSpy).toHaveBeenCalledTimes(1);
 
-    firstCallback(makeEvent(13, "gapped") as StreamItem);
-    expect(applyEventsSpy).toHaveBeenCalledTimes(1);
-    expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
-
-    firstCallback(makeEvent(14, "old-callback") as StreamItem);
-    expect(applyEventsSpy).toHaveBeenCalledTimes(1);
-
-    const refetchCallback = capturedCallbacks[1]!;
-    refetchCallback({
-      kind: "snapshot",
-      snapshot: { snapshotSequence: 20, thread: makeThread() },
-    } as StreamItem);
-    refetchCallback(makeEvent(21, "post-refetch") as StreamItem);
+    firstCallback(makeEvent(13, "second relevant event") as StreamItem);
     expect(applyEventsSpy).toHaveBeenCalledTimes(2);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
 
     stop();
     await resetEnvironmentServiceForTests();

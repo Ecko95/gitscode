@@ -529,6 +529,51 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("buffers domain events acquired before stream consumption starts", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    const receivedEvent = await system.run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const subscription = yield* engine.subscribeDomainEvents;
+
+          yield* engine.dispatch(
+            {
+              type: "project.create",
+              commandId: CommandId.make("cmd-project-pre-acquired-subscription"),
+              projectId: asProjectId("project-pre-acquired-subscription"),
+              title: "Pre-acquired Subscription Project",
+              workspaceRoot: "/tmp/project-pre-acquired-subscription",
+              defaultModelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              createdAt,
+            },
+            "server",
+          );
+
+          return yield* Stream.fromSubscription(subscription).pipe(
+            Stream.runHead,
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.die("expected a buffered domain event"),
+                onSome: Effect.succeed,
+              }),
+            ),
+            Effect.timeout("1 second"),
+          );
+        }),
+      ),
+    );
+
+    expect(receivedEvent.type).toBe("project.created");
+    expect(receivedEvent.aggregateId).toBe("project-pre-acquired-subscription");
+    await system.dispose();
+  });
+
   it("records command ack duration using the first committed event type", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

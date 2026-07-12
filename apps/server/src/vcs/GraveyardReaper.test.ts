@@ -7,8 +7,9 @@
  *   - Under-age adopted worktree → untouched
  *   - REBOUND: adopted + owner-recorded + NO thread.deleted → skip, no burial (live thread)
  *   - REBOUND: adopted + owner-recorded + thread.archived (no thread.deleted) → skip (archived blocks)
+ *   - REBOUND: adopted + owner-recorded + thread.deleted + live projection reference → skip
  *   - Adopted + owner-recorded + thread.deleted → prune proceeds (thread is dead)
- *   - Capture failure → buried with null ref (removal proceeds)
+ *   - Capture failure → untouched so a later sweep can retry safely
  *   - Remove failure → warn, no burial event
  *   - Already buried → skipped in sweep
  *
@@ -170,6 +171,7 @@ function makeEngineLayer(events: OrchestrationEvent[]): {
         }),
       readEvents: (_from: number) =>
         Stream.fromIterable(events) as Stream.Stream<OrchestrationEvent>,
+      subscribeDomainEvents: Effect.die("unused"),
       streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
     }),
     dispatched,
@@ -189,16 +191,20 @@ function makeCheckpointLayer(fail: boolean) {
   } as never);
 }
 
-function makeGitLayer(fail: boolean) {
+function makeGitLayer(fail: boolean, removeCalls: string[]) {
   return Layer.succeed(
     GitVcsDriver,
     new Proxy({} as never, {
       get: (_target, prop) => {
         if (prop === "removeWorktree") {
-          return () =>
-            fail
-              ? Effect.fail(Object.assign(new Error("rm-fail"), { _tag: "GitCommandError" }))
-              : Effect.void;
+          return (input: { readonly path: string }) =>
+            Effect.sync(() => removeCalls.push(input.path)).pipe(
+              Effect.andThen(
+                fail
+                  ? Effect.fail(Object.assign(new Error("rm-fail"), { _tag: "GitCommandError" }))
+                  : Effect.void,
+              ),
+            );
         }
         return () => Effect.die(`unused git method: ${String(prop)}`);
       },
@@ -211,7 +217,11 @@ function makeGitLayer(fail: boolean) {
  * Default (liveWorktreePaths=[]) returns false (no live threads). Pass the path
  * under test to simulate a live thread referencing that worktree.
  */
-function makeProjectionLayer(liveWorktreePaths: string[] = []) {
+function makeProjectionLayer(
+  liveWorktreePaths: string[] = [],
+  responses: boolean[] | undefined = undefined,
+) {
+  let responseIndex = 0;
   return Layer.succeed(ProjectionSnapshotQuery, {
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
@@ -227,7 +237,14 @@ function makeProjectionLayer(liveWorktreePaths: string[] = []) {
     getThreadShellById: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
     getThreadWorktreeInfo: () => Effect.die("unused"),
-    hasLiveThreadForWorktreePath: (p: string) => Effect.succeed(liveWorktreePaths.includes(p)),
+    hasLiveThreadForWorktreePath: (p: string) => {
+      if (responses && responses.length > 0) {
+        const response = responses[Math.min(responseIndex, responses.length - 1)] ?? true;
+        responseIndex += 1;
+        return Effect.succeed(response);
+      }
+      return Effect.succeed(liveWorktreePaths.includes(p));
+    },
   } as never);
 }
 
@@ -242,8 +259,14 @@ async function runReaperSweep(opts: {
   failGit?: boolean;
   /** Worktree paths that a live (non-deleted) thread references in the projection DB. */
   liveWorktreePaths?: string[];
-}): Promise<{ dispatched: Array<Record<string, unknown>> }> {
+  /** Deterministic projection responses for race tests (one response per query). */
+  projectionResponses?: boolean[];
+}): Promise<{
+  dispatched: Array<Record<string, unknown>>;
+  removeCalls: string[];
+}> {
   const { layer: engineLayer, dispatched } = makeEngineLayer(opts.events);
+  const removeCalls: string[] = [];
 
   // maxAgeMs=1 so epoch-time adoptedAt always ages out
   process.env["GITS_GRAVEYARD_MAX_AGE_MS"] = "1";
@@ -251,10 +274,10 @@ async function runReaperSweep(opts: {
     const baseLayer = Layer.mergeAll(
       engineLayer,
       makeCheckpointLayer(opts.failCp ?? false),
-      makeGitLayer(opts.failGit ?? false),
+      makeGitLayer(opts.failGit ?? false, removeCalls),
       Layer.succeed(ServerConfig, { worktreesDir: opts.worktreesDir } as never),
       NodeServices.layer, // provides FileSystem, Crypto
-      makeProjectionLayer(opts.liveWorktreePaths ?? []),
+      makeProjectionLayer(opts.liveWorktreePaths ?? [], opts.projectionResponses),
     );
 
     await Effect.runPromise(runSweepOnce.pipe(Effect.provide(baseLayer)));
@@ -262,7 +285,7 @@ async function runReaperSweep(opts: {
     delete process.env["GITS_GRAVEYARD_MAX_AGE_MS"];
   }
 
-  return { dispatched };
+  return { dispatched, removeCalls };
 }
 
 // ---------------------------------------------------------------------------
@@ -335,13 +358,46 @@ describe("GraveyardReaper — sweep behaviour", () => {
     expect(buryCmds[0]!["trigger"]).toBe("reaper");
   });
 
-  it("capture failure → buried with null finalCheckpointRef (removal proceeds)", async () => {
+  it("REBOUND: owner-recorded + thread.deleted + live projection reference → skip", async () => {
+    const path = addPath();
+    const threadId = ThreadId.make("t-deleted-with-live-fork");
+    const events = [
+      makeAdoptedEvent(path),
+      makeOwnerRecordedEvent(path, threadId),
+      makeThreadDeletedEvent(threadId),
+    ];
+    const { dispatched } = await runReaperSweep({
+      worktreesDir,
+      events,
+      liveWorktreePaths: [path],
+    });
+    expect(dispatched.filter((d) => d["type"] === "worktree.bury")).toHaveLength(0);
+  });
+
+  it("capture failure → no removal or burial so a later sweep can retry", async () => {
     const path = addPath();
     const events = [makeAdoptedEvent(path)];
-    const { dispatched } = await runReaperSweep({ worktreesDir, events, failCp: true });
+    const { dispatched, removeCalls } = await runReaperSweep({
+      worktreesDir,
+      events,
+      failCp: true,
+    });
     const buryCmds = dispatched.filter((d) => d["type"] === "worktree.bury");
-    expect(buryCmds).toHaveLength(1);
-    expect(buryCmds[0]!["finalCheckpointRef"]).toBeNull();
+    expect(buryCmds).toHaveLength(0);
+    expect(removeCalls).toEqual([]);
+  });
+
+  it("re-checks liveness after checkpoint capture before removal", async () => {
+    const path = addPath();
+    const events = [makeAdoptedEvent(path)];
+    const { dispatched, removeCalls } = await runReaperSweep({
+      worktreesDir,
+      events,
+      // Initial check is clear; a thread binds the path while capture runs.
+      projectionResponses: [false, true],
+    });
+    expect(removeCalls).toEqual([]);
+    expect(dispatched.filter((d) => d["type"] === "worktree.bury")).toHaveLength(0);
   });
 
   it("remove failure → warn, no burial event, candidate remains", async () => {

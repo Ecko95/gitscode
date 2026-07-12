@@ -199,7 +199,7 @@ export const attachmentsRouteLayer = HttpRouter.add(
     return yield* HttpServerResponse.file(filePath, {
       status: 200,
       headers: {
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": "private, no-store",
       },
     }).pipe(
       Effect.catch(() =>

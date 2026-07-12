@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -81,6 +82,16 @@ export class DesktopSavedEnvironmentsWriteError extends Data.TaggedError(
   }
 }
 
+export class DesktopSavedEnvironmentsReadError extends Data.TaggedError(
+  "DesktopSavedEnvironmentsReadError",
+)<{
+  readonly cause: PlatformError.PlatformError | Schema.SchemaError;
+}> {
+  override get message() {
+    return `Failed to read desktop saved environments: ${this.cause.message}`;
+  }
+}
+
 export class DesktopSavedEnvironmentSecretDecodeError extends Data.TaggedError(
   "DesktopSavedEnvironmentSecretDecodeError",
 )<{
@@ -92,20 +103,25 @@ export class DesktopSavedEnvironmentSecretDecodeError extends Data.TaggedError(
 }
 
 export type DesktopSavedEnvironmentsGetSecretError =
+  | DesktopSavedEnvironmentsReadError
   | DesktopSavedEnvironmentSecretDecodeError
   | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
   | ElectronSafeStorage.ElectronSafeStorageDecryptError;
 
 export type DesktopSavedEnvironmentsSetSecretError =
+  | DesktopSavedEnvironmentsReadError
   | DesktopSavedEnvironmentsWriteError
   | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
   | ElectronSafeStorage.ElectronSafeStorageEncryptError;
 
 export interface DesktopSavedEnvironmentsShape {
-  readonly getRegistry: Effect.Effect<readonly PersistedSavedEnvironmentRecord[]>;
+  readonly getRegistry: Effect.Effect<
+    readonly PersistedSavedEnvironmentRecord[],
+    DesktopSavedEnvironmentsReadError
+  >;
   readonly setRegistry: (
     records: readonly PersistedSavedEnvironmentRecord[],
-  ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
+  ) => Effect.Effect<void, DesktopSavedEnvironmentsReadError | DesktopSavedEnvironmentsWriteError>;
   readonly getSecret: (
     environmentId: string,
   ) => Effect.Effect<Option.Option<string>, DesktopSavedEnvironmentsGetSecretError>;
@@ -115,7 +131,7 @@ export interface DesktopSavedEnvironmentsShape {
   }) => Effect.Effect<boolean, DesktopSavedEnvironmentsSetSecretError>;
   readonly removeSecret: (
     environmentId: string,
-  ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
+  ) => Effect.Effect<void, DesktopSavedEnvironmentsReadError | DesktopSavedEnvironmentsWriteError>;
 }
 
 export class DesktopSavedEnvironments extends Context.Service<
@@ -178,16 +194,21 @@ function normalizeSavedEnvironmentRegistryDocument(
 function readRegistryDocument(
   fileSystem: FileSystem.FileSystem,
   registryPath: string,
-): Effect.Effect<SavedEnvironmentRegistryDocument> {
+): Effect.Effect<SavedEnvironmentRegistryDocument, DesktopSavedEnvironmentsReadError> {
   return fileSystem.readFileString(registryPath).pipe(
-    Effect.option,
+    Effect.map(Option.some),
+    Effect.catch((cause: PlatformError.PlatformError) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.succeed(Option.none<string>())
+        : Effect.fail(new DesktopSavedEnvironmentsReadError({ cause })),
+    ),
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.succeed({ version: 1, records: [] }),
         onSome: (raw) =>
           decodeSavedEnvironmentRegistryDocumentJson(raw).pipe(
             Effect.map(normalizeSavedEnvironmentRegistryDocument),
-            Effect.catch(() => Effect.succeed({ version: 1, records: [] })),
+            Effect.mapError((cause) => new DesktopSavedEnvironmentsReadError({ cause })),
           ),
       }),
     ),
@@ -248,6 +269,7 @@ export const layer = Layer.effect(
     const path = yield* Path.Path;
     const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
     const crypto = yield* Crypto.Crypto;
+    const mutationSemaphore = yield* Semaphore.make(1);
 
     const writeDocument = (document: SavedEnvironmentRegistryDocument) =>
       crypto.randomUUIDv4.pipe(
@@ -277,7 +299,7 @@ export const layer = Layer.effect(
           environment.savedEnvironmentRegistryPath,
         );
         yield* writeDocument(preserveExistingSecrets(currentDocument, records));
-      }),
+      }, mutationSemaphore.withPermits(1)),
       getSecret: Effect.fn("desktop.savedEnvironments.getSecret")(function* (environmentId) {
         yield* Effect.annotateCurrentSpan({ environmentId });
         const document = yield* readRegistryDocument(
@@ -327,7 +349,7 @@ export const layer = Layer.effect(
           yield* writeDocument(nextDocument);
         }
         return found;
-      }),
+      }, mutationSemaphore.withPermits(1)),
       removeSecret: Effect.fn("desktop.savedEnvironments.removeSecret")(function* (environmentId) {
         yield* Effect.annotateCurrentSpan({ environmentId });
         const document = yield* readRegistryDocument(
@@ -352,7 +374,7 @@ export const layer = Layer.effect(
             return toPersistedSavedEnvironmentRecord(record);
           }),
         });
-      }),
+      }, mutationSemaphore.withPermits(1)),
     });
   }),
 );

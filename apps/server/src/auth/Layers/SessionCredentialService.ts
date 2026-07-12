@@ -556,6 +556,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
+    subscribeChanges: PubSub.subscribe(changesPubSub),
     revoke,
     revokeAllExcept,
     markConnected,

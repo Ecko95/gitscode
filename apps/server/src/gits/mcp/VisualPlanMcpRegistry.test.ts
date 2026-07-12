@@ -2,8 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -12,21 +13,23 @@ import { ServerSecretStoreLive } from "../../auth/Layers/ServerSecretStore.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { VisualPlanMcpService, VisualPlanMcpServiceLive } from "./VisualPlanMcpRegistry.ts";
 
-const makeOrchestrationStub = (
-  events?: Stream.Stream<import("@t3tools/contracts").OrchestrationEvent>,
-) =>
-  Layer.succeed(
+const makeOrchestrationStub = () =>
+  Layer.effect(
     OrchestrationEngineService,
-    OrchestrationEngineService.of({
-      readEvents: () => Stream.empty,
-      dispatch: () => Effect.succeed({ sequence: 0 }),
-      streamDomainEvents: events ?? Stream.empty,
+    Effect.gen(function* () {
+      const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      return OrchestrationEngineService.of({
+        readEvents: () => Stream.empty,
+        dispatch: () => Effect.succeed({ sequence: 0 }),
+        subscribeDomainEvents: PubSub.subscribe(domainEvents),
+        streamDomainEvents: Stream.fromPubSub(domainEvents),
+      });
     }),
   );
 
-const makeTestLayer = (events?: Stream.Stream<import("@t3tools/contracts").OrchestrationEvent>) =>
+const makeTestLayer = () =>
   VisualPlanMcpServiceLive.pipe(
-    Layer.provideMerge(makeOrchestrationStub(events)),
+    Layer.provideMerge(makeOrchestrationStub()),
     Layer.provideMerge(
       ServerAuthLive.pipe(
         Layer.provide(SqlitePersistenceMemory),

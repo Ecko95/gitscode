@@ -241,6 +241,13 @@ export const AuthAccessStreamEvent = Schema.Union([
 ]);
 export type AuthAccessStreamEvent = typeof AuthAccessStreamEvent.Type;
 
+export class AuthAccessDeniedError extends Schema.TaggedErrorClass<AuthAccessDeniedError>()(
+  "AuthAccessDeniedError",
+  {
+    message: TrimmedNonEmptyString,
+  },
+) {}
+
 export const AuthRevokePairingLinkInput = Schema.Struct({
   id: TrimmedNonEmptyString,
 });

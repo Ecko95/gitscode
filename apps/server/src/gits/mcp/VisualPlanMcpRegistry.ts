@@ -107,8 +107,9 @@ const make = Effect.gen(function* () {
 
   // Subscribe to thread-deletion events in a scoped fiber; Layer.effect's scope
   // interrupts the fiber when the service scope closes.
+  const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
   yield* Effect.forkScoped(
-    Stream.runForEach(orchestrationEngine.streamDomainEvents, (event: OrchestrationEvent) => {
+    Stream.runForEach(Stream.fromSubscription(domainEvents), (event: OrchestrationEvent) => {
       if (event.type !== "thread.deleted") {
         return Effect.void;
       }

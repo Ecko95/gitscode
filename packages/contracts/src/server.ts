@@ -328,9 +328,24 @@ export const ServerProcessDiagnosticsResult = Schema.Struct({
 });
 export type ServerProcessDiagnosticsResult = typeof ServerProcessDiagnosticsResult.Type;
 
+export const SERVER_PROCESS_RESOURCE_HISTORY_MIN_WINDOW_MS = 1_000;
+export const SERVER_PROCESS_RESOURCE_HISTORY_MAX_WINDOW_MS = 3_600_000;
+export const SERVER_PROCESS_RESOURCE_HISTORY_MIN_BUCKET_MS = 5_000;
+export const SERVER_PROCESS_RESOURCE_HISTORY_MAX_BUCKET_MS = 3_600_000;
+
 export const ServerProcessResourceHistoryInput = Schema.Struct({
-  windowMs: NonNegativeInt,
-  bucketMs: NonNegativeInt,
+  windowMs: NonNegativeInt.check(
+    Schema.isBetween({
+      minimum: SERVER_PROCESS_RESOURCE_HISTORY_MIN_WINDOW_MS,
+      maximum: SERVER_PROCESS_RESOURCE_HISTORY_MAX_WINDOW_MS,
+    }),
+  ),
+  bucketMs: NonNegativeInt.check(
+    Schema.isBetween({
+      minimum: SERVER_PROCESS_RESOURCE_HISTORY_MIN_BUCKET_MS,
+      maximum: SERVER_PROCESS_RESOURCE_HISTORY_MAX_BUCKET_MS,
+    }),
+  ),
 });
 export type ServerProcessResourceHistoryInput = typeof ServerProcessResourceHistoryInput.Type;
 

@@ -56,10 +56,12 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -1245,6 +1247,10 @@ const buildAppUnderTest = (options?: {
         Layer.mock(OrchestrationEngineService)({
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
           streamDomainEvents: Stream.empty,
           ...options?.layers?.orchestrationEngine,
         }),
@@ -1368,16 +1374,21 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
-const wsRpcProtocolLayer = (wsUrl: string) => {
+const wsRpcProtocolLayer = (wsUrl: string, options?: { readonly onClose?: () => void }) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
-    (socketUrl, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(
+    (socketUrl, protocols) => {
+      const socket = new NodeSocket.NodeWS.WebSocket(
         socketUrl,
         protocols,
         cookie ? { headers: { cookie } } : undefined,
-      ) as unknown as globalThis.WebSocket,
+      );
+      if (options?.onClose) {
+        socket.once("close", options.onClose);
+      }
+      return socket as unknown as globalThis.WebSocket;
+    },
   );
 
   return RpcClient.layerProtocolSocket().pipe(
@@ -1393,7 +1404,8 @@ type WsRpcClient =
 const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
-) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
+  options?: { readonly onClose?: () => void },
+) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, options)));
 
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
@@ -2609,6 +2621,209 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("denies auth access stream to paired clients without closing their websocket", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const clientPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({ label: "Paired client" }),
+      });
+      const clientPairing = (yield* clientPairingResponse.json) as {
+        readonly credential: string;
+      };
+      assert.equal(clientPairingResponse.status, 200);
+
+      const clientBootstrap = yield* bootstrapBrowserSession(clientPairing.credential);
+      const clientCookie = clientBootstrap.cookie?.split(";")[0];
+      assert.equal(clientBootstrap.response.status, 200);
+      assert.isDefined(clientCookie);
+
+      const protectedPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({ label: "Protected active link" }),
+      });
+      assert.equal(protectedPairingResponse.status, 200);
+
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        clientCookie ?? "",
+      );
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const authAccessResult = yield* client[WS_METHODS.subscribeAuthAccess]({}).pipe(
+              Stream.take(1),
+              Stream.runCollect,
+              Effect.result,
+            );
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            return { authAccessResult, config };
+          }),
+        ),
+      );
+
+      assertTrue(response.authAccessResult._tag === "Failure");
+      assert.equal(response.authAccessResult.failure._tag, "AuthAccessDeniedError");
+      assert.equal(
+        response.authAccessResult.failure.message,
+        "Only owner sessions can manage network access.",
+      );
+      assert.equal(
+        response.config.environment.environmentId,
+        testEnvironmentDescriptor.environmentId,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("streams auth access snapshot to owner sessions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({ label: "Owner-visible link" }),
+      });
+      const pairing = (yield* pairingResponse.json) as {
+        readonly id: string;
+        readonly credential: string;
+      };
+      assert.equal(pairingResponse.status, 200);
+
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        ownerCookie,
+      );
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeAuthAccess]({}).pipe(Stream.take(1), Stream.runCollect),
+        ),
+      );
+
+      const snapshot = Array.from(events)[0];
+      assert.equal(snapshot?.type, "snapshot");
+      if (snapshot?.type === "snapshot") {
+        const listedPairing = snapshot.payload.pairingLinks.find(
+          (entry) => entry.id === pairing.id,
+        );
+        assert.equal(listedPairing?.credential, pairing.credential);
+        assert.isTrue(
+          snapshot.payload.clientSessions.some(
+            (session) => session.role === "owner" && session.current,
+          ),
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("disconnects an active websocket when its authenticated session is revoked", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const pairingBody = (yield* pairingResponse.json) as {
+        readonly credential: string;
+      };
+      const pairedSessionCookie = yield* getAuthenticatedSessionCookieHeader(
+        pairingBody.credential,
+      );
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly current: boolean;
+      }>;
+      const pairedSessionId = clients.find((entry) => !entry.current)?.sessionId;
+      assert.isDefined(pairedSessionId);
+
+      const socketClosed = yield* Effect.sync(() => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((complete) => {
+          resolve = complete;
+        });
+        return { promise, resolve } as const;
+      });
+      const pairedWsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        pairedSessionCookie,
+      );
+      const postRevokeResult = yield* Effect.scoped(
+        withWsRpcClient(
+          pairedWsUrl,
+          (client) =>
+            Effect.gen(function* () {
+              const beforeRevoke = yield* client[WS_METHODS.serverGetConfig]({});
+              assert.equal(
+                beforeRevoke.environment.environmentId,
+                testEnvironmentDescriptor.environmentId,
+              );
+
+              const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+                headers: {
+                  cookie: ownerCookie,
+                },
+                body: yield* HttpBody.json({ sessionId: pairedSessionId }),
+              });
+              assert.equal(revokeResponse.status, 200);
+
+              yield* Effect.raceFirst(
+                Effect.promise(() => socketClosed.promise),
+                Effect.sleep(Duration.seconds(2)).pipe(
+                  Effect.andThen(
+                    Effect.die(new Error("Timed out waiting for the revoked websocket to close.")),
+                  ),
+                ),
+              );
+
+              return yield* client[WS_METHODS.serverGetConfig]({}).pipe(Effect.result);
+            }),
+          {
+            onClose: socketClosed.resolve,
+          },
+        ),
+      );
+
+      assertTrue(postRevokeResult._tag === "Failure");
+      assertInclude(String(postRevokeResult.failure), "SocketCloseError");
+
+      const reconnectResult = yield* Effect.scoped(
+        withWsRpcClient(pairedWsUrl, (client) => client[WS_METHODS.serverGetConfig]({})).pipe(
+          Effect.result,
+        ),
+      );
+      assertTrue(reconnectResult._tag === "Failure");
+      assertInclude(String(reconnectResult.failure), "SocketOpenError");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("serves attachment files from state dir", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2632,6 +2847,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       assert.equal(response.status, 200);
       assert.equal(yield* response.text, "attachment-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("marks authenticated attachment responses private and non-cacheable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "thread-private-cache-attachment";
+
+      const { config } = yield* buildAppUnderTest();
+      const attachmentPath = resolveAttachmentRelativePath({
+        attachmentsDir: config.attachmentsDir,
+        relativePath: `${attachmentId}.bin`,
+      });
+      assert.isNotNull(attachmentPath, "Attachment path should be resolvable");
+
+      yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
+      yield* fileSystem.writeFileString(attachmentPath, "sensitive-attachment");
+
+      const response = yield* HttpClient.get(`/attachments/${attachmentId}`, {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["cache-control"], "private, no-store");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5101,6 +5343,96 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
       assertTrue(result.failure.cause instanceof Error);
       assert.include(result.failure.cause.message, projectionError.message);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers shell events published while the snapshot is loading", () =>
+    Effect.gen(function* () {
+      const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const snapshotStarted = yield* Deferred.make<void>();
+      const releaseSnapshot = yield* Deferred.make<void>();
+      const lazyStreamSubscribed = yield* Deferred.make<void>();
+      const threadId = ThreadId.make("thread-during-shell-snapshot");
+      const event = {
+        sequence: 11,
+        eventId: EventId.make("event-during-shell-snapshot"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-04-05T00:00:00.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.deleted",
+        payload: {
+          threadId,
+          deletedAt: "2026-04-05T00:00:00.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+      const fallbackEvent = {
+        ...event,
+        sequence: 12,
+        eventId: EventId.make("event-after-shell-snapshot"),
+      } satisfies Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            subscribeDomainEvents: PubSub.subscribe(domainEvents),
+            streamDomainEvents: Stream.unwrap(
+              Effect.gen(function* () {
+                const subscription = yield* PubSub.subscribe(domainEvents);
+                yield* Deferred.succeed(lazyStreamSubscribed, undefined);
+                return Stream.fromSubscription(subscription);
+              }),
+            ),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(snapshotStarted, undefined);
+                yield* Deferred.await(releaseSnapshot);
+                return {
+                  snapshotSequence: 10,
+                  projects: [],
+                  threads: [],
+                  updatedAt: "2026-04-05T00:00:00.000Z",
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const streamFiber = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
+            Stream.take(2),
+            Stream.runCollect,
+          ),
+        ),
+      ).pipe(Effect.forkScoped);
+
+      yield* Deferred.await(snapshotStarted);
+      yield* PubSub.publish(domainEvents, event);
+      yield* Deferred.succeed(releaseSnapshot, undefined);
+
+      const usedLazyStream = yield* Effect.race(
+        Deferred.await(lazyStreamSubscribed).pipe(Effect.as(true)),
+        Fiber.await(streamFiber).pipe(Effect.as(false)),
+      );
+      if (usedLazyStream) {
+        yield* PubSub.publish(domainEvents, fallbackEvent);
+      }
+
+      const output = Array.from(yield* Fiber.join(streamFiber).pipe(Effect.timeout("2 seconds")));
+      assert.deepEqual(
+        output.map((item) => item.kind),
+        ["snapshot", "thread-removed"],
+      );
+      const liveEvent = output[1];
+      assertTrue(liveEvent?.kind === "thread-removed");
+      assert.equal(liveEvent.sequence, 11);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

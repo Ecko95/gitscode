@@ -19,6 +19,36 @@ Current status: implementation complete and verified with focused tests, formatt
 
 Notes: `gsd-browser` is optional. Missing binaries or browsers surface as a recoverable panel error and do not block normal chat sessions.
 
+## Session log — 2026-07-12 (full system audit remediation planned)
+
+- [x] Convert `docs/audits/2026-07-11-full-system-audit.md` into an ordered remediation plan
+- [ ] Browser stabilization: deterministic bootstrap, WebGL fixture, keyboard readiness, request-order latch
+- [ ] Socket expiry, scoped provider streams, bounded queues, and assistant projection coalescing
+- [ ] Bundle split, Android text buffer benchmark, dependency remediation, dead-code CI report, benchmark history
+
+Plan: `docs/superpowers/plans/2026-07-12-full-system-audit-remediation.md`. Start Task 1 and Task 2 independently; Task 3 precedes Tasks 4–5. Android changes wait for SDK/emulator tooling and dead-file deletion waits for reference/owner confirmation.
+
+## Session log — 2026-07-11 (full system audit in progress)
+
+Branch `audit/full-system-2026-07-11`, rebased onto `origin/gits` at `5ca9d3a7b`.
+
+- [x] Create a clean audit branch from the current integration tip
+- [x] Capture formatting, lint, typecheck, build, and full-test baselines
+- [x] Audit server, web, desktop/mobile, security, reliability, and complexity surfaces
+- [x] Fix confirmed auto-fixable findings with focused regression checks
+- [x] Run repeatable performance benchmarks and document the environment
+- [x] Publish the full audit, benchmark results, residual risks, and improvement backlog
+
+Fixed so far: F-SEC-01 dependency advisories, F-DATA-01 destructive worktree reaping,
+F-PERF-01 diagnostics amplification, F-DATA-02 desktop registry overwrite, F-SEC-02 iOS
+transport policy, F-SEC-03 auth-access disclosure, F-DATA-03 cross-environment errors,
+F-REL-01 subscription cleanup, F-SEC-04 active-session revocation, F-SEC-05 private
+attachment caching, F-REL-02 sequence-gap handling, F-REL-03 startup event ordering,
+F-PERF-02 detail-cache disposal, F-PERF-03 terminal buffer disposal, F-TEST-01 benchmark
+integrity, F-TEST-02 backpressure assertions, and F-DATA-04 serialized registry mutation.
+
+Notes: benchmark runs must be isolated from parallel audit processes; use `bun run test`, never `bun test`.
+
 ## Session log — 2026-07-10 (A2A + hardening shipped to `gits`)
 
 `origin/gits` @ `da97a62fe`. All work below is **merged into `gits`**; no open PRs.

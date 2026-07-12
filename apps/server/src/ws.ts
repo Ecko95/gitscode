@@ -13,6 +13,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  AuthAccessDeniedError,
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
@@ -50,7 +51,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
@@ -94,7 +95,7 @@ import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
-import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -167,36 +168,6 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   );
 }
 
-/**
- * logSequenceGap - detects and logs a gap between the snapshot boundary and
- * the first live event on a subscriber's hot stream.
- *
- * Called once per subscription at the point where the live stream is wired in.
- * A gap (firstLiveSequence > snapshotSequence + 1) means events were emitted
- * between snapshot-read and stream-subscription and will never be delivered to
- * this subscriber — silent event loss on reconnect.
- *
- * Recovery chosen: log structured warning and continue. Crashing the socket
- * or forcibly refetching the snapshot here would require redesigning the
- * stream contract; the warn gives the operator enough context to detect
- * and address this at the architectural level (e.g. subscribe-then-snapshot).
- *
- * ponytail: first-event check only — per-event monotonicity is a separate concern.
- */
-export function logSequenceGap(
-  label: string,
-  snapshotSequence: number,
-  firstLiveSequence: number,
-): Effect.Effect<void> {
-  if (firstLiveSequence <= snapshotSequence + 1) return Effect.void;
-  return Effect.logWarning("subscribe-sequence-gap: live stream skips past snapshot boundary", {
-    label,
-    snapshotSequence,
-    firstLiveSequence,
-    gapSize: firstLiveSequence - snapshotSequence - 1,
-  });
-}
-
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // ponytail: per-WS-subscriber event buffer cap for UI push streams.
@@ -237,7 +208,7 @@ export function terminalCallbackStream<A, E = never, R = never>(
  * ponytail: Queue.dropping offer is non-blocking; failCause on overflow is
  * idempotent (already done). Stream.callback manages queue scope and lifetime.
  */
-function bufferOrTerminate<A, E, R>(
+export function bufferOrTerminate<A, E, R>(
   self: Stream.Stream<A, E, R>,
   capacity: number,
   overflowError: () => OrchestrationGetSnapshotError,
@@ -322,9 +293,10 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
+const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" | "role">) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
+      const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
@@ -1030,6 +1002,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
+              const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
@@ -1043,8 +1016,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 ),
               );
 
-              const liveStream = bufferOrTerminate(
-                orchestrationEngine.streamDomainEvents,
+              const liveStream = Stream.fromSubscription(domainEvents).pipe(
+                Stream.filter((event) => event.sequence > snapshot.snapshotSequence),
+                Stream.mapEffect(toShellStreamEvent),
+                Stream.flatMap((event) =>
+                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                ),
+              );
+              const bufferedLiveStream = bufferOrTerminate(
+                liveStream,
                 WS_PUSH_SUBSCRIBER_BUFFER,
                 () =>
                   new OrchestrationGetSnapshotError({
@@ -1052,24 +1032,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       "subscribeShell: subscriber buffer overflow — resubscribe for fresh snapshot",
                     cause: "overflow",
                   }),
-              ).pipe(
-                // ponytail: gap check on raw stream before toShellStreamEvent filters
-                // may drop the event.
-                Stream.mapAccumEffect(
-                  () => false as boolean,
-                  (checked, event: OrchestrationEvent) =>
-                    checked
-                      ? Effect.succeed([true, [event]] as const)
-                      : logSequenceGap(
-                          "subscribeShell",
-                          snapshot.snapshotSequence,
-                          event.sequence,
-                        ).pipe(Effect.as([true, [event]] as const)),
-                ),
-                Stream.mapEffect(toShellStreamEvent),
-                Stream.flatMap((event) =>
-                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
-                ),
               );
 
               return Stream.concat(
@@ -1077,7 +1039,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   kind: "snapshot" as const,
                   snapshot,
                 }),
-                liveStream,
+                bufferedLiveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1103,6 +1065,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
+              const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
               const { threadDetail, snapshotSequence } = yield* readThreadDetailSnapshot(
                 input.threadId,
                 projectionSnapshotQuery,
@@ -1115,29 +1078,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 });
               }
 
-              const liveStream = bufferOrTerminate(
-                orchestrationEngine.streamDomainEvents,
-                WS_PUSH_SUBSCRIBER_BUFFER,
-                () =>
-                  new OrchestrationGetSnapshotError({
-                    message: `subscribeThread:${input.threadId}: subscriber buffer overflow — resubscribe for fresh snapshot`,
-                    cause: "overflow",
-                  }),
-              ).pipe(
-                // ponytail: gap check on raw stream before thread filter so the first
-                // event arriving after snapshot-read (even for other aggregates) sets
-                // the checked flag — the sequence space is global, not per-thread.
-                Stream.mapAccumEffect(
-                  () => false as boolean,
-                  (checked, event: OrchestrationEvent) =>
-                    checked
-                      ? Effect.succeed([true, [event]] as const)
-                      : logSequenceGap(
-                          `subscribeThread:${input.threadId}`,
-                          snapshotSequence,
-                          event.sequence,
-                        ).pipe(Effect.as([true, [event]] as const)),
-                ),
+              const liveStream = Stream.fromSubscription(domainEvents).pipe(
+                Stream.filter((event) => event.sequence > snapshotSequence),
                 Stream.filter(
                   (event) =>
                     event.aggregateKind === "thread" &&
@@ -1149,6 +1091,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   event,
                 })),
               );
+              const bufferedLiveStream = bufferOrTerminate(
+                liveStream,
+                WS_PUSH_SUBSCRIBER_BUFFER,
+                () =>
+                  new OrchestrationGetSnapshotError({
+                    message: `subscribeThread:${input.threadId}: subscriber buffer overflow — resubscribe for fresh snapshot`,
+                    cause: "overflow",
+                  }),
+              );
 
               return Stream.concat(
                 Stream.make({
@@ -1158,7 +1109,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     thread: threadDetail.value,
                   },
                 }),
-                liveStream,
+                bufferedLiveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1985,6 +1936,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeAuthAccess,
             Effect.gen(function* () {
+              if (currentSession.role !== "owner") {
+                return yield* new AuthAccessDeniedError({
+                  message: "Only owner sessions can manage network access.",
+                });
+              }
+
               const initialSnapshot = yield* loadAuthAccessSnapshot();
               const revisionRef = yield* Ref.make(1);
               const accessChanges: Stream.Stream<
@@ -2026,12 +1983,13 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const serverAuth = yield* ServerAuth;
         const sessions = yield* SessionCredentialService;
+        const sessionChanges = yield* sessions.subscribeChanges;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session.sessionId).pipe(
+            makeWsRpcLayer(session).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
@@ -2058,9 +2016,17 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ),
           ),
         );
+        const sessionRevoked = Stream.fromSubscription(sessionChanges).pipe(
+          Stream.filter(
+            (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.as(HttpServerResponse.empty()),
+        );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () => Effect.raceFirst(rpcWebSocketHttpEffect, sessionRevoked),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(Effect.catchTag("AuthError", respondToAuthError)),

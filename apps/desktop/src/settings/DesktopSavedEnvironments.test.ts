@@ -1,10 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -90,6 +96,7 @@ function makeLayer(
     readonly availabilityError?: unknown;
     readonly encryptError?: unknown;
     readonly decryptError?: unknown;
+    readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
   },
 ) {
   const environmentLayer = DesktopEnvironment.layer({
@@ -108,6 +115,10 @@ function makeLayer(
     ),
   );
 
+  const platformLayer = options?.fileSystemLayer
+    ? Layer.mergeAll(options.fileSystemLayer, NodeCrypto.layer, NodePath.layer)
+    : NodeServices.layer;
+
   return DesktopSavedEnvironments.layer.pipe(
     Layer.provideMerge(environmentLayer),
     Layer.provideMerge(
@@ -118,7 +129,7 @@ function makeLayer(
         decryptError: options?.decryptError,
       }),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(platformLayer),
   );
 }
 
@@ -129,6 +140,7 @@ const withSavedEnvironments = <A, E, R>(
     readonly availabilityError?: unknown;
     readonly encryptError?: unknown;
     readonly decryptError?: unknown;
+    readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
   },
 ) =>
   Effect.gen(function* () {
@@ -139,7 +151,116 @@ const withSavedEnvironments = <A, E, R>(
     return yield* effect.pipe(Effect.provide(makeLayer(baseDir, options)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
+interface MutationBarrier {
+  readonly firstRenameStarted: Deferred.Deferred<void>;
+  readonly releaseFirstRename: Deferred.Deferred<void>;
+  readonly secondReadStarted: Deferred.Deferred<void>;
+  readonly releaseSecondRead: Deferred.Deferred<void>;
+}
+
+function makeMutationBarrier() {
+  return Effect.all({
+    firstRenameStarted: Deferred.make<void>(),
+    releaseFirstRename: Deferred.make<void>(),
+    secondReadStarted: Deferred.make<void>(),
+    releaseSecondRead: Deferred.make<void>(),
+  });
+}
+
+function makeMutationBarrierFileSystemLayer(input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly getBarrier: () => MutationBarrier | null;
+}) {
+  let currentBarrier: MutationBarrier | null = null;
+  let readCount = 0;
+  let renameCount = 0;
+
+  const readBarrier = () => {
+    const nextBarrier = input.getBarrier();
+    if (nextBarrier !== currentBarrier) {
+      currentBarrier = nextBarrier;
+      readCount = 0;
+      renameCount = 0;
+    }
+    return currentBarrier;
+  };
+
+  return Layer.succeed(FileSystem.FileSystem, {
+    ...input.fileSystem,
+    readFileString: (path) =>
+      Effect.gen(function* () {
+        const barrier = readBarrier();
+        if (barrier !== null) {
+          readCount += 1;
+          if (readCount === 2) {
+            yield* Deferred.succeed(barrier.secondReadStarted, undefined);
+            yield* Deferred.await(barrier.releaseSecondRead);
+          }
+        }
+        return yield* input.fileSystem.readFileString(path);
+      }),
+    rename: (from, to) =>
+      Effect.gen(function* () {
+        const barrier = readBarrier();
+        if (barrier !== null) {
+          renameCount += 1;
+          if (renameCount === 1) {
+            yield* Deferred.succeed(barrier.firstRenameStarted, undefined);
+            yield* Deferred.await(barrier.releaseFirstRename);
+          }
+        }
+        yield* input.fileSystem.rename(from, to);
+      }),
+  } satisfies FileSystem.FileSystem);
+}
+
+function runConcurrentMutationPair<A, E1, B, E2>(
+  firstMutation: Effect.Effect<A, E1>,
+  secondMutation: Effect.Effect<B, E2>,
+  barrier: MutationBarrier,
+) {
+  return Effect.gen(function* () {
+    const firstFiber = yield* firstMutation.pipe(Effect.forkScoped);
+    yield* Deferred.await(barrier.firstRenameStarted);
+
+    const secondMutationAttempted = yield* Deferred.make<void>();
+    const secondFiber = yield* Deferred.succeed(secondMutationAttempted, undefined).pipe(
+      Effect.andThen(secondMutation),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(secondMutationAttempted);
+    yield* Effect.yieldNow;
+
+    const secondReadStartedEarly = Option.isSome(yield* Deferred.poll(barrier.secondReadStarted));
+    if (secondReadStartedEarly) {
+      yield* Deferred.succeed(barrier.releaseSecondRead, undefined);
+      yield* Fiber.join(secondFiber);
+      yield* Deferred.succeed(barrier.releaseFirstRename, undefined);
+    } else {
+      yield* Deferred.succeed(barrier.releaseFirstRename, undefined);
+      yield* Deferred.await(barrier.secondReadStarted);
+      yield* Deferred.succeed(barrier.releaseSecondRead, undefined);
+    }
+
+    yield* Fiber.join(firstFiber);
+    yield* Fiber.join(secondFiber);
+    assert.isFalse(secondReadStartedEarly);
+  });
+}
+
 describe("DesktopSavedEnvironments", () => {
+  it.effect("treats a missing registry as empty and allows the first write", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+
+        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
+        yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+        assert.deepEqual(yield* savedEnvironments.getRegistry, [savedRegistryRecord]);
+      }),
+    ),
+  );
+
   it.effect("persists and reloads saved environment metadata", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
@@ -289,22 +410,72 @@ describe("DesktopSavedEnvironments", () => {
     ),
   );
 
-  it.effect("treats malformed saved environment documents as empty", () =>
+  it.effect("fails closed and preserves malformed saved environment documents", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        const malformedDocument = "{not-json";
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{not-json");
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          malformedDocument,
+        );
 
-        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
-        assert.isTrue(
-          Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
+        const readExit = yield* Effect.exit(savedEnvironments.getRegistry);
+        assert.equal(readExit._tag, "Failure");
+
+        const mutationExit = yield* Effect.exit(
+          savedEnvironments.setRegistry([savedRegistryRecord]),
+        );
+        assert.equal(mutationExit._tag, "Failure");
+        assert.equal(
+          yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath),
+          malformedDocument,
         );
       }),
     ),
   );
+
+  it.effect("fails a mutation without writing when the registry cannot be read", () => {
+    const readError = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFileString",
+      description: "permission denied",
+      pathOrDescriptor: "saved-environments.json",
+    });
+    const writeAttempts: string[] = [];
+    let storedBytes = "persisted registry bytes";
+    const fileSystemLayer = FileSystem.layerNoop({
+      readFileString: () => Effect.fail(readError),
+      writeFileString: (path, bytes) =>
+        Effect.sync(() => {
+          writeAttempts.push(path);
+          storedBytes = bytes;
+        }),
+    });
+
+    return withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        const mutationExit = yield* Effect.exit(
+          savedEnvironments.setRegistry([savedRegistryRecord]),
+        );
+
+        assert.equal(mutationExit._tag, "Failure");
+        if (mutationExit._tag === "Failure") {
+          const error = Cause.squash(mutationExit.cause);
+          assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentsReadError);
+          assert.equal(error.cause, readError);
+        }
+        assert.deepEqual(writeAttempts, []);
+        assert.equal(storedBytes, "persisted registry bytes");
+      }),
+      { fileSystemLayer },
+    );
+  });
 
   it.effect("returns false when writing a secret without metadata", () =>
     withSavedEnvironments(
@@ -340,5 +511,79 @@ describe("DesktopSavedEnvironments", () => {
         );
       }),
     ),
+  );
+
+  it.effect("serializes metadata rewrites behind the secret write they preserve", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let activeBarrier: MutationBarrier | null = null;
+      const fileSystemLayer = makeMutationBarrierFileSystemLayer({
+        fileSystem,
+        getBarrier: () => activeBarrier,
+      });
+
+      return yield* withSavedEnvironments(
+        Effect.gen(function* () {
+          const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+          yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+
+          const secretFirstRecord = {
+            ...savedRegistryRecord,
+            label: "Metadata written after secret",
+          };
+          activeBarrier = yield* makeMutationBarrier();
+          yield* runConcurrentMutationPair(
+            savedEnvironments.setSecret({
+              environmentId: savedRegistryRecord.environmentId,
+              secret: "first-token",
+            }),
+            savedEnvironments.setRegistry([secretFirstRecord]),
+            activeBarrier,
+          );
+          activeBarrier = null;
+
+          assert.deepEqual(yield* savedEnvironments.getRegistry, [secretFirstRecord]);
+          assert.deepEqual(
+            yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+            Option.some("first-token"),
+          );
+        }),
+        { fileSystemLayer },
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("serializes secret removal behind the secret write it observes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let activeBarrier: MutationBarrier | null = null;
+      const fileSystemLayer = makeMutationBarrierFileSystemLayer({
+        fileSystem,
+        getBarrier: () => activeBarrier,
+      });
+
+      return yield* withSavedEnvironments(
+        Effect.gen(function* () {
+          const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+          yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+
+          activeBarrier = yield* makeMutationBarrier();
+          yield* runConcurrentMutationPair(
+            savedEnvironments.setSecret({
+              environmentId: savedRegistryRecord.environmentId,
+              secret: "transient-token",
+            }),
+            savedEnvironments.removeSecret(savedRegistryRecord.environmentId),
+            activeBarrier,
+          );
+          activeBarrier = null;
+
+          assert.isTrue(
+            Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
+          );
+        }),
+        { fileSystemLayer },
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

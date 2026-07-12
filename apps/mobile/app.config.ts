@@ -72,9 +72,13 @@ const config: ExpoConfig = {
     supportsTablet: true,
     bundleIdentifier: variant.iosBundleIdentifier,
     infoPlist: {
-      NSAppTransportSecurity: {
-        NSAllowsArbitraryLoads: true,
-      },
+      ...(APP_VARIANT === "development"
+        ? {
+            NSAppTransportSecurity: {
+              NSAllowsArbitraryLoads: true,
+            },
+          }
+        : {}),
       NSLocalNetworkUsageDescription:
         "Allow GITS to connect to GITS servers on your local network or tailnet.",
       ITSAppUsesNonExemptEncryption: false,

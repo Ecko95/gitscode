@@ -9,6 +9,8 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
 export type SessionRole = "owner" | "client" | "thread-scoped";
@@ -77,6 +79,11 @@ export interface SessionCredentialServiceShape {
     SessionCredentialError
   >;
   readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+  readonly subscribeChanges: Effect.Effect<
+    PubSub.Subscription<SessionCredentialChange>,
+    never,
+    Scope.Scope
+  >;
   readonly revoke: (sessionId: AuthSessionId) => Effect.Effect<boolean, SessionCredentialError>;
   readonly revokeAllExcept: (
     sessionId: AuthSessionId,

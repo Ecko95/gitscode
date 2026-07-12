@@ -1,8 +1,12 @@
-import type {
-  ServerProcessResourceHistoryBucket,
-  ServerProcessResourceHistoryInput,
-  ServerProcessResourceHistoryResult,
-  ServerProcessResourceHistorySummary,
+import {
+  SERVER_PROCESS_RESOURCE_HISTORY_MAX_BUCKET_MS,
+  SERVER_PROCESS_RESOURCE_HISTORY_MAX_WINDOW_MS,
+  SERVER_PROCESS_RESOURCE_HISTORY_MIN_BUCKET_MS,
+  SERVER_PROCESS_RESOURCE_HISTORY_MIN_WINDOW_MS,
+  type ServerProcessResourceHistoryBucket,
+  type ServerProcessResourceHistoryInput,
+  type ServerProcessResourceHistoryResult,
+  type ServerProcessResourceHistorySummary,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -163,55 +167,97 @@ function summarizeProcesses(
     .toSorted((left, right) => right.cpuSecondsApprox - left.cpuSecondsApprox);
 }
 
+function clampDurationMs(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) {
+    return value === Number.POSITIVE_INFINITY ? maximum : minimum;
+  }
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+
+interface ProcessResourceReadTotals {
+  cpuPercent: number;
+  rssBytes: number;
+  processCount: number;
+}
+
+interface ProcessResourceBucketAccumulator {
+  readonly startedAtMs: number;
+  readonly endedAtMs: number;
+  readonly readTotalsBySampledAt: Map<number, ProcessResourceReadTotals>;
+}
+
 function buildBuckets(input: {
   readonly samples: ReadonlyArray<ProcessResourceSample>;
   readonly nowMs: number;
   readonly windowMs: number;
   readonly bucketMs: number;
 }): ReadonlyArray<ServerProcessResourceHistoryBucket> {
-  const bucketMs = Math.max(1_000, input.bucketMs);
   const windowStartMs = input.nowMs - input.windowMs;
-  const buckets: ServerProcessResourceHistoryBucket[] = [];
+  const bucketCount = Math.ceil(input.windowMs / input.bucketMs);
+  const accumulators: ProcessResourceBucketAccumulator[] = Array.from(
+    { length: bucketCount },
+    (_, index) => {
+      const startedAtMs = windowStartMs + index * input.bucketMs;
+      return {
+        startedAtMs,
+        endedAtMs: Math.min(input.nowMs, startedAtMs + input.bucketMs),
+        readTotalsBySampledAt: new Map(),
+      };
+    },
+  );
 
-  for (let startedAtMs = windowStartMs; startedAtMs < input.nowMs; startedAtMs += bucketMs) {
-    const endedAtMs = Math.min(input.nowMs, startedAtMs + bucketMs);
-    const bucketSamples = input.samples.filter(
-      (sample) =>
-        sample.sampledAtMs >= startedAtMs &&
-        (endedAtMs === input.nowMs
-          ? sample.sampledAtMs <= endedAtMs
-          : sample.sampledAtMs < endedAtMs),
-    );
-    const samplesByRead = new Map<number, ProcessResourceSample[]>();
-    for (const sample of bucketSamples) {
-      const samplesAtTime = samplesByRead.get(sample.sampledAtMs) ?? [];
-      samplesAtTime.push(sample);
-      samplesByRead.set(sample.sampledAtMs, samplesAtTime);
+  for (const sample of input.samples) {
+    if (sample.sampledAtMs < windowStartMs || sample.sampledAtMs > input.nowMs) {
+      continue;
     }
 
-    const readTotals = [...samplesByRead.values()].map((samplesAtTime) => ({
-      cpuPercent: samplesAtTime.reduce((total, sample) => total + sample.cpuPercent, 0),
-      rssBytes: samplesAtTime.reduce((total, sample) => total + sample.rssBytes, 0),
-      processCount: samplesAtTime.length,
-    }));
-    const avgCpuPercent =
-      readTotals.length === 0
-        ? 0
-        : readTotals.reduce((total, read) => total + read.cpuPercent, 0) / readTotals.length;
+    const bucketIndex =
+      sample.sampledAtMs === input.nowMs
+        ? bucketCount - 1
+        : Math.floor((sample.sampledAtMs - windowStartMs) / input.bucketMs);
+    const bucket = accumulators[bucketIndex];
+    if (!bucket) {
+      continue;
+    }
 
-    buckets.push({
-      startedAt: dateTimeFromMillis(startedAtMs),
-      endedAt: dateTimeFromMillis(endedAtMs),
-      avgCpuPercent,
-      maxCpuPercent: readTotals.length ? Math.max(...readTotals.map((read) => read.cpuPercent)) : 0,
-      maxRssBytes: readTotals.length ? Math.max(...readTotals.map((read) => read.rssBytes)) : 0,
-      maxProcessCount: readTotals.length
-        ? Math.max(...readTotals.map((read) => read.processCount))
-        : 0,
-    });
+    const current = bucket.readTotalsBySampledAt.get(sample.sampledAtMs);
+    if (current) {
+      current.cpuPercent += sample.cpuPercent;
+      current.rssBytes += sample.rssBytes;
+      current.processCount += 1;
+    } else {
+      bucket.readTotalsBySampledAt.set(sample.sampledAtMs, {
+        cpuPercent: sample.cpuPercent,
+        rssBytes: sample.rssBytes,
+        processCount: 1,
+      });
+    }
   }
 
-  return buckets;
+  return accumulators.map((bucket) => {
+    let cpuPercentTotal = 0;
+    let maxCpuPercent = 0;
+    let maxRssBytes = 0;
+    let maxProcessCount = 0;
+    for (const totals of bucket.readTotalsBySampledAt.values()) {
+      cpuPercentTotal += totals.cpuPercent;
+      maxCpuPercent = Math.max(maxCpuPercent, totals.cpuPercent);
+      maxRssBytes = Math.max(maxRssBytes, totals.rssBytes);
+      maxProcessCount = Math.max(maxProcessCount, totals.processCount);
+    }
+
+    return {
+      startedAt: dateTimeFromMillis(bucket.startedAtMs),
+      endedAt: dateTimeFromMillis(bucket.endedAtMs),
+      avgCpuPercent:
+        bucket.readTotalsBySampledAt.size === 0
+          ? 0
+          : cpuPercentTotal / bucket.readTotalsBySampledAt.size,
+      maxCpuPercent,
+      maxRssBytes,
+      maxProcessCount,
+    };
+  });
 }
 
 export function aggregateProcessResourceHistory(input: {
@@ -222,8 +268,19 @@ export function aggregateProcessResourceHistory(input: {
   readonly bucketMs: number;
   readonly lastError: string | null;
 }): ServerProcessResourceHistoryResult {
-  const windowMs = Math.max(1_000, input.windowMs);
-  const bucketMs = Math.max(1_000, input.bucketMs);
+  const windowMs = clampDurationMs(
+    input.windowMs,
+    SERVER_PROCESS_RESOURCE_HISTORY_MIN_WINDOW_MS,
+    SERVER_PROCESS_RESOURCE_HISTORY_MAX_WINDOW_MS,
+  );
+  const bucketMs = Math.min(
+    windowMs,
+    clampDurationMs(
+      input.bucketMs,
+      SERVER_PROCESS_RESOURCE_HISTORY_MIN_BUCKET_MS,
+      SERVER_PROCESS_RESOURCE_HISTORY_MAX_BUCKET_MS,
+    ),
+  );
   const minSampledAtMs = input.readAtMs - windowMs;
   const samples = input.samples.filter((sample) => sample.sampledAtMs >= minSampledAtMs);
   const topProcesses = summarizeProcesses(samples);

@@ -1,5 +1,5 @@
 import { AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   EnvironmentId,
@@ -14,6 +14,7 @@ import {
   getKnownTerminalSessionListFilter,
   knownTerminalSessionsAtom,
   runningTerminalIdsAtom,
+  terminalSessionBufferAtom,
   terminalSessionStateAtom,
   type KnownTerminalSessionTarget,
 } from "./terminalSessionState.ts";
@@ -89,6 +90,7 @@ function applyMetadataEvents(
 
 describe("createTerminalSessionManager", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     resetAtomRegistry();
   });
 
@@ -175,11 +177,16 @@ describe("createTerminalSessionManager", () => {
         },
       ]);
     }
+    const invalidatedBufferAtom = terminalSessionBufferAtom(TARGET);
 
     manager.invalidateEnvironment(TARGET.environmentId);
 
     expect(manager.getSnapshot(TARGET).buffer).toBe("");
     expect(manager.getSnapshot(otherTarget).buffer).toBe("env-remote");
+
+    const setSpy = vi.spyOn(atomRegistry, "set");
+    manager.reset();
+    expect(setSpy).not.toHaveBeenCalledWith(invalidatedBufferAtom, expect.anything());
   });
 
   it("lists known sessions for a thread ordered by terminal id (numeric-aware)", () => {
@@ -268,7 +275,7 @@ describe("createTerminalSessionManager", () => {
     ).toEqual([]);
   });
 
-  it("removes closed sessions from the known-session index while keeping local closed state", () => {
+  it("keeps closed and exited attach history until metadata removes the session", () => {
     const manager = createTerminalSessionManager({
       getRegistry: () => atomRegistry,
     });
@@ -301,7 +308,23 @@ describe("createTerminalSessionManager", () => {
         threadId: TARGET.threadId,
         terminalId: TARGET.terminalId,
       },
+      {
+        type: "exited",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        exitCode: 0,
+        exitSignal: null,
+      },
     ]);
+    expect(manager.getSnapshot(TARGET)).toMatchObject({
+      buffer: "hello",
+      summary: {
+        terminalId: TARGET.terminalId,
+      },
+      updatedAt: BASE_SNAPSHOT.updatedAt,
+    });
+
+    const removedBufferAtom = terminalSessionBufferAtom(TARGET);
     applyMetadataEvents(manager, TARGET.environmentId, [
       {
         type: "remove",
@@ -317,11 +340,15 @@ describe("createTerminalSessionManager", () => {
       }),
     ).toEqual([]);
     expect(manager.getSnapshot(TARGET)).toMatchObject({
-      buffer: "hello",
+      buffer: "",
       status: "closed",
       summary: null,
-      updatedAt: BASE_SNAPSHOT.updatedAt,
+      updatedAt: null,
     });
+
+    const setSpy = vi.spyOn(atomRegistry, "set");
+    manager.reset();
+    expect(setSpy).not.toHaveBeenCalledWith(removedBufferAtom, expect.anything());
   });
 
   it("clears locally retained closed state on reset", () => {
@@ -407,6 +434,7 @@ describe("createTerminalSessionManager", () => {
         },
       ],
     );
+    const prunedBufferAtom = terminalSessionBufferAtom(TARGET);
 
     applyMetadataEvents(manager, TARGET.environmentId, [
       {
@@ -450,6 +478,11 @@ describe("createTerminalSessionManager", () => {
         },
       },
     ]);
+    expect(atomRegistry.get(prunedBufferAtom).buffer).toBe("");
+
+    const setSpy = vi.spyOn(atomRegistry, "set");
+    manager.reset();
+    expect(setSpy).not.toHaveBeenCalledWith(prunedBufferAtom, expect.anything());
   });
 
   it("updates listed session metadata when existing session activity changes", () => {

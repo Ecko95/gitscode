@@ -1,4 +1,4 @@
-# GITS Orchestration Hot-Path Baseline — 2026-07 (W4.1)
+# GITS Orchestration Dispatch Hot-Path Baseline — 2026-07 (W4.1)
 
 Measured: 2026-07-03  
 Branch: `perf/orchestration-baseline`  
@@ -7,36 +7,51 @@ Task: W4.1 — Orchestration performance baseline
 ## Repro Command
 
 ```bash
-# Default run (10 sessions, 50 events/session, 10 warm-up dispatches)
+# Default run (10 sessions, 50 dispatches/session, 10 warm-up dispatches)
 bun apps/server/src/perf/orchestration-baseline.ts
 
-# Custom concurrency / event count
-PERF_SESSIONS=10 PERF_EVENTS_PER_SESSION=50 PERF_WARMUP=10 \
+# Custom concurrency / dispatch count
+PERF_SESSIONS=10 PERF_DISPATCHES_PER_SESSION=50 PERF_WARMUP=10 \
   bun apps/server/src/perf/orchestration-baseline.ts
+
+# Machine-readable output (stdout is exactly one JSON document)
+PERF_JSON=1 bun apps/server/src/perf/orchestration-baseline.ts
 ```
+
+`PERF_SESSIONS` must be a positive integer. `PERF_DISPATCHES_PER_SESSION` must be a
+positive multiple of 5, and `PERF_WARMUP` must be a non-negative multiple of 5. The
+harness runs concurrency levels `1`, `min(5, PERF_SESSIONS)`, and `PERF_SESSIONS`,
+with duplicate levels removed.
 
 ## Environment
 
-| Key                 | Value                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------- |
-| Host                | WSL2 / Linux (6.6.87.2-microsoft-standard-WSL2)                                                         |
-| SQLite mode         | in-memory (`:memory:`) — no fsync overhead                                                              |
-| Provider CLIs       | **EXCLUDED** — synthetic commands only                                                                  |
-| Event mix per cycle | turn.start (→ 2 events) + session.set + msg.delta + msg.complete + activity.append (5 dispatches/cycle) |
-| Bun                 | 1.3.13                                                                                                  |
-| Effect              | 4.0.0-beta.73                                                                                           |
+| Key                | Value                                                                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------- |
+| Host               | WSL2 / Linux (6.6.87.2-microsoft-standard-WSL2)                                                          |
+| SQLite mode        | in-memory (`:memory:`) — no fsync overhead                                                               |
+| Provider CLIs      | **EXCLUDED** — synthetic commands only                                                                   |
+| Dispatch mix/cycle | turn.start (→ 2 domain events) + session.set + msg.delta + msg.complete + activity.append (5 dispatches) |
+| Bun                | 1.3.13                                                                                                   |
+| Effect             | 4.0.0-beta.73                                                                                            |
 
 **Important WSL2 caveat:** WSL2 runs on a virtual machine sharing CPU with Windows.  
 Timer resolution is ~1ms and scheduling jitter is significant — p95 will be 15–30% better  
 on a bare-metal Linux host. These numbers are a floor, not a ceiling.
 
-## Baseline Table (50 events/session, 10 warm-up)
+The environment above describes the historical measurement host. Current harness output derives
+the operating system, kernel release, architecture, WSL status, and logical CPU count at runtime.
 
-| Sessions | Events | p50      | p95      | mean     | min     | max      | evts/s | total_ms  |
-| -------- | ------ | -------- | -------- | -------- | ------- | -------- | ------ | --------- |
-| 1        | 50     | 23.42ms  | 41.98ms  | 24.34ms  | 2.33ms  | 54.53ms  | 40.4   | 1237.57ms |
-| 5        | 250    | 104.77ms | 186.05ms | 107.93ms | 19.51ms | 233.47ms | 44.7   | 5593.82ms |
-| 10       | 500    | 177.23ms | 318.94ms | 173.99ms | 15.38ms | 393.50ms | 55.5   | 9015.93ms |
+## Historical Baseline Table (50 dispatches/session, 10 warm-up)
+
+The measured values below are preserved from the 2026-07-03 run. Terminology has been corrected
+from “events” to “dispatches”; the table was not regenerated, so p99 and coefficient of variation
+are unavailable for this historical sample. New runs report both statistics.
+
+| Sessions | Dispatches | p50      | p95      | mean     | min     | max      | dispatch/s | total_ms  |
+| -------- | ---------- | -------- | -------- | -------- | ------- | -------- | ---------- | --------- |
+| 1        | 50         | 23.42ms  | 41.98ms  | 24.34ms  | 2.33ms  | 54.53ms  | 40.4       | 1237.57ms |
+| 5        | 250        | 104.77ms | 186.05ms | 107.93ms | 19.51ms | 233.47ms | 44.7       | 5593.82ms |
+| 10       | 500        | 177.23ms | 318.94ms | 173.99ms | 15.38ms | 393.50ms | 55.5       | 9015.93ms |
 
 All timings are **end-to-end `engine.dispatch()` wall-clock** (from `Queue.offer` returning  
 to `Deferred.await` resolving). This covers the complete hot path.
@@ -81,8 +96,9 @@ A single provider turn involves:
 - `ProviderCommandReactor` dispatching orchestration commands per event
 - Each reactor command goes through the same pipeline measured above
 
-Provider turns typically emit 10–100+ events over seconds-to-minutes. The per-event  
-orchestration cost above is the marginal cost per provider event ingested.
+Provider turns typically emit 10–100+ runtime events over seconds-to-minutes. Reactors translate
+those runtime events into orchestration command dispatches; the cost above is per dispatch, not
+per emitted domain event.
 
 ## Downstream Task Assessment
 

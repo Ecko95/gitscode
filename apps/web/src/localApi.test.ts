@@ -45,6 +45,11 @@ const rpcClientMock = {
     sidecarStatus: vi.fn(),
     releaseSidecar: vi.fn(),
   },
+  browserPreview: {
+    open: vi.fn(),
+    status: vi.fn(),
+    control: vi.fn(),
+  },
   terminal: {
     open: vi.fn(),
     attach: vi.fn((_input: unknown, listener: (event: TerminalAttachStreamEvent) => void) =>
