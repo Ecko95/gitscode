@@ -18,6 +18,15 @@ Current status: implementation complete and verified with focused tests, formatt
 
 Notes: `gsd-browser` is optional. Missing binaries or browsers surface as a recoverable panel error and do not block normal chat sessions.
 
+## Session log — 2026-07-12 (full system audit remediation planned)
+
+- [x] Convert `docs/audits/2026-07-11-full-system-audit.md` into an ordered remediation plan
+- [ ] Browser stabilization: deterministic bootstrap, WebGL fixture, keyboard readiness, request-order latch
+- [ ] Socket expiry, scoped provider streams, bounded queues, and assistant projection coalescing
+- [ ] Bundle split, Android text buffer benchmark, dependency remediation, dead-code CI report, benchmark history
+
+Plan: `docs/superpowers/plans/2026-07-12-full-system-audit-remediation.md`. Start Task 1 and Task 2 independently; Task 3 precedes Tasks 4–5. Android changes wait for SDK/emulator tooling and dead-file deletion waits for reference/owner confirmation.
+
 ## Session log — 2026-07-11 (full system audit in progress)
 
 Branch `audit/full-system-2026-07-11`, rebased onto `origin/gits` at `5ca9d3a7b`.
