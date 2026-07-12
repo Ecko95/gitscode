@@ -94,6 +94,7 @@ export function BrowserPreviewPanel({
     set_busy_action("run-dev");
     set_control_error(null);
     try {
+      await api.terminal.close({ threadId, terminalId: "browser-dev" }).catch(() => undefined);
       await api.terminal.open({ threadId, terminalId: "browser-dev", cwd });
       await api.terminal.write({
         threadId,
