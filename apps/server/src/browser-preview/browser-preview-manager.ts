@@ -15,7 +15,10 @@ import { sessionPortForSessionId } from "../provider/sessionPort.ts";
 const exec_file = promisify(execFile);
 const TICKET_TTL_MS = 2 * 60 * 1000;
 const SESSION_PREFIX = "gits-";
-const CONTROL_COMMANDS: Record<Exclude<BrowserPreviewAction, "navigate" | "instruct">, string> = {
+const CONTROL_COMMANDS: Record<
+  Exclude<BrowserPreviewAction, "navigate" | "instruct" | "connect-localhost" | "console">,
+  string
+> = {
   pause: "pause",
   resume: "resume",
   step: "step",
@@ -32,6 +35,7 @@ interface BrowserPreviewSession {
   preview_ticket_expires_at_ms: number | null;
   status: BrowserPreviewLifecycleStatus;
   message: string | null;
+  console_entries: string[];
 }
 
 interface BrowserPreviewTicket {
@@ -70,6 +74,22 @@ function parse_json_output(output: string): Record<string, unknown> {
   return JSON.parse(output.slice(start)) as Record<string, unknown>;
 }
 
+export function parse_localhost_dev_ports(output: string, preferred_port: number): number[] {
+  const ports = output
+    .split("\n")
+    .filter((line) => /(?:node|bun|deno|python|ruby|php|java)/i.test(line))
+    .flatMap((line) => {
+      const match = line.match(/:(\d+)\s/);
+      return match ? [Number(match[1])] : [];
+    })
+    .filter((port) => port > 0 && port !== 13_773);
+  return [...new Set(ports)].sort((left, right) => {
+    if (left === preferred_port) return -1;
+    if (right === preferred_port) return 1;
+    return left - right;
+  });
+}
+
 export class BrowserPreviewManager {
   readonly #sessions = new Map<ThreadId, BrowserPreviewSession>();
   readonly #tickets = new Map<string, BrowserPreviewTicket>();
@@ -106,6 +126,7 @@ export class BrowserPreviewManager {
       preview_ticket_expires_at_ms: null,
       status: "starting" as const,
       message: null,
+      console_entries: [],
     };
     this.#sessions.set(thread_id, session);
     session.status = "starting";
@@ -147,6 +168,7 @@ export class BrowserPreviewManager {
         status: "idle",
         previewPath: null,
         terminalUrl: `http://localhost:${sessionPortForSessionId(thread_id)}`,
+        consoleEntries: [],
         expiresAt: null,
         message: null,
       };
@@ -185,6 +207,18 @@ export class BrowserPreviewManager {
         throw new Error("A browser instruction is required.");
       }
       await this.#run(session.session_name, "act-instruction", [browser_instruction]);
+    } else if (action === "connect-localhost") {
+      const { stdout } = await exec_file("ss", ["-ltnpH"]);
+      const [port] = parse_localhost_dev_ports(stdout, sessionPortForSessionId(thread_id));
+      if (!port) {
+        throw new Error("No local dev server is listening yet.");
+      }
+      await this.#run(session.session_name, "navigate", [`http://localhost:${port}/`]);
+    } else if (action === "console") {
+      const result = await this.#run(session.session_name, "console");
+      session.console_entries = Array.isArray(result.entries)
+        ? result.entries.map((entry) => JSON.stringify(entry))
+        : [];
     } else {
       await this.#run(session.session_name, CONTROL_COMMANDS[action]);
     }
@@ -233,6 +267,7 @@ export class BrowserPreviewManager {
       status: session.status,
       previewPath: `/api/browser-preview/view?${preview_params.toString()}`,
       terminalUrl: `http://localhost:${sessionPortForSessionId(session.thread_id)}`,
+      consoleEntries: session.console_entries,
       expiresAt: new Date(expires_at_ms).toISOString(),
       message: session.message,
     };
@@ -244,6 +279,7 @@ export class BrowserPreviewManager {
       status: session.status,
       previewPath: null,
       terminalUrl: `http://localhost:${sessionPortForSessionId(session.thread_id)}`,
+      consoleEntries: session.console_entries,
       expiresAt: null,
       message: session.message,
     };

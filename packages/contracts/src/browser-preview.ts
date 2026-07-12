@@ -11,6 +11,8 @@ export const BrowserPreviewAction = Schema.Literals([
   "release",
   "navigate",
   "instruct",
+  "connect-localhost",
+  "console",
 ]);
 export type BrowserPreviewAction = typeof BrowserPreviewAction.Type;
 
@@ -43,6 +45,7 @@ export const BrowserPreviewStatus = Schema.Struct({
   status: BrowserPreviewLifecycleStatus,
   previewPath: Schema.NullOr(TrimmedNonEmptyString),
   terminalUrl: Schema.NullOr(TrimmedNonEmptyString),
+  consoleEntries: Schema.Array(Schema.String),
   expiresAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),
 });

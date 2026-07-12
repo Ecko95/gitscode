@@ -37,6 +37,7 @@ export function BrowserPreviewPanel({
   );
   const [browser_url, set_browser_url] = useState("");
   const [control_error, set_control_error] = useState<string | null>(null);
+  const [console_open, set_console_open] = useState(false);
 
   const open_preview = useCallback(async () => {
     set_busy_action("open");
@@ -52,6 +53,7 @@ export function BrowserPreviewPanel({
         status: "error",
         previewPath: null,
         terminalUrl: null,
+        consoleEntries: [],
         expiresAt: null,
         message: cause instanceof Error ? cause.message : "Browser preview failed to start.",
       });
@@ -98,6 +100,18 @@ export function BrowserPreviewPanel({
         terminalId: "browser-dev",
         data: 'npm run dev -- --port "$GITS_PORT"\r',
       });
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        try {
+          set_preview_status(
+            await api.browserPreview.control({ threadId, action: "connect-localhost" }),
+          );
+          return;
+        } catch {
+          // The dev server may still be compiling.
+        }
+      }
+      throw new Error("npm run dev started, but no local listener appeared.");
     } catch (cause) {
       set_control_error(cause instanceof Error ? cause.message : "Failed to start npm run dev.");
     } finally {
@@ -217,7 +231,27 @@ export function BrowserPreviewPanel({
           <XIcon className="size-3" />
           Abort
         </Button>
+        <Button
+          size="xs"
+          variant={console_open ? "default" : "outline"}
+          disabled={busy_action !== null}
+          onClick={() => {
+            const next_open = !console_open;
+            set_console_open(next_open);
+            if (next_open) void control("console");
+          }}
+        >
+          Console
+        </Button>
       </div>
+
+      {console_open ? (
+        <pre className="max-h-40 shrink-0 overflow-auto border-b border-border bg-black p-2 text-[11px] text-zinc-100">
+          {preview_status?.consoleEntries.length
+            ? preview_status.consoleEntries.join("\n")
+            : "No console entries."}
+        </pre>
+      ) : null}
 
       <div className="relative min-h-0 flex-1 bg-muted/30">
         {preview_status?.previewPath ? (

@@ -54,6 +54,7 @@ describe("browser preview contracts", () => {
         status: "live",
         previewPath: "/api/browser-preview/thread-1",
         terminalUrl: "http://localhost:39369",
+        consoleEntries: [],
         expiresAt: "2026-07-12T12:00:00.000Z",
         message: null,
       }),

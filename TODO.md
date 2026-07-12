@@ -10,6 +10,7 @@
 - [x] Reset the URL bar to the active chat terminal's deterministic localhost port.
 - [x] Add a per-chat Browser mode that sends composer text directly to `gsd-browser`.
 - [x] Add a Browser Supervision action that launches `npm run dev` in a chat-scoped terminal.
+- [x] Discover the launched localhost listener automatically and expose browser console output.
 - [x] Add header, `/browser`, and configurable `browser.toggle` command surfaces.
 - [x] Stop the isolated browser daemon when its chat is archived.
 - [ ] Add OpenCode dynamic MCP registration once its shared server exposes per-session MCP configuration.
