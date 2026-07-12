@@ -14,7 +14,7 @@ import type {
 const exec_file = promisify(execFile);
 const TICKET_TTL_MS = 2 * 60 * 1000;
 const SESSION_PREFIX = "gits-";
-const CONTROL_COMMANDS: Record<BrowserPreviewAction, string> = {
+const CONTROL_COMMANDS: Record<Exclude<BrowserPreviewAction, "navigate">, string> = {
   pause: "pause",
   resume: "resume",
   step: "step",
@@ -155,12 +155,24 @@ export class BrowserPreviewManager {
     return session.viewer_url ? this.#issue_status(session) : this.#to_status(session);
   }
 
-  async control(thread_id: ThreadId, action: BrowserPreviewAction): Promise<BrowserPreviewStatus> {
+  async control(
+    thread_id: ThreadId,
+    action: BrowserPreviewAction,
+    requested_url?: string,
+  ): Promise<BrowserPreviewStatus> {
     const session = this.#sessions.get(thread_id);
     if (!session) {
       throw new Error("Open the browser preview before sending controls.");
     }
-    await this.#run(session.session_name, CONTROL_COMMANDS[action]);
+    if (action === "navigate") {
+      const url = new URL(requested_url ?? "");
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error("Browser URLs must use http or https.");
+      }
+      await this.#run(session.session_name, "navigate", [url.toString()]);
+    } else {
+      await this.#run(session.session_name, CONTROL_COMMANDS[action]);
+    }
     return this.status(thread_id);
   }
 

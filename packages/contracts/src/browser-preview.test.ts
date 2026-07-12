@@ -27,6 +27,16 @@ describe("browser preview contracts", () => {
     ).toThrow();
   });
 
+  it("decodes browser navigation with a URL", () => {
+    expect(
+      decode_control_input({
+        threadId: "thread-1",
+        action: "navigate",
+        url: "http://localhost:8080",
+      }),
+    ).toMatchObject({ action: "navigate", url: "http://localhost:8080" });
+  });
+
   it("decodes a live preview status", () => {
     expect(
       decode_status({

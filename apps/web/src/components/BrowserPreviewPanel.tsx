@@ -31,6 +31,8 @@ export function BrowserPreviewPanel({
 }: BrowserPreviewPanelProps) {
   const [preview_status, set_preview_status] = useState<BrowserPreviewStatus | null>(null);
   const [busy_action, set_busy_action] = useState<BrowserPreviewAction | "open" | null>("open");
+  const [browser_url, set_browser_url] = useState("");
+  const [control_error, set_control_error] = useState<string | null>(null);
 
   const open_preview = useCallback(async () => {
     set_busy_action("open");
@@ -56,12 +58,17 @@ export function BrowserPreviewPanel({
   }, [open_preview]);
 
   const control = useCallback(
-    async (action: BrowserPreviewAction) => {
+    async (action: BrowserPreviewAction, url?: string) => {
       const api = readEnvironmentApi(environmentId);
       if (!api) return;
+      set_control_error(null);
       set_busy_action(action);
       try {
-        set_preview_status(await api.browserPreview.control({ threadId, action }));
+        set_preview_status(
+          await api.browserPreview.control({ threadId, action, ...(url ? { url } : {}) }),
+        );
+      } catch (cause) {
+        set_control_error(cause instanceof Error ? cause.message : "Browser control failed.");
       } finally {
         set_busy_action(null);
       }
@@ -101,6 +108,41 @@ export function BrowserPreviewPanel({
           <XIcon className="size-3.5" />
         </Button>
       </header>
+
+      <form
+        className="flex shrink-0 gap-1 border-b border-border p-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void control("navigate", browser_url);
+        }}
+      >
+        <input
+          type="url"
+          value={browser_url}
+          onChange={(event) => set_browser_url(event.target.value)}
+          placeholder="http://localhost:3000"
+          aria-label="Browser URL"
+          className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          disabled={busy_action !== null}
+          required
+        />
+        <Button
+          type="submit"
+          size="xs"
+          variant="outline"
+          disabled={busy_action !== null || browser_url.trim().length === 0}
+        >
+          Go
+        </Button>
+      </form>
+      {control_error ? (
+        <p
+          className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive"
+          role="alert"
+        >
+          {control_error}
+        </p>
+      ) : null}
 
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border p-2">
         <Button

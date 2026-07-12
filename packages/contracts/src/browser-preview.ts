@@ -9,6 +9,7 @@ export const BrowserPreviewAction = Schema.Literals([
   "abort",
   "takeover",
   "release",
+  "navigate",
 ]);
 export type BrowserPreviewAction = typeof BrowserPreviewAction.Type;
 
@@ -31,6 +32,7 @@ export type BrowserPreviewThreadInput = typeof BrowserPreviewThreadInput.Type;
 export const BrowserPreviewControlInput = Schema.Struct({
   threadId: ThreadId,
   action: BrowserPreviewAction,
+  url: Schema.optional(TrimmedNonEmptyString),
 });
 export type BrowserPreviewControlInput = typeof BrowserPreviewControlInput.Type;
 
