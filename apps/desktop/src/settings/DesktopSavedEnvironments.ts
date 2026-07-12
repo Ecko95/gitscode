@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -268,6 +269,7 @@ export const layer = Layer.effect(
     const path = yield* Path.Path;
     const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
     const crypto = yield* Crypto.Crypto;
+    const mutationSemaphore = yield* Semaphore.make(1);
 
     const writeDocument = (document: SavedEnvironmentRegistryDocument) =>
       crypto.randomUUIDv4.pipe(
@@ -297,7 +299,7 @@ export const layer = Layer.effect(
           environment.savedEnvironmentRegistryPath,
         );
         yield* writeDocument(preserveExistingSecrets(currentDocument, records));
-      }),
+      }, mutationSemaphore.withPermits(1)),
       getSecret: Effect.fn("desktop.savedEnvironments.getSecret")(function* (environmentId) {
         yield* Effect.annotateCurrentSpan({ environmentId });
         const document = yield* readRegistryDocument(
@@ -347,7 +349,7 @@ export const layer = Layer.effect(
           yield* writeDocument(nextDocument);
         }
         return found;
-      }),
+      }, mutationSemaphore.withPermits(1)),
       removeSecret: Effect.fn("desktop.savedEnvironments.removeSecret")(function* (environmentId) {
         yield* Effect.annotateCurrentSpan({ environmentId });
         const document = yield* readRegistryDocument(
@@ -372,7 +374,7 @@ export const layer = Layer.effect(
             return toPersistedSavedEnvironmentRecord(record);
           }),
         });
-      }),
+      }, mutationSemaphore.withPermits(1)),
     });
   }),
 );

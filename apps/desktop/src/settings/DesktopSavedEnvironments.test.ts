@@ -4,8 +4,10 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -148,6 +150,103 @@ const withSavedEnvironments = <A, E, R>(
     });
     return yield* effect.pipe(Effect.provide(makeLayer(baseDir, options)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
+interface MutationBarrier {
+  readonly firstRenameStarted: Deferred.Deferred<void>;
+  readonly releaseFirstRename: Deferred.Deferred<void>;
+  readonly secondReadStarted: Deferred.Deferred<void>;
+  readonly releaseSecondRead: Deferred.Deferred<void>;
+}
+
+function makeMutationBarrier() {
+  return Effect.all({
+    firstRenameStarted: Deferred.make<void>(),
+    releaseFirstRename: Deferred.make<void>(),
+    secondReadStarted: Deferred.make<void>(),
+    releaseSecondRead: Deferred.make<void>(),
+  });
+}
+
+function makeMutationBarrierFileSystemLayer(input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly getBarrier: () => MutationBarrier | null;
+}) {
+  let currentBarrier: MutationBarrier | null = null;
+  let readCount = 0;
+  let renameCount = 0;
+
+  const readBarrier = () => {
+    const nextBarrier = input.getBarrier();
+    if (nextBarrier !== currentBarrier) {
+      currentBarrier = nextBarrier;
+      readCount = 0;
+      renameCount = 0;
+    }
+    return currentBarrier;
+  };
+
+  return Layer.succeed(FileSystem.FileSystem, {
+    ...input.fileSystem,
+    readFileString: (path) =>
+      Effect.gen(function* () {
+        const barrier = readBarrier();
+        if (barrier !== null) {
+          readCount += 1;
+          if (readCount === 2) {
+            yield* Deferred.succeed(barrier.secondReadStarted, undefined);
+            yield* Deferred.await(barrier.releaseSecondRead);
+          }
+        }
+        return yield* input.fileSystem.readFileString(path);
+      }),
+    rename: (from, to) =>
+      Effect.gen(function* () {
+        const barrier = readBarrier();
+        if (barrier !== null) {
+          renameCount += 1;
+          if (renameCount === 1) {
+            yield* Deferred.succeed(barrier.firstRenameStarted, undefined);
+            yield* Deferred.await(barrier.releaseFirstRename);
+          }
+        }
+        yield* input.fileSystem.rename(from, to);
+      }),
+  } satisfies FileSystem.FileSystem);
+}
+
+function runConcurrentMutationPair<A, E1, B, E2>(
+  firstMutation: Effect.Effect<A, E1>,
+  secondMutation: Effect.Effect<B, E2>,
+  barrier: MutationBarrier,
+) {
+  return Effect.gen(function* () {
+    const firstFiber = yield* firstMutation.pipe(Effect.forkScoped);
+    yield* Deferred.await(barrier.firstRenameStarted);
+
+    const secondMutationAttempted = yield* Deferred.make<void>();
+    const secondFiber = yield* Deferred.succeed(secondMutationAttempted, undefined).pipe(
+      Effect.andThen(secondMutation),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(secondMutationAttempted);
+    yield* Effect.yieldNow;
+
+    const secondReadStartedEarly = Option.isSome(yield* Deferred.poll(barrier.secondReadStarted));
+    if (secondReadStartedEarly) {
+      yield* Deferred.succeed(barrier.releaseSecondRead, undefined);
+      yield* Fiber.join(secondFiber);
+      yield* Deferred.succeed(barrier.releaseFirstRename, undefined);
+    } else {
+      yield* Deferred.succeed(barrier.releaseFirstRename, undefined);
+      yield* Deferred.await(barrier.secondReadStarted);
+      yield* Deferred.succeed(barrier.releaseSecondRead, undefined);
+    }
+
+    yield* Fiber.join(firstFiber);
+    yield* Fiber.join(secondFiber);
+    assert.isFalse(secondReadStartedEarly);
+  });
+}
 
 describe("DesktopSavedEnvironments", () => {
   it.effect("treats a missing registry as empty and allows the first write", () =>
@@ -412,5 +511,79 @@ describe("DesktopSavedEnvironments", () => {
         );
       }),
     ),
+  );
+
+  it.effect("serializes metadata rewrites behind the secret write they preserve", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let activeBarrier: MutationBarrier | null = null;
+      const fileSystemLayer = makeMutationBarrierFileSystemLayer({
+        fileSystem,
+        getBarrier: () => activeBarrier,
+      });
+
+      return yield* withSavedEnvironments(
+        Effect.gen(function* () {
+          const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+          yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+
+          const secretFirstRecord = {
+            ...savedRegistryRecord,
+            label: "Metadata written after secret",
+          };
+          activeBarrier = yield* makeMutationBarrier();
+          yield* runConcurrentMutationPair(
+            savedEnvironments.setSecret({
+              environmentId: savedRegistryRecord.environmentId,
+              secret: "first-token",
+            }),
+            savedEnvironments.setRegistry([secretFirstRecord]),
+            activeBarrier,
+          );
+          activeBarrier = null;
+
+          assert.deepEqual(yield* savedEnvironments.getRegistry, [secretFirstRecord]);
+          assert.deepEqual(
+            yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId),
+            Option.some("first-token"),
+          );
+        }),
+        { fileSystemLayer },
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("serializes secret removal behind the secret write it observes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let activeBarrier: MutationBarrier | null = null;
+      const fileSystemLayer = makeMutationBarrierFileSystemLayer({
+        fileSystem,
+        getBarrier: () => activeBarrier,
+      });
+
+      return yield* withSavedEnvironments(
+        Effect.gen(function* () {
+          const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+          yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+
+          activeBarrier = yield* makeMutationBarrier();
+          yield* runConcurrentMutationPair(
+            savedEnvironments.setSecret({
+              environmentId: savedRegistryRecord.environmentId,
+              secret: "transient-token",
+            }),
+            savedEnvironments.removeSecret(savedRegistryRecord.environmentId),
+            activeBarrier,
+          );
+          activeBarrier = null;
+
+          assert.isTrue(
+            Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
+          );
+        }),
+        { fileSystemLayer },
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
