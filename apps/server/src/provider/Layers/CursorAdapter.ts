@@ -53,7 +53,11 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
-import { browser_preview_mcp_args, browser_preview_mcp_env } from "../browser-preview-mcp.ts";
+import {
+  BROWSER_PREVIEW_AGENT_GUIDANCE,
+  browser_preview_mcp_args,
+  browser_preview_mcp_env,
+} from "../browser-preview-mcp.ts";
 import { type AcpSessionRuntimeShape } from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -996,7 +1000,13 @@ export function makeCursorAdapter(
 
         const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
         if (input.input?.trim()) {
-          promptParts.push({ type: "text", text: input.input.trim() });
+          promptParts.push({
+            type: "text",
+            text:
+              ctx.turns.length === 0
+                ? `${BROWSER_PREVIEW_AGENT_GUIDANCE}\n\n${input.input.trim()}`
+                : input.input.trim(),
+          });
         }
         if (input.attachments && input.attachments.length > 0) {
           for (const attachment of input.attachments) {

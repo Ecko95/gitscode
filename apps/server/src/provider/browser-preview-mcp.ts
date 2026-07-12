@@ -2,6 +2,8 @@
 import type { ThreadId } from "@t3tools/contracts";
 import { existsSync } from "node:fs";
 
+export const BROWSER_PREVIEW_AGENT_GUIDANCE = `When a task involves a browser or local web app, use the gsd-browser MCP tools so all interactions appear in this chat's Browser supervision panel. If starting a dev server, keep it running, read its actual listening URL, verify that URL is reachable, and navigate gsd-browser to it. Never guess a localhost port.`;
+
 export function browser_preview_session_name(thread_id: ThreadId): string {
   return `gits-${String(thread_id)
     .replace(/[^a-zA-Z0-9_-]/g, "-")

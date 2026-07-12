@@ -72,7 +72,11 @@ import {
   type VisualPlanMcpServiceShape,
 } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { browser_preview_mcp_args, browser_preview_mcp_env } from "../browser-preview-mcp.ts";
+import {
+  BROWSER_PREVIEW_AGENT_GUIDANCE,
+  browser_preview_mcp_args,
+  browser_preview_mcp_env,
+} from "../browser-preview-mcp.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -3066,7 +3070,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: BROWSER_PREVIEW_AGENT_GUIDANCE,
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.

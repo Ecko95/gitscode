@@ -42,7 +42,11 @@ import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
-import { browser_preview_mcp_args, browser_preview_mcp_env } from "../browser-preview-mcp.ts";
+import {
+  BROWSER_PREVIEW_AGENT_GUIDANCE,
+  browser_preview_mcp_args,
+  browser_preview_mcp_env,
+} from "../browser-preview-mcp.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -411,10 +415,7 @@ function buildCodexCollaborationMode(input: {
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
-      developer_instructions:
-        input.interactionMode === "plan"
-          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      developer_instructions: `${input.interactionMode === "plan" ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS}\n\n${BROWSER_PREVIEW_AGENT_GUIDANCE}`,
     },
   };
 }
