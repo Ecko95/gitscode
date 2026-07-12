@@ -53,6 +53,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { browser_preview_mcp_args, browser_preview_mcp_env } from "../browser-preview-mcp.ts";
 import { type AcpSessionRuntimeShape } from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -587,18 +588,27 @@ export function makeCursorAdapter(
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(visualPlanMcpToken
-              ? {
-                  mcpServers: [
+            mcpServers: [
+              {
+                name: "gits-browser",
+                command: "gsd-browser",
+                args: [...browser_preview_mcp_args(input.threadId)],
+                env: Object.entries(browser_preview_mcp_env()).map(([name, value]) => ({
+                  name,
+                  value,
+                })),
+              },
+              ...(visualPlanMcpToken
+                ? [
                     {
-                      type: "http",
+                      type: "http" as const,
                       name: "gits-visual-plan",
                       url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
                       headers: [{ name: "Authorization", value: `Bearer ${visualPlanMcpToken}` }],
                     },
-                  ],
-                }
-              : {}),
+                  ]
+                : []),
+            ],
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Scope.Scope, sessionScope),

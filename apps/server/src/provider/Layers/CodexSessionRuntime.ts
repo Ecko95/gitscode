@@ -42,6 +42,7 @@ import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
+import { browser_preview_mcp_args, browser_preview_mcp_env } from "../browser-preview-mcp.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -336,6 +337,7 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
 }
 
 export function buildThreadStartParams(input: {
+  readonly threadId: ThreadId;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
@@ -351,10 +353,15 @@ export function buildThreadStartParams(input: {
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     // Per-thread config override (mirrors config.toml). Registers the GITS
     // visual-plan MCP as a streamable-HTTP server scoped to this thread's token.
-    ...(input.visualPlanMcp
-      ? {
-          config: {
-            mcp_servers: {
+    config: {
+      mcp_servers: {
+        "gits-browser": {
+          command: "gsd-browser",
+          args: browser_preview_mcp_args(input.threadId),
+          env: browser_preview_mcp_env(),
+        },
+        ...(input.visualPlanMcp
+          ? {
               "gits-visual-plan": {
                 url: input.visualPlanMcp.url,
                 // codex rejects inline `bearer_token` for streamable_http; send the
@@ -362,10 +369,10 @@ export function buildThreadStartParams(input: {
                 // the cursor adapter already does).
                 http_headers: { Authorization: `Bearer ${input.visualPlanMcp.token}` },
               },
-            },
-          },
-        }
-      : {}),
+            }
+          : {}),
+      },
+    },
   };
 }
 
@@ -535,6 +542,7 @@ export const openCodexThread = (input: {
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
+    threadId: input.threadId,
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,

@@ -33,6 +33,7 @@ import {
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   AutomodeSupervisorError,
+  BrowserPreviewError,
   CritError,
   DelamainAdapterError,
   GitsCapacityError,
@@ -121,8 +122,14 @@ import { CritSidecarManager } from "./crit/crit-sidecar-manager.ts";
 import { resolve_crit_binary_path } from "./crit/crit-binary-resolver.ts";
 import { build_ensure_sidecar_input } from "./crit/crit-sidecar-request.ts";
 import { readPersistedServerRuntimeState } from "./serverRuntimeState.ts";
+import { browser_preview_manager } from "./browser-preview/browser-preview-manager.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isCritError = Schema.is(CritError);
+const to_browser_preview_error = (cause: unknown) =>
+  new BrowserPreviewError({
+    message: cause instanceof Error ? cause.message : "Browser preview operation failed.",
+    cause,
+  });
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isGitsCockpitError = Schema.is(GitsCockpitError);
 const isGitsDevCommandError = Schema.is(GitsDevCommandError);
@@ -944,6 +951,16 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     }),
                   ),
                 );
+                yield* Effect.promise(() =>
+                  browser_preview_manager.stop(normalizedCommand.threadId),
+                ).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("failed to stop browser preview after archive", {
+                      threadId: normalizedCommand.threadId,
+                      cause,
+                    }),
+                  ),
+                );
               }
               return result;
             }).pipe(
@@ -1508,6 +1525,33 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               ),
             ),
             { "rpc.aggregate": "crit" },
+          ),
+        [WS_METHODS.browserPreviewOpen]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserPreviewOpen,
+            Effect.tryPromise({
+              try: () => browser_preview_manager.open(input.threadId),
+              catch: to_browser_preview_error,
+            }),
+            { "rpc.aggregate": "browserPreview" },
+          ),
+        [WS_METHODS.browserPreviewStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserPreviewStatus,
+            Effect.tryPromise({
+              try: () => browser_preview_manager.status(input.threadId),
+              catch: to_browser_preview_error,
+            }),
+            { "rpc.aggregate": "browserPreview" },
+          ),
+        [WS_METHODS.browserPreviewControl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserPreviewControl,
+            Effect.tryPromise({
+              try: () => browser_preview_manager.control(input.threadId, input.action),
+              catch: to_browser_preview_error,
+            }),
+            { "rpc.aggregate": "browserPreview" },
           ),
         [WS_METHODS.critSidecarStatus]: (input) =>
           observeRpcEffect(

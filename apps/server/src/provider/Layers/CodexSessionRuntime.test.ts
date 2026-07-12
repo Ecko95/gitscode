@@ -662,6 +662,7 @@ describe("forkCodexThread", () => {
 describe("buildThreadStartParams visual-plan MCP", () => {
   it("registers the visual-plan MCP via an Authorization header, not inline bearer_token", () => {
     const params = buildThreadStartParams({
+      threadId: ThreadId.make("thread-browser-test"),
       cwd: "/tmp/project",
       runtimeMode: "full-access",
       model: "gpt-5.3-codex",
@@ -677,19 +678,27 @@ describe("buildThreadStartParams visual-plan MCP", () => {
     assert.deepEqual(server.http_headers, { Authorization: "Bearer tok-123" });
   });
 
-  it("omits config entirely when no visual-plan MCP is provided", () => {
+  it("always registers the isolated browser MCP when no visual-plan MCP is provided", () => {
     const params = buildThreadStartParams({
+      threadId: ThreadId.make("thread-browser-test"),
       cwd: "/tmp/project",
       runtimeMode: "full-access",
       model: undefined,
       serviceTier: undefined,
       visualPlanMcp: undefined,
     });
-    assert.equal(params.config, undefined);
+    const servers = (params.config as { mcp_servers: Record<string, { args?: readonly string[] }> })
+      .mcp_servers;
+    assert.deepEqual(servers["gits-browser"]?.args, [
+      "--session",
+      "gits-thread-browser-test",
+      "mcp",
+    ]);
   });
 
   it("maps runtimeMode 'auto' to the same conservative policy as auto-accept-edits", () => {
     const params = buildThreadStartParams({
+      threadId: ThreadId.make("thread-browser-test"),
       cwd: "/tmp/project",
       runtimeMode: "auto",
       model: undefined,
@@ -697,10 +706,8 @@ describe("buildThreadStartParams visual-plan MCP", () => {
       visualPlanMcp: undefined,
     });
 
-    assert.deepStrictEqual(params, {
-      cwd: "/tmp/project",
-      approvalPolicy: "on-request",
-      sandbox: "workspace-write",
-    });
+    assert.equal(params.cwd, "/tmp/project");
+    assert.equal(params.approvalPolicy, "on-request");
+    assert.equal(params.sandbox, "workspace-write");
   });
 });

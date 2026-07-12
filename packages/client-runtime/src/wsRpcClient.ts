@@ -136,6 +136,11 @@ export interface WsRpcClient {
     readonly sidecarStatus: RpcUnaryMethod<typeof WS_METHODS.critSidecarStatus>;
     readonly releaseSidecar: RpcUnaryMethod<typeof WS_METHODS.critReleaseSidecar>;
   };
+  readonly browserPreview: {
+    readonly open: RpcUnaryMethod<typeof WS_METHODS.browserPreviewOpen>;
+    readonly status: RpcUnaryMethod<typeof WS_METHODS.browserPreviewStatus>;
+    readonly control: RpcUnaryMethod<typeof WS_METHODS.browserPreviewControl>;
+  };
   readonly gits: {
     readonly getCockpit: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsGetCockpit>;
     readonly devCommands: {
@@ -360,6 +365,13 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.critSidecarStatus](input)),
       releaseSidecar: (input) =>
         transport.request((client) => client[WS_METHODS.critReleaseSidecar](input)),
+    },
+    browserPreview: {
+      open: (input) => transport.request((client) => client[WS_METHODS.browserPreviewOpen](input)),
+      status: (input) =>
+        transport.request((client) => client[WS_METHODS.browserPreviewStatus](input)),
+      control: (input) =>
+        transport.request((client) => client[WS_METHODS.browserPreviewControl](input)),
     },
     gits: {
       getCockpit: () => transport.request((client) => client[WS_METHODS.gitsGetCockpit]({})),

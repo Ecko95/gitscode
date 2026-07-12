@@ -29,6 +29,7 @@ import {
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
+import { BrowserPreviewPanel } from "../components/BrowserPreviewPanel";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
@@ -177,6 +178,8 @@ function ChatThreadRouteView() {
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const critMode = search.diff === "crit";
   const diffOpen = search.diff === "1" || critMode;
+  const browserOpen = search.browser === "1";
+  const rightPanelOpen = diffOpen || browserOpen;
 
   // Crit PR review panel content. The panel mode is explicit (driven by
   // `?diff=crit`, set by the "Crit review" button); there is no auto-swap.
@@ -259,10 +262,18 @@ function ChatThreadRouteView() {
       params: buildThreadRouteParams(threadRef),
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
+        return { ...rest, browser: undefined, diff: "1" };
       },
     });
   }, [markDiffOpened, navigate, threadRef]);
+  const closeBrowser = useCallback(() => {
+    if (!threadRef) return;
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      search: (previous) => ({ ...previous, browser: undefined }),
+    });
+  }, [navigate, threadRef]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -286,6 +297,15 @@ function ChatThreadRouteView() {
   }
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
+  const rightPanelContent = browserOpen ? (
+    <BrowserPreviewPanel
+      environmentId={threadRef.environmentId}
+      threadId={threadRef.threadId}
+      onClose={closeBrowser}
+    />
+  ) : shouldRenderDiffContent ? (
+    (critPanel ?? <LazyDiffPanel mode={shouldUseDiffSheet ? "sheet" : "sidebar"} />)
+  ) : null;
 
   if (!shouldUseDiffSheet) {
     return (
@@ -295,16 +315,16 @@ function ChatThreadRouteView() {
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}
             onDiffPanelOpen={markDiffOpened}
-            reserveTitleBarControlInset={!diffOpen}
+            reserveTitleBarControlInset={!rightPanelOpen}
             routeKind="server"
           />
         </SidebarInset>
         <DiffPanelInlineSidebar
-          diffOpen={diffOpen}
+          diffOpen={rightPanelOpen}
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}
-          renderDiffContent={shouldRenderDiffContent}
-          critPanel={critPanel}
+          renderDiffContent={rightPanelOpen || shouldRenderDiffContent}
+          critPanel={rightPanelContent}
         />
       </>
     );
@@ -320,8 +340,8 @@ function ChatThreadRouteView() {
           routeKind="server"
         />
       </SidebarInset>
-      <RightPanelSheet open={diffOpen} onClose={closeDiff}>
-        {shouldRenderDiffContent ? (critPanel ?? <LazyDiffPanel mode="sheet" />) : null}
+      <RightPanelSheet open={rightPanelOpen} onClose={browserOpen ? closeBrowser : closeDiff}>
+        {rightPanelContent}
       </RightPanelSheet>
     </>
   );
@@ -330,7 +350,7 @@ function ChatThreadRouteView() {
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [retainSearchParams<DiffRouteSearch>(["diff", "browser"])],
   },
   component: ChatThreadRouteView,
 });

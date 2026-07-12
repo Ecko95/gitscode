@@ -53,6 +53,11 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       sidecarStatus: rpcClient.crit.sidecarStatus,
       releaseSidecar: rpcClient.crit.releaseSidecar,
     },
+    browserPreview: {
+      open: rpcClient.browserPreview.open,
+      status: rpcClient.browserPreview.status,
+      control: rpcClient.browserPreview.control,
+    },
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,
       getTurnDiff: rpcClient.orchestration.getTurnDiff,

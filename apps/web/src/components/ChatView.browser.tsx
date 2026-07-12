@@ -250,6 +250,7 @@ function createMockEnvironmentApi(input: {
     git: {} as EnvironmentApi["git"],
     review: {} as EnvironmentApi["review"],
     crit: {} as EnvironmentApi["crit"],
+    browserPreview: {} as EnvironmentApi["browserPreview"],
     orchestration: {
       dispatchCommand: input.dispatchCommand,
       getTurnDiff: (() => {

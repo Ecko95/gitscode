@@ -72,6 +72,7 @@ import {
   type VisualPlanMcpServiceShape,
 } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { browser_preview_mcp_args, browser_preview_mcp_env } from "../browser-preview-mcp.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -3005,15 +3006,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const visualPlanToken = visualPlanMcpSvc
         ? yield* visualPlanMcpSvc.issueToken(threadId)
         : undefined;
-      const visualPlanMcpServers = visualPlanToken
-        ? {
-            "gits-visual-plan": {
-              type: "http" as const,
-              url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
-              headers: { Authorization: `Bearer ${visualPlanToken}` },
-            },
-          }
-        : undefined;
+      const visualPlanMcpServers = {
+        "gits-browser": {
+          type: "stdio" as const,
+          command: "gsd-browser",
+          args: [...browser_preview_mcp_args(threadId)],
+          env: browser_preview_mcp_env(),
+        },
+        ...(visualPlanToken
+          ? {
+              "gits-visual-plan": {
+                type: "http" as const,
+                url: `http://127.0.0.1:${serverConfig.port}${VISUAL_PLAN_MCP_PATH}`,
+                headers: { Authorization: `Bearer ${visualPlanToken}` },
+              },
+            }
+          : {}),
+      };
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -3079,7 +3088,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        ...(visualPlanMcpServers ? { mcpServers: visualPlanMcpServers } : {}),
+        mcpServers: visualPlanMcpServers,
         // Merge per-session env vars (GITS_PORT, GITS_ALLOWED_ROOT, PATH prepend, etc.)
         // into the claude env. claudeEnvironmentWithDirenv is the instance-level base
         // plus the project's direnv delta; child vars add the per-session policy and

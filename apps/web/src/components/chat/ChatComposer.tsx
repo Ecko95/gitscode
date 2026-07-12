@@ -538,6 +538,7 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  onToggleBrowser: () => void;
   togglePlanSidebar: () => void;
   toggleDelamainSidebar: () => void;
   toggleVisualPlan: () => void;
@@ -618,6 +619,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
+    onToggleBrowser,
     togglePlanSidebar,
     toggleDelamainSidebar,
     toggleVisualPlan,
@@ -930,6 +932,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
+        {
+          id: "slash:browser",
+          type: "slash-command",
+          command: "browser",
+          label: "/browser",
+          description: "Open or close live browser supervision",
+        },
         {
           id: "slash:model",
           type: "slash-command",
@@ -1605,7 +1614,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        if (item.command === "browser") {
+          onToggleBrowser();
+        } else {
+          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        }
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -1651,7 +1664,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      onToggleBrowser,
+      resolveActiveComposerTrigger,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(

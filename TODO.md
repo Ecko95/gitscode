@@ -1,5 +1,18 @@
 # TODO
 
+## Live browser supervision — 2026-07-12
+
+- [x] Add thread-isolated `gsd-browser` MCP sessions for Codex, Claude, and Cursor.
+- [x] Add authenticated same-origin HTTP/WebSocket preview relay for local and Tailnet access.
+- [x] Add responsive chat preview UI with pause, resume, step, abort, takeover, and release controls.
+- [x] Add header, `/browser`, and configurable `browser.toggle` command surfaces.
+- [x] Stop the isolated browser daemon when its chat is archived.
+- [ ] Add OpenCode dynamic MCP registration once its shared server exposes per-session MCP configuration.
+
+Current status: implementation complete and verified with focused tests, formatting, lint, typecheck, and a live `gsd-browser` cold-start smoke.
+
+Notes: `gsd-browser` is optional. Missing binaries or browsers surface as a recoverable panel error and do not block normal chat sessions.
+
 ## Session log — 2026-07-10 (A2A + hardening shipped to `gits`)
 
 `origin/gits` @ `da97a62fe`. All work below is **merged into `gits`**; no open PRs.

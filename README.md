@@ -2,6 +2,12 @@
 
 GITS is the DevOS IDE and control plane for coding agents. It keeps the T3 Code remote shell and adds a GITS cockpit for Open GSD, Delamain peers, provider sessions, and remote operator workflows.
 
+## Live browser supervision
+
+GITS can attach an isolated `gsd-browser` session to each chat so you can watch and supervise browser automation without leaving the conversation. Open it from the monitor button in the chat header or enter `/browser`. The panel supports pause/resume, single-step, abort, and temporary operator takeover; `browser.toggle` is also available in custom keybindings.
+
+Install `gsd-browser` on the GITS server host and ensure Chrome/Chromium is available. GITS automatically detects common system and Playwright browser locations; set `GSD_BROWSER_BROWSER_PATH` when using a custom binary. Remote/Tailnet clients use the authenticated same-origin relay and never connect to the loopback viewer directly.
+
 ## Installation
 
 > [!WARNING]

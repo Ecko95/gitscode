@@ -36,12 +36,14 @@ function buildProps() {
     diffToggleShortcutLabel: null,
     gitCwd: null,
     diffOpen: false,
+    browserOpen: false,
     onRunProjectScript: vi.fn(),
     onAddProjectScript: vi.fn(),
     onUpdateProjectScript: vi.fn(),
     onDeleteProjectScript: vi.fn(),
     onToggleTerminal: vi.fn(),
     onToggleDiff: vi.fn(),
+    onToggleBrowser: vi.fn(),
   };
 }
 

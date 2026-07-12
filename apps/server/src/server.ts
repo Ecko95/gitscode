@@ -122,6 +122,10 @@ import {
 import { critTurnRouteLayer, critTurnStatusRouteLayer } from "./crit/critHttp.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { layer as CritSidecarManagerLive } from "./crit/crit-sidecar-manager.ts";
+import {
+  browserPreviewSocketRouteLayer,
+  browserPreviewViewRouteLayer,
+} from "./browser-preview/browser-preview-routes.ts";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import {
   gitsBuildInfoRouteLayer,
@@ -522,6 +526,8 @@ const PushRoutesLayer = Layer.mergeAll(
 
 export const makeRoutesLayer = Layer.mergeAll(
   AuthRoutesLayer,
+  browserPreviewViewRouteLayer,
+  browserPreviewSocketRouteLayer,
   attachmentsRouteLayer,
   critTurnRouteLayer,
   critTurnStatusRouteLayer,

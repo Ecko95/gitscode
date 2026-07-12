@@ -23,6 +23,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  MonitorPlayIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -1049,6 +1050,26 @@ function OpenCommandPaletteDialog() {
       openAddProjectFlow();
     },
   });
+
+  if (activeThread) {
+    actionItems.push({
+      kind: "action",
+      value: "action:browser-preview",
+      searchTerms: ["browser", "preview", "supervise", "automation", "live"],
+      title: "Open live browser supervision",
+      icon: <MonitorPlayIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "browser.toggle",
+      run: async () => {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(
+            scopeThreadRef(activeThread.environmentId, activeThread.id),
+          ),
+          search: { browser: "1" },
+        });
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

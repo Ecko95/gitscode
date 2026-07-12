@@ -87,6 +87,11 @@ import type {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import type { AudioTranscribeInput, AudioTranscribeResult } from "./rpc.ts";
+import type {
+  BrowserPreviewControlInput,
+  BrowserPreviewStatus,
+  BrowserPreviewThreadInput,
+} from "./browser-preview.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -577,6 +582,11 @@ export interface EnvironmentApi {
     ensureSidecar: (input: CritEnsureSidecarRequest) => Promise<CritSidecarStatusResponse>;
     sidecarStatus: (input: CritSidecarStatusRequest) => Promise<CritSidecarStatusResponse>;
     releaseSidecar: (input: CritSidecarStatusRequest) => Promise<CritReleaseSidecarResponse>;
+  };
+  browserPreview: {
+    open: (input: BrowserPreviewThreadInput) => Promise<BrowserPreviewStatus>;
+    status: (input: BrowserPreviewThreadInput) => Promise<BrowserPreviewStatus>;
+    control: (input: BrowserPreviewControlInput) => Promise<BrowserPreviewStatus>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

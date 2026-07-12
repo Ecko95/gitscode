@@ -5,6 +5,12 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { ExternalLauncherError, LaunchEditorInput, OpenInTerminalInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
 import {
+  BrowserPreviewControlInput,
+  BrowserPreviewError,
+  BrowserPreviewStatus,
+  BrowserPreviewThreadInput,
+} from "./browser-preview.ts";
+import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -224,6 +230,11 @@ export const WS_METHODS = {
   critEnsureSidecar: "crit.ensureSidecar",
   critSidecarStatus: "crit.sidecarStatus",
   critReleaseSidecar: "crit.releaseSidecar",
+
+  // Thread-scoped browser supervision methods
+  browserPreviewOpen: "browserPreview.open",
+  browserPreviewStatus: "browserPreview.status",
+  browserPreviewControl: "browserPreview.control",
 
   // GITS cockpit methods
   gitsGetCockpit: "gits.cockpit.get",
@@ -573,6 +584,24 @@ export const WsCritReleaseSidecarRpc = Rpc.make(WS_METHODS.critReleaseSidecar, {
   payload: CritSidecarStatusRequest,
   success: CritReleaseSidecarResponse,
   error: CritError,
+});
+
+export const WsBrowserPreviewOpenRpc = Rpc.make(WS_METHODS.browserPreviewOpen, {
+  payload: BrowserPreviewThreadInput,
+  success: BrowserPreviewStatus,
+  error: BrowserPreviewError,
+});
+
+export const WsBrowserPreviewStatusRpc = Rpc.make(WS_METHODS.browserPreviewStatus, {
+  payload: BrowserPreviewThreadInput,
+  success: BrowserPreviewStatus,
+  error: BrowserPreviewError,
+});
+
+export const WsBrowserPreviewControlRpc = Rpc.make(WS_METHODS.browserPreviewControl, {
+  payload: BrowserPreviewControlInput,
+  success: BrowserPreviewStatus,
+  error: BrowserPreviewError,
 });
 
 export const WsGitsGetCockpitRpc = Rpc.make(WS_METHODS.gitsGetCockpit, {
@@ -972,6 +1001,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsCritEnsureSidecarRpc,
   WsCritSidecarStatusRpc,
   WsCritReleaseSidecarRpc,
+  WsBrowserPreviewOpenRpc,
+  WsBrowserPreviewStatusRpc,
+  WsBrowserPreviewControlRpc,
   WsGitsGetCockpitRpc,
   WsGitsDevCommandsListRpc,
   WsGitsDevCommandsInitRpc,

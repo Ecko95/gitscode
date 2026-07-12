@@ -25,4 +25,5 @@ export * from "./review.ts";
 export * from "./gits.ts";
 export * from "./usage.ts";
 export * from "./crit.ts";
+export * from "./browser-preview.ts";
 export * from "./rpc.ts";

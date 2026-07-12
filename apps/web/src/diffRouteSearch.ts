@@ -2,6 +2,7 @@ import { TurnId } from "@t3tools/contracts";
 
 export interface DiffRouteSearch {
   diff?: "1" | "crit" | undefined;
+  browser?: "1" | undefined;
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
 }
@@ -27,6 +28,7 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
 
 export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRouteSearch {
   const diff = isDiffOpenValue(search.diff) ? "1" : search.diff === "crit" ? "crit" : undefined;
+  const browser = isDiffOpenValue(search.browser) ? "1" : undefined;
   // diffTurnId/diffFilePath only apply to the native per-turn diff, not crit.
   const diffTurnIdRaw = diff === "1" ? normalizeSearchString(search.diffTurnId) : undefined;
   const diffTurnId = diffTurnIdRaw ? TurnId.make(diffTurnIdRaw) : undefined;
@@ -34,7 +36,8 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
     diff === "1" && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
 
   return {
-    ...(diff ? { diff } : {}),
+    ...(diff && !browser ? { diff } : {}),
+    ...(browser ? { browser } : {}),
     ...(diffTurnId ? { diffTurnId } : {}),
     ...(diffFilePath ? { diffFilePath } : {}),
   };

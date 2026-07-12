@@ -25,6 +25,7 @@
 ### Task 1: Shared preview contracts and client API
 
 **Files:**
+
 - Create: `packages/contracts/src/browser-preview.ts`
 - Modify: `packages/contracts/src/index.ts`
 - Modify: `packages/contracts/src/rpc.ts`
@@ -34,6 +35,7 @@
 - Test: `packages/contracts/src/browser-preview.test.ts`
 
 **Interfaces:**
+
 - Produces: `BrowserPreviewStatus`, `BrowserPreviewOpenResult`, `BrowserPreviewControlInput`, `BrowserPreviewError`, and `EnvironmentApi.browserPreview`.
 - Control actions: `pause | resume | step | abort | takeover | release`.
 
@@ -59,21 +61,29 @@ Define bounded strings and typed results:
 
 ```ts
 export const BrowserPreviewControlAction = Schema.Literals([
-	"pause",
-	"resume",
-	"step",
-	"abort",
-	"takeover",
-	"release",
+  "pause",
+  "resume",
+  "step",
+  "abort",
+  "takeover",
+  "release",
 ]);
 
 export const BrowserPreviewOpenInput = Schema.Struct({ threadId: ThreadId });
 export const BrowserPreviewOpenResult = Schema.Struct({
-	available: Schema.Boolean,
-	status: Schema.Literals(["idle", "starting", "live", "paused", "takeover", "unavailable", "error"]),
-	previewPath: Schema.NullOr(Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(512))),
-	expiresAt: Schema.NullOr(Schema.String),
-	message: Schema.NullOr(Schema.String),
+  available: Schema.Boolean,
+  status: Schema.Literals([
+    "idle",
+    "starting",
+    "live",
+    "paused",
+    "takeover",
+    "unavailable",
+    "error",
+  ]),
+  previewPath: Schema.NullOr(Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(512))),
+  expiresAt: Schema.NullOr(Schema.String),
+  message: Schema.NullOr(Schema.String),
 });
 ```
 
@@ -95,12 +105,14 @@ git commit -m "feat(preview): add browser preview contracts"
 ### Task 2: Thread-scoped browser service and ticket registry
 
 **Files:**
+
 - Create: `apps/server/src/browser-preview/Services/BrowserPreview.ts`
 - Create: `apps/server/src/browser-preview/Layers/BrowserPreview.ts`
 - Test: `apps/server/src/browser-preview/Layers/BrowserPreview.test.ts`
 - Modify: `apps/server/src/server.ts`
 
 **Interfaces:**
+
 - Produces: `browser_session_name(thread_id)`, `get_mcp_server(thread_id)`, `status(thread_id)`, `open(thread_id)`, `control(input)`, `resolve_ticket(ticket)`, and `stop(thread_id)`.
 - Uses: `ProcessRunner`, `Crypto.Crypto`, `Clock`, and an in-memory map of preview tickets.
 
@@ -110,7 +122,7 @@ Test deterministic UUID-safe names, distinct names, CLI JSON parsing, binary abs
 
 ```ts
 expect(browser_session_name(ThreadId.make("550e8400-e29b-41d4-a716-446655440000"))).toBe(
-	"gits-550e8400-e29b-41d4-a716-446655440000",
+  "gits-550e8400-e29b-41d4-a716-446655440000",
 );
 expect(() => parse_view_result('{"url":"https://evil.example/ws"}')).toThrow();
 ```
@@ -127,10 +139,10 @@ Use `ProcessRunner.run` with the binary from `GITS_GSD_BROWSER_BIN` or `gsd-brow
 
 ```ts
 const session_args = (thread_id: ThreadId, args: ReadonlyArray<string>) => [
-	...args,
-	"--session",
-	browser_session_name(thread_id),
-	"--json",
+  ...args,
+  "--session",
+  browser_session_name(thread_id),
+  "--json",
 ];
 ```
 
@@ -160,11 +172,13 @@ git commit -m "feat(preview): manage isolated browser sessions"
 ### Task 3: Secure HTTP and WebSocket viewer bridge
 
 **Files:**
+
 - Create: `apps/server/src/browser-preview/http.ts`
 - Test: `apps/server/src/browser-preview/http.test.ts`
 - Modify: `apps/server/src/server.ts`
 
 **Interfaces:**
+
 - Consumes: `BrowserPreview.resolve_ticket(ticket)`.
 - Produces: `GET /api/browser-preview/:ticket` and `GET /api/browser-preview/:ticket/ws`.
 
@@ -173,7 +187,7 @@ git commit -m "feat(preview): manage isolated browser sessions"
 Use a minimal fixture containing the viewer CSP and `new WebSocket('ws://' + location.host + '/ws?' + query.toString())`. Assert the rewrite allows embedding, uses protocol-aware WebSockets, targets the ticket bridge path, preserves the nonce, and fails when the bootstrap expression is absent.
 
 ```ts
-expect(rewritten.html).toContain("location.protocol === \"https:\" ? \"wss://\" : \"ws://\"");
+expect(rewritten.html).toContain('location.protocol === "https:" ? "wss://" : "ws://"');
 expect(rewritten.headers["cache-control"]).toBe("no-store");
 ```
 
@@ -192,13 +206,14 @@ Extract the wildcard ticket from the URL, resolve it, fetch the stored loopback 
 Upgrade the client request through `request.upgrade`, construct the upstream socket with `Socket.makeWebSocket`, acquire both writers inside one scope, and run both raw pumps concurrently:
 
 ```ts
-yield* Effect.all(
-	[
-		client_socket.runRaw((frame) => upstream_write(frame)),
-		upstream_socket.runRaw((frame) => client_write(frame)),
-	],
-	{ concurrency: "unbounded" },
-);
+yield *
+  Effect.all(
+    [
+      client_socket.runRaw((frame) => upstream_write(frame)),
+      upstream_socket.runRaw((frame) => client_write(frame)),
+    ],
+    { concurrency: "unbounded" },
+  );
 ```
 
 Close the peer when either side terminates. Never accept a target URL from route parameters.
@@ -223,6 +238,7 @@ git commit -m "feat(preview): bridge the live browser viewer"
 ### Task 4: RPC handlers and provider MCP injection
 
 **Files:**
+
 - Modify: `apps/server/src/ws.ts`
 - Modify: `apps/server/src/provider/Layers/CodexSessionRuntime.ts`
 - Modify: `apps/server/src/provider/Layers/CodexAdapter.ts`
@@ -236,6 +252,7 @@ git commit -m "feat(preview): bridge the live browser viewer"
 - Test: existing provider adapter/runtime tests plus new focused assertions.
 
 **Interfaces:**
+
 - Consumes: `BrowserPreview.get_mcp_server(thread_id)` and control methods.
 - Produces: per-thread MCP definitions named `gsd-browser` for every managed provider runtime.
 
@@ -281,6 +298,7 @@ git commit -m "feat(preview): bind browser MCP to provider chats"
 ### Task 5: Thread route panel and live preview UI
 
 **Files:**
+
 - Create: `apps/web/src/components/browser-preview/BrowserPreviewPanel.tsx`
 - Create: `apps/web/src/components/browser-preview/browser-preview-state.ts`
 - Create: `apps/web/src/components/browser-preview/browser-preview-url.ts`
@@ -294,6 +312,7 @@ git commit -m "feat(preview): bind browser MCP to provider chats"
 - Test: `apps/web/src/components/ChatView.browser.tsx`
 
 **Interfaces:**
+
 - Consumes: `EnvironmentApi.browserPreview.open/status/control` and environment HTTP base URL.
 - Produces: URL-addressable `panel=browser`, resizable desktop panel, and responsive sheet.
 
@@ -343,6 +362,7 @@ git commit -m "feat(preview): add live browser chat panel"
 ### Task 6: Built-in commands and keybinding
 
 **Files:**
+
 - Modify: `packages/contracts/src/keybindings.ts`
 - Modify: `packages/shared/src/keybindings.ts`
 - Modify: `apps/web/src/keybindings.ts`
@@ -356,6 +376,7 @@ git commit -m "feat(preview): add live browser chat panel"
 - Test: `apps/web/src/components/CommandPalette.logic.test.ts`
 
 **Interfaces:**
+
 - Produces: `browser.toggle`, command-palette controls, and local `/browser` commands.
 
 - [ ] **Step 1: Write failing parser and keybinding tests**
@@ -364,8 +385,8 @@ Assert `/browser` defaults to open, accept each control subcommand, reject extra
 
 ```ts
 expect(parseStandaloneComposerSlashCommand("/browser pause")).toEqual({
-	type: "browser",
-	action: "pause",
+  type: "browser",
+  action: "pause",
 });
 expect(parseStandaloneComposerSlashCommand("/browser explain this")).toBeNull();
 ```
@@ -405,6 +426,7 @@ git commit -m "feat(preview): add browser supervision commands"
 ### Task 7: Lifecycle cleanup, docs, TODO, and final verification
 
 **Files:**
+
 - Modify: `apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts`
 - Test: `apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts`
 - Modify: `README.md`
@@ -412,6 +434,7 @@ git commit -m "feat(preview): add browser supervision commands"
 - Modify: `TODO.md`
 
 **Interfaces:**
+
 - Consumes: `BrowserPreview.stop(thread_id)`.
 - Produces: revoked tickets and best-effort daemon stop after thread deletion.
 
