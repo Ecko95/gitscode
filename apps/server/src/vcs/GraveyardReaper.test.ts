@@ -217,7 +217,11 @@ function makeGitLayer(fail: boolean, removeCalls: string[]) {
  * Default (liveWorktreePaths=[]) returns false (no live threads). Pass the path
  * under test to simulate a live thread referencing that worktree.
  */
-function makeProjectionLayer(liveWorktreePaths: string[] = []) {
+function makeProjectionLayer(
+  liveWorktreePaths: string[] = [],
+  responses: boolean[] | undefined = undefined,
+) {
+  let responseIndex = 0;
   return Layer.succeed(ProjectionSnapshotQuery, {
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
@@ -233,7 +237,14 @@ function makeProjectionLayer(liveWorktreePaths: string[] = []) {
     getThreadShellById: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
     getThreadWorktreeInfo: () => Effect.die("unused"),
-    hasLiveThreadForWorktreePath: (p: string) => Effect.succeed(liveWorktreePaths.includes(p)),
+    hasLiveThreadForWorktreePath: (p: string) => {
+      if (responses && responses.length > 0) {
+        const response = responses[Math.min(responseIndex, responses.length - 1)] ?? true;
+        responseIndex += 1;
+        return Effect.succeed(response);
+      }
+      return Effect.succeed(liveWorktreePaths.includes(p));
+    },
   } as never);
 }
 
@@ -248,6 +259,8 @@ async function runReaperSweep(opts: {
   failGit?: boolean;
   /** Worktree paths that a live (non-deleted) thread references in the projection DB. */
   liveWorktreePaths?: string[];
+  /** Deterministic projection responses for race tests (one response per query). */
+  projectionResponses?: boolean[];
 }): Promise<{
   dispatched: Array<Record<string, unknown>>;
   removeCalls: string[];
@@ -264,7 +277,7 @@ async function runReaperSweep(opts: {
       makeGitLayer(opts.failGit ?? false, removeCalls),
       Layer.succeed(ServerConfig, { worktreesDir: opts.worktreesDir } as never),
       NodeServices.layer, // provides FileSystem, Crypto
-      makeProjectionLayer(opts.liveWorktreePaths ?? []),
+      makeProjectionLayer(opts.liveWorktreePaths ?? [], opts.projectionResponses),
     );
 
     await Effect.runPromise(runSweepOnce.pipe(Effect.provide(baseLayer)));
@@ -372,6 +385,19 @@ describe("GraveyardReaper — sweep behaviour", () => {
     const buryCmds = dispatched.filter((d) => d["type"] === "worktree.bury");
     expect(buryCmds).toHaveLength(0);
     expect(removeCalls).toEqual([]);
+  });
+
+  it("re-checks liveness after checkpoint capture before removal", async () => {
+    const path = addPath();
+    const events = [makeAdoptedEvent(path)];
+    const { dispatched, removeCalls } = await runReaperSweep({
+      worktreesDir,
+      events,
+      // Initial check is clear; a thread binds the path while capture runs.
+      projectionResponses: [false, true],
+    });
+    expect(removeCalls).toEqual([]);
+    expect(dispatched.filter((d) => d["type"] === "worktree.bury")).toHaveLength(0);
   });
 
   it("remove failure → warn, no burial event, candidate remains", async () => {

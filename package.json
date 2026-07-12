@@ -103,8 +103,8 @@
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "undici": "^8.7.0",
-    "vite": "^8.1.4",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "ws": "^8.21.0"
   },
   "engines": {
     "bun": "^1.3.11",

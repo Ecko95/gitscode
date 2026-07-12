@@ -264,6 +264,23 @@ export const runSweepOnce = Effect.gen(function* () {
       continue;
     }
 
+    // Re-check after checkpoint capture. Capturing can yield to another thread
+    // binding this path, so the earlier guard is not sufficient on its own.
+    // Fail-safe: an uncertain second check leaves the worktree intact.
+    const reboundDuringCapture: boolean = yield* projectionQuery
+      .hasLiveThreadForWorktreePath(worktreePath)
+      .pipe(
+        Effect.catch((_err) =>
+          Effect.logWarning("graveyard.reaper.projection-check-failed", { worktreePath }).pipe(
+            Effect.as(true),
+          ),
+        ),
+      );
+    if (reboundDuringCapture) {
+      yield* Effect.logInfo("graveyard.reaper.skip-rebound", { worktreePath });
+      continue;
+    }
+
     // Step 2: remove worktree (force: true — orphans are likely dirty)
     const removed: boolean = yield* gitDriver
       .removeWorktree({ cwd: serverConfig.worktreesDir, path: worktreePath, force: true })
