@@ -134,7 +134,9 @@ re-injects → continue`.
   (mirrors manual steering); `ping_human` backstop.
 - **Brain derails ("sicko mode")** → operator STOP kill-switch (existing hard-stop) +
   hard budget cap that auto-halts the brain.
-- **Cost runaway** → `$` ceiling per arm (the video hit ~$50/day); brain halts at cap.
+- **Cost runaway** → token ceiling per arm (tail brain rollout `token_count`, kill at
+  cap; the video hit ~$50/day on metered GLM) + capacity check pauses the brain when
+  codex window utilization crosses threshold.
 - **Auth race** → brain concurrency 1 (single session anyway); peers keep their own
   codex home (`peer-codex-home`).
 - **Sandbox** → brain runs confined (systemd-run/Docker); peers already bwrap-confined
@@ -154,20 +156,43 @@ first). Four protocol invariants make the comparison interpretable:
    approval, arming is explicit). For the spike's duration both arms run
    auto-approve, kill-switch only — otherwise a 24h unattended run measures
    autonomy *policy*, not brain *architecture*.
-3. **Metered brain provider.** The codex OAuth path bills in rate-limit windows,
-   not dollars — a "$ ceiling per arm" is neither enforceable nor cleanly
-   measurable on it. Run the brain on a metered key (OpenRouter GLM, as the video
-   did) for clean cost numbers; peers stay on codex OAuth in both arms (identical,
-   cancels out).
+3. **Token/window-denominated budgets — brain on codex OAuth.** Subscription
+   economics bound the brain to Pi's codex provider (ChatGPT sub); a metered key
+   would cost real dollars for no decision-relevant gain. Budgets and metrics are
+   therefore denominated in **tokens and capacity share, not $**: enforce a hard
+   token ceiling by tailing the brain rollout's cumulative `token_count` (kill at
+   cap), meter window utilization via `GitsCapacityMonitor`, and compute notional
+   API-rate $ post-hoc from token counts (exactly as the baseline did). Peers stay
+   on codex OAuth in both arms (identical, cancels out).
 4. **Phase 1 is a smoke test, not a verdict.** One 24h run per arm at n=1 goal —
    a single flaky peer can decide it. Findings are directional; re-run before
    believing a close result.
 
+**Accepted confound + Phase 1.5 tiebreaker.** The arms differ in model AND harness
+(Claude-brain heartbeat vs gpt-5.x Pi brain) — unavoidable, since each brain is
+only subscription-viable on its own provider. Phase 1 therefore answers the actual
+decision — *which deployable, subscription-covered system lands more verified work
+per window* — not "is continuous context better, all else equal." Only if Pi wins
+or ties the headline metric, run **Phase 1.5**: a heartbeat variant with
+codex-provider verifier/brain threads (GITS already has the codex provider), making
+both arms gpt-5.x on the same subscription so harness/context-architecture is the
+only variable. Still zero metered spend.
+
+**Success bar (cross-pool capacity).** Peers already consume the codex weekly
+window; a codex brain double-loads that same pool while Claude weekly capacity
+idles overnight. The heartbeat spreads autonomy across both subscriptions, and its
+overnight brain is thin (pre-approved concrete briefs; deterministic driver +
+verifier runs — the expensive part of the manual baseline was *interactive*
+supervision, which the off-hours design moves into the evening approval window).
+Pi must beat the heartbeat by enough per slice to justify concentrating all
+autonomy on one subscription's weekly cap — **parity is a loss for the treatment**.
+
 | Metric | Source |
 |---|---|
-| **Supervisor tokens / notional $ per rc0 slice (HEADLINE)** | Pi session file vs GITS provider-thread costs; baseline ceiling ≤$6.75/slice |
+| **Supervisor tokens per rc0 slice (HEADLINE)** | Pi rollout `token_count` vs GITS provider-thread usage; notional-$ ceiling ≤$6.75/slice post-hoc |
+| Codex window share per rc0 slice (5h + weekly) | `GitsCapacityMonitor` |
 | Slices landed / held-PRs passing verifier (rc0) | verifier gate (same pipeline both arms) + episode ledger |
-| Cost (brain $ + peer $ + memory $) | OpenRouter logs (brain) / codex logs (peers) |
+| Cost (brain + peer + memory, tokens; notional $ post-hoc) | codex rollout logs both sides |
 | Coherence / on-task | sampled qualitative + (Ph2) observation accuracy |
 | Horizon to derail (incl. brain crash = derail event) | operator log |
 
@@ -211,12 +236,13 @@ protocol. Detailed design deferred until Phase 1 proves the loop survives real p
 1. Can Pi act as an MCP client to `delamain-peers`? (Decides bridge cost AND the
    waiting mechanism — Phase-1 blocker.)
 2. `GOAL.md` item selection from the audit backlog — each item verifier-gradeable.
-3. Budget ceiling per arm ($ and/or hours) — enforceable only with the metered
-   brain provider (protocol invariant 3).
+3. Budget ceiling per arm — token ceiling value and/or hours (protocol invariant 3;
+   enforced by tailing the brain rollout's `token_count`).
 4. Where the brain runs (VPS systemd-run scope vs local Docker) for the spike.
 5. Pi codex-provider OAuth refresh mid-session: a never-ending session is the worst
-   case for the known `refresh_token_reused` hazard — verify refresh works during a
-   long-lived session, and decide upfront that a brain crash/restart counts as a
-   derailment event (context reset kills the thesis silently otherwise). Moot for
-   the brain itself if it runs on the metered provider; still applies to peers'
-   codex homes.
+   case for the known `refresh_token_reused` hazard — and the brain now definitely
+   runs on codex OAuth (invariant 3), so this applies to the brain AND the peers'
+   codex homes. Verify refresh works during a long-lived session, use a separate
+   auth home for the brain (`peer-pi-home`), and decide upfront that a brain
+   crash/restart counts as a derailment event (context reset kills the thesis
+   silently otherwise).
