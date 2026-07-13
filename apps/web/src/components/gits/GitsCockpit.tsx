@@ -53,6 +53,7 @@ import {
   ListChecksIcon,
   LockIcon,
   LockOpenIcon,
+  MessageSquarePlusIcon,
   PenLineIcon,
   PlayIcon,
   PlugIcon,
@@ -65,6 +66,7 @@ import {
   StarIcon,
   ExternalLinkIcon,
   SquareTerminalIcon,
+  Trash2Icon,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -91,6 +93,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import {
+  Sheet,
+  SheetDescription,
+  SheetHeader,
+  SheetPanel,
+  SheetPopup,
+  SheetTitle,
+} from "../ui/sheet";
 import { SidebarInset, SidebarTrigger } from "../ui/sidebar";
 import { Textarea } from "../ui/textarea";
 import { ComposerVoiceButton } from "../chat/ComposerVoiceButton";
@@ -1853,6 +1863,215 @@ function motokoSelectedRouteLabel(selectedProjectRoot: string): string {
   return selectedProjectRoot.trim().length === 0 ? MOTOKO_ROOT_ROUTE_LABEL : selectedProjectRoot;
 }
 
+const EMPTY_MOTOKO_TRANSCRIPT: ReadonlyArray<MotokoTranscriptEntry> = [];
+
+type MotokoProposalDecision = "approve" | "reject" | "defer";
+
+const MOTOKO_PROPOSAL_STATUS_ACCENT: Record<HermesProposalCard["status"], string> = {
+  proposed: "border-l-amber-500/60",
+  approved: "border-l-emerald-500/60",
+  drafted: "border-l-emerald-500/60",
+  rejected: "border-l-destructive/60",
+  blocked: "border-l-destructive/60",
+  deferred: "border-l-border",
+};
+
+// Mirrors the server's draftKindFor so the card can announce what approval will do.
+function motokoProposalDraftKind(
+  proposal: HermesProposalCard,
+): "delamain-peer" | "open-gsd" | "verification" {
+  if (proposal.recommendedExecutor === "open-gsd") {
+    return "open-gsd";
+  }
+  if (proposal.actionKind === "read-only") {
+    return "verification";
+  }
+  return "delamain-peer";
+}
+
+function motokoDecisionSummary(
+  decision: MotokoProposalDecision,
+  title: string,
+  result: {
+    decided: HermesProposalCard;
+    draft: HermesExecutionDraft | null;
+    peer: DelamainPeer | null;
+  },
+): string {
+  if (decision === "reject") {
+    return `Rejected proposal "${title}".`;
+  }
+  if (decision === "defer") {
+    return `Deferred proposal "${title}".`;
+  }
+  if (result.peer) {
+    return `Approved "${title}" and dispatched Delamain peer ${result.peer.name ?? result.peer.id} on ${result.draft?.repo ?? "the proposal repo"}.`;
+  }
+  if (result.draft === null) {
+    return `Approved "${title}" (status: ${result.decided.status}).`;
+  }
+  if (result.draft.status === "blocked") {
+    return `Approved "${title}" but nothing was dispatched: ${result.draft.blockedReason ?? "the execution draft is blocked"}.`;
+  }
+  return `Approved "${title}" and created a ${result.draft.kind} handoff draft.`;
+}
+
+function MotokoProposalCardList({ label, items }: { label: string; items: ReadonlyArray<string> }) {
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground/80">{label}</div>
+      <ul className="grid gap-1 text-[11px] text-muted-foreground">
+        {items.map((item, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- lines can repeat; index keeps keys unique
+          <li key={`${label}-${index}`} className="break-words">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function MotokoProposalCard({
+  proposal,
+  actionPending,
+  onDecision,
+  onDraft,
+}: {
+  proposal: HermesProposalCard;
+  actionPending: boolean;
+  onDecision: (proposal: HermesProposalCard, decision: MotokoProposalDecision) => void;
+  onDraft: (proposalId: string) => void;
+}) {
+  const draftKind = motokoProposalDraftKind(proposal);
+  const canApprove =
+    proposal.status === "proposed" ||
+    proposal.status === "deferred" ||
+    proposal.status === "rejected";
+  const canReject = proposal.status === "proposed" || proposal.status === "deferred";
+  const canDefer = proposal.status === "proposed" || proposal.status === "blocked";
+  const canDraft = proposal.status === "approved";
+  const hasDetails =
+    proposal.detail.trim().length > 0 ||
+    proposal.evidence.length > 0 ||
+    proposal.verificationPlan.length > 0 ||
+    proposal.scope.length > 0;
+  return (
+    <article
+      className={cn(
+        "grid gap-2.5 rounded-lg border border-border/70 border-l-2 bg-card/80 px-3.5 py-3 text-xs shadow-xs",
+        MOTOKO_PROPOSAL_STATUS_ACCENT[proposal.status],
+      )}
+    >
+      <header className="grid gap-1.5">
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <span className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground">
+            {proposal.title}
+          </span>
+          <StatusPill label={proposal.status} tone={hermesProposalTone(proposal.status)} />
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+          <StatusPill
+            label={`risk ${proposal.risk}`}
+            tone={proposal.risk === "blocked" ? "danger" : "default"}
+          />
+          <span>{proposal.actionKind}</span>
+          <span aria-hidden="true">|</span>
+          <span>
+            {draftKind === "delamain-peer"
+              ? "approval dispatches a Delamain peer"
+              : draftKind === "open-gsd"
+                ? "approval drafts an Open GSD handoff"
+                : "approval drafts a verification handoff"}
+          </span>
+          {proposal.projectDir ? (
+            <>
+              <span aria-hidden="true">|</span>
+              <span className="min-w-0 truncate font-mono">{proposal.projectDir}</span>
+            </>
+          ) : null}
+        </div>
+      </header>
+      <p className="leading-relaxed text-muted-foreground">{proposal.summary}</p>
+      {hasDetails ? (
+        <details className="overflow-hidden rounded-md border border-border/60 bg-background/70">
+          <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground">
+            Details, evidence & verification
+          </summary>
+          <div className="grid gap-3 border-t border-border/60 px-3 py-3">
+            {proposal.detail.trim().length > 0 ? (
+              <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
+                {proposal.detail}
+              </p>
+            ) : null}
+            <MotokoProposalCardList label="Evidence" items={proposal.evidence} />
+            <MotokoProposalCardList label="Verification plan" items={proposal.verificationPlan} />
+            <MotokoProposalCardList label="Scope" items={proposal.scope} />
+          </div>
+        </details>
+      ) : null}
+      {proposal.blockedReason ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+          {proposal.blockedReason}
+        </div>
+      ) : null}
+      {proposal.decisionReason ? (
+        <div className="text-[11px] text-muted-foreground">
+          Decision note: {proposal.decisionReason}
+        </div>
+      ) : null}
+      <footer className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] text-muted-foreground">
+          {proposal.decidedAt
+            ? `decided ${formatIsoDate(proposal.decidedAt)}`
+            : `proposed ${formatIsoDate(proposal.createdAt)}`}
+        </span>
+        <div className="flex flex-wrap justify-end gap-2">
+          {canDefer ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onDecision(proposal, "defer")}
+              disabled={actionPending}
+            >
+              Defer
+            </Button>
+          ) : null}
+          {canReject ? (
+            <Button
+              size="sm"
+              variant="destructive-outline"
+              onClick={() => onDecision(proposal, "reject")}
+              disabled={actionPending}
+            >
+              Reject
+            </Button>
+          ) : null}
+          {canApprove ? (
+            <Button
+              size="sm"
+              onClick={() => onDecision(proposal, "approve")}
+              disabled={actionPending}
+            >
+              <CheckCircle2Icon className="size-3.5" />
+              {draftKind === "delamain-peer" ? "Approve & dispatch" : "Approve"}
+            </Button>
+          ) : null}
+          {canDraft ? (
+            <Button size="sm" onClick={() => onDraft(proposal.id)} disabled={actionPending}>
+              <FilePlus2Icon className="size-3.5" />
+              Draft handoff
+            </Button>
+          ) : null}
+        </div>
+      </footer>
+    </article>
+  );
+}
+
 function motokoModelControlValue(status: HermesStatusResult | undefined): string {
   const provider = status?.model.provider ?? "unknown";
   const model = status?.model.model ?? "unknown";
@@ -2345,6 +2564,8 @@ function MotokoPanel({
   onStartAcp,
   onInspectGits,
   onChatSubmit,
+  onClearChat,
+  onNewChat,
   onDecision,
   onWriteContext,
   onDraft,
@@ -2379,12 +2600,15 @@ function MotokoPanel({
   onStartAcp: () => void;
   onInspectGits: () => void;
   onChatSubmit: () => void;
-  onDecision: (proposalId: string, decision: "approve" | "reject" | "defer") => void;
+  onClearChat: () => void;
+  onNewChat: () => void;
+  onDecision: (proposal: HermesProposalCard, decision: MotokoProposalDecision) => void;
   onWriteContext: () => void;
   onDraft: (proposalId: string) => void;
   onRunSchedule: () => void;
 }) {
   const cards = proposals?.proposals ?? [];
+  const [proposalsOpen, setProposalsOpen] = useState(false);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const node = transcriptRef.current;
@@ -2424,10 +2648,26 @@ function MotokoPanel({
             {status?.config.hermesHome ?? "~/.gits/hermes"}
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
-          <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} />
-          Refresh
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setProposalsOpen(true)}>
+            <ListChecksIcon className="size-3.5" />
+            Proposals
+            <span
+              className={cn(
+                "rounded-full px-1.5 text-[11px] tabular-nums",
+                pendingCount > 0
+                  ? "bg-amber-500/15 text-amber-600"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
+              {formatCount(pendingCount)}
+            </span>
+          </Button>
+          <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
+            <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {errorMessage ? (
@@ -2476,7 +2716,31 @@ function MotokoPanel({
       <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.85fr)]">
         <div className="min-w-0 border-b border-border/60 xl:border-b-0 xl:border-r">
           <div className="flex min-h-[46rem] flex-col bg-background">
-            <SectionHeader title="Conversation" count={transcript.length} />
+            <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-2 sm:px-5">
+              <div className="flex min-w-0 items-center gap-2 text-xs">
+                <span className="font-medium text-muted-foreground">
+                  Conversation ({formatCount(transcript.length)})
+                </span>
+                <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground/70">
+                  {routeLabel}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onClearChat}
+                  disabled={transcript.length === 0}
+                >
+                  <Trash2Icon className="size-3.5" />
+                  Clear
+                </Button>
+                <Button size="sm" variant="outline" onClick={onNewChat}>
+                  <MessageSquarePlusIcon className="size-3.5" />
+                  New chat
+                </Button>
+              </div>
+            </div>
             <div
               ref={transcriptRef}
               aria-live="polite"
@@ -2508,99 +2772,109 @@ function MotokoPanel({
                       +{formatCount(transcript.length - 80)} earlier messages hidden
                     </div>
                   ) : null}
-                  {transcript.slice(-80).map((entry) => (
-                    <div
-                      key={entry.id}
-                      className={cn(
-                        "flex w-full",
-                        entry.role === "operator" ? "justify-end" : "justify-start",
-                      )}
-                    >
+                  {transcript.slice(-80).map((entry) => {
+                    // Prefer the live proposal so inline decision buttons track current status.
+                    const entryProposal = entry.result?.proposal
+                      ? (cards.find((card) => card.id === entry.result?.proposal?.id) ??
+                        entry.result.proposal)
+                      : null;
+                    return (
                       <div
+                        key={entry.id}
                         className={cn(
-                          "grid max-w-[92%] gap-2 rounded-2xl border px-4 py-3 shadow-xs",
-                          entry.role === "operator"
-                            ? "rounded-br-md border-primary/30 bg-primary text-primary-foreground"
-                            : "rounded-bl-md border-border/70 bg-card/88 text-foreground",
+                          "flex w-full",
+                          entry.role === "operator" ? "justify-end" : "justify-start",
                         )}
                       >
-                        <div className="flex min-w-0 items-center justify-between gap-2">
-                          <span
+                        <div
+                          className={cn(
+                            "grid max-w-[92%] gap-2 rounded-2xl border px-4 py-3 shadow-xs",
+                            entry.role === "operator"
+                              ? "rounded-br-md border-primary/30 bg-primary text-primary-foreground"
+                              : "rounded-bl-md border-border/70 bg-card/88 text-foreground",
+                          )}
+                        >
+                          <div className="flex min-w-0 items-center justify-between gap-2">
+                            <span
+                              className={cn(
+                                "font-medium",
+                                entry.role === "operator"
+                                  ? "text-primary-foreground"
+                                  : "text-foreground",
+                              )}
+                            >
+                              {entry.role === "operator" ? "You" : "Motoko"}
+                            </span>
+                            <span
+                              className={cn(
+                                "text-[11px]",
+                                entry.role === "operator"
+                                  ? "text-primary-foreground/70"
+                                  : "text-muted-foreground",
+                              )}
+                            >
+                              {formatIsoDate(entry.createdAt)}
+                            </span>
+                          </div>
+                          <pre
                             className={cn(
-                              "font-medium",
+                              "whitespace-pre-wrap font-sans text-[13px] leading-relaxed",
                               entry.role === "operator"
-                                ? "text-primary-foreground"
+                                ? "text-primary-foreground/95"
                                 : "text-foreground",
                             )}
                           >
-                            {entry.role === "operator" ? "You" : "Motoko"}
-                          </span>
-                          <span
-                            className={cn(
-                              "text-[11px]",
-                              entry.role === "operator"
-                                ? "text-primary-foreground/70"
-                                : "text-muted-foreground",
-                            )}
-                          >
-                            {formatIsoDate(entry.createdAt)}
-                          </span>
-                        </div>
-                        <pre
-                          className={cn(
-                            "whitespace-pre-wrap font-sans text-[13px] leading-relaxed",
-                            entry.role === "operator"
-                              ? "text-primary-foreground/95"
-                              : "text-foreground",
-                          )}
-                        >
-                          {entry.message}
-                        </pre>
-                        {entry.result?.status === "setup-required" ? (
-                          <div className="grid gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                            <div className="font-medium text-amber-700">
-                              {entry.result.setupTitle ?? "Hermes setup required"}
-                            </div>
-                            {entry.result.setupDetail ? (
-                              <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-amber-700">
-                                {entry.result.setupDetail}
-                              </pre>
-                            ) : null}
-                            {entry.result.setupCommand ? (
-                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background px-2 py-2">
-                                <code className="min-w-0 flex-1 overflow-auto text-[11px] text-foreground">
-                                  {entry.result.setupCommand}
-                                </code>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    void navigator.clipboard.writeText(entry.result!.setupCommand!)
-                                  }
-                                >
-                                  <CopyIcon className="size-3.5" />
-                                  Copy
-                                </Button>
+                            {entry.message}
+                          </pre>
+                          {entry.result?.status === "setup-required" ? (
+                            <div className="grid gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                              <div className="font-medium text-amber-700">
+                                {entry.result.setupTitle ?? "Hermes setup required"}
                               </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        {entry.result?.proposal ? (
-                          <div className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] text-muted-foreground">
-                            Created proposal card:{" "}
-                            <span className="font-medium text-foreground">
-                              {entry.result.proposal.title}
-                            </span>
-                          </div>
-                        ) : null}
-                        {entry.result?.blockedReason && entry.result.status !== "setup-required" ? (
-                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-                            {entry.result.blockedReason}
-                          </div>
-                        ) : null}
+                              {entry.result.setupDetail ? (
+                                <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-amber-700">
+                                  {entry.result.setupDetail}
+                                </pre>
+                              ) : null}
+                              {entry.result.setupCommand ? (
+                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background px-2 py-2">
+                                  <code className="min-w-0 flex-1 overflow-auto text-[11px] text-foreground">
+                                    {entry.result.setupCommand}
+                                  </code>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() =>
+                                      void navigator.clipboard.writeText(
+                                        entry.result!.setupCommand!,
+                                      )
+                                    }
+                                  >
+                                    <CopyIcon className="size-3.5" />
+                                    Copy
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {entryProposal ? (
+                            <MotokoProposalCard
+                              proposal={entryProposal}
+                              actionPending={actionPending}
+                              onDecision={onDecision}
+                              onDraft={onDraft}
+                            />
+                          ) : null}
+                          {entry.result?.blockedReason &&
+                          entry.result.status !== "setup-required" ? (
+                            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                              {entry.result.blockedReason}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2775,94 +3049,6 @@ function MotokoPanel({
             ) : null}
 
             <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
-              <SectionHeader title="Proposal cards" count={cards.length} />
-              {loading && cards.length === 0 ? (
-                <EmptyState label="Loading Motoko proposals..." />
-              ) : cards.length === 0 ? (
-                <EmptyState label="No Motoko proposals." />
-              ) : (
-                <div className="divide-y divide-border/60">
-                  {cards.slice(0, 80).map((proposal) => (
-                    <div key={proposal.id} className="grid gap-3 px-3 py-3">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                          {proposal.title}
-                        </span>
-                        <StatusPill
-                          label={proposal.status}
-                          tone={hermesProposalTone(proposal.status)}
-                        />
-                        <StatusPill
-                          label={proposal.risk}
-                          tone={proposal.risk === "blocked" ? "danger" : "default"}
-                        />
-                      </div>
-                      <p className="line-clamp-3 text-muted-foreground">{proposal.summary}</p>
-                      <div className="grid gap-2">
-                        <div>
-                          <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground/80">
-                            Evidence
-                          </div>
-                          <ul className="grid gap-1 text-[11px] text-muted-foreground">
-                            {proposal.evidence.slice(0, 3).map((item, index) => (
-                              // oxlint-disable-next-line react/no-array-index-key -- evidence lines can repeat; index keeps keys unique
-                              <li key={`evidence-${index}`} className="line-clamp-2">
-                                {item}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                      {proposal.blockedReason ? (
-                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-                          {proposal.blockedReason}
-                        </div>
-                      ) : null}
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onDecision(proposal.id, "defer")}
-                          disabled={actionPending}
-                        >
-                          Defer
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive-outline"
-                          onClick={() => onDecision(proposal.id, "reject")}
-                          disabled={actionPending}
-                        >
-                          Reject
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onDecision(proposal.id, "approve")}
-                          disabled={actionPending || proposal.status === "blocked"}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => onDraft(proposal.id)}
-                          disabled={actionPending || proposal.status !== "approved"}
-                        >
-                          Draft
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {cards.length > 80 ? (
-                    <div className="px-3 py-2 text-[11px] text-muted-foreground">
-                      +{formatCount(cards.length - 80)} more proposals
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </div>
-
-            <div className="overflow-hidden rounded-md border border-border/70 bg-muted/20">
               <div className="border-b border-border/60 px-3 py-2 font-medium text-muted-foreground">
                 Log
               </div>
@@ -2895,6 +3081,34 @@ function MotokoPanel({
           </div>
         </div>
       </div>
+
+      <Sheet open={proposalsOpen} onOpenChange={setProposalsOpen}>
+        <SheetPopup side="right" className="max-w-xl">
+          <SheetHeader>
+            <SheetTitle>Motoko proposals</SheetTitle>
+            <SheetDescription>
+              {formatCount(pendingCount)} pending | {formatCount(cards.length)} total
+            </SheetDescription>
+          </SheetHeader>
+          <SheetPanel className="grid gap-3">
+            {loading && cards.length === 0 ? (
+              <EmptyState label="Loading Motoko proposals..." />
+            ) : cards.length === 0 ? (
+              <EmptyState label="No Motoko proposals." />
+            ) : (
+              cards.map((proposal) => (
+                <MotokoProposalCard
+                  key={proposal.id}
+                  proposal={proposal}
+                  actionPending={actionPending}
+                  onDecision={onDecision}
+                  onDraft={onDraft}
+                />
+              ))
+            )}
+          </SheetPanel>
+        </SheetPopup>
+      </Sheet>
     </section>
   );
 }
@@ -4433,9 +4647,18 @@ export function GitsCockpit() {
   const [replyText, setReplyText] = useState("");
   const [selectedProjectRoot, setSelectedProjectRoot] = useState("");
   const [motokoChatInput, setMotokoChatInput] = useState("");
-  const [motokoTranscript, setMotokoTranscript] = useState<ReadonlyArray<MotokoTranscriptEntry>>(
-    [],
-  );
+  // One chat per Motoko route: keyed by trimmed project root ("" = root/gits).
+  const [motokoTranscripts, setMotokoTranscripts] = useState<
+    Readonly<Record<string, ReadonlyArray<MotokoTranscriptEntry>>>
+  >({});
+  const motokoRoute = selectedProjectRoot.trim();
+  const motokoTranscript = motokoTranscripts[motokoRoute] ?? EMPTY_MOTOKO_TRANSCRIPT;
+  const appendMotokoTranscript = (routeKey: string, entry: MotokoTranscriptEntry) => {
+    setMotokoTranscripts((current) => ({
+      ...current,
+      [routeKey]: [...(current[routeKey] ?? []), entry],
+    }));
+  };
   const [motokoInteractionMode, setMotokoInteractionMode] =
     useState<MotokoInteractionMode>("default");
   const [motokoScheduleKind, setMotokoScheduleKind] =
@@ -4747,46 +4970,40 @@ export function GitsCockpit() {
     },
   });
   const hermesChatMutation = useMutation({
-    mutationFn: async (message: string) => {
+    // routeKey travels with the request so replies land in the chat they were sent from,
+    // even if the operator switches repos mid-flight.
+    mutationFn: async (input: { message: string; routeKey: string }) => {
       const effectiveMessage =
         motokoInteractionMode === "plan"
           ? [
               "Motoko interaction mode: plan.",
               "Respond with analysis, options, and a proposed approval path. Do not recommend direct execution.",
               "",
-              message,
+              input.message,
             ].join("\n")
-          : message;
+          : input.message;
 
       return readGitsClient().hermes.chat({
         message: effectiveMessage,
-        ...(selectedProjectRoot.trim().length > 0
-          ? { projectDir: selectedProjectRoot.trim() }
-          : {}),
+        ...(input.routeKey.length > 0 ? { projectDir: input.routeKey } : {}),
       });
     },
-    onMutate: async (message) => {
-      setMotokoTranscript((current) => [
-        ...current,
-        {
-          id: makeTranscriptEntryId("operator", new Date().toISOString()),
-          role: "operator",
-          message,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+    onMutate: async (input) => {
+      appendMotokoTranscript(input.routeKey, {
+        id: makeTranscriptEntryId("operator", new Date().toISOString()),
+        role: "operator",
+        message: input.message,
+        createdAt: new Date().toISOString(),
+      });
     },
-    onSuccess: async (result) => {
-      setMotokoTranscript((current) => [
-        ...current,
-        {
-          id: makeTranscriptEntryId("motoko", result.createdAt),
-          role: "motoko",
-          message: result.response,
-          createdAt: result.createdAt,
-          result,
-        },
-      ]);
+    onSuccess: async (result, input) => {
+      appendMotokoTranscript(input.routeKey, {
+        id: makeTranscriptEntryId("motoko", result.createdAt),
+        role: "motoko",
+        message: result.response,
+        createdAt: result.createdAt,
+        result,
+      });
       setMotokoChatInput("");
       await Promise.all([
         hermesLogQuery.refetch(),
@@ -4794,23 +5011,60 @@ export function GitsCockpit() {
         ...(result.proposal ? [hermesProposalsQuery.refetch()] : []),
       ]);
     },
-    onError: (error) => {
-      setMotokoTranscript((current) => [
-        ...current,
-        {
-          id: makeTranscriptEntryId("motoko", new Date().toISOString()),
-          role: "motoko",
-          message: error instanceof Error ? error.message : "Motoko chat failed.",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+    onError: (error, input) => {
+      appendMotokoTranscript(input.routeKey, {
+        id: makeTranscriptEntryId("motoko", new Date().toISOString()),
+        role: "motoko",
+        message: error instanceof Error ? error.message : "Motoko chat failed.",
+        createdAt: new Date().toISOString(),
+      });
     },
   });
   const hermesDecisionMutation = useMutation({
-    mutationFn: async (input: { proposalId: string; decision: "approve" | "reject" | "defer" }) =>
-      readGitsClient().hermes.decideProposal(input),
-    onSuccess: async () => {
-      await Promise.all([hermesProposalsQuery.refetch(), hermesQuery.refetch()]);
+    mutationFn: async (input: {
+      proposalId: string;
+      decision: MotokoProposalDecision;
+      routeKey: string;
+      title: string;
+    }) => {
+      const client = readGitsClient();
+      const decided = await client.hermes.decideProposal({
+        proposalId: input.proposalId,
+        decision: input.decision,
+      });
+      if (input.decision !== "approve" || decided.status !== "approved") {
+        return { decided, draft: null, peer: null };
+      }
+      // Approval means "go": draft the handoff and, for delamain work, dispatch the peer now.
+      const draft = await client.hermes.draftFromProposal({ proposalId: input.proposalId });
+      if (draft.status !== "draft" || draft.kind !== "delamain-peer" || draft.repo === null) {
+        return { decided, draft, peer: null };
+      }
+      const peer = await client.delamain.spawnPeer({ repo: draft.repo, prompt: draft.prompt });
+      return { decided, draft, peer };
+    },
+    onSuccess: async (result, input) => {
+      appendMotokoTranscript(input.routeKey, {
+        id: makeTranscriptEntryId("motoko", new Date().toISOString()),
+        role: "motoko",
+        message: motokoDecisionSummary(input.decision, input.title, result),
+        createdAt: new Date().toISOString(),
+      });
+      await Promise.all([
+        hermesProposalsQuery.refetch(),
+        hermesQuery.refetch(),
+        ...(result.peer ? [delamainQuery.refetch()] : []),
+      ]);
+    },
+    onError: (error, input) => {
+      appendMotokoTranscript(input.routeKey, {
+        id: makeTranscriptEntryId("motoko", new Date().toISOString()),
+        role: "motoko",
+        message: `Decision on "${input.title}" failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+        createdAt: new Date().toISOString(),
+      });
     },
   });
   const hermesDraftMutation = useMutation({
@@ -5550,10 +5804,23 @@ export function GitsCockpit() {
                     if (message.length === 0) {
                       return;
                     }
-                    void hermesChatMutation.mutate(message);
+                    void hermesChatMutation.mutate({ message, routeKey: motokoRoute });
                   }}
-                  onDecision={(proposalId, decision) =>
-                    void hermesDecisionMutation.mutate({ proposalId, decision })
+                  onClearChat={() =>
+                    setMotokoTranscripts((current) => ({ ...current, [motokoRoute]: [] }))
+                  }
+                  onNewChat={() => {
+                    setMotokoTranscripts((current) => ({ ...current, [motokoRoute]: [] }));
+                    setMotokoChatInput("");
+                    hermesChatMutation.reset();
+                  }}
+                  onDecision={(proposal, decision) =>
+                    void hermesDecisionMutation.mutate({
+                      proposalId: proposal.id,
+                      decision,
+                      routeKey: motokoRoute,
+                      title: proposal.title,
+                    })
                   }
                   onWriteContext={() => void hermesContextMutation.mutate()}
                   onDraft={(proposalId) => void hermesDraftMutation.mutate(proposalId)}
