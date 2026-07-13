@@ -311,6 +311,27 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         expect(peakReads).toBeLessThanOrEqual(32);
       }),
     );
+
+    it.effect("indexes symlinked directories as entries without traversing into them", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-search-symlink-" });
+        yield* writeTextFile(cwd, "real/inside.ts", "export {};\n");
+        yield* Effect.promise(() =>
+          fsPromises.symlink(path.join(cwd, "real"), path.join(cwd, "linked")),
+        );
+
+        const linkedResult = yield* searchWorkspaceEntries({ cwd, query: "linked", limit: 10 });
+        const insideResult = yield* searchWorkspaceEntries({ cwd, query: "inside", limit: 10 });
+
+        expect(
+          linkedResult.entries.map((entry) => ({ path: entry.path, kind: entry.kind })),
+        ).toEqual([{ path: "linked", kind: "directory" }]);
+        // the file is reachable through the REAL directory only — the symlink
+        // is listed but never traversed (cycle / double-index guard)
+        expect(insideResult.entries.map((entry) => entry.path)).toEqual(["real/inside.ts"]);
+      }),
+    );
   });
 
   describe("browse", () => {
@@ -334,6 +355,27 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
             { name: "alpine", fullPath: path.join(cwd, "alpine") },
           ],
         });
+      }),
+    );
+
+    it.effect("lists symlinked directories and skips dangling symlinks", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        yield* writeTextFile(cwd, "real-dir/index.ts", "export {};\n");
+        yield* Effect.promise(() =>
+          fsPromises.symlink(path.join(cwd, "real-dir"), path.join(cwd, "linked-dir")),
+        );
+        yield* Effect.promise(() =>
+          fsPromises.symlink(path.join(cwd, "does-not-exist"), path.join(cwd, "broken-link")),
+        );
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: appendSeparator(cwd),
+        });
+
+        expect(result.entries.map((entry) => entry.name)).toEqual(["linked-dir", "real-dir"]);
       }),
     );
 
