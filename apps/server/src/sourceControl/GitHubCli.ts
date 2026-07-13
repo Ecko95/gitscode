@@ -56,11 +56,13 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly headSelector: string;
     readonly limit?: number;
+    readonly repo?: string;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
   readonly getPullRequest: (input: {
     readonly cwd: string;
     readonly reference: string;
+    readonly repo?: string;
   }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
 
   readonly getPullRequestChecks: (input: {
@@ -258,6 +260,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
         args: [
           "pr",
           "list",
+          ...(input.repo ? ["--repo", input.repo] : []),
           "--head",
           input.headSelector,
           "--state",
@@ -298,6 +301,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
           "pr",
           "view",
           input.reference,
+          ...(input.repo ? ["--repo", input.repo] : []),
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
