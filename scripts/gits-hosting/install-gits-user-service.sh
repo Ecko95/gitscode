@@ -79,6 +79,7 @@ WorkingDirectory=${gits_hosting_worktree}
 Environment=NODE_ENV=production
 Environment=T3CODE_HOME=${gits_hosting_t3code_home}
 Environment=GITS_BUILD_INFO_PATH=${metadata_path}
+Environment=GITS_CONFINE_BIN=${gits_hosting_worktree}/scripts/gits-confine.sh
 Environment=PATH=${service_path}
 ExecStart=${node_path} --max-old-space-size=${gits_hosting_node_heap_mb} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}
 Restart=on-failure
