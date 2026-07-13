@@ -7,6 +7,7 @@ import {
   GitsMcpInventorySnapshot,
   GitsSkillInventorySnapshot,
   HermesChatResult,
+  HermesCodexAuthStatus,
   HermesExecutionDraft,
   HermesProposalCard,
   HermesScheduleRunResult,
@@ -18,6 +19,7 @@ const decodeGitsSkillInventorySnapshot = Schema.decodeUnknownSync(GitsSkillInven
 const decodeGitsMcpInventorySnapshot = Schema.decodeUnknownSync(GitsMcpInventorySnapshot);
 const decodeGitsCapacitySnapshot = Schema.decodeUnknownSync(GitsCapacitySnapshot);
 const decodeHermesStatus = Schema.decodeUnknownSync(HermesStatusResult);
+const decodeHermesCodexAuthStatus = Schema.decodeUnknownSync(HermesCodexAuthStatus);
 const decodeHermesChatResult = Schema.decodeUnknownSync(HermesChatResult);
 const decodeHermesProposal = Schema.decodeUnknownSync(HermesProposalCard);
 const decodeHermesDraft = Schema.decodeUnknownSync(HermesExecutionDraft);
@@ -272,11 +274,12 @@ describe("Hermes Motoko contracts", () => {
         contextWindowSource: "cache",
       },
       codexAuth: {
-        state: "detected",
-        source: "codex-cli",
-        hermesAuthExists: false,
+        state: "needs-reauth",
+        source: "hermes-home",
+        hermesAuthExists: true,
         codexCliAuthExists: true,
-        message: "Codex CLI OAuth credentials are present.",
+        message:
+          "Hermes Codex OAuth chain requires re-login (relogin required (refresh_token_reused)).",
       },
       soul: {
         exists: true,
@@ -326,6 +329,17 @@ describe("Hermes Motoko contracts", () => {
 
     expect(parsed.policy.repoWritesRequireDelamain).toBe(true);
     expect(parsed.motokoProfile.managedByGits).toBe(true);
+  });
+
+  it("still decodes the legacy codex-cli auth source", () => {
+    const parsed = decodeHermesCodexAuthStatus({
+      state: "detected",
+      source: "codex-cli",
+      hermesAuthExists: false,
+      codexCliAuthExists: true,
+      message: "legacy payload",
+    });
+    expect(parsed.source).toBe("codex-cli");
   });
 
   it("accepts expanded proposal cards, drafts, and scheduled proposal runs", () => {

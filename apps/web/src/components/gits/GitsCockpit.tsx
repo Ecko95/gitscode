@@ -2444,7 +2444,7 @@ function MotokoPanel({
         <StatBlock label="Pending" value={formatCount(pendingCount)} icon={AlertTriangleIcon} />
         <StatBlock
           label="OAuth"
-          value={status?.codexAuth.source ?? "unknown"}
+          value={status?.codexAuth.state ?? "unknown"}
           icon={ShieldCheckIcon}
         />
         <StatBlock label="Mode" value={status?.config.approvalMode ?? "unknown"} icon={PowerIcon} />

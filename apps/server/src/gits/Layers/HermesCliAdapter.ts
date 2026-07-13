@@ -368,6 +368,68 @@ async function readFileIfExists(path: string): Promise<string | null> {
   }
 }
 
+export type HermesCodexChainHealth =
+  | { readonly kind: "missing" }
+  | { readonly kind: "healthy" }
+  | { readonly kind: "needs-reauth"; readonly reason: string };
+
+export function codexReauthCommand(hermesHome: string): string {
+  return `HERMES_HOME=${hermesHome} hermes auth add openai-codex --type oauth`;
+}
+
+export function parseCodexChainHealth(authJsonText: string | null): HermesCodexChainHealth {
+  if (authJsonText === null) {
+    return { kind: "missing" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(authJsonText);
+  } catch {
+    return { kind: "needs-reauth", reason: "auth.json could not be parsed" };
+  }
+  const providers =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as { readonly providers?: unknown }).providers
+      : undefined;
+  const entry =
+    typeof providers === "object" && providers !== null
+      ? (providers as Record<string, unknown>)["openai-codex"]
+      : undefined;
+  if (typeof entry !== "object" || entry === null) {
+    return { kind: "needs-reauth", reason: "no openai-codex provider entry in auth.json" };
+  }
+  const record = entry as {
+    readonly tokens?: unknown;
+    readonly last_auth_error?: unknown;
+  };
+  const lastAuthError =
+    typeof record.last_auth_error === "object" && record.last_auth_error !== null
+      ? (record.last_auth_error as {
+          readonly code?: unknown;
+          readonly at?: unknown;
+          readonly relogin_required?: unknown;
+        })
+      : null;
+  if (lastAuthError?.relogin_required === true) {
+    const code = typeof lastAuthError.code === "string" ? lastAuthError.code : "unknown";
+    const at = typeof lastAuthError.at === "string" ? ` at ${lastAuthError.at}` : "";
+    return { kind: "needs-reauth", reason: `relogin required (${code}${at})` };
+  }
+  const tokens =
+    typeof record.tokens === "object" && record.tokens !== null
+      ? (record.tokens as { readonly access_token?: unknown; readonly refresh_token?: unknown })
+      : null;
+  const hasToken = (value: unknown): boolean =>
+    typeof value === "string" && value.trim().length > 0;
+  if (!hasToken(tokens?.access_token) || !hasToken(tokens?.refresh_token)) {
+    return {
+      kind: "needs-reauth",
+      reason: "access_token/refresh_token missing from openai-codex tokens",
+    };
+  }
+  return { kind: "healthy" };
+}
+
 function firstUsefulLines(value: string, maxLines = 16): string {
   return value
     .split(/\r?\n/)
@@ -515,28 +577,27 @@ async function readSafeConfig(): Promise<HermesSafeConfig> {
   };
 }
 
-async function readCodexAuthStatus(config: HermesSafeConfig): Promise<HermesCodexAuthStatus> {
+export async function readCodexAuthStatus(
+  config: Pick<HermesSafeConfig, "hermesHome" | "codexCliAuthPath">,
+): Promise<HermesCodexAuthStatus> {
   const hermesAuthPath = Path.join(config.hermesHome, "auth.json");
-  const [hermesAuthExists, codexCliAuthExists] = await Promise.all([
-    fileExists(hermesAuthPath),
+  const [authText, codexCliAuthExists] = await Promise.all([
+    readFileIfExists(hermesAuthPath),
     fileExists(config.codexCliAuthPath),
   ]);
+  const health = parseCodexChainHealth(authText);
+  const hermesAuthExists = authText !== null;
+  const reauth = codexReauthCommand(config.hermesHome);
 
-  const source: HermesCodexAuthStatus["source"] =
-    hermesAuthExists && codexCliAuthExists
-      ? "both"
-      : hermesAuthExists
-        ? "hermes-home"
-        : codexCliAuthExists
-          ? "codex-cli"
-          : "missing";
-  const state: HermesCodexAuthStatus["state"] = source === "missing" ? "missing" : "detected";
+  const source: HermesCodexAuthStatus["source"] = hermesAuthExists ? "hermes-home" : "missing";
+  const state: HermesCodexAuthStatus["state"] =
+    health.kind === "missing" ? "missing" : health.kind === "healthy" ? "detected" : "needs-reauth";
   const message =
-    source === "missing"
-      ? "No Hermes or Codex CLI OAuth file was found. Run `hermes auth add openai-codex --type oauth` or `hermes model`."
-      : source === "codex-cli"
-        ? "Codex CLI OAuth credentials are present and can be imported by Hermes."
-        : "Hermes OAuth state is present. Token contents are not exposed.";
+    health.kind === "missing"
+      ? `No Hermes Codex OAuth chain at ${hermesAuthPath}. Run \`${reauth}\` on this host.`
+      : health.kind === "healthy"
+        ? "Hermes Codex OAuth chain is healthy. Token contents are not exposed."
+        : `Hermes Codex OAuth chain requires re-login (${health.reason}). Run \`${reauth}\` on this host. Hermes owns token refresh; GITS never reads or copies tokens.`;
 
   return {
     state,
@@ -545,6 +606,26 @@ async function readCodexAuthStatus(config: HermesSafeConfig): Promise<HermesCode
     codexCliAuthExists,
     message,
   };
+}
+
+export async function codexChainPreflight(
+  config: Pick<HermesSafeConfig, "hermesHome" | "configPath">,
+): Promise<{ readonly reason: string; readonly command: string } | null> {
+  const configText = await readFileIfExists(config.configPath);
+  const provider = readYamlSectionScalar(configText, "model", "provider");
+  if (provider !== "openai-codex") {
+    // ponytail: only the codex chain gets a preflight; a null/other provider falls through to
+    // hermes' own errors (the existing isProviderConfigurationError path handles unconfigured).
+    return null;
+  }
+  const health = parseCodexChainHealth(
+    await readFileIfExists(Path.join(config.hermesHome, "auth.json")),
+  );
+  if (health.kind === "healthy") {
+    return null;
+  }
+  const reason = health.kind === "missing" ? "no Codex OAuth chain in HERMES_HOME" : health.reason;
+  return { reason, command: codexReauthCommand(config.hermesHome) };
 }
 
 async function readSoulStatus(config: HermesSafeConfig): Promise<HermesSoulStatus> {
@@ -1376,7 +1457,10 @@ const getStatus: HermesAdapterShape["getStatus"] = () =>
       ...(!available ? ["Hermes binary is unavailable on PATH."] : []),
       ...(!envExists ? [`Hermes .env is missing at ${envPath}.`] : []),
       ...(!configExists ? [`Hermes config.yaml is missing at ${config.configPath}.`] : []),
-      ...(codexAuth.state !== "detected" ? [codexAuth.message] : []),
+      ...(codexAuth.state !== "detected" &&
+      (model.provider === null || model.provider === "openai-codex")
+        ? [codexAuth.message]
+        : []),
       ...(!soul.exists ? [`SOUL.md is missing at ${config.soulPath}.`] : []),
       ...(!motokoProfile.managedByGits ? [motokoProfile.summary] : []),
       ...(config.approvalMode === "off"
@@ -1464,7 +1548,7 @@ const check: HermesAdapterShape["check"] = () =>
             `Hermes: ${status.available ? (status.version ?? "installed") : "unavailable"}`,
             `Doctor: ${status.doctor.status}`,
             `ACP: ${status.acp.available ? "available" : status.acp.check.status}`,
-            `Codex OAuth: ${status.codexAuth.source}`,
+            `Codex OAuth: ${status.codexAuth.state}`,
             `SOUL.md: ${status.soul.exists ? status.soul.summary : "missing"}`,
             `Approval mode: ${status.config.approvalMode}`,
           ].join("\n"),
@@ -1506,19 +1590,19 @@ const setupCodexOAuth: HermesAdapterShape["setupCodexOAuth"] = () =>
         catch: (cause) => toHermesError("Failed to inspect Codex OAuth state.", cause),
       });
       const nextCommand =
-        auth.source === "missing"
-          ? `HERMES_HOME=${status.config.hermesHome} hermes auth add openai-codex --type oauth`
+        auth.state !== "detected"
+          ? codexReauthCommand(status.config.hermesHome)
           : `HERMES_HOME=${status.config.hermesHome} hermes model`;
       return {
         exec: null,
-        status: auth.source === "missing" ? ("action-required" as const) : ("completed" as const),
+        status: auth.state !== "detected" ? ("action-required" as const) : ("completed" as const),
         stdout: [
           `HERMES_HOME: ${status.config.hermesHome}`,
           soul.summary,
           auth.message,
           "Token contents were not read or copied.",
         ].join("\n"),
-        stderr: auth.source === "missing" ? "Codex OAuth re-auth is required." : "",
+        stderr: auth.state !== "detected" ? "Codex OAuth re-auth is required." : "",
         nextCommand,
       };
     }),
@@ -1619,6 +1703,34 @@ const inspectGitsAndPropose: HermesAdapterShape["inspectGitsAndPropose"] = (inpu
       try: () => ensureSoul(config),
       catch: (cause) => toHermesError("Failed to create GITS Hermes SOUL.md.", cause),
     });
+    const preflight = yield* Effect.tryPromise({
+      try: () => codexChainPreflight(config),
+      catch: (cause) => toHermesError("Failed to preflight Hermes Codex OAuth chain.", cause),
+    });
+    if (preflight !== null) {
+      const now = yield* nowIso();
+      const proposal = makeProposal({
+        title: "Motoko blocked: Hermes Codex OAuth re-login required",
+        summary: `Hermes was not spawned: ${preflight.reason}.`,
+        detail: `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable (${preflight.reason}). Run \`${preflight.command}\` on this host, then retry.`,
+        actionKind: "read-only",
+        status: "blocked",
+        blockedReason: `Hermes Codex OAuth chain requires re-login. Run \`${preflight.command}\`.`,
+        source: "hermes chat -q",
+        projectDir: input.projectDir,
+        now,
+        evidence: ["GITS preflight blocked the Hermes spawn before execution.", preflight.reason],
+      });
+      const proposals = yield* Effect.tryPromise({
+        try: () => readProposals(config),
+        catch: (cause) => toHermesError("Failed to read Hermes proposals.", cause),
+      });
+      yield* Effect.tryPromise({
+        try: () => writeProposals(config, [proposal, ...proposals]),
+        catch: (cause) => toHermesError("Failed to persist Hermes proposal.", cause),
+      });
+      return proposal;
+    }
     const prompt =
       input.prompt ??
       [
@@ -1670,7 +1782,7 @@ const inspectGitsAndPropose: HermesAdapterShape["inspectGitsAndPropose"] = (inpu
     return proposal;
   });
 
-const makeChat =
+export const makeChat =
   (capacityMonitor: GitsCapacityMonitorShape): HermesAdapterShape["chat"] =>
   (input) =>
     Effect.gen(function* () {
@@ -1680,6 +1792,29 @@ const makeChat =
         catch: (cause) => toHermesError("Failed to create GITS Hermes SOUL.md.", cause),
       });
       const actionKind = classifyHermesChatAction(input.message);
+      const preflight = yield* Effect.tryPromise({
+        try: () => codexChainPreflight(config),
+        catch: (cause) => toHermesError("Failed to preflight Hermes Codex OAuth chain.", cause),
+      });
+      if (preflight !== null) {
+        const now = yield* nowIso();
+        return {
+          status: "setup-required",
+          actionKind,
+          response:
+            "Motoko chat is blocked until the Hermes Codex OAuth chain is re-authenticated.",
+          proposal: null,
+          blockedReason: `Hermes Codex OAuth chain requires re-login: ${preflight.reason}.`,
+          setupTitle: "Re-authenticate Hermes Codex OAuth",
+          setupDetail: [
+            `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable: ${preflight.reason}.`,
+            `Run \`${preflight.command}\` in a local terminal on this host (device-code OAuth flow).`,
+            "Hermes owns this chain and its token refresh. Do not copy credentials from ~/.codex or another machine; a second refresher kills the chain with refresh_token_reused.",
+          ].join("\n"),
+          setupCommand: preflight.command,
+          createdAt: now,
+        } satisfies HermesChatResult;
+      }
       const capacityContext = yield* capacityMonitor.getSnapshot().pipe(
         Effect.map(formatCapacityForHermes),
         Effect.catch(() => Effect.succeed<string | null>(null)),
