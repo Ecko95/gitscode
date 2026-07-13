@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
@@ -71,6 +72,11 @@ function makeSupervisorLayer(options?: { readonly onSpawn?: () => void }) {
             return { ...peer, sourceRepo: input.repo, task: input.prompt };
           }),
         killPeer: () => Effect.succeed(peer),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(AutomodeLanding)({
+        ensure_integration_branch: () => Effect.void,
       }),
     ),
     Layer.provide(

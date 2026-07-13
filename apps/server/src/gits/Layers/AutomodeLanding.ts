@@ -26,10 +26,10 @@ export const AutomodeLandingLive = Layer.effect(
         ),
       );
 
-    const land_slice: AutomodeLandingShape["land_slice"] = (input) =>
+    // Ensure the integration branch exists on origin (create from baseRef if absent).
+    // `--exit-code` makes ls-remote return 2 when the ref is missing; allow that as a value.
+    const ensure_integration_branch: AutomodeLandingShape["ensure_integration_branch"] = (input) =>
       Effect.gen(function* () {
-        // 1) Ensure the integration branch exists on origin (create from baseRef if absent).
-        //    `--exit-code` makes ls-remote return 2 when the ref is missing; allow that as a value.
         const exists = yield* git
           .execute({
             operation: "automode-ls-integration",
@@ -52,6 +52,17 @@ export const AutomodeLandingLive = Layer.effect(
             yield* run(input.repo, command);
           }
         }
+      });
+
+    const land_slice: AutomodeLandingShape["land_slice"] = (input) =>
+      Effect.gen(function* () {
+        // 1) Belt-and-braces: dispatch already ensures the branch, but an RPC dispatch
+        //    could race a manual branch deletion, so ensure again at land time.
+        yield* ensure_integration_branch({
+          repo: input.repo,
+          integrationBranch: input.integrationBranch,
+          baseRef: input.baseRef,
+        });
 
         // 2) Fast-forward the integration branch to the slice tip.
         const commands = build_land_slice_commands({
@@ -82,6 +93,6 @@ export const AutomodeLandingLive = Layer.effect(
         return { status: "landed" as const };
       });
 
-    return { land_slice } satisfies AutomodeLandingShape;
+    return { ensure_integration_branch, land_slice } satisfies AutomodeLandingShape;
   }),
 );

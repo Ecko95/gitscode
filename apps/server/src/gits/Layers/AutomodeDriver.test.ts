@@ -108,7 +108,10 @@ interface MakeLayerOptions {
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
-function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: MakeLayerOptions) {
+function makeLayer(
+  peerStatus: { current: PeerStatus | "absent"; integrationStatus?: string | null },
+  options?: MakeLayerOptions,
+) {
   const spawnedPeerId = basePeer.id;
   const delamain = Layer.mock(DelamainAdapter)({
     listPeers: () =>
@@ -117,7 +120,14 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
         peers:
           peerStatus.current === "absent"
             ? []
-            : [{ ...basePeer, status: peerStatus.current, rawStatus: peerStatus.current }],
+            : [
+                {
+                  ...basePeer,
+                  status: peerStatus.current,
+                  rawStatus: peerStatus.current,
+                  integrationStatus: peerStatus.integrationStatus ?? null,
+                },
+              ],
       }),
     spawnPeer: (input) =>
       Effect.succeed({
@@ -150,6 +160,7 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
         : Effect.succeed(options?.review ?? passingReview),
   });
   const landing = Layer.mock(AutomodeLanding)({
+    ensure_integration_branch: () => Effect.void,
     land_slice: () => Effect.succeed(options?.landResult ?? { status: "landed" }),
   });
   const mergeQueue = [...(options?.mergeResults ?? [])];
@@ -179,6 +190,7 @@ function makeLayer(peerStatus: { current: PeerStatus | "absent" }, options?: Mak
   }).pipe(Layer.provide(NodeServices.layer));
   const supervisor = AutomodeSupervisorLive.pipe(
     Layer.provide(delamain),
+    Layer.provide(landing),
     Layer.provide(usage),
     Layer.provideMerge(config),
     Layer.provideMerge(NodeServices.layer),
@@ -372,6 +384,29 @@ describe("AutomodeDriver", () => {
       assert.equal(snapshot.goals.find((g) => g.title === "Bad")?.status, "failed");
       assert.equal(snapshot.driverHalted, true);
     }).pipe(Effect.provide(makeLayer(peerStatus, { review: failingReview })));
+  });
+
+  it.effect("on done: integration skipped (nothing pushed) → goal failed and chain halts", () => {
+    const peerStatus = {
+      current: "absent" as PeerStatus | "absent",
+      integrationStatus: null as string | null,
+    };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Empty", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      peerStatus.integrationStatus = "skipped"; // delamain: 0 commits ahead, branch never pushed
+      yield* driver.tickOnce(); // must fail + halt, not attempt to review/land
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.find((g) => g.title === "Empty")?.status, "failed");
+      assert.equal(snapshot.driverHalted, true);
+      assert.include(snapshot.driverHaltedReason ?? "", "no changes");
+    }).pipe(Effect.provide(makeLayer(peerStatus, { review: passingReview })));
   });
 
   it.effect("on done: non-fast-forward landing → halts without completing", () => {

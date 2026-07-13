@@ -40,7 +40,7 @@ function episode(overrides: Partial<AutomodeEpisode>): AutomodeEpisode {
     repo: "/tmp/source-repo",
     goalId: "goal-1",
     goalTitle: "Slice one",
-    sliceBranch: "auto/slice/goal-1",
+    sliceBranch: "codex-peer/peer-1",
     verdict: "pass",
     confidence: "high",
     recommendation: "hold-for-review",
