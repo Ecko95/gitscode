@@ -3,8 +3,15 @@ import * as Fs from "node:fs/promises";
 import * as Os from "node:os";
 import * as Path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { HermesAdapter } from "../Services/HermesAdapter.ts";
+import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
+import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
+import { GitsCapacityMonitor } from "../Services/GitsCapacityMonitor.ts";
+import { OpenGsdAdapter } from "../Services/OpenGsdAdapter.ts";
 import {
   buildProjectContextMarkdown,
   buildHermesCockpitChatArgs,
@@ -22,10 +29,36 @@ import {
   makeHermesEnv,
   parseHermesModelStatus,
   resolveHermesHome,
+  HermesCliAdapterLive,
 } from "./HermesCliAdapter.ts";
+
+type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+
+const execFileMock = vi.hoisted(() =>
+  vi.fn<
+    (
+      file: string,
+      args: ReadonlyArray<string>,
+      options: Record<string, unknown>,
+      callback: ExecFileCallback,
+    ) => unknown
+  >(),
+);
+
+vi.mock("node:child_process", () => ({
+  execFile: execFileMock,
+}));
+
+beforeEach(() => {
+  execFileMock.mockImplementation((_file, _args, _options, callback) => {
+    callback(new Error("execFile mock not configured for this test."), "", "");
+    return {};
+  });
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  execFileMock.mockReset();
 });
 
 describe("HermesCliAdapter command construction", () => {
@@ -242,5 +275,65 @@ describe("HermesCliAdapter policy gates", () => {
       expect(hermesProposalRequiresApproval(actionKind)).toBe(true);
       expect(hermesDirectExecutionBlocked(actionKind)).toBe(true);
     }
+  });
+});
+
+describe("HermesCliAdapter schedules", () => {
+  const unused = () => Effect.die("unused dependency");
+  const TestLayer = HermesCliAdapterLive.pipe(
+    Layer.provide(
+      Layer.mock(GitsCapacityMonitor)({
+        getSnapshot: unused,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(DelamainAdapter)({
+        listPeers: unused,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(OpenGsdAdapter)({
+        getStatus: unused,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(AutomodeSupervisor)({
+        getSnapshot: unused,
+      }),
+    ),
+  );
+
+  it("survives the scheduled capacity lookup fallback and returns the schedule result", async () => {
+    const hermesHome = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-schedule-"));
+    vi.stubEnv("GITS_HERMES_HOME", hermesHome);
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      expect(args).toContain("chat");
+      expect(args).toContain("-q");
+      const prompt = args.at(-1);
+      expect(prompt).toContain("Provider capacity snapshot: unavailable.");
+      callback(null, "Daily briefing complete.", "");
+      return {};
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* HermesAdapter;
+        return yield* adapter.runSchedule({
+          kind: "daily-briefing",
+          projectDir: "/tmp/gits",
+        });
+      }).pipe(Effect.provide(TestLayer)),
+    );
+
+    expect(result.kind).toBe("daily-briefing");
+    expect(result.blockedReason).toBe(
+      "Requires human approval before Delamain spawn, repo write, integrate, or destructive action.",
+    );
+    expect(result.proposals).toHaveLength(1);
+    expect(result.proposals[0]).toMatchObject({
+      detail: "Daily briefing complete.",
+      evidence: expect.arrayContaining(["Provider capacity snapshot unavailable."]),
+    });
+    expect(execFileMock).toHaveBeenCalledTimes(1);
   });
 });

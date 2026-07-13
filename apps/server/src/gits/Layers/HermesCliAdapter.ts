@@ -15,6 +15,7 @@ import * as Result from "effect/Result";
 import {
   type AutomodeSnapshot,
   type DelamainPeerListResult,
+  GitsCapacityError,
   HermesAdapterError,
   type HermesApprovalMode,
   type HermesCapability,
@@ -122,6 +123,10 @@ function toHermesError(message: string, cause?: unknown) {
     message,
     ...(cause === undefined ? {} : { cause }),
   });
+}
+
+function toCapacityUnavailableError(message: string) {
+  return new GitsCapacityError({ message });
 }
 
 function nowIso() {
@@ -1993,7 +1998,8 @@ const runSchedule: HermesAdapterShape["runSchedule"] = (input) =>
       } satisfies HermesScheduleRunResult;
     }
     const chatResult = yield* makeChat({
-      getSnapshot: () => Effect.die(new Error("Capacity snapshot unavailable for scheduled run.")),
+      getSnapshot: () =>
+        Effect.fail(toCapacityUnavailableError("Capacity snapshot unavailable for scheduled run.")),
     })({
       message: schedulePrompt(input.kind, input.projectDir ?? null),
       ...(input.projectDir ? { projectDir: input.projectDir } : {}),
