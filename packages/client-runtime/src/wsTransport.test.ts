@@ -842,7 +842,9 @@ describe("WsTransport", () => {
       {
         onEnd,
         onResubscribe,
-        retryDelay: 20,
+        // Wide retry gap: onResubscribe fires at the top of every retry iteration, so the
+        // assertions below must complete before the next retry starts or the count races.
+        retryDelay: 1000,
         tag: WS_METHODS.subscribeServerLifecycle,
       },
     );
