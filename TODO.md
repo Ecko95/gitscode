@@ -1,5 +1,11 @@
 # TODO
 
+## VPS agent stack handoff — 2026-07-13
+
+- [x] Add `docs/gits/VPS_AGENT_STACK.md` with the Codex, Claude Code, Open GSD Core, plugin, and MCP setup path.
+
+Current status: documentation is ready for VPS provisioning and Notion Markdown import.
+
 ## Live browser supervision — 2026-07-12
 
 - [x] Add thread-isolated `gsd-browser` MCP sessions for Codex, Claude, and Cursor.
