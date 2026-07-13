@@ -58,6 +58,46 @@ interface SearchableWorkspaceEntry extends ProjectEntry {
 
 type RankedWorkspaceEntry = RankedSearchResult<SearchableWorkspaceEntry>;
 
+// "directory" = real directory (safe to traverse); "symlink-directory" = a
+// symlink whose target is a directory (shown, never traversed); files of
+// either flavor collapse to "file". Dirent.isDirectory() is false for
+// symlinks, so a plain isDirectory() filter silently hides symlinked dirs.
+interface NamedDirectoryEntry {
+  readonly name: string;
+  readonly kind: "directory" | "symlink-directory" | "file";
+}
+
+async function classifyDirents(
+  absoluteDir: string,
+  dirents: Dirent[],
+): Promise<NamedDirectoryEntry[]> {
+  const classified: NamedDirectoryEntry[] = [];
+  for (const dirent of dirents) {
+    if (dirent.isDirectory()) {
+      classified.push({ name: dirent.name, kind: "directory" });
+      continue;
+    }
+    if (dirent.isFile()) {
+      classified.push({ name: dirent.name, kind: "file" });
+      continue;
+    }
+    if (!dirent.isSymbolicLink()) {
+      continue;
+    }
+    try {
+      const stat = await fsPromises.stat(`${absoluteDir}/${dirent.name}`);
+      if (stat.isDirectory()) {
+        classified.push({ name: dirent.name, kind: "symlink-directory" });
+      } else if (stat.isFile()) {
+        classified.push({ name: dirent.name, kind: "file" });
+      }
+    } catch {
+      // dangling symlink — omit, matching prior behavior for non-file/dir entries
+    }
+  }
+  return classified;
+}
+
 function toPosixPath(input: string): string {
   return input.replaceAll("\\", "/");
 }
@@ -277,13 +317,14 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     cwd: string,
     relativeDir: string,
   ): Effect.fn.Return<
-    { readonly relativeDir: string; readonly dirents: Dirent[] | null },
+    { readonly relativeDir: string; readonly dirents: NamedDirectoryEntry[] | null },
     WorkspaceEntriesError
   > {
     return yield* Effect.tryPromise({
       try: async () => {
         const absoluteDir = relativeDir ? path.join(cwd, relativeDir) : cwd;
-        const dirents = await fsPromises.readdir(absoluteDir, { withFileTypes: true });
+        const rawDirents = await fsPromises.readdir(absoluteDir, { withFileTypes: true });
+        const dirents = await classifyDirents(absoluteDir, rawDirents);
         return { relativeDir, dirents };
       },
       catch: (cause) =>
@@ -322,18 +363,15 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
       const candidateEntriesByDirectory = directoryEntries.map((directoryEntry) => {
         const { relativeDir, dirents } = directoryEntry;
-        if (!dirents) return [] as Array<{ dirent: Dirent; relativePath: string }>;
+        if (!dirents) return [] as Array<{ dirent: NamedDirectoryEntry; relativePath: string }>;
 
         dirents.sort((left, right) => left.name.localeCompare(right.name));
-        const candidates: Array<{ dirent: Dirent; relativePath: string }> = [];
+        const candidates: Array<{ dirent: NamedDirectoryEntry; relativePath: string }> = [];
         for (const dirent of dirents) {
           if (!dirent.name || dirent.name === "." || dirent.name === "..") {
             continue;
           }
-          if (dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)) {
-            continue;
-          }
-          if (!dirent.isDirectory() && !dirent.isFile()) {
+          if (dirent.kind !== "file" && IGNORED_DIRECTORY_NAMES.has(dirent.name)) {
             continue;
           }
 
@@ -363,12 +401,15 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
           const entry = toSearchableWorkspaceEntry({
             path: candidate.relativePath,
-            kind: candidate.dirent.isDirectory() ? "directory" : "file",
+            kind: candidate.dirent.kind === "file" ? "file" : "directory",
             parentPath: parentPathOf(candidate.relativePath),
           });
           entries.push(entry);
 
-          if (candidate.dirent.isDirectory()) {
+          // Symlinked directories are listed but never traversed: following
+          // them risks cycles and double-indexing, silently masked as
+          // WORKSPACE_INDEX_MAX_ENTRIES truncation.
+          if (candidate.dirent.kind === "directory") {
             pendingDirectories.push(candidate.relativePath);
           }
 
@@ -447,7 +488,10 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
       const dirents = yield* Effect.tryPromise({
-        try: () => fsPromises.readdir(parentPath, { withFileTypes: true }),
+        try: async () => {
+          const rawDirents = await fsPromises.readdir(parentPath, { withFileTypes: true });
+          return classifyDirents(parentPath, rawDirents);
+        },
         catch: (cause) =>
           new WorkspaceEntriesBrowseError({
             cwd: input.cwd,
@@ -463,7 +507,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
+          dirent.kind !== "file" &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
           (showHidden || !dirent.name.startsWith("."))
         ) {
