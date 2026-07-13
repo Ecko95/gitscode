@@ -28,7 +28,7 @@ const landInput = {
   repo: "/tmp/repo",
   integrationBranch: "auto/gits-self",
   baseRef: "gits",
-  sliceBranch: "auto/slice/goal-1",
+  sliceBranch: "codex-peer/peer-1",
 };
 
 describe("AutomodeLandingLive", () => {
@@ -70,6 +70,41 @@ describe("AutomodeLandingLive", () => {
     ),
   );
 
+  it.effect(
+    "ensure_integration_branch pushes the create ref only when the branch is absent",
+    () => {
+      const pushes: string[][] = [];
+      let exists = false;
+      const ensureInput = {
+        repo: "/tmp/repo",
+        integrationBranch: "auto/gits-self",
+        baseRef: "gits",
+      };
+      return Effect.gen(function* () {
+        const landing = yield* AutomodeLanding;
+        yield* landing.ensure_integration_branch(ensureInput);
+        assert.deepEqual(pushes, [
+          ["push", "origin", "refs/remotes/origin/gits:refs/heads/auto/gits-self"],
+        ]);
+        exists = true;
+        yield* landing.ensure_integration_branch(ensureInput);
+        assert.equal(pushes.length, 1); // no create push once the branch exists
+      }).pipe(
+        Effect.provide(
+          AutomodeLandingLive.pipe(
+            Layer.provide(
+              gitDriverMock((args) => {
+                if (args[0] === "ls-remote") return { exitCode: exists ? 0 : 2 };
+                if (args[0] === "push") pushes.push([...args]);
+                return { exitCode: 0 };
+              }),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("returns rejected (not an error) when the FF push is refused", () =>
     Effect.gen(function* () {
       const landing = yield* AutomodeLanding;
@@ -83,7 +118,7 @@ describe("AutomodeLandingLive", () => {
               if (args[0] === "ls-remote") return { exitCode: 0 };
               if (
                 args[0] === "push" &&
-                args.includes("refs/remotes/origin/auto/slice/goal-1:refs/heads/auto/gits-self")
+                args.includes("refs/remotes/origin/codex-peer/peer-1:refs/heads/auto/gits-self")
               ) {
                 return { exitCode: 1, stderr: "! [rejected] (non-fast-forward)" };
               }

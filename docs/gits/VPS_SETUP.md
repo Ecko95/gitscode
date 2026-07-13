@@ -117,11 +117,11 @@ npm install -g @openai/codex
 
 One dedicated home per consumer, **each authenticated on this host** via the tailnet SSH session — never copy an `auth.json` from another machine (rotating refresh tokens: two refreshers on one chain kill it with `refresh_token_reused`).
 
-| Consumer                | Home                                                                |
-| ----------------------- | ------------------------------------------------------------------- |
-| Interactive codex (you) | `~/.codex`                                                          |
-| Hermes/Motoko brain     | `~/.gits/hermes-codex-home` (final path per the auth-lifecycle fix) |
-| delamain peers          | `~/.delamain/peer-codex-home`                                       |
+| Consumer                | Home                                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Interactive codex (you) | `~/.codex`                                                                                                                 |
+| Hermes/Motoko brain     | inside `HERMES_HOME` — `~/.gits/hermes/auth.json` (`HERMES_HOME=~/.gits/hermes hermes auth add openai-codex --type oauth`) |
+| delamain peers          | `~/.delamain/peer-codex-home`                                                                                              |
 
 No Claude credentials on this box (decision 19: headless Claude is metered; autonomy is all-codex). Before first armed night, run the decision-19 audit: nothing in GITS config may instantiate the Claude provider headlessly.
 

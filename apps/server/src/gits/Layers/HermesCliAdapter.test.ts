@@ -5,6 +5,8 @@ import * as Path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as Effect from "effect/Effect";
+
 import {
   buildProjectContextMarkdown,
   buildHermesCockpitChatArgs,
@@ -16,11 +18,17 @@ import {
   HERMES_DOCTOR_ARGS,
   HERMES_VERSION_ARGS,
   classifyHermesChatAction,
+  codexChainPreflight,
+  codexReauthCommand,
   hermesDirectExecutionBlocked,
+  hermesModelCommand,
   hermesProposalRequiresApproval,
   isLegacyProviderSetupProposalArtifact,
+  makeChat,
   makeHermesEnv,
+  parseCodexChainHealth,
   parseHermesModelStatus,
+  readCodexAuthStatus,
   resolveHermesHome,
 } from "./HermesCliAdapter.ts";
 
@@ -74,6 +82,24 @@ describe("HermesCliAdapter command construction", () => {
 
     expect(env.HERMES_HOME).toBe("/tmp/gits-hermes");
     expect(env.HERMES_YOLO_MODE).toBeUndefined();
+  });
+
+  it("strips every ANTHROPIC_*/CLAUDE_* var from child process env (decision 19)", () => {
+    vi.stubEnv("HERMES_YOLO_MODE", "1");
+    vi.stubEnv("ANTHROPIC_API_KEY", "SECRET-API-KEY");
+    vi.stubEnv("ANTHROPIC_TOKEN", "SECRET-OAUTH-TOKEN");
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "SECRET-CC-TOKEN");
+    vi.stubEnv("ANTHROPIC_BASE_URL", "https://api.anthropic.example");
+    vi.stubEnv("HERMES_INFERENCE_PROVIDER", "anthropic");
+    vi.stubEnv("GITS_KEEP_ME", "kept");
+
+    const env = makeHermesEnv("/tmp/gits-hermes");
+
+    expect(Object.keys(env).filter((key) => /^(ANTHROPIC_|CLAUDE_)/.test(key))).toEqual([]);
+    expect(env.HERMES_YOLO_MODE).toBeUndefined();
+    expect(env.HERMES_INFERENCE_PROVIDER).toBeUndefined();
+    expect(env.HERMES_HOME).toBe("/tmp/gits-hermes");
+    expect(env.GITS_KEEP_ME).toBe("kept");
   });
 
   it("reads non-secret model metadata from Hermes config and cache", () => {
@@ -223,6 +249,340 @@ describe("HermesCliAdapter cockpit chat", () => {
     expect(markdown).toContain("Capacity routed to Codex.");
     expect(markdown).toContain("RUNBOOK.md");
     expect(markdown).toContain("Motoko may inspect and propose only.");
+  });
+});
+
+const HEALTHY_AUTH = JSON.stringify({
+  version: 1,
+  providers: {
+    "openai-codex": {
+      tokens: {
+        access_token: "SECRET-ACCESS",
+        refresh_token: "SECRET-REFRESH",
+        id_token: "SECRET-ID",
+        account_id: "acct-1",
+      },
+      last_refresh: "2026-07-01T00:00:00Z",
+      auth_mode: "chatgpt",
+    },
+  },
+  updated_at: "2026-07-01T00:00:00Z",
+  active_provider: "openai-codex",
+});
+const DEAD_AUTH = JSON.stringify({
+  version: 1,
+  providers: {
+    "openai-codex": {
+      tokens: { id_token: "SECRET-ID", account_id: "acct-1" },
+      last_refresh: "2026-06-03T00:00:00Z",
+      auth_mode: "chatgpt",
+      last_auth_error: {
+        provider: "openai-codex",
+        code: "refresh_token_reused",
+        message: "Codex refresh token was already consumed by another client",
+        reason: "credential_pool_refresh_failure",
+        relogin_required: true,
+        at: "2026-06-20T18:12:04+00:00",
+      },
+    },
+  },
+  updated_at: "2026-06-20T18:12:04+00:00",
+  active_provider: "openai-codex",
+});
+// Mirrors the real post-`hermes auth add` auth.json: providers entry keeps only
+// id_token/account_id plus a STALE relogin_required error, while the live OAuth pair
+// lives in credential_pool["openai-codex"].
+function poolAuthFixture(entry: Record<string, unknown>): string {
+  return JSON.stringify({
+    version: 1,
+    providers: {
+      "openai-codex": {
+        tokens: { id_token: "SECRET-ID", account_id: "acct-1" },
+        last_refresh: "2026-06-03T00:00:00Z",
+        auth_mode: "chatgpt",
+        last_auth_error: {
+          provider: "openai-codex",
+          code: "refresh_token_reused",
+          message: "Codex refresh token was already consumed by another client",
+          reason: "credential_pool_refresh_failure",
+          relogin_required: true,
+          at: "2026-06-20T18:12:04+00:00",
+        },
+      },
+    },
+    credential_pool: { "openai-codex": [entry] },
+    updated_at: "2026-07-13T00:00:00Z",
+    active_provider: "openai-codex",
+  });
+}
+const POOL_ENTRY = {
+  id: "cred-1",
+  label: "openai-codex-oauth-1",
+  auth_type: "oauth",
+  priority: 0,
+  source: "manual:device_code",
+  access_token: "SECRET-POOL-ACCESS",
+  refresh_token: "SECRET-POOL-REFRESH",
+  base_url: "https://chatgpt.com/backend-api/codex",
+  last_refresh: "2026-07-13T00:00:00Z",
+  request_count: 3,
+};
+const POOL_ONLY_AUTH = poolAuthFixture(POOL_ENTRY);
+const CODEX_PROVIDER_CONFIG = "model:\n  provider: openai-codex\n  default: gpt-5.4\n";
+
+describe("HermesCliAdapter codex chain health", () => {
+  it("reports a missing auth.json as missing", () => {
+    expect(parseCodexChainHealth(null)).toEqual({ kind: "missing" });
+  });
+
+  it("reports a healthy chain as healthy", () => {
+    expect(parseCodexChainHealth(HEALTHY_AUTH)).toEqual({ kind: "healthy" });
+  });
+
+  it("reports a relogin-required chain as needs-reauth with the error code", () => {
+    const result = parseCodexChainHealth(DEAD_AUTH);
+    expect(result.kind).toBe("needs-reauth");
+    expect(result.kind === "needs-reauth" && result.reason).toContain("refresh_token_reused");
+  });
+
+  it("reports missing or empty tokens as needs-reauth without a last_auth_error", () => {
+    const missingTokens = JSON.stringify({
+      version: 1,
+      providers: {
+        "openai-codex": {
+          tokens: { id_token: "SECRET-ID", account_id: "acct-1" },
+        },
+      },
+    });
+    const missingResult = parseCodexChainHealth(missingTokens);
+    expect(missingResult.kind).toBe("needs-reauth");
+    expect(missingResult.kind === "needs-reauth" && missingResult.reason).toContain(
+      "access_token/refresh_token missing",
+    );
+
+    const emptyTokens = JSON.stringify({
+      version: 1,
+      providers: {
+        "openai-codex": {
+          tokens: { access_token: "", refresh_token: "SECRET-REFRESH" },
+        },
+      },
+    });
+    const emptyResult = parseCodexChainHealth(emptyTokens);
+    expect(emptyResult.kind).toBe("needs-reauth");
+    expect(emptyResult.kind === "needs-reauth" && emptyResult.reason).toContain(
+      "access_token/refresh_token missing",
+    );
+  });
+
+  it("tolerates a non-relogin last_auth_error when both tokens are present", () => {
+    const midRotation = JSON.stringify({
+      version: 1,
+      providers: {
+        "openai-codex": {
+          tokens: { access_token: "SECRET-ACCESS", refresh_token: "SECRET-REFRESH" },
+          last_auth_error: { code: "transient", relogin_required: false },
+        },
+      },
+    });
+    expect(parseCodexChainHealth(midRotation)).toEqual({ kind: "healthy" });
+  });
+
+  it("reports a pool-only chain (hermes auth add) as healthy despite a stale providers relogin error", () => {
+    expect(parseCodexChainHealth(POOL_ONLY_AUTH)).toEqual({ kind: "healthy" });
+  });
+
+  it("reports a pool entry without tokens as needs-reauth", () => {
+    const { access_token: _access, refresh_token: _refresh, ...tokenless } = POOL_ENTRY;
+    const result = parseCodexChainHealth(poolAuthFixture(tokenless));
+    expect(result.kind).toBe("needs-reauth");
+  });
+
+  it("reports a dead pool entry as needs-reauth with the pool entry's own error reason", () => {
+    const result = parseCodexChainHealth(
+      poolAuthFixture({ ...POOL_ENTRY, last_status: "dead", last_error_reason: "token_revoked" }),
+    );
+    expect(result.kind).toBe("needs-reauth");
+    expect(result.kind === "needs-reauth" && result.reason).toContain("pool entry dead");
+    expect(result.kind === "needs-reauth" && result.reason).toContain("token_revoked");
+  });
+
+  it("reports malformed JSON as needs-reauth", () => {
+    expect(parseCodexChainHealth("{not json").kind).toBe("needs-reauth");
+  });
+
+  it("reports a missing openai-codex entry as needs-reauth", () => {
+    expect(parseCodexChainHealth('{"version":1,"providers":{}}').kind).toBe("needs-reauth");
+  });
+
+  it("never leaks token values into health results", () => {
+    const missingTokens = JSON.stringify({
+      version: 1,
+      providers: {
+        "openai-codex": {
+          tokens: { id_token: "SECRET-ID", account_id: "acct-1" },
+        },
+      },
+    });
+    const deadPool = poolAuthFixture({
+      ...POOL_ENTRY,
+      last_status: "dead",
+      last_error_reason: "token_revoked",
+    });
+    for (const authText of [HEALTHY_AUTH, DEAD_AUTH, POOL_ONLY_AUTH, missingTokens, deadPool]) {
+      expect(JSON.stringify(parseCodexChainHealth(authText))).not.toContain("SECRET");
+    }
+  });
+});
+
+describe("HermesCliAdapter codex auth status", () => {
+  it("reports a dead chain as needs-reauth from hermes-home with the re-login command", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-auth-"));
+    await Fs.writeFile(Path.join(tmp, "auth.json"), DEAD_AUTH, "utf8");
+
+    const status = await readCodexAuthStatus({
+      hermesHome: tmp,
+      codexCliAuthPath: Path.join(tmp, "codex-cli-auth.json"),
+    });
+
+    expect(status.state).toBe("needs-reauth");
+    expect(status.source).toBe("hermes-home");
+    expect(status.hermesAuthExists).toBe(true);
+    expect(status.message).toContain(codexReauthCommand(tmp));
+    expect(status.message).not.toContain("SECRET");
+  });
+
+  it("never treats the codex CLI auth file as a hermes auth source", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-auth-"));
+    const codexCliAuthPath = Path.join(tmp, "codex-cli-auth.json");
+    await Fs.writeFile(codexCliAuthPath, "{}", "utf8");
+
+    const status = await readCodexAuthStatus({ hermesHome: tmp, codexCliAuthPath });
+
+    expect(status.state).toBe("missing");
+    expect(status.source).toBe("missing");
+    expect(status.codexCliAuthExists).toBe(true);
+    expect(status.message).not.toMatch(/import/i);
+  });
+});
+
+describe("HermesCliAdapter codex chain preflight", () => {
+  it("blocks a configured non-codex provider with the reconfigure command (decision 19)", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-preflight-"));
+    const configPath = Path.join(tmp, "config.yaml");
+    await Fs.writeFile(configPath, "model:\n  provider: openrouter\n  default: gpt-5.4\n", "utf8");
+    await Fs.writeFile(Path.join(tmp, "auth.json"), HEALTHY_AUTH, "utf8");
+
+    const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
+
+    expect(preflight?.kind).toBe("wrong-provider");
+    expect(preflight?.reason).toContain("openrouter");
+    expect(preflight?.command).toBe(hermesModelCommand(tmp));
+  });
+
+  it("never blocks when no provider is configured", async () => {
+    const missingConfigTmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-preflight-"));
+    await Fs.writeFile(Path.join(missingConfigTmp, "auth.json"), DEAD_AUTH, "utf8");
+    expect(
+      await codexChainPreflight({
+        hermesHome: missingConfigTmp,
+        configPath: Path.join(missingConfigTmp, "config.yaml"),
+      }),
+    ).toBeNull();
+
+    const noModelTmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-preflight-"));
+    const noModelConfigPath = Path.join(noModelTmp, "config.yaml");
+    await Fs.writeFile(noModelConfigPath, "approvals:\n  mode: manual\n", "utf8");
+    await Fs.writeFile(Path.join(noModelTmp, "auth.json"), DEAD_AUTH, "utf8");
+    expect(
+      await codexChainPreflight({ hermesHome: noModelTmp, configPath: noModelConfigPath }),
+    ).toBeNull();
+  });
+
+  it("blocks a codex provider with a dead chain", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-preflight-"));
+    const configPath = Path.join(tmp, "config.yaml");
+    await Fs.writeFile(configPath, CODEX_PROVIDER_CONFIG, "utf8");
+    await Fs.writeFile(Path.join(tmp, "auth.json"), DEAD_AUTH, "utf8");
+
+    const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
+
+    expect(preflight?.kind).toBe("needs-reauth");
+    expect(preflight?.command).toBe(codexReauthCommand(tmp));
+  });
+
+  it("blocks a codex provider with no auth.json", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-preflight-"));
+    const configPath = Path.join(tmp, "config.yaml");
+    await Fs.writeFile(configPath, CODEX_PROVIDER_CONFIG, "utf8");
+
+    const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
+
+    expect(preflight).not.toBeNull();
+    expect(preflight?.reason).toBe("no Codex OAuth chain in HERMES_HOME");
+  });
+
+  it("passes a codex provider with a healthy chain", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-preflight-"));
+    const configPath = Path.join(tmp, "config.yaml");
+    await Fs.writeFile(configPath, CODEX_PROVIDER_CONFIG, "utf8");
+    await Fs.writeFile(Path.join(tmp, "auth.json"), HEALTHY_AUTH, "utf8");
+
+    expect(await codexChainPreflight({ hermesHome: tmp, configPath })).toBeNull();
+  });
+});
+
+describe("HermesCliAdapter chat preflight", () => {
+  it("short-circuits chat before spawning hermes on a dead codex chain", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-chat-"));
+    await Fs.writeFile(Path.join(tmp, "config.yaml"), CODEX_PROVIDER_CONFIG, "utf8");
+    await Fs.writeFile(Path.join(tmp, "auth.json"), DEAD_AUTH, "utf8");
+    const markerPath = Path.join(tmp, "fake-hermes");
+    await Fs.writeFile(markerPath, '#!/bin/sh\ntouch "$(dirname "$0")/spawned"\n', "utf8");
+    await Fs.chmod(markerPath, 0o755);
+    vi.stubEnv("GITS_HERMES_HOME", tmp);
+    vi.stubEnv("GITS_HERMES_BIN", markerPath);
+
+    const result = await Effect.runPromise(
+      makeChat({
+        getSnapshot: () => Effect.die(new Error("capacity must not be consulted before preflight")),
+      })({ message: "inspect the project status" }),
+    );
+
+    expect(result.status).toBe("setup-required");
+    expect(result.setupCommand).toBe(codexReauthCommand(tmp));
+    expect(result.blockedReason).toContain("re-login");
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+    const spawned = await Fs.stat(Path.join(tmp, "spawned")).then(
+      () => true,
+      () => false,
+    );
+    expect(spawned).toBe(false);
+  });
+
+  it("short-circuits chat with the reconfigure command on a non-codex provider (decision 19)", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-chat-"));
+    await Fs.writeFile(
+      Path.join(tmp, "config.yaml"),
+      "model:\n  provider: openrouter\n  default: gpt-5.4\n",
+      "utf8",
+    );
+    await Fs.writeFile(Path.join(tmp, "auth.json"), HEALTHY_AUTH, "utf8");
+    // spawn prevention is proven by the dead-chain test above (same early return); this test
+    // only asserts the decision-19 messaging, so the binary path never needs to exist.
+    vi.stubEnv("GITS_HERMES_HOME", tmp);
+    vi.stubEnv("GITS_HERMES_BIN", Path.join(tmp, "fake-hermes"));
+
+    const result = await Effect.runPromise(
+      makeChat({
+        getSnapshot: () => Effect.die(new Error("capacity must not be consulted before preflight")),
+      })({ message: "inspect the project status" }),
+    );
+
+    expect(result.status).toBe("setup-required");
+    expect(result.setupCommand).toBe(hermesModelCommand(tmp));
+    expect(result.blockedReason).toContain("openai-codex");
+    expect(result.blockedReason).not.toContain("re-login");
   });
 });
 

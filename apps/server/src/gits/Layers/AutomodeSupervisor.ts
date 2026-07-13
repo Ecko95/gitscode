@@ -30,6 +30,7 @@ import {
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
+import { AUTOMODE_BASE_REF, AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import {
   AutomodeSupervisor,
   type AutomodeSupervisorShape,
@@ -398,6 +399,7 @@ export const AutomodeSupervisorLive = Layer.effect(
   AutomodeSupervisor,
   Effect.gen(function* () {
     const delamainAdapter = yield* DelamainAdapter;
+    const landing = yield* AutomodeLanding;
     const usageMeter = yield* AutomodeUsageMeter;
     const config = yield* ServerConfig;
     const fs = yield* FileSystem.FileSystem;
@@ -525,9 +527,16 @@ export const AutomodeSupervisorLive = Layer.effect(
           const nextState = yield* commitStateOrFail((state) =>
             Effect.gen(function* () {
               const nextPolicy = applyPolicyUpdate(state.policy, input, updatedAt);
-              if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
+              // Codex peers produce no cost telemetry, so a dollar budget is unenforceable
+              // on an all-codex box; the runtime cap is the enforceable V1 envelope
+              // (docs/brainstorms/off-hours-autonomy.md, decision 11 + accepted gaps).
+              if (
+                nextPolicy.mode === "autonomous" &&
+                nextPolicy.maxBudgetUsd === null &&
+                !shouldScheduleRuntimeLimit(nextPolicy)
+              ) {
                 return yield* toAutomodeError(
-                  "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
+                  "Autonomous mode requires a resource cap — set a max budget (maxBudgetUsd) or a runtime cap (maxRuntimeMinutes).",
                 );
               }
               if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {
@@ -712,6 +721,18 @@ export const AutomodeSupervisorLive = Layer.effect(
             } satisfies AutomodeDispatchResult;
           }
 
+          // The peer spawns from (startRef) and syncs against (mergeBranch) the integration
+          // branch, so it must exist on origin before delamain touches it — first dispatch
+          // against a fresh integration branch would otherwise fail at spawn/integration.
+          // Same baseRef the driver lands with.
+          if (state.policy.integrationBranch !== null) {
+            yield* landing.ensure_integration_branch({
+              repo: goal.repo,
+              integrationBranch: state.policy.integrationBranch,
+              baseRef: AUTOMODE_BASE_REF,
+            });
+          }
+
           const peer = yield* delamainAdapter
             .spawnPeer({
               repo: goal.repo,
@@ -721,7 +742,10 @@ export const AutomodeSupervisorLive = Layer.effect(
               ...(state.policy.integrationBranch
                 ? {
                     startRef: state.policy.integrationBranch,
-                    mergeBranch: `auto/slice/${goal.id}`,
+                    // delamain treats mergeBranch as the SYNC BASE (fetch + merge origin/<ref>
+                    // into the peer branch before pushing the peer branch) — it never creates
+                    // the ref, so it must be the integration branch landing fast-forwards.
+                    mergeBranch: state.policy.integrationBranch,
                   }
                 : {}),
               confine: true,

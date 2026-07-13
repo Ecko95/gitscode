@@ -14,6 +14,10 @@ import type {
 
 import { ServerConfig } from "../../config.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
+import {
+  AutomodeLanding,
+  type AutomodeEnsureIntegrationBranchInput,
+} from "../Services/AutomodeLanding.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
@@ -73,6 +77,7 @@ function makeLayer(options?: {
   readonly onSpawn?: (input: DelamainSpawnPeerInput) => void;
   readonly onSend?: (input: DelamainSendMessageInput) => void;
   readonly onKill?: () => void;
+  readonly onEnsure?: (input: AutomodeEnsureIntegrationBranchInput) => void;
   readonly baseDir?: string;
 }) {
   return AutomodeSupervisorLive.pipe(
@@ -103,6 +108,14 @@ function makeLayer(options?: {
           Effect.sync(() => {
             options?.onSend?.(input);
             return { responseId: input.responseId ?? null, delivered: 1, skipped: null };
+          }),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(AutomodeLanding)({
+        ensure_integration_branch: (input) =>
+          Effect.sync(() => {
+            options?.onEnsure?.(input);
           }),
       }),
     ),
@@ -602,8 +615,9 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
-  it.effect("autonomous dispatch spawns from the integration tip to a per-slice branch", () => {
+  it.effect("autonomous dispatch ensures the integration branch and spawns synced to it", () => {
     let spawnInput: DelamainSpawnPeerInput | null = null;
+    const ensured: AutomodeEnsureIntegrationBranchInput[] = [];
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       yield* supervisor.updatePolicy({
@@ -622,16 +636,63 @@ describe("AutomodeSupervisorLive", () => {
         repo: "/tmp/source-repo",
         prompt: "Run a safe task.",
       });
-      const goalId = queued.goals[0]!.id;
-      yield* supervisor.dispatchGoal({ goalId });
+      yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      // The integration branch must exist on origin before delamain fetches it.
+      assert.deepEqual(ensured, [
+        { repo: "/tmp/source-repo", integrationBranch: "auto/gits-self", baseRef: "gits" },
+      ]);
       assert.equal(spawnInput?.startRef, "auto/gits-self");
-      assert.equal(spawnInput?.mergeBranch, `auto/slice/${goalId}`);
+      // mergeBranch is delamain's SYNC BASE, not a branch it creates — it must be
+      // the integration branch itself, never a phantom per-slice ref.
+      assert.equal(spawnInput?.mergeBranch, "auto/gits-self");
     }).pipe(
       Effect.provide(
         makeLayer({
           budgetUsage: availableBudgetUsage,
           onSpawn: (input) => {
             spawnInput = input;
+          },
+          onEnsure: (input) => {
+            ensured.push(input);
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("dispatch without an integration branch skips ensure and spawns unpinned", () => {
+    let spawnInput: DelamainSpawnPeerInput | null = null;
+    let ensureCalls = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Unpinned goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(result.peer?.id, peer.id);
+      assert.equal(ensureCalls, 0);
+      assert.equal(spawnInput?.startRef, undefined);
+      assert.equal(spawnInput?.mergeBranch, undefined);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          onSpawn: (input) => {
+            spawnInput = input;
+          },
+          onEnsure: () => {
+            ensureCalls += 1;
           },
         }),
       ),
@@ -681,7 +742,7 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
-  it.effect("rejects arming autonomous mode without a budget", () =>
+  it.effect("rejects arming autonomous mode without a budget or runtime cap", () =>
     Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       const error = yield* supervisor
@@ -689,14 +750,50 @@ describe("AutomodeSupervisorLive", () => {
           mode: "autonomous",
           killSwitchEnabled: false,
           allowedRepos: ["/tmp/source-repo"],
+          maxRuntimeMinutes: null,
         })
         .pipe(Effect.flip);
 
       assert.equal(error._tag, "AutomodeSupervisorError");
       assert.include(error.message, "max budget");
+      assert.include(error.message, "runtime cap");
 
       const snapshot = yield* supervisor.getSnapshot();
       assert.equal(snapshot.policy.mode, "manual");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("arms autonomous mode without a budget when a runtime cap is set", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const snapshot = yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: null,
+        maxRuntimeMinutes: 60,
+      });
+
+      assert.equal(snapshot.policy.mode, "autonomous");
+      assert.equal(snapshot.policy.maxBudgetUsd, null);
+      assert.equal(snapshot.policy.maxRuntimeMinutes, 60);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("rejects arming autonomous mode when the runtime cap is zero and budget is null", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const error = yield* supervisor
+        .updatePolicy({
+          mode: "autonomous",
+          killSwitchEnabled: false,
+          allowedRepos: ["/tmp/source-repo"],
+          maxRuntimeMinutes: 0,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "AutomodeSupervisorError");
+      assert.include(error.message, "runtime cap");
     }).pipe(Effect.provide(makeLayer())),
   );
 
