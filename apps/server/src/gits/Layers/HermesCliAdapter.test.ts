@@ -3,6 +3,7 @@ import * as Fs from "node:fs/promises";
 import * as Os from "node:os";
 import * as Path from "node:path";
 
+import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -19,10 +20,19 @@ import {
   hermesDirectExecutionBlocked,
   hermesProposalRequiresApproval,
   isLegacyProviderSetupProposalArtifact,
+  makeHermesCliAdapter,
   makeHermesEnv,
   parseHermesModelStatus,
   resolveHermesHome,
 } from "./HermesCliAdapter.ts";
+import {
+  AutomodeSupervisor,
+  type AutomodeSupervisorShape,
+} from "../Services/AutomodeSupervisor.ts";
+import { DelamainAdapter, type DelamainAdapterShape } from "../Services/DelamainAdapter.ts";
+import { GitsCapacityMonitor } from "../Services/GitsCapacityMonitor.ts";
+import type { GitsCapacityMonitorShape } from "../Services/GitsCapacityMonitor.ts";
+import { OpenGsdAdapter, type OpenGsdAdapterShape } from "../Services/OpenGsdAdapter.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -98,6 +108,53 @@ describe("HermesCliAdapter command construction", () => {
 });
 
 describe("HermesCliAdapter cockpit chat", () => {
+  it("returns a scheduled result when the capacity fallback is unavailable", async () => {
+    const tempDir = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-schedule-"));
+    const hermesHome = Path.join(tempDir, "hermes-home");
+    const hermesBin = Path.join(tempDir, "hermes");
+    await Fs.writeFile(
+      hermesBin,
+      ["#!/usr/bin/env bash", "printf '%s\\n' 'Scheduled stale scan result'", ""].join("\n"),
+      "utf8",
+    );
+    await Fs.chmod(hermesBin, 0o755);
+    vi.stubEnv("GITS_HERMES_BIN", hermesBin);
+    vi.stubEnv("GITS_HERMES_HOME", hermesHome);
+    vi.stubEnv("GITS_MOTOKO_SCHEDULES_DISABLED", undefined);
+
+    const unusedCapacityMonitor = {
+      getSnapshot: () => Effect.die("unused capacity monitor"),
+    } satisfies GitsCapacityMonitorShape;
+    const unusedDelamainAdapter = {
+      listPeers: () => Effect.die("unused Delamain adapter"),
+    } as unknown as DelamainAdapterShape;
+    const unusedOpenGsdAdapter = {
+      getStatus: () => Effect.die("unused Open GSD adapter"),
+    } as unknown as OpenGsdAdapterShape;
+    const unusedAutomodeSupervisor = {
+      getSnapshot: () => Effect.die("unused automode supervisor"),
+    } as unknown as AutomodeSupervisorShape;
+
+    const adapter = await Effect.runPromise(
+      makeHermesCliAdapter.pipe(
+        Effect.provideService(GitsCapacityMonitor, unusedCapacityMonitor),
+        Effect.provideService(DelamainAdapter, unusedDelamainAdapter),
+        Effect.provideService(OpenGsdAdapter, unusedOpenGsdAdapter),
+        Effect.provideService(AutomodeSupervisor, unusedAutomodeSupervisor),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      adapter.runSchedule({
+        kind: "weekly-stale-scan",
+      }),
+    );
+
+    expect(result.kind).toBe("weekly-stale-scan");
+    expect(result.blockedReason).toBeNull();
+    expect(result.proposals).toEqual([]);
+  });
+
   it("classifies spawn-shaped operator requests as approval-gated worktree actions", () => {
     expect(classifyHermesChatAction("spawn agents for this new project")).toBe("worktree-spawn");
     expect(classifyHermesChatAction("admin-merge this branch")).toBe("integrate");
