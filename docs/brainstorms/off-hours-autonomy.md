@@ -10,37 +10,37 @@ The operator's supervision windows are narrow (17:00–20:00, 22:00–00:00 Euro
 
 ## Operator rhythm (design input)
 
-| Window | Weekday | Weekend | Role |
-|---|---|---|---|
-| 00:00–05:00 | idle | idle | autonomy slot 1 |
-| 05:00–10:00 | idle | idle | autonomy slot 2 |
-| 10:00–15:00 | human | idle | autonomy slot 3 (Sat/Sun only) |
-| 17:00–20:00 | supervision | supervision | human work |
-| 22:00–00:00 | supervision | supervision | digest review + arming |
+| Window      | Weekday     | Weekend     | Role                           |
+| ----------- | ----------- | ----------- | ------------------------------ |
+| 00:00–05:00 | idle        | idle        | autonomy slot 1                |
+| 05:00–10:00 | idle        | idle        | autonomy slot 2                |
+| 10:00–15:00 | human       | idle        | autonomy slot 3 (Sat/Sun only) |
+| 17:00–20:00 | supervision | supervision | human work                     |
+| 22:00–00:00 | supervision | supervision | digest review + arming         |
 
 All times Europe/London — the VPS must pin this TZ explicitly.
 
 ## Decision ledger (ratified 2026-07-12)
 
-| # | Decision | Choice |
-|---|---|---|
-| 1 | Host | Inside the GITS server on the 24/7 Linux VPS (no external cron; in-process scheduler) |
-| 2 | V1 repos | `gitscode` + pilots `delamain`, `isomer-calc-engine`; registry schema per-repo from day one |
-| 3 | Channel | Telegram bot (long-polling, allowlisted chat ID) for digest/approval/arming **and** existing web-push, both from day one |
-| 4 | Idea inputs | Structured sources only: per-repo `TODO.md` / `.planning/` / docs backlogs, recent git history, automode episode ledger, `GitsUsageReader` quantitative stats. Semantic transcript mining = v2 |
-| 5 | Approval unit | Concrete brief only — target repo, scoped task, verify plan, budget estimate, expected deliverable. Nothing vaguer may reach Telegram; Motoko finishes planning before it may ask |
-| 6 | Slots | Nightly 00:00–10:00 (two 5h slots) + Sat/Sun 10:00–15:00 |
-| 7 | Slot edge | Slots gate **starts**, not finishes: running goal completes under its own runtime cap; no goal starts if expected runtime exceeds remaining slot |
-| 8 | Arming | Nightly explicit arm: the 22:00 digest asks "N briefs queued — run tonight? [Arm] [Skip]". No tap = dark night. `reArmOnBoot` invariant untouched — a VPS restart mid-night halts everything, notifies, waits |
-| 9 | Self-improvement track | Ordinary proposals whose target repo is gitscode (incl. Motoko's own profile/skills). Same pipeline, no separate meta-loop |
-| 10 | Failure semantics | Goal-level failure → quarantine (branch kept, verdict recorded, flagged in morning report), queue continues. Only systemic failures halt the night: delamain unreachable, repo corrupt, budget/capacity exhausted, kill switch |
-| 11 | Resource envelope | Sequential (`maxActivePeers: 1`), ≤3 goals/night, ~90 min runtime cap per goal, capacity check before each start (skip if Codex window utilization already high) |
-| 12 | Phone-approvable classes | `worktree-spawn` briefs only. `repo-write`, `integrate`, `destructive-shell` cards remain cockpit-only |
-| 13 | Verification floor | Repo eligible only with a verify command set that includes a real test run, green on the base branch at slot start. Red baseline → repo skipped for the night (failures must be attributable) |
-| 14 | PR shape | One held PR **per goal**, targeting the repo's own default branch. Human-merge only, autoMerge OFF (unchanged invariant) |
-| 15 | Staleness | Approved briefs expire after 7 days unrun (resurface for re-approval); cheap re-validation at goal start (referenced context must still exist) else quarantine. Stale held PRs flagged in digest; **no autonomous rebases** |
-| 16 | Bot capability ceiling | Approve / Reject / Defer / Arm / Skip / STOP only. Policy and config (budget caps, goal caps, registry, allowlists, schedule) are immutable from Telegram — cockpit-only |
-| 17 | Peer OS caps | Peer spawns wrapped in `systemd-run --user --scope` with `MemoryMax` (~4G) and `CPUWeight` below the GITS server, so a runaway peer OOMs alone and the kill switch survives |
+| #   | Decision                 | Choice                                                                                                                                                                                                                         |
+| --- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Host                     | Inside the GITS server on the 24/7 Linux VPS (no external cron; in-process scheduler)                                                                                                                                          |
+| 2   | V1 repos                 | `gitscode` + pilots `delamain`, `isomer-calc-engine`; registry schema per-repo from day one                                                                                                                                    |
+| 3   | Channel                  | Telegram bot (long-polling, allowlisted chat ID) for digest/approval/arming **and** existing web-push, both from day one                                                                                                       |
+| 4   | Idea inputs              | Structured sources only: per-repo `TODO.md` / `.planning/` / docs backlogs, recent git history, automode episode ledger, `GitsUsageReader` quantitative stats. Semantic transcript mining = v2                                 |
+| 5   | Approval unit            | Concrete brief only — target repo, scoped task, verify plan, budget estimate, expected deliverable. Nothing vaguer may reach Telegram; Motoko finishes planning before it may ask                                              |
+| 6   | Slots                    | Nightly 00:00–10:00 (two 5h slots) + Sat/Sun 10:00–15:00                                                                                                                                                                       |
+| 7   | Slot edge                | Slots gate **starts**, not finishes: running goal completes under its own runtime cap; no goal starts if expected runtime exceeds remaining slot                                                                               |
+| 8   | Arming                   | Nightly explicit arm: the 22:00 digest asks "N briefs queued — run tonight? [Arm] [Skip]". No tap = dark night. `reArmOnBoot` invariant untouched — a VPS restart mid-night halts everything, notifies, waits                  |
+| 9   | Self-improvement track   | Ordinary proposals whose target repo is gitscode (incl. Motoko's own profile/skills). Same pipeline, no separate meta-loop                                                                                                     |
+| 10  | Failure semantics        | Goal-level failure → quarantine (branch kept, verdict recorded, flagged in morning report), queue continues. Only systemic failures halt the night: delamain unreachable, repo corrupt, budget/capacity exhausted, kill switch |
+| 11  | Resource envelope        | Sequential (`maxActivePeers: 1`), ≤3 goals/night, ~90 min runtime cap per goal, capacity check before each start (skip if Codex window utilization already high)                                                               |
+| 12  | Phone-approvable classes | `worktree-spawn` briefs only. `repo-write`, `integrate`, `destructive-shell` cards remain cockpit-only                                                                                                                         |
+| 13  | Verification floor       | Repo eligible only with a verify command set that includes a real test run, green on the base branch at slot start. Red baseline → repo skipped for the night (failures must be attributable)                                  |
+| 14  | PR shape                 | One held PR **per goal**, targeting the repo's own default branch. Human-merge only, autoMerge OFF (unchanged invariant)                                                                                                       |
+| 15  | Staleness                | Approved briefs expire after 7 days unrun (resurface for re-approval); cheap re-validation at goal start (referenced context must still exist) else quarantine. Stale held PRs flagged in digest; **no autonomous rebases**    |
+| 16  | Bot capability ceiling   | Approve / Reject / Defer / Arm / Skip / STOP only. Policy and config (budget caps, goal caps, registry, allowlists, schedule) are immutable from Telegram — cockpit-only                                                       |
+| 17  | Peer OS caps             | Peer spawns wrapped in `systemd-run --user --scope` with `MemoryMax` (~4G) and `CPUWeight` below the GITS server, so a runaway peer OOMs alone and the kill switch survives                                                    |
 
 ## Standing defaults
 
@@ -59,7 +59,7 @@ All times Europe/London — the VPS must pin this TZ explicitly.
 
 0. **VPS provisioning** — repo clones (×3), delamain binary, codex/claude credentials, TZ pinned Europe/London, systemd lingering for user scopes. Pilots brought up to the verification floor.
 1. **Slot scheduler + arming state** — in-process scheduler in the GITS server; nightly arm/disarm lifecycle honoring `reArmOnBoot`.
-2. **Telegram bot** — long-polling, allowlisted, six verbs, config-immutable. Digest + morning report rendering. *Implementation note:* the Hermes runtime may provide a native Telegram channel (`profiles/motoko-gits/config.yaml.example` → `notify_channel: telegram`); resolve build-vs-reuse at phase start.
+2. **Telegram bot** — long-polling, allowlisted, six verbs, config-immutable. Digest + morning report rendering. _Implementation note:_ the Hermes runtime may provide a native Telegram channel (`profiles/motoko-gits/config.yaml.example` → `notify_channel: telegram`); resolve build-vs-reuse at phase start.
 3. **Repo registry + multi-repo automode** — per-repo verify commands, base branches, PR targets; `allowedRepos` driven from the registry.
 4. **Driver changes** — one held PR per goal (open at goal completion, not queue drain); quarantine-and-continue; slot-runway start gate; systemd scope wrapping.
 5. **Ideation run** — scheduled `inspectGitsAndPropose`-style pass over the structured sources + usage stats, emitting `worktree-spawn` briefs into the digest queue.
