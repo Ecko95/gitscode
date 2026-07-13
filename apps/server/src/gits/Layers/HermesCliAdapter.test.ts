@@ -27,6 +27,9 @@ import {
   makeChat,
   makeHermesCliAdapter,
   makeHermesEnv,
+  makeProposal,
+  normalizeProposal,
+  summarizeProposal,
   parseCodexChainHealth,
   parseHermesModelStatus,
   readCodexAuthStatus,
@@ -219,6 +222,7 @@ describe("HermesCliAdapter cockpit chat", () => {
     expect(
       isLegacyProviderSetupProposalArtifact({
         id: "hermes-legacy",
+        episodeId: "epi-legacy-hermes-legacy",
         title: "No inference provider configured. Run 'hermes model' to choose a provider and",
         summary: "model, or set an API key",
         detail:
@@ -247,6 +251,7 @@ describe("HermesCliAdapter cockpit chat", () => {
     expect(
       isLegacyProviderSetupProposalArtifact({
         id: "hermes-normal",
+        episodeId: "epi-legacy-hermes-normal",
         title: "Inspect build provenance drift",
         summary: "Capture the deploy metadata mismatch and propose a cleanup.",
         detail: "The hosted worktree metadata is stale and should be refreshed.",
@@ -642,6 +647,52 @@ describe("HermesCliAdapter chat preflight", () => {
     expect(result.setupCommand).toBe(hermesModelCommand(tmp));
     expect(result.blockedReason).toContain("openai-codex");
     expect(result.blockedReason).not.toContain("re-login");
+  });
+});
+
+describe("HermesCliAdapter proposal helpers", () => {
+  it("summarizeProposal skips hermes chrome lines and uses the first real line as title", () => {
+    const summarized = summarizeProposal(
+      ["⚠️ Reached maximum iterations (15)", "", "# Real proposal title", "Second line."].join(
+        "\n",
+      ),
+    );
+    expect(summarized.title).toBe("Real proposal title");
+    expect(summarized.summary).toBe("Second line.");
+  });
+
+  it("summarizeProposal falls back when the output is all chrome", () => {
+    const summarized = summarizeProposal("⚠️ Reached maximum iterations (15)\nℹ️ hint\n✓ done");
+    expect(summarized.title).toBe("Hermes GITS improvement proposal");
+  });
+
+  it("normalizeProposal backfills a legacy card without episodeId", () => {
+    const normalized = normalizeProposal({ id: "hermes-old", title: "Old card" });
+    expect(normalized?.episodeId).toBe("epi-legacy-hermes-old");
+  });
+
+  it("normalizeProposal keeps a stored episodeId", () => {
+    const normalized = normalizeProposal({
+      id: "hermes-new",
+      title: "New card",
+      episodeId: "epi-abc",
+    });
+    expect(normalized?.episodeId).toBe("epi-abc");
+  });
+
+  it("makeProposal mints an episodeId", () => {
+    const proposal = makeProposal({
+      title: "T",
+      summary: "S",
+      detail: "D",
+      actionKind: "read-only",
+      status: "proposed",
+      blockedReason: null,
+      source: "test",
+      projectDir: null,
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    expect(proposal.episodeId).toMatch(/^epi-[0-9a-f-]{36}$/);
   });
 });
 

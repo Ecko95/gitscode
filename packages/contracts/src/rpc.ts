@@ -52,6 +52,10 @@ import {
   GitsDevCommandInitInput,
   GitsDevCommandListInput,
   GitsDevCommandListResult,
+  GitsSchedulerDisarmInput,
+  GitsSchedulerSetConfigInput,
+  GitsSchedulerSnapshot,
+  GitsSlotSchedulerError,
   HermesAdapterError,
   HermesChatInput,
   HermesChatResult,
@@ -260,6 +264,11 @@ export const WS_METHODS = {
   gitsAutomodeApproveGoal: "gits.automode.goals.approve",
   gitsAutomodeRejectGoal: "gits.automode.goals.reject",
   gitsAutomodeDispatchGoal: "gits.automode.goals.dispatch",
+  gitsAutomodeSchedulerSnapshot: "gits.automode.scheduler.snapshot",
+  gitsAutomodeSchedulerSetConfig: "gits.automode.scheduler.setConfig",
+  gitsAutomodeSchedulerArm: "gits.automode.scheduler.arm",
+  gitsAutomodeSchedulerDisarm: "gits.automode.scheduler.disarm",
+  gitsAutomodeDriverResume: "gits.automode.driver.resume",
   gitsCapacityGetSnapshot: "gits.capacity.snapshot",
   gitsHermesGetStatus: "gits.hermes.status",
   gitsHermesGetConfig: "gits.hermes.config",
@@ -744,6 +753,43 @@ export const WsGitsAutomodeDispatchGoalRpc = Rpc.make(WS_METHODS.gitsAutomodeDis
   error: AutomodeSupervisorError,
 });
 
+export const WsGitsAutomodeSchedulerSnapshotRpc = Rpc.make(
+  WS_METHODS.gitsAutomodeSchedulerSnapshot,
+  {
+    payload: Schema.Struct({}),
+    success: GitsSchedulerSnapshot,
+    error: GitsSlotSchedulerError,
+  },
+);
+
+export const WsGitsAutomodeSchedulerSetConfigRpc = Rpc.make(
+  WS_METHODS.gitsAutomodeSchedulerSetConfig,
+  {
+    payload: GitsSchedulerSetConfigInput,
+    success: GitsSchedulerSnapshot,
+    error: GitsSlotSchedulerError,
+  },
+);
+
+export const WsGitsAutomodeSchedulerArmRpc = Rpc.make(WS_METHODS.gitsAutomodeSchedulerArm, {
+  payload: Schema.Struct({}),
+  success: GitsSchedulerSnapshot,
+  error: GitsSlotSchedulerError,
+});
+
+export const WsGitsAutomodeSchedulerDisarmRpc = Rpc.make(WS_METHODS.gitsAutomodeSchedulerDisarm, {
+  payload: GitsSchedulerDisarmInput,
+  success: GitsSchedulerSnapshot,
+  error: GitsSlotSchedulerError,
+});
+
+// Wires the EXISTING supervisor.resumeDriver — the halted-banner Resume button.
+export const WsGitsAutomodeDriverResumeRpc = Rpc.make(WS_METHODS.gitsAutomodeDriverResume, {
+  payload: Schema.Struct({}),
+  success: AutomodeSnapshot,
+  error: AutomodeSupervisorError,
+});
+
 export const WsGitsCapacityGetSnapshotRpc = Rpc.make(WS_METHODS.gitsCapacityGetSnapshot, {
   payload: GitsCapacitySnapshotInput,
   success: GitsCapacitySnapshot,
@@ -1028,6 +1074,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsAutomodeApproveGoalRpc,
   WsGitsAutomodeRejectGoalRpc,
   WsGitsAutomodeDispatchGoalRpc,
+  WsGitsAutomodeSchedulerSnapshotRpc,
+  WsGitsAutomodeSchedulerSetConfigRpc,
+  WsGitsAutomodeSchedulerArmRpc,
+  WsGitsAutomodeSchedulerDisarmRpc,
+  WsGitsAutomodeDriverResumeRpc,
   WsGitsCapacityGetSnapshotRpc,
   WsGitsHermesGetStatusRpc,
   WsGitsHermesGetConfigRpc,

@@ -18,6 +18,8 @@ const SummaryString = TrimmedNonEmptyString.check(Schema.isMaxLength(10_000));
 
 export const AutomodeEpisode = Schema.Struct({
   id: TrimmedNonEmptyString,
+  // Episode thread (decision 23): null for rows recorded before migration 036.
+  episodeId: Schema.NullOr(TrimmedNonEmptyString),
   repo: PathString,
   goalId: TrimmedNonEmptyString,
   goalTitle: TrimmedNonEmptyString,

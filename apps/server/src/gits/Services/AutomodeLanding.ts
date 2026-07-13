@@ -3,8 +3,9 @@ import type * as Effect from "effect/Effect";
 import type { AutomodeSupervisorError } from "@t3tools/contracts";
 
 /** Branch the integration line is cut from and the held PR targets. */
-// ponytail: hardcoded to this repo's default branch — derive from policy when automode targets other repos.
-export const AUTOMODE_BASE_REF = "gits";
+// ponytail: env knob with a gitscode default — the phase-3 repo registry supersedes this
+// with per-repo base refs; until then GITS_AUTOMODE_BASE_REF covers non-gits deployments.
+export const AUTOMODE_BASE_REF = process.env.GITS_AUTOMODE_BASE_REF?.trim() || "gits";
 
 export interface AutomodeEnsureIntegrationBranchInput {
   readonly repo: string;

@@ -4,12 +4,19 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
-import { type AutomodeGoal, type PeerStatus } from "@t3tools/contracts";
+import {
+  AutomodeSupervisorError,
+  type AutomodeGoal,
+  type AutomodeSnapshot,
+  type GitsVerifyCommand,
+  type PeerStatus,
+} from "@t3tools/contracts";
 
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeDriver, type AutomodeDriverShape } from "../Services/AutomodeDriver.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
+import { GitsSlotScheduler } from "../Services/GitsSlotScheduler.ts";
 import { AUTOMODE_BASE_REF, AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
@@ -20,6 +27,29 @@ const TICK_INTERVAL_MS = (() => {
   const parsed = raw === undefined || raw === "" ? Number.NaN : Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 5000;
 })();
+
+// Verify floor (the #154 lesson): autonomous slices always run at least the CI-shaped
+// checks, no matter how thin policy.verificationCommands is. Policy overrides a floor
+// entry by label via the existing updatePolicy RPC — no env escape hatch needed.
+// ponytail: gitscode-specific commands until the phase-3 repo registry owns per-repo floors.
+export const AUTOMODE_VERIFY_FLOOR: ReadonlyArray<GitsVerifyCommand> = [
+  { label: "fmt", cmd: ["bun", "run", "fmt:check"] },
+  { label: "lint", cmd: ["bun", "run", "lint"] },
+  { label: "typecheck", cmd: ["bun", "run", "typecheck"] },
+  { label: "test", cmd: ["bun", "run", "test"], timeoutSeconds: 900 },
+  { label: "build", cmd: ["bun", "run", "build"], timeoutSeconds: 900 },
+];
+
+/** Floor ∪ policy commands, merged by label — a policy entry wins on collision. */
+export function merge_verify_commands(
+  policyCommands: ReadonlyArray<GitsVerifyCommand>,
+): GitsVerifyCommand[] {
+  const byLabel = new Map(AUTOMODE_VERIFY_FLOOR.map((command) => [command.label, command]));
+  for (const command of policyCommands) {
+    byLabel.set(command.label, command);
+  }
+  return [...byLabel.values()];
+}
 
 const TERMINAL_FAIL_STATUSES = new Set<PeerStatus>(["failed", "frozen", "killed", "halted"]);
 const TERMINAL_DONE_STATUSES = new Set<PeerStatus>(["done", "completed"]);
@@ -43,6 +73,63 @@ export const AutomodeDriverLive = Layer.effect(
     const landing = yield* AutomodeLanding;
     const heldPr = yield* AutomodeHeldPr;
     const ledger = yield* AutomodeEpisodeLedger;
+    const scheduler = yield* GitsSlotScheduler;
+
+    const toDriverError = (message: string) => (cause: unknown) =>
+      new AutomodeSupervisorError({ message, cause });
+
+    // Held-PR lifecycle: open exactly once after ≥1 landed slice, then poll for the merge.
+    // Runs on queue-drained ticks AND gate-denied ticks — a night-capped run (goals still
+    // queued, gate denying) must not starve its held PR. Self-guards on runMerged /
+    // integration branch / landed repo.
+    const maintainHeldPr = (snapshot: AutomodeSnapshot) =>
+      Effect.gen(function* () {
+        // Run is terminal once the held PR merged.
+        if (snapshot.runMerged) {
+          return;
+        }
+        const policy = snapshot.policy;
+        if (policy.integrationBranch === null) {
+          return;
+        }
+        const landedRepo = snapshot.goals.find((goal) => goal.status === "completed")?.repo ?? null;
+        if (landedRepo === null) {
+          return;
+        }
+
+        if (snapshot.heldPrUrl === null || snapshot.heldPrNumber === null) {
+          // Open the held PR exactly once, only if at least one slice landed.
+          const landedTitles = snapshot.goals
+            .filter((goal) => goal.status === "completed")
+            .map((goal) => `- ${goal.title} (episode ${goal.episodeId})`)
+            .join("\n");
+          const result = yield* heldPr.open_held_pr({
+            repo: landedRepo,
+            integrationBranch: policy.integrationBranch,
+            baseBranch: AUTOMODE_BASE_REF,
+            title: `automode: held PR for ${policy.integrationBranch}`,
+            body: `Autonomous run — landed slices (held for review, not auto-merged):\n\n${landedTitles}`,
+          });
+          if (result.status === "rejected") {
+            yield* supervisor.haltDriver({
+              reason: `Halted: could not open held PR — ${result.reason}`,
+            });
+            return;
+          }
+          yield* supervisor.recordHeldPr({ url: result.url, number: result.number });
+          return;
+        }
+
+        // Held PR already open → poll GitHub for the merge.
+        const detect = yield* heldPr.detect_merge({
+          repo: landedRepo,
+          prNumber: snapshot.heldPrNumber,
+        });
+        if (detect.merged) {
+          yield* supervisor.markRunMerged();
+          yield* Effect.logInfo("gits.automode.run-merged", { heldPrUrl: snapshot.heldPrUrl });
+        }
+      });
 
     const tickOnce: AutomodeDriverShape["tickOnce"] = () =>
       Effect.gen(function* () {
@@ -112,7 +199,11 @@ export const AutomodeDriverLive = Layer.effect(
               });
               return;
             }
-            if (policy.verificationCommands.length === 0) {
+            // Floor ∪ policy (policy wins by label). The fail-closed empty check guards
+            // the MERGED set — unreachable while the floor const is non-empty, kept as
+            // defense against a future emptied floor.
+            const verificationCommands = merge_verify_commands(policy.verificationCommands);
+            if (verificationCommands.length === 0) {
               yield* supervisor.haltDriver({
                 reason: `Halted: ${running.title} finished but no verification commands are configured.`,
               });
@@ -132,7 +223,7 @@ export const AutomodeDriverLive = Layer.effect(
                 worktree: peer.worktreePath,
                 baseRef: policy.integrationBranch,
                 sliceId: running.id,
-                verificationCommands: policy.verificationCommands,
+                verificationCommands,
               })
               .pipe(Effect.result);
             if (Result.isFailure(reviewResult)) {
@@ -177,6 +268,7 @@ export const AutomodeDriverLive = Layer.effect(
             yield* ledger
               .record_episode({
                 id: `ep-${running.id}-${recordedAt}`,
+                episodeId: running.episodeId,
                 repo: running.repo,
                 goalId: running.id,
                 goalTitle: running.title,
@@ -212,58 +304,24 @@ export const AutomodeDriverLive = Layer.effect(
           return;
         }
 
-        // 3) Queue drained → held-PR lifecycle, then dispatch.
+        // 3) Queue drained → held-PR lifecycle only.
         const next = oldestQueued(snapshot.goals);
         if (next === null) {
-          // Run is terminal once the held PR merged.
-          if (snapshot.runMerged) {
-            return;
-          }
-          const policy = snapshot.policy;
-          if (policy.integrationBranch === null) {
-            return;
-          }
-          const landedRepo =
-            snapshot.goals.find((goal) => goal.status === "completed")?.repo ?? null;
-
-          if (snapshot.heldPrUrl === null || snapshot.heldPrNumber === null) {
-            // Open the held PR exactly once, only if at least one slice landed.
-            if (landedRepo === null) {
-              return;
-            }
-            const landedTitles = snapshot.goals
-              .filter((goal) => goal.status === "completed")
-              .map((goal) => `- ${goal.title}`)
-              .join("\n");
-            const result = yield* heldPr.open_held_pr({
-              repo: landedRepo,
-              integrationBranch: policy.integrationBranch,
-              baseBranch: AUTOMODE_BASE_REF,
-              title: `automode: held PR for ${policy.integrationBranch}`,
-              body: `Autonomous run — landed slices (held for review, not auto-merged):\n\n${landedTitles}`,
-            });
-            if (result.status === "rejected") {
-              yield* supervisor.haltDriver({
-                reason: `Halted: could not open held PR — ${result.reason}`,
-              });
-              return;
-            }
-            yield* supervisor.recordHeldPr({ url: result.url, number: result.number });
-            return;
-          }
-
-          // Held PR already open → poll GitHub for the merge.
-          if (landedRepo === null) {
-            return;
-          }
-          const detect = yield* heldPr.detect_merge({
-            repo: landedRepo,
-            prNumber: snapshot.heldPrNumber,
-          });
-          if (detect.merged) {
-            yield* supervisor.markRunMerged();
-            yield* Effect.logInfo("gits.automode.run-merged", { heldPrUrl: snapshot.heldPrUrl });
-          }
+          yield* maintainHeldPr(snapshot);
+          return;
+        }
+        // Scheduler start gate (decisions 6/7/11/20): a deny leaves the goal queued for a
+        // later tick — quiet, NOT a halt. Manual RPC dispatch stays ungated (human-driven).
+        const gate = yield* scheduler
+          .checkStartAllowed({
+            expectedRuntimeMinutes: snapshot.policy.maxRuntimeMinutes,
+            maxActivePeers: snapshot.policy.maxActivePeers,
+          })
+          .pipe(Effect.mapError(toDriverError("Scheduler start gate check failed.")));
+        if (!gate.allowed) {
+          // A denied night still maintains the held PR for already-landed slices —
+          // otherwise a night-capped run would never open/poll it while goals stay queued.
+          yield* maintainHeldPr(snapshot);
           return;
         }
         const result = yield* supervisor.dispatchGoal({ goalId: next.id });
@@ -271,7 +329,20 @@ export const AutomodeDriverLive = Layer.effect(
           yield* supervisor.haltDriver({
             reason: result.blockedReason ?? `Dispatch of ${next.title} did not spawn a peer.`,
           });
+          return;
         }
+        // Disabled-scheduler bypass: a supervised daytime dispatch must not consume the night cap.
+        if (gate.bypassed === true) {
+          return;
+        }
+        yield* scheduler.recordGoalStart({ goalId: next.id, episodeId: next.episodeId }).pipe(
+          // Fail closed: an unrecorded start would undercount the decision-11 night cap.
+          Effect.catch((error) =>
+            supervisor.haltDriver({
+              reason: `Halted: scheduler failed to record the start of ${next.title} — ${error.message}`,
+            }),
+          ),
+        );
       });
 
     // Forked, scoped polling fiber — runs for the lifetime of the layer.

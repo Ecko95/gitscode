@@ -90,6 +90,7 @@ import { mutateVisualPlan } from "./gits/mcp/visualPlanWrite.ts";
 import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
 import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
 import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
+import { GitsSlotScheduler } from "./gits/Services/GitsSlotScheduler.ts";
 import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
@@ -323,6 +324,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
       const gitsPlanningScanner = yield* GitsPlanningScanner;
       const delamainAdapter = yield* DelamainAdapter;
       const gitsCapacityMonitor = yield* GitsCapacityMonitor;
+      const gitsSlotScheduler = yield* GitsSlotScheduler;
       const hermesAdapter = yield* HermesAdapter;
       const openGsdAdapter = yield* OpenGsdAdapter;
       const automodeSupervisor = yield* AutomodeSupervisor;
@@ -1717,6 +1719,34 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
             automodeSupervisor.dispatchGoal(input),
             { "rpc.aggregate": "gits" },
           ),
+        [WS_METHODS.gitsAutomodeSchedulerSnapshot]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeSchedulerSnapshot,
+            gitsSlotScheduler.getSnapshot(),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeSchedulerSetConfig]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeSchedulerSetConfig,
+            gitsSlotScheduler.setConfig(input),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeSchedulerArm]: (_input) =>
+          observeRpcEffect(WS_METHODS.gitsAutomodeSchedulerArm, gitsSlotScheduler.arm(), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsAutomodeSchedulerDisarm]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeSchedulerDisarm,
+            gitsSlotScheduler.disarm(input),
+            {
+              "rpc.aggregate": "gits",
+            },
+          ),
+        [WS_METHODS.gitsAutomodeDriverResume]: (_input) =>
+          observeRpcEffect(WS_METHODS.gitsAutomodeDriverResume, automodeSupervisor.resumeDriver(), {
+            "rpc.aggregate": "gits",
+          }),
         [WS_METHODS.gitsCapacityGetSnapshot]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsCapacityGetSnapshot,

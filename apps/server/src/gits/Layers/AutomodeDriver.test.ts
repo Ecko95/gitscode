@@ -5,8 +5,10 @@ import * as Layer from "effect/Layer";
 
 import {
   GitsReviewError,
+  GitsSlotSchedulerError,
   type DelamainPeer,
   type DelamainPeerListResult,
+  type GitsReviewInput,
   type GitsReviewResult,
   type PeerStatus,
 } from "@t3tools/contracts";
@@ -20,8 +22,17 @@ import {
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
+import {
+  GitsSlotScheduler,
+  type GitsSchedulerGateResult,
+  type GitsSchedulerGoalStartInput,
+} from "../Services/GitsSlotScheduler.ts";
 import { AutomodeLanding, type AutomodeLandResult } from "../Services/AutomodeLanding.ts";
-import { AutomodeHeldPr, type AutomodeOpenHeldPrResult } from "../Services/AutomodeHeldPr.ts";
+import {
+  AutomodeHeldPr,
+  type AutomodeOpenHeldPrInput,
+  type AutomodeOpenHeldPrResult,
+} from "../Services/AutomodeHeldPr.ts";
 import {
   AutomodeEpisodeLedger,
   type AutomodeEpisode,
@@ -100,11 +111,15 @@ const emptyList: Omit<DelamainPeerListResult, "peers"> = {
 interface MakeLayerOptions {
   readonly review?: GitsReviewResult;
   readonly reviewError?: GitsReviewError;
+  readonly onReview?: (input: GitsReviewInput) => void;
   readonly landResult?: AutomodeLandResult;
   readonly openResult?: AutomodeOpenHeldPrResult;
-  readonly onOpenHeldPr?: () => void;
+  readonly onOpenHeldPr?: (input: AutomodeOpenHeldPrInput) => void;
   readonly mergeResults?: boolean[];
   readonly onRecordEpisode?: (episode: AutomodeEpisode) => void;
+  readonly gateResult?: GitsSchedulerGateResult;
+  readonly onRecordGoalStart?: (input: GitsSchedulerGoalStartInput) => void;
+  readonly recordGoalStartError?: GitsSlotSchedulerError;
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -154,10 +169,23 @@ function makeLayer(
       }),
   });
   const reviewPipeline = Layer.mock(GitsReviewPipeline)({
-    review: () =>
-      options?.reviewError !== undefined
-        ? Effect.fail(options.reviewError)
-        : Effect.succeed(options?.review ?? passingReview),
+    review: (input) =>
+      Effect.suspend(() => {
+        options?.onReview?.(input);
+        return options?.reviewError !== undefined
+          ? Effect.fail(options.reviewError)
+          : Effect.succeed(options?.review ?? passingReview);
+      }),
+  });
+  const scheduler = Layer.mock(GitsSlotScheduler)({
+    checkStartAllowed: () => Effect.succeed(options?.gateResult ?? { allowed: true as const }),
+    recordGoalStart: (input) =>
+      Effect.suspend(() => {
+        options?.onRecordGoalStart?.(input);
+        return options?.recordGoalStartError !== undefined
+          ? Effect.fail(options.recordGoalStartError)
+          : Effect.void;
+      }),
   });
   const landing = Layer.mock(AutomodeLanding)({
     ensure_integration_branch: () => Effect.void,
@@ -165,9 +193,9 @@ function makeLayer(
   });
   const mergeQueue = [...(options?.mergeResults ?? [])];
   const heldPr = Layer.mock(AutomodeHeldPr)({
-    open_held_pr: () =>
+    open_held_pr: (input) =>
       Effect.sync(() => {
-        options?.onOpenHeldPr?.();
+        options?.onOpenHeldPr?.(input);
         return (
           options?.openResult ?? {
             status: "opened",
@@ -199,6 +227,7 @@ function makeLayer(
     Layer.provideMerge(supervisor),
     Layer.provide(delamain),
     Layer.provide(reviewPipeline),
+    Layer.provide(scheduler),
     Layer.provide(landing),
     Layer.provide(heldPr),
     Layer.provide(ledger),
@@ -434,8 +463,9 @@ describe("AutomodeDriver", () => {
     );
   });
 
-  it.effect("on done: empty verificationCommands → halts (fail-closed)", () => {
+  it.effect("on done: empty policy verificationCommands → verify floor still runs (#154)", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const reviews: GitsReviewInput[] = [];
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       const driver = yield* AutomodeDriver;
@@ -456,12 +486,40 @@ describe("AutomodeDriver", () => {
 
       yield* driver.tickOnce(); // dispatch
       peerStatus.current = "done";
-      yield* driver.tickOnce(); // no verify commands → halt
+      yield* driver.tickOnce(); // floor merged in → review runs → land → complete
 
       const snapshot = yield* supervisor.getSnapshot();
-      assert.notEqual(snapshot.goals.find((g) => g.title === "Unverified")?.status, "completed");
-      assert.equal(snapshot.driverHalted, true);
-    }).pipe(Effect.provide(makeLayer(peerStatus)));
+      assert.equal(snapshot.goals.find((g) => g.title === "Unverified")?.status, "completed");
+      assert.equal(snapshot.driverHalted, false);
+      // The merged set is exactly the floor when policy contributes nothing.
+      assert.deepEqual(
+        reviews[0]?.verificationCommands.map((command) => command.label),
+        ["fmt", "lint", "typecheck", "test", "build"],
+      );
+    }).pipe(Effect.provide(makeLayer(peerStatus, { onReview: (input) => reviews.push(input) })));
+  });
+
+  it.effect("verify-floor merge: a policy entry overrides the floor entry by label", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const reviews: GitsReviewInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor); // policy has typecheck: ["bun","typecheck"]
+      yield* supervisor.enqueueGoal({ title: "Merged", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce();
+
+      const commands = reviews[0]?.verificationCommands ?? [];
+      const typecheck = commands.filter((command) => command.label === "typecheck");
+      assert.equal(typecheck.length, 1); // merged, not duplicated
+      assert.deepEqual(typecheck[0]?.cmd, ["bun", "typecheck"]); // policy wins on collision
+      // Floor entries without a policy override survive the merge.
+      assert.isDefined(commands.find((command) => command.label === "fmt"));
+      assert.isDefined(commands.find((command) => command.label === "build"));
+    }).pipe(Effect.provide(makeLayer(peerStatus, { onReview: (input) => reviews.push(input) })));
   });
 
   it.effect("opens a held PR when the queue drains with a landed goal", () => {
@@ -566,6 +624,10 @@ describe("AutomodeDriver", () => {
       assert.equal(episodes[0]?.goalTitle, "Ledger me");
       assert.equal(episodes[0]?.verdict, "pass");
       assert.equal(episodes[0]?.repo, "/tmp/source-repo");
+      // Episode thread (decision 23): the ledger row carries the goal's episodeId.
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(episodes[0]?.episodeId, snapshot.goals[0]?.episodeId);
+      assert.match(episodes[0]?.episodeId ?? "", /^epi-[0-9a-f-]{36}$/);
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
@@ -629,6 +691,157 @@ describe("AutomodeDriver", () => {
           openResult: { status: "rejected", reason: "gh pr create failed" },
         }),
       ),
+    );
+  });
+
+  it.effect("scheduler deny → no dispatch, goal stays queued, no halt", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const starts: GitsSchedulerGoalStartInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Gated", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.find((g) => g.title === "Gated")?.status, "queued");
+      assert.equal(snapshot.driverHalted, false);
+      assert.equal(starts.length, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          gateResult: { allowed: false, reason: "Outside slot window (next slot 00:00)" },
+          onRecordGoalStart: (input) => starts.push(input),
+        }),
+      ),
+    );
+  });
+
+  it.effect("scheduler allow → dispatch + recordGoalStart with the goal's episodeId", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const starts: GitsSchedulerGoalStartInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Started", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      const goal = snapshot.goals.find((g) => g.title === "Started");
+      assert.equal(goal?.status, "running");
+      assert.equal(starts.length, 1);
+      assert.equal(starts[0]?.goalId, goal?.id);
+      assert.equal(starts[0]?.episodeId, goal?.episodeId);
+    }).pipe(
+      Effect.provide(makeLayer(peerStatus, { onRecordGoalStart: (input) => starts.push(input) })),
+    );
+  });
+
+  it.effect("gate deny with a landed goal still opens the held PR (no starvation)", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let openCalls = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Landed", repo: "/tmp/source-repo", prompt: "x" });
+      yield* supervisor.enqueueGoal({ title: "Capped", repo: "/tmp/source-repo", prompt: "y" });
+      const before = yield* supervisor.getSnapshot();
+      const landedId = before.goals.find((g) => g.title === "Landed")?.id ?? "";
+      yield* supervisor.dispatchGoal({ goalId: landedId }); // manual dispatch stays ungated
+
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // reconcile → land → complete (gate not consulted)
+      peerStatus.current = "absent";
+      yield* driver.tickOnce(); // "Capped" still queued + gate denies → held PR must still open
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.heldPrNumber, 30);
+      assert.equal(openCalls, 1);
+      assert.equal(snapshot.goals.find((g) => g.title === "Capped")?.status, "queued");
+      assert.equal(snapshot.driverHalted, false);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          gateResult: { allowed: false, reason: "Night goal cap reached (1)" },
+          onOpenHeldPr: () => {
+            openCalls += 1;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("disabled-scheduler bypass dispatches without recording a goal start", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const starts: GitsSchedulerGoalStartInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Bypassed", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.find((g) => g.title === "Bypassed")?.status, "running");
+      assert.equal(starts.length, 0); // must NOT consume the night cap
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          gateResult: { allowed: true, bypassed: true },
+          onRecordGoalStart: (input) => starts.push(input),
+        }),
+      ),
+    );
+  });
+
+  it.effect("halts (fail-closed) when the scheduler cannot record a goal start", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Uncounted", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.driverHalted, true);
+      assert.include(snapshot.driverHaltedReason ?? "", "failed to record the start");
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          recordGoalStartError: new GitsSlotSchedulerError({ message: "scheduler disk full" }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("held PR body lists each landed slice with its episode id", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const bodies: string[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Sliced", repo: "/tmp/source-repo", prompt: "x" });
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // land + complete
+      peerStatus.current = "absent";
+      yield* driver.tickOnce(); // queue drained → open held PR
+
+      const snapshot = yield* supervisor.getSnapshot();
+      const goal = snapshot.goals.find((g) => g.title === "Sliced");
+      assert.equal(bodies.length, 1);
+      assert.include(bodies[0] ?? "", `- Sliced (episode ${goal?.episodeId})`);
+    }).pipe(
+      Effect.provide(makeLayer(peerStatus, { onOpenHeldPr: (input) => bodies.push(input.body) })),
     );
   });
 

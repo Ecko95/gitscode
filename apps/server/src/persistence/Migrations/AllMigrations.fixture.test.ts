@@ -160,6 +160,13 @@ layer("AllMigrations.fixture", (it) => {
         "projection_thread_messages.provider_message_id missing",
       );
 
+      // automode_episodes: episode_id (added by 036)
+      const episodeCols = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(automode_episodes)`;
+      const episodeColNames = new Set(episodeCols.map((c) => c.name));
+      assert.ok(episodeColNames.has("episode_id"), "automode_episodes.episode_id missing");
+
       // projection_projects: default_model_selection_json (added by 016)
       const projCols = yield* sql<{
         readonly name: string;
