@@ -525,9 +525,16 @@ export const AutomodeSupervisorLive = Layer.effect(
           const nextState = yield* commitStateOrFail((state) =>
             Effect.gen(function* () {
               const nextPolicy = applyPolicyUpdate(state.policy, input, updatedAt);
-              if (nextPolicy.mode === "autonomous" && nextPolicy.maxBudgetUsd === null) {
+              // Codex peers produce no cost telemetry, so a dollar budget is unenforceable
+              // on an all-codex box; the runtime cap is the enforceable V1 envelope
+              // (docs/brainstorms/off-hours-autonomy.md, decision 11 + accepted gaps).
+              if (
+                nextPolicy.mode === "autonomous" &&
+                nextPolicy.maxBudgetUsd === null &&
+                !shouldScheduleRuntimeLimit(nextPolicy)
+              ) {
                 return yield* toAutomodeError(
-                  "Autonomous mode requires a max budget (maxBudgetUsd) — refusing to arm without a cost cap.",
+                  "Autonomous mode requires a resource cap — set a max budget (maxBudgetUsd) or a runtime cap (maxRuntimeMinutes).",
                 );
               }
               if (nextPolicy.mode === "autonomous" && nextPolicy.allowedRepos.length === 0) {

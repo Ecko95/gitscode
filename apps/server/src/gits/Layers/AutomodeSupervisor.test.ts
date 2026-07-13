@@ -681,7 +681,7 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
-  it.effect("rejects arming autonomous mode without a budget", () =>
+  it.effect("rejects arming autonomous mode without a budget or runtime cap", () =>
     Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       const error = yield* supervisor
@@ -689,14 +689,50 @@ describe("AutomodeSupervisorLive", () => {
           mode: "autonomous",
           killSwitchEnabled: false,
           allowedRepos: ["/tmp/source-repo"],
+          maxRuntimeMinutes: null,
         })
         .pipe(Effect.flip);
 
       assert.equal(error._tag, "AutomodeSupervisorError");
       assert.include(error.message, "max budget");
+      assert.include(error.message, "runtime cap");
 
       const snapshot = yield* supervisor.getSnapshot();
       assert.equal(snapshot.policy.mode, "manual");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("arms autonomous mode without a budget when a runtime cap is set", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const snapshot = yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: null,
+        maxRuntimeMinutes: 60,
+      });
+
+      assert.equal(snapshot.policy.mode, "autonomous");
+      assert.equal(snapshot.policy.maxBudgetUsd, null);
+      assert.equal(snapshot.policy.maxRuntimeMinutes, 60);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("rejects arming autonomous mode when the runtime cap is zero and budget is null", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const error = yield* supervisor
+        .updatePolicy({
+          mode: "autonomous",
+          killSwitchEnabled: false,
+          allowedRepos: ["/tmp/source-repo"],
+          maxRuntimeMinutes: 0,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "AutomodeSupervisorError");
+      assert.include(error.message, "runtime cap");
     }).pipe(Effect.provide(makeLayer())),
   );
 
