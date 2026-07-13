@@ -18,12 +18,12 @@ describe("automode landing commands", () => {
 
   it("fast-forwards the integration branch to the slice tip on origin", () => {
     const cmds = build_land_slice_commands({
-      sliceBranch: "auto/slice/goal-1",
+      sliceBranch: "codex-peer/peer-1",
       integrationBranch: "auto/gits-self",
     });
     expect(cmds.map((c) => c.args)).toEqual([
-      ["fetch", "origin", "auto/slice/goal-1"],
-      ["push", "origin", "refs/remotes/origin/auto/slice/goal-1:refs/heads/auto/gits-self"],
+      ["fetch", "origin", "codex-peer/peer-1"],
+      ["push", "origin", "refs/remotes/origin/codex-peer/peer-1:refs/heads/auto/gits-self"],
     ]);
   });
 });

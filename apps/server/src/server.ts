@@ -296,12 +296,13 @@ const AutomodeUsageMeterLayerLive = AutomodeUsageMeterLive.pipe(
   Layer.provide(OrchestrationLayerLive.pipe(Layer.provide(PersistenceLayerLive))),
 );
 
+const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(Layer.provide(GitVcsDriver.layer));
+
 const AutomodeSupervisorLayerLive = AutomodeSupervisorLive.pipe(
   Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(AutomodeLandingLayerLive),
   Layer.provide(AutomodeUsageMeterLayerLive),
 );
-
-const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(Layer.provide(GitVcsDriver.layer));
 
 const AutomodeHeldPrLayerLive = AutomodeHeldPrLive.pipe(Layer.provide(GitHubCli.layer));
 

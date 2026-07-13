@@ -75,6 +75,17 @@ if command -v node >/dev/null 2>&1; then
   NODE_ROOT="$(dirname "$NODE_BIN")"
   [ -d "$NODE_ROOT" ] && sys_args+=( --ro-bind "$NODE_ROOT" "$NODE_ROOT" )
 fi
+# Bun lives in $HOME too (~/.bun) — without a bind every `bun run …` verification
+# command dies with execvp ENOENT inside the jail. Bind ONLY ~/.bun/bin (bun + bunx):
+# the wider ~/.bun root would expose install/cache (private-registry tarballs), and
+# in-jail bun never reads the host cache anyway (BUN_INSTALL unset, HOME is tmpfs).
+# NOTE: the ignore-scripts env below is honored by npm/node only — bun does not read
+# npm_config_ignore_scripts, so bun repos rely on the OS jail, not script suppression.
+BUN_BIN=""
+if command -v bun >/dev/null 2>&1; then
+  BUN_BIN="$(dirname "$(readlink -f "$(command -v bun)")")"
+  [ -d "$BUN_BIN" ] && sys_args+=( --ro-bind "$BUN_BIN" "$BUN_BIN" )
+fi
 for p in "${EXTRA_RO[@]}"; do [ -n "$p" ] && [ -e "$p" ] && sys_args+=( --ro-bind "$p" "$p" ); done
 
 # Minimal credentials (peer profile): bind ONLY what was named, read-only. Everything else in
@@ -120,6 +131,7 @@ fi
 
 PATH_IN="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 [ -n "$NODE_BIN" ] && PATH_IN="${NODE_BIN}:${PATH_IN}"
+[ -n "$BUN_BIN" ] && PATH_IN="${BUN_BIN}:${PATH_IN}"
 
 # User-supplied env (e.g. CODEX_HOME for a confined codex peer). KEY=VAL form.
 user_env_args=()

@@ -10,7 +10,7 @@ import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeDriver, type AutomodeDriverShape } from "../Services/AutomodeDriver.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
-import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
+import { AUTOMODE_BASE_REF, AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { decide_automode_gate } from "./AutomodeReviewGate.ts";
@@ -84,6 +84,18 @@ export const AutomodeDriverLive = Layer.effect(
             });
             return;
           }
+          if (peer.integrationStatus === "skipped") {
+            // delamain skips the push when the peer branch has zero commits ahead of the
+            // sync base — nothing ever reaches origin, so landing would fail every tick.
+            yield* supervisor.failGoal({
+              goalId: running.id,
+              reason: `Peer ${peer.id} finished with no changes ahead of the integration branch (nothing pushed).`,
+            });
+            yield* supervisor.haltDriver({
+              reason: `Halted: ${running.title} produced no changes to land.`,
+            });
+            return;
+          }
           if (peer.status === "waiting") {
             yield* supervisor.haltDriver({
               reason: `Halted: peer ${peer.id} is waiting on input for ${running.title}.`,
@@ -147,7 +159,7 @@ export const AutomodeDriverLive = Layer.effect(
             const landResult = yield* landing.land_slice({
               repo: running.repo,
               integrationBranch: policy.integrationBranch,
-              baseRef: "gits",
+              baseRef: AUTOMODE_BASE_REF,
               sliceBranch: peer.branch,
             });
             if (landResult.status === "rejected") {
@@ -226,7 +238,7 @@ export const AutomodeDriverLive = Layer.effect(
             const result = yield* heldPr.open_held_pr({
               repo: landedRepo,
               integrationBranch: policy.integrationBranch,
-              baseBranch: "gits",
+              baseBranch: AUTOMODE_BASE_REF,
               title: `automode: held PR for ${policy.integrationBranch}`,
               body: `Autonomous run — landed slices (held for review, not auto-merged):\n\n${landedTitles}`,
             });
