@@ -182,6 +182,11 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         approveGoal: vi.fn(),
         rejectGoal: vi.fn(),
         dispatchGoal: vi.fn(),
+        schedulerSnapshot: vi.fn(),
+        schedulerSetConfig: vi.fn(),
+        schedulerArm: vi.fn(),
+        schedulerDisarm: vi.fn(),
+        resumeDriver: vi.fn(),
       },
       capacity: {
         getSnapshot: vi.fn(),

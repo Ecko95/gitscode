@@ -176,6 +176,13 @@ export interface WsRpcClient {
       readonly approveGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeApproveGoal>;
       readonly rejectGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeRejectGoal>;
       readonly dispatchGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeDispatchGoal>;
+      readonly schedulerSnapshot: RpcUnaryNoArgMethod<
+        typeof WS_METHODS.gitsAutomodeSchedulerSnapshot
+      >;
+      readonly schedulerSetConfig: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeSchedulerSetConfig>;
+      readonly schedulerArm: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsAutomodeSchedulerArm>;
+      readonly schedulerDisarm: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeSchedulerDisarm>;
+      readonly resumeDriver: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsAutomodeDriverResume>;
     };
     readonly capacity: {
       readonly getSnapshot: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsCapacityGetSnapshot>;
@@ -429,6 +436,16 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsAutomodeRejectGoal](input)),
         dispatchGoal: (input) =>
           transport.request((client) => client[WS_METHODS.gitsAutomodeDispatchGoal](input)),
+        schedulerSnapshot: () =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeSchedulerSnapshot]({})),
+        schedulerSetConfig: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeSchedulerSetConfig](input)),
+        schedulerArm: () =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeSchedulerArm]({})),
+        schedulerDisarm: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeSchedulerDisarm](input)),
+        resumeDriver: () =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeDriverResume]({})),
       },
       capacity: {
         getSnapshot: () =>

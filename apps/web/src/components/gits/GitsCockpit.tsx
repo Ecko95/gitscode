@@ -13,6 +13,7 @@ import type {
   GitsMcpInventorySnapshot,
   GitsMcpServerItem,
   GitsMcpServerProvider,
+  GitsSchedulerSnapshot,
   GitsSkillInventoryItem,
   GitsSkillInventorySnapshot,
   GitsSkillProvider,
@@ -237,6 +238,11 @@ function formatIsoDate(value: string | null | undefined): string {
 
 function formatPercent(value: number | null | undefined): string {
   return value === null || value === undefined ? "..." : `${value.toFixed(0)}%`;
+}
+
+function formatSlotRemaining(ms: number): string {
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
 }
 
 function tallyValues<T extends string>(values: ReadonlyArray<T>): Record<string, number> {
@@ -3910,6 +3916,7 @@ function automodeGoalTone(goal: AutomodeGoal): ReturnType<typeof statusTone> {
 
 function AutomodePanel({
   snapshot,
+  scheduler,
   loading,
   error,
   actionError,
@@ -3952,8 +3959,13 @@ function AutomodePanel({
   onApproveGoal,
   onRejectGoal,
   onDispatchGoal,
+  onSchedulerEnabledChange,
+  onSchedulerArm,
+  onSchedulerDisarm,
+  onResumeDriver,
 }: {
   snapshot: AutomodeSnapshot | undefined;
+  scheduler: GitsSchedulerSnapshot | undefined;
   loading: boolean;
   error: unknown;
   actionError: unknown;
@@ -3996,6 +4008,10 @@ function AutomodePanel({
   onApproveGoal: (goalId: string) => void;
   onRejectGoal: (goalId: string) => void;
   onDispatchGoal: (goalId: string) => void;
+  onSchedulerEnabledChange: (value: boolean) => void;
+  onSchedulerArm: () => void;
+  onSchedulerDisarm: () => void;
+  onResumeDriver: () => void;
 }) {
   const goals = snapshot?.goals ?? [];
   const budgetUsage = snapshot?.budgetUsage;
@@ -4066,9 +4082,94 @@ function AutomodePanel({
       {snapshot?.driverHalted ? (
         <div
           aria-live="polite"
-          className="border-b border-border/60 bg-destructive/5 px-4 py-2 text-xs text-destructive sm:px-5"
+          className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-destructive/5 px-4 py-2 text-xs text-destructive sm:px-5"
         >
-          Driver halted{snapshot.driverHaltedReason ? `: ${snapshot.driverHaltedReason}` : "."}
+          <span className="min-w-0">
+            Driver halted{snapshot.driverHaltedReason ? `: ${snapshot.driverHaltedReason}` : "."}
+          </span>
+          <Button size="sm" variant="outline" onClick={onResumeDriver} disabled={actionPending}>
+            <PlayIcon className="size-3.5" />
+            Resume driver
+          </Button>
+        </div>
+      ) : null}
+      {scheduler ? (
+        <div className="grid gap-2 border-b border-border/60 px-4 py-3 text-xs sm:px-5">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="font-medium">Night scheduler</span>
+            <StatusPill
+              label={scheduler.config.enabled ? "enabled" : "disabled"}
+              tone={scheduler.config.enabled ? "success" : "default"}
+            />
+            <StatusPill
+              label={
+                scheduler.arming.status === "armed"
+                  ? `armed${scheduler.arming.nightKey ? ` ${scheduler.arming.nightKey}` : ""}`
+                  : "disarmed"
+              }
+              tone={scheduler.arming.status === "armed" ? "success" : "warning"}
+            />
+            <span className="text-muted-foreground">
+              {scheduler.currentSlot
+                ? `slot ${scheduler.currentSlot.start}–${scheduler.currentSlot.end}${
+                    scheduler.slotRemainingMs !== null
+                      ? ` (${formatSlotRemaining(scheduler.slotRemainingMs)} left)`
+                      : ""
+                  }`
+                : "no active slot"}{" "}
+              | {formatCount(scheduler.goalsStartedTonight)} /{" "}
+              {formatCount(scheduler.config.maxGoalsPerNight)} goals tonight
+            </span>
+          </div>
+          {scheduler.lastGateDecision ? (
+            <div className="text-muted-foreground">
+              Last gate: {scheduler.lastGateDecision.allowed ? "allowed" : "denied"}
+              {scheduler.lastGateDecision.reason
+                ? ` — ${scheduler.lastGateDecision.reason}`
+                : ""} (
+              {formatIsoDate(scheduler.lastGateDecision.at)})
+            </div>
+          ) : null}
+          {scheduler.arming.status === "disarmed" && scheduler.arming.disarmedReason ? (
+            <div className="text-destructive">{scheduler.arming.disarmedReason}</div>
+          ) : null}
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <label className="flex items-center gap-2 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={scheduler.config.enabled}
+                onChange={(event) => onSchedulerEnabledChange(event.currentTarget.checked)}
+                disabled={actionPending}
+              />
+              Scheduler enabled
+            </label>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onSchedulerArm}
+                disabled={
+                  actionPending || !scheduler.config.enabled || scheduler.arming.status === "armed"
+                }
+              >
+                Arm tonight
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive-outline"
+                onClick={onSchedulerDisarm}
+                disabled={actionPending || scheduler.arming.status !== "armed"}
+              >
+                Disarm
+              </Button>
+            </div>
+          </div>
+          {scheduler.config.enabled ? (
+            <p className="text-muted-foreground">
+              Scheduler gates autonomous starts — disable for supervised daytime runs, or dispatch
+              manually.
+            </p>
+          ) : null}
         </div>
       ) : null}
       {snapshot && (snapshot.heldPrUrl !== null || snapshot.runMerged) ? (
@@ -4536,6 +4637,18 @@ export function GitsCockpit() {
     queryFn: async () => readGitsClient().automode.getSnapshot(),
     refetchInterval: 5_000,
   });
+  const schedulerQuery = useQuery({
+    queryKey: [
+      "gits",
+      "automode",
+      "scheduler",
+      targetEnvironmentId,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
+    queryFn: async () => readGitsClient().automode.schedulerSnapshot(),
+    refetchInterval: 10_000,
+  });
   const capacityQuery = useQuery({
     queryKey: [
       "gits",
@@ -4979,6 +5092,32 @@ export function GitsCockpit() {
       await Promise.all([automodeQuery.refetch(), delamainQuery.refetch()]);
     },
   });
+  const schedulerSetConfigMutation = useMutation({
+    mutationFn: async (input: { enabled: boolean }) =>
+      readGitsClient().automode.schedulerSetConfig(input),
+    onSuccess: async () => {
+      await schedulerQuery.refetch();
+    },
+  });
+  const schedulerArmMutation = useMutation({
+    mutationFn: async () => readGitsClient().automode.schedulerArm(),
+    onSuccess: async () => {
+      await schedulerQuery.refetch();
+    },
+  });
+  const schedulerDisarmMutation = useMutation({
+    mutationFn: async () =>
+      readGitsClient().automode.schedulerDisarm({ reason: "Disarmed in cockpit." }),
+    onSuccess: async () => {
+      await schedulerQuery.refetch();
+    },
+  });
+  const driverResumeMutation = useMutation({
+    mutationFn: async () => readGitsClient().automode.resumeDriver(),
+    onSuccess: async () => {
+      await automodeQuery.refetch();
+    },
+  });
   const handleDevStart = async (command: GitsDevCommand) => {
     if (!targetEnvironmentId) {
       setDevActionError("No target environment is available.");
@@ -5159,14 +5298,22 @@ export function GitsCockpit() {
     automodeEnqueueMutation.error ??
     automodeApproveMutation.error ??
     automodeRejectMutation.error ??
-    automodeDispatchMutation.error;
+    automodeDispatchMutation.error ??
+    schedulerSetConfigMutation.error ??
+    schedulerArmMutation.error ??
+    schedulerDisarmMutation.error ??
+    driverResumeMutation.error;
   const automodeActionPending =
     automodePolicyMutation.isPending ||
     automodeKillSwitchMutation.isPending ||
     automodeEnqueueMutation.isPending ||
     automodeApproveMutation.isPending ||
     automodeRejectMutation.isPending ||
-    automodeDispatchMutation.isPending;
+    automodeDispatchMutation.isPending ||
+    schedulerSetConfigMutation.isPending ||
+    schedulerArmMutation.isPending ||
+    schedulerDisarmMutation.isPending ||
+    driverResumeMutation.isPending;
   const setAutomodePolicyField =
     <T,>(setter: (value: T) => void) =>
     (value: T) => {
@@ -5428,6 +5575,7 @@ export function GitsCockpit() {
               {activeTab === "automode" ? (
                 <AutomodePanel
                   snapshot={automodeQuery.data}
+                  scheduler={schedulerQuery.data}
                   loading={automodeQuery.isPending || automodeQuery.isFetching}
                   error={automodeQuery.error}
                   actionError={automodeActionError}
@@ -5482,6 +5630,12 @@ export function GitsCockpit() {
                     }
                   }}
                   onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
+                  onSchedulerEnabledChange={(enabled) =>
+                    void schedulerSetConfigMutation.mutate({ enabled })
+                  }
+                  onSchedulerArm={() => void schedulerArmMutation.mutate()}
+                  onSchedulerDisarm={() => void schedulerDisarmMutation.mutate()}
+                  onResumeDriver={() => void driverResumeMutation.mutate()}
                 />
               ) : null}
               {activeTab === "usage" ? (
