@@ -6,6 +6,17 @@
 
 Current status: documentation is ready for VPS provisioning and Notion Markdown import.
 
+## Session log — 2026-07-13 (Motoko chat + proposals rework, PR #159)
+
+- [x] Key Motoko chat transcripts by repo route (one repo, one chat; replies follow their origin route)
+- [x] Add Clear and New chat buttons to the conversation header
+- [x] Render proposal cards with defer/reject/approve/draft inline in the chat (live status)
+- [x] Redesign the proposal card and move the list into a header-triggered Proposals sheet
+- [x] Approve now dispatches: decide → draft → delamain.spawnPeer for delamain-peer drafts, outcome posted to chat
+- [x] Persist per-repo transcripts across reloads (localStorage, capped at 200 entries per route)
+
+Verified: tsgo/oxlint clean, apps/web vitest 1048/1048, headless Playwright run over the isolated harness (empty `GITS_HERMES_HOME` keeps hermes calls zero-cost; proposals seeded via `gits-proposals.json`).
+
 ## Live browser supervision — 2026-07-12
 
 - [x] Add thread-isolated `gsd-browser` MCP sessions for Codex, Claude, and Cursor.
