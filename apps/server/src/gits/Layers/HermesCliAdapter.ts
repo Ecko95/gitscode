@@ -392,6 +392,60 @@ export function hermesModelCommand(hermesHome: string): string {
   return `HERMES_HOME=${hermesHome} hermes model`;
 }
 
+function hasNonEmptyToken(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+// usable: at least one live pool entry. reason: non-secret explanation when entries exist
+// but none are usable (null when the pool is absent/empty, so providers-level reasons apply).
+function codexPoolStatus(parsed: unknown): {
+  readonly usable: boolean;
+  readonly reason: string | null;
+} {
+  const pool =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as { readonly credential_pool?: unknown }).credential_pool
+      : undefined;
+  const entries =
+    typeof pool === "object" && pool !== null
+      ? (pool as Record<string, unknown>)["openai-codex"]
+      : undefined;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { usable: false, reason: null };
+  }
+  const issues: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) {
+      issues.push("pool entry malformed");
+      continue;
+    }
+    const record = entry as {
+      readonly access_token?: unknown;
+      readonly refresh_token?: unknown;
+      readonly last_status?: unknown;
+      readonly last_error_reason?: unknown;
+    };
+    // hermes agent/credential_pool.py: last_status "dead" is terminal and excluded from
+    // rotation unconditionally; "exhausted" is a temporary quota state a re-auth cannot fix,
+    // so it does not mark the entry unusable here. last_error_reason is a reason slug
+    // (never token material), safe to surface.
+    if (record.last_status === "dead") {
+      const why =
+        typeof record.last_error_reason === "string" && record.last_error_reason.trim().length > 0
+          ? ` (${record.last_error_reason.trim()})`
+          : "";
+      issues.push(`pool entry dead${why}`);
+      continue;
+    }
+    if (!hasNonEmptyToken(record.access_token) || !hasNonEmptyToken(record.refresh_token)) {
+      issues.push("pool entry missing access_token/refresh_token");
+      continue;
+    }
+    return { usable: true, reason: null };
+  }
+  return { usable: false, reason: `no usable credential_pool entry: ${issues.join("; ")}` };
+}
+
 export function parseCodexChainHealth(authJsonText: string | null): HermesCodexChainHealth {
   if (authJsonText === null) {
     return { kind: "missing" };
@@ -402,6 +456,15 @@ export function parseCodexChainHealth(authJsonText: string | null): HermesCodexC
   } catch {
     return { kind: "needs-reauth", reason: "auth.json could not be parsed" };
   }
+  // The hermes runtime selects credentials from credential_pool["openai-codex"], not from
+  // providers.tokens (hermes_cli/auth.py _sync_codex_pool_entries). `hermes auth add` writes
+  // only the pool and does not clear a stale providers.last_auth_error, so a usable pool
+  // entry means the chain is live regardless of the providers record — and when pool entries
+  // exist but are all unusable, the pool reason is the true cause, not the providers record.
+  const poolStatus = codexPoolStatus(parsed);
+  if (poolStatus.usable) {
+    return { kind: "healthy" };
+  }
   const providers =
     typeof parsed === "object" && parsed !== null
       ? (parsed as { readonly providers?: unknown }).providers
@@ -411,7 +474,10 @@ export function parseCodexChainHealth(authJsonText: string | null): HermesCodexC
       ? (providers as Record<string, unknown>)["openai-codex"]
       : undefined;
   if (typeof entry !== "object" || entry === null) {
-    return { kind: "needs-reauth", reason: "no openai-codex provider entry in auth.json" };
+    return {
+      kind: "needs-reauth",
+      reason: poolStatus.reason ?? "no openai-codex provider entry in auth.json",
+    };
   }
   const record = entry as {
     readonly tokens?: unknown;
@@ -428,18 +494,16 @@ export function parseCodexChainHealth(authJsonText: string | null): HermesCodexC
   if (lastAuthError?.relogin_required === true) {
     const code = typeof lastAuthError.code === "string" ? lastAuthError.code : "unknown";
     const at = typeof lastAuthError.at === "string" ? ` at ${lastAuthError.at}` : "";
-    return { kind: "needs-reauth", reason: `relogin required (${code}${at})` };
+    return { kind: "needs-reauth", reason: poolStatus.reason ?? `relogin required (${code}${at})` };
   }
   const tokens =
     typeof record.tokens === "object" && record.tokens !== null
       ? (record.tokens as { readonly access_token?: unknown; readonly refresh_token?: unknown })
       : null;
-  const hasToken = (value: unknown): boolean =>
-    typeof value === "string" && value.trim().length > 0;
-  if (!hasToken(tokens?.access_token) || !hasToken(tokens?.refresh_token)) {
+  if (!hasNonEmptyToken(tokens?.access_token) || !hasNonEmptyToken(tokens?.refresh_token)) {
     return {
       kind: "needs-reauth",
-      reason: "access_token/refresh_token missing from openai-codex tokens",
+      reason: poolStatus.reason ?? "access_token/refresh_token missing from openai-codex tokens",
     };
   }
   return { kind: "healthy" };

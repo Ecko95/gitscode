@@ -289,6 +289,45 @@ const DEAD_AUTH = JSON.stringify({
   updated_at: "2026-06-20T18:12:04+00:00",
   active_provider: "openai-codex",
 });
+// Mirrors the real post-`hermes auth add` auth.json: providers entry keeps only
+// id_token/account_id plus a STALE relogin_required error, while the live OAuth pair
+// lives in credential_pool["openai-codex"].
+function poolAuthFixture(entry: Record<string, unknown>): string {
+  return JSON.stringify({
+    version: 1,
+    providers: {
+      "openai-codex": {
+        tokens: { id_token: "SECRET-ID", account_id: "acct-1" },
+        last_refresh: "2026-06-03T00:00:00Z",
+        auth_mode: "chatgpt",
+        last_auth_error: {
+          provider: "openai-codex",
+          code: "refresh_token_reused",
+          message: "Codex refresh token was already consumed by another client",
+          reason: "credential_pool_refresh_failure",
+          relogin_required: true,
+          at: "2026-06-20T18:12:04+00:00",
+        },
+      },
+    },
+    credential_pool: { "openai-codex": [entry] },
+    updated_at: "2026-07-13T00:00:00Z",
+    active_provider: "openai-codex",
+  });
+}
+const POOL_ENTRY = {
+  id: "cred-1",
+  label: "openai-codex-oauth-1",
+  auth_type: "oauth",
+  priority: 0,
+  source: "manual:device_code",
+  access_token: "SECRET-POOL-ACCESS",
+  refresh_token: "SECRET-POOL-REFRESH",
+  base_url: "https://chatgpt.com/backend-api/codex",
+  last_refresh: "2026-07-13T00:00:00Z",
+  request_count: 3,
+};
+const POOL_ONLY_AUTH = poolAuthFixture(POOL_ENTRY);
 const CODEX_PROVIDER_CONFIG = "model:\n  provider: openai-codex\n  default: gpt-5.4\n";
 
 describe("HermesCliAdapter codex chain health", () => {
@@ -349,6 +388,25 @@ describe("HermesCliAdapter codex chain health", () => {
     expect(parseCodexChainHealth(midRotation)).toEqual({ kind: "healthy" });
   });
 
+  it("reports a pool-only chain (hermes auth add) as healthy despite a stale providers relogin error", () => {
+    expect(parseCodexChainHealth(POOL_ONLY_AUTH)).toEqual({ kind: "healthy" });
+  });
+
+  it("reports a pool entry without tokens as needs-reauth", () => {
+    const { access_token: _access, refresh_token: _refresh, ...tokenless } = POOL_ENTRY;
+    const result = parseCodexChainHealth(poolAuthFixture(tokenless));
+    expect(result.kind).toBe("needs-reauth");
+  });
+
+  it("reports a dead pool entry as needs-reauth with the pool entry's own error reason", () => {
+    const result = parseCodexChainHealth(
+      poolAuthFixture({ ...POOL_ENTRY, last_status: "dead", last_error_reason: "token_revoked" }),
+    );
+    expect(result.kind).toBe("needs-reauth");
+    expect(result.kind === "needs-reauth" && result.reason).toContain("pool entry dead");
+    expect(result.kind === "needs-reauth" && result.reason).toContain("token_revoked");
+  });
+
   it("reports malformed JSON as needs-reauth", () => {
     expect(parseCodexChainHealth("{not json").kind).toBe("needs-reauth");
   });
@@ -366,7 +424,12 @@ describe("HermesCliAdapter codex chain health", () => {
         },
       },
     });
-    for (const authText of [HEALTHY_AUTH, DEAD_AUTH, missingTokens]) {
+    const deadPool = poolAuthFixture({
+      ...POOL_ENTRY,
+      last_status: "dead",
+      last_error_reason: "token_revoked",
+    });
+    for (const authText of [HEALTHY_AUTH, DEAD_AUTH, POOL_ONLY_AUTH, missingTokens, deadPool]) {
       expect(JSON.stringify(parseCodexChainHealth(authText))).not.toContain("SECRET");
     }
   });
