@@ -5,7 +5,7 @@
 
 ## Decision summary
 
-**Primary pick: Hetzner Cloud CX43** — 8 shared Intel x86 vCPU / 16 GB RAM / 160 GB NVMe / 20 TB traffic, Nuremberg or Falkenstein, **€15.99/mo + €0.50 IPv4** (+20% ≈ €3.20/mo for automated backups → ~€19.7/mo all-in).
+**Ordered 2026-07-13: netcup RS 4000 G12** — 12 **dedicated** AMD EPYC 9645 cores / 32 GB DDR5 **ECC** / 1 TB NVMe, Nuremberg, **€33.55/mo net (≈€40.59 incl. 21% ES VAT)**, monthly term, IPv4 included. The research pick was Hetzner CX43/CX53, but the CX (cost-optimized) line was sold out in every location and the post-hike CPX/CCX lines cost 4–5× — so the operator took the researchers' netcup Root Server line at the 32 GB tier (daytime interactive headroom on top of the autonomy stack). Knock-ons: dedicated cores retire the CPU-steal caveat entirely; peer `MemoryMax` may rise to 6G for the heaviest Playwright shards; 1 TB makes disk gardening moot; **no elastic resize** — growing means a tier migration, which 12 cores / 32 GB should never need before the 3700X repurpose.
 
 | Rank | Option                      | Spec                                    | €/mo          | Why / why not                                                                                                                                                                                                              |
 | ---- | --------------------------- | --------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -15,7 +15,7 @@
 | —    | Contabo VPS 30              | 8 vCPU, 24 GB, 200 GB                   | 14.00         | Rejected: oversubscription = CPU steal exactly during the nightly CI window                                                                                                                                                |
 | —    | Hetzner CCX23 / CAX31 (ARM) | dedicated / ARM                         | 85.99 / 20.99 | CCX tripled in the June-2026 price shock; ARM now costs _more_ than x86 and adds two real landmines (Playwright `channel:'chrome'` has no ARM Linux build; electron-builder packaging needs x86 FPM). **x86, unambiguous** |
 
-Reconciliation with the standing EX44-1-LTD decision (dedicated, 64 GB, €57.30): that was sized before the off-hours design ratified sequential execution (≤1 peer, ≤3 goals/night, 90 min caps). Peak concurrent working set measures ~7 GB — 16 GB is correct, 64 GB is 4× over-provisioned. Start on CX43; if episode-ledger runtimes ever show CPU steal, resize to CCX23 or move to netcup with the same runbook.
+Reconciliation with the standing EX44-1-LTD decision (dedicated, 64 GB, €57.30): that was sized before the off-hours design ratified sequential execution (≤1 peer, ≤3 goals/night, 90 min caps). Peak concurrent working set for the autonomy stack measures ~7 GB — 16 GB suffices for it alone; the RS 4000's 32 GB carries additional daytime interactive load, and its dedicated cores make the CPU-steal contingency moot.
 
 RAM/disk rationale (from the sizing pass): peak ≈ 7 GB (GITS + MCP children ~1.5, delamain 0.3, peer scope capped 4.0, Hermes 0.5, herdr/OS 0.9) → 16 GB leaves ~9 GB page cache; steady-state disk ≈ 38–50 GB (3 clones, worktrees, node_modules, Playwright + build caches, rollouts) → 160 GB absorbs sprawl; grow later with a Block Volume (€0.057/GB/mo), not a plan bump.
 
@@ -25,15 +25,15 @@ RAM/disk rationale (from the sizing pass): peak ≈ 7 GB (GITS + MCP children ~1
 2. **OpenSSH over the tailnet** — independent fallback, key-only, never public. Two decoupled paths: a bad ACL edit or a broken sshd_config is an inconvenience, not a lockout.
 3. **herdr** — rides SSH; it has **no web UI and no TCP port** (control plane is a Unix socket). `herdr --remote ssh://ops@vps-eu` from the laptop attaches over the tailnet with zero extra exposure. Do not reverse-proxy or `tailscale serve` it.
 4. **GITS cockpit** — `tailscale serve` (tailnet-only HTTPS; never `funnel`) via `scripts/gits-hosting/deploy-gits-tailnet-hosted.sh` — the native-Linux path, no Windows portproxy.
-5. **Break-glass** — Hetzner VNC web console (hypervisor-level, works with all firewalls down). Console password lives in the password manager.
+5. **Break-glass** — netcup SCP remote console (hypervisor-level, works with all firewalls down). SCP + root passwords live in the password manager.
 
 Nothing else. No public ports, no RDP/VNC service, no mosh, no code-server. Telegram (long-polling) and GitHub are pure-outbound.
 
 ## 1. Create the server
 
-- Hetzner Cloud → CX43, Ubuntu 24.04 LTS, Nuremberg/Falkenstein, your SSH key.
-- **Before or immediately after first boot**: attach a Cloud Firewall with an **empty inbound ruleset** (deny-all) and default outbound (allow-all). Optional later: inbound `UDP 41641` if DERP-relay latency ever bites; interactive SSH/TUI is fine on DERP.
-- Enable automated backups (+20%). Set/vault the console (root) password for break-glass.
+- netcup → Root Server **RS 4000 G12** (ordered 2026-07-13), Ubuntu 24.04 LTS image, Nuremberg, **IPv4 included** (it is "optionally included" — must be selected), monthly term. Provisioning is not instant: account verification (mediaFinanz credit check) + setup can take minutes to hours.
+- **On handover, in the SCP panel first**: enable the netcup firewall with an **empty inbound ruleset** (deny-all; stateful, default outbound allow). Optional later: inbound `UDP 41641` if DERP-relay latency ever bites; interactive SSH/TUI is fine on DERP.
+- Locate the **remote console** and **rescue system** in the SCP panel; set and vault the SCP + root passwords for break-glass. Take a first snapshot once the base install is clean.
 
 ## 2. Base system
 
@@ -98,7 +98,7 @@ ufw allow in on tailscale0
 ufw enable
 ```
 
-**Validation order (anti-lockout):** keep the VNC console tab open → provider deny-all → `tailscale up --ssh` → verify Tailscale SSH in a fresh session → apply sshd + ufw → verify **both** paths again → only then close the console.
+**Validation order (anti-lockout):** keep the SCP remote-console tab open → provider deny-all → `tailscale up --ssh` → verify Tailscale SSH in a fresh session → apply sshd + ufw → verify **both** paths again → only then close the console.
 
 Do **not** install fail2ban (no public attack surface; only self-lockout risk) and do **not** install Docker (peers run tests on the host; Docker's iptables rules bypass ufw — if it ever lands, publish ports as `127.0.0.1:` only).
 
@@ -143,14 +143,17 @@ Deploy GITS with the existing native-Linux script (installs the systemd user ser
 /srv/gits/repos/gitscode/scripts/gits-hosting/deploy-gits-tailnet-hosted.sh
 ```
 
-## 8. Backups
+## 8. Backups (3-2-1 — netcup does none contractually and disclaims data-loss liability)
 
-- Hetzner automated backups on (daily, 7 slots) — covers bare-metal restore.
-- Nightly restic (or equivalent) of `~/.gits`, `~/.delamain` (state + archive, not worktrees), repo-local `.planning/`, crontab, and this box's configs → off-box target (Hetzner Storage Box / B2). The server is never the only copy.
+- **netcup snapshots** (included, copy-on-write): take one before any risky change. Rollback layer only — they live on netcup infrastructure and are not a backup.
+- **Primary: server → Backblaze B2 nightly** via restic (systemd timer; client-side encrypted). Include: `~/.gits`, `~/.delamain` (state + archive, **not** worktrees), repo-local `.planning/`, crontab, `/etc` configs. **Exclude codex `auth.json` chains** — restoring an old refresh token collides with the live chain (`refresh_token_reused`); the restore procedure is re-login per home via the console. Data volume is a few GB → pennies/month.
+- **Offline mirror: local machine ← B2** whenever it is on (`rclone sync` of the encrypted repo, scheduled). The laptop _pulls_, so its downtime never gaps the primary, and a compromised server cannot reach this copy.
+- **Golden image**: after phase 0 completes, one manual snapshot-export (qcow2) downloaded locally — a restore-whole-configured-server artifact, refreshed only at milestones.
+- **Restore test once** after setup: restore to a temp dir and open the state files. Untested backups do not count. The server is never the only copy.
 
 ## 9. Break-glass runbook
 
 1. Tailscale SSH fails → try plain `ssh ops@100.x.y.z` (OpenSSH over tailnet).
-2. Both fail → Hetzner VNC web console (password from vault); fix tailscaled/sshd.
-3. Boot-level damage → Hetzner Rescue mode, mount + chroot.
+2. Both fail → netcup SCP remote console (passwords from vault); fix tailscaled/sshd.
+3. Boot-level damage → netcup rescue system, mount + chroot.
 4. Last resort only: temporary provider-firewall rule `TCP 22 from <your-current-ip>/32` — delete it the moment you're back in. Never `0.0.0.0/0`, never standing.
