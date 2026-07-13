@@ -97,13 +97,13 @@ claude plugin install supabase@claude-plugins-official
 
 Install only services that have a real VPS use case.
 
-| Service | Use it when | Notes |
-| --- | --- | --- |
-| Context7 | Up-to-date package/framework docs are valuable | Recommended |
-| Figma MCP | The VPS does Figma design or design-to-code work | Requires Figma authentication |
-| Notion MCP | Agents must read/write workspace docs | Requires OAuth; keep it user-scoped |
-| gsd-browser | Browser automation, UI verification, screenshots | Requires Chrome/Chromium; use headless on a VPS |
-| Delamain | You deploy its custom local server and peer orchestration | Not a generic install |
+| Service     | Use it when                                               | Notes                                           |
+| ----------- | --------------------------------------------------------- | ----------------------------------------------- |
+| Context7    | Up-to-date package/framework docs are valuable            | Recommended                                     |
+| Figma MCP   | The VPS does Figma design or design-to-code work          | Requires Figma authentication                   |
+| Notion MCP  | Agents must read/write workspace docs                     | Requires OAuth; keep it user-scoped             |
+| gsd-browser | Browser automation, UI verification, screenshots          | Requires Chrome/Chromium; use headless on a VPS |
+| Delamain    | You deploy its custom local server and peer orchestration | Not a generic install                           |
 
 Example hosted MCP connections for Codex:
 
@@ -117,15 +117,15 @@ codex mcp login figma
 
 ## What each core plugin is for
 
-| Plugin | Keep it for |
-| --- | --- |
-| Ponytail | Minimum viable diffs, reuse-first engineering, avoiding unnecessary dependencies |
-| Superpowers | Structured planning, debugging, TDD, verification, worktree workflows |
-| Context7 | Current official library/API documentation |
-| Frontend Design | Product-quality UI implementation guidance |
-| Skill Creator | Writing and maintaining custom reusable skills |
-| Figma | Figma context, variables, diagrams, design-to-code workflows |
-| Open GSD Core | Durable project plans/state and discuss -> plan -> execute -> verify -> ship workflow |
+| Plugin          | Keep it for                                                                           |
+| --------------- | ------------------------------------------------------------------------------------- |
+| Ponytail        | Minimum viable diffs, reuse-first engineering, avoiding unnecessary dependencies      |
+| Superpowers     | Structured planning, debugging, TDD, verification, worktree workflows                 |
+| Context7        | Current official library/API documentation                                            |
+| Frontend Design | Product-quality UI implementation guidance                                            |
+| Skill Creator   | Writing and maintaining custom reusable skills                                        |
+| Figma           | Figma context, variables, diagrams, design-to-code workflows                          |
+| Open GSD Core   | Durable project plans/state and discuss -> plan -> execute -> verify -> ship workflow |
 
 ## Open GSD Pi: optional, not the default
 
