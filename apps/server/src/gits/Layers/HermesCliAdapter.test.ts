@@ -21,6 +21,7 @@ import {
   codexChainPreflight,
   codexReauthCommand,
   hermesDirectExecutionBlocked,
+  hermesModelCommand,
   hermesProposalRequiresApproval,
   isLegacyProviderSetupProposalArtifact,
   makeChat,
@@ -81,6 +82,24 @@ describe("HermesCliAdapter command construction", () => {
 
     expect(env.HERMES_HOME).toBe("/tmp/gits-hermes");
     expect(env.HERMES_YOLO_MODE).toBeUndefined();
+  });
+
+  it("strips every ANTHROPIC_*/CLAUDE_* var from child process env (decision 19)", () => {
+    vi.stubEnv("HERMES_YOLO_MODE", "1");
+    vi.stubEnv("ANTHROPIC_API_KEY", "SECRET-API-KEY");
+    vi.stubEnv("ANTHROPIC_TOKEN", "SECRET-OAUTH-TOKEN");
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "SECRET-CC-TOKEN");
+    vi.stubEnv("ANTHROPIC_BASE_URL", "https://api.anthropic.example");
+    vi.stubEnv("HERMES_INFERENCE_PROVIDER", "anthropic");
+    vi.stubEnv("GITS_KEEP_ME", "kept");
+
+    const env = makeHermesEnv("/tmp/gits-hermes");
+
+    expect(Object.keys(env).filter((key) => /^(ANTHROPIC_|CLAUDE_)/.test(key))).toEqual([]);
+    expect(env.HERMES_YOLO_MODE).toBeUndefined();
+    expect(env.HERMES_INFERENCE_PROVIDER).toBeUndefined();
+    expect(env.HERMES_HOME).toBe("/tmp/gits-hermes");
+    expect(env.GITS_KEEP_ME).toBe("kept");
   });
 
   it("reads non-secret model metadata from Hermes config and cache", () => {
@@ -385,13 +404,17 @@ describe("HermesCliAdapter codex auth status", () => {
 });
 
 describe("HermesCliAdapter codex chain preflight", () => {
-  it("never blocks a non-codex provider even with a dead chain", async () => {
+  it("blocks a configured non-codex provider with the reconfigure command (decision 19)", async () => {
     const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-preflight-"));
     const configPath = Path.join(tmp, "config.yaml");
     await Fs.writeFile(configPath, "model:\n  provider: openrouter\n  default: gpt-5.4\n", "utf8");
-    await Fs.writeFile(Path.join(tmp, "auth.json"), DEAD_AUTH, "utf8");
+    await Fs.writeFile(Path.join(tmp, "auth.json"), HEALTHY_AUTH, "utf8");
 
-    expect(await codexChainPreflight({ hermesHome: tmp, configPath })).toBeNull();
+    const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
+
+    expect(preflight?.kind).toBe("wrong-provider");
+    expect(preflight?.reason).toContain("openrouter");
+    expect(preflight?.command).toBe(hermesModelCommand(tmp));
   });
 
   it("never blocks when no provider is configured", async () => {
@@ -421,7 +444,7 @@ describe("HermesCliAdapter codex chain preflight", () => {
 
     const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
 
-    expect(preflight).not.toBeNull();
+    expect(preflight?.kind).toBe("needs-reauth");
     expect(preflight?.command).toBe(codexReauthCommand(tmp));
   });
 
@@ -472,6 +495,31 @@ describe("HermesCliAdapter chat preflight", () => {
       () => false,
     );
     expect(spawned).toBe(false);
+  });
+
+  it("short-circuits chat with the reconfigure command on a non-codex provider (decision 19)", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-chat-"));
+    await Fs.writeFile(
+      Path.join(tmp, "config.yaml"),
+      "model:\n  provider: openrouter\n  default: gpt-5.4\n",
+      "utf8",
+    );
+    await Fs.writeFile(Path.join(tmp, "auth.json"), HEALTHY_AUTH, "utf8");
+    // spawn prevention is proven by the dead-chain test above (same early return); this test
+    // only asserts the decision-19 messaging, so the binary path never needs to exist.
+    vi.stubEnv("GITS_HERMES_HOME", tmp);
+    vi.stubEnv("GITS_HERMES_BIN", Path.join(tmp, "fake-hermes"));
+
+    const result = await Effect.runPromise(
+      makeChat({
+        getSnapshot: () => Effect.die(new Error("capacity must not be consulted before preflight")),
+      })({ message: "inspect the project status" }),
+    );
+
+    expect(result.status).toBe("setup-required");
+    expect(result.setupCommand).toBe(hermesModelCommand(tmp));
+    expect(result.blockedReason).toContain("openai-codex");
+    expect(result.blockedReason).not.toContain("re-login");
   });
 });
 

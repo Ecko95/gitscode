@@ -153,6 +153,17 @@ export function makeHermesEnv(hermesHome: string): NodeJS.ProcessEnv {
     HERMES_HOME: hermesHome,
   };
   delete env.HERMES_YOLO_MODE;
+  // decision 19: autonomy is all-codex. hermes auto-authenticates an anthropic provider from
+  // ANTHROPIC_API_KEY/ANTHROPIC_TOKEN/CLAUDE_CODE_OAUTH_TOKEN, and its provider:auto resolution
+  // picks it up; hermes reads no ANTHROPIC_*/CLAUDE_* var for any non-Anthropic feature.
+  // HERMES_INFERENCE_PROVIDER overrides provider resolution below config.yaml, which would
+  // sidestep the codexChainPreflight pin — config.yaml is the only sanctioned provider surface.
+  delete env.HERMES_INFERENCE_PROVIDER;
+  for (const key of Object.keys(env)) {
+    if (/^(ANTHROPIC_|CLAUDE_)/.test(key)) {
+      delete env[key];
+    }
+  }
   return env;
 }
 
@@ -375,6 +386,10 @@ export type HermesCodexChainHealth =
 
 export function codexReauthCommand(hermesHome: string): string {
   return `HERMES_HOME=${hermesHome} hermes auth add openai-codex --type oauth`;
+}
+
+export function hermesModelCommand(hermesHome: string): string {
+  return `HERMES_HOME=${hermesHome} hermes model`;
 }
 
 export function parseCodexChainHealth(authJsonText: string | null): HermesCodexChainHealth {
@@ -610,13 +625,25 @@ export async function readCodexAuthStatus(
 
 export async function codexChainPreflight(
   config: Pick<HermesSafeConfig, "hermesHome" | "configPath">,
-): Promise<{ readonly reason: string; readonly command: string } | null> {
+): Promise<{
+  readonly kind: "needs-reauth" | "wrong-provider";
+  readonly reason: string;
+  readonly command: string;
+} | null> {
   const configText = await readFileIfExists(config.configPath);
   const provider = readYamlSectionScalar(configText, "model", "provider");
-  if (provider !== "openai-codex") {
-    // ponytail: only the codex chain gets a preflight; a null/other provider falls through to
-    // hermes' own errors (the existing isProviderConfigurationError path handles unconfigured).
+  if (provider === null) {
+    // ponytail: an unconfigured provider falls through to hermes' own errors (the existing
+    // isProviderConfigurationError path yields setup-required with the right guidance).
     return null;
+  }
+  if (provider !== "openai-codex") {
+    // decision 19: hermes spawned by GITS is the autonomy brain and runs exclusively on codex.
+    return {
+      kind: "wrong-provider",
+      reason: `Hermes model.provider is "${provider}" but GITS autonomy is pinned to openai-codex (decision 19)`,
+      command: hermesModelCommand(config.hermesHome),
+    };
   }
   const health = parseCodexChainHealth(
     await readFileIfExists(Path.join(config.hermesHome, "auth.json")),
@@ -625,7 +652,7 @@ export async function codexChainPreflight(
     return null;
   }
   const reason = health.kind === "missing" ? "no Codex OAuth chain in HERMES_HOME" : health.reason;
-  return { reason, command: codexReauthCommand(config.hermesHome) };
+  return { kind: "needs-reauth", reason, command: codexReauthCommand(config.hermesHome) };
 }
 
 async function readSoulStatus(config: HermesSafeConfig): Promise<HermesSoulStatus> {
@@ -1461,6 +1488,11 @@ const getStatus: HermesAdapterShape["getStatus"] = () =>
       (model.provider === null || model.provider === "openai-codex")
         ? [codexAuth.message]
         : []),
+      ...(model.provider !== null && model.provider !== "openai-codex"
+        ? [
+            `Hermes model.provider is "${model.provider}" but GITS autonomy is pinned to openai-codex (decision 19). Run \`${hermesModelCommand(config.hermesHome)}\` to reconfigure.`,
+          ]
+        : []),
       ...(!soul.exists ? [`SOUL.md is missing at ${config.soulPath}.`] : []),
       ...(!motokoProfile.managedByGits ? [motokoProfile.summary] : []),
       ...(config.approvalMode === "off"
@@ -1709,13 +1741,20 @@ const inspectGitsAndPropose: HermesAdapterShape["inspectGitsAndPropose"] = (inpu
     });
     if (preflight !== null) {
       const now = yield* nowIso();
+      const wrongProvider = preflight.kind === "wrong-provider";
       const proposal = makeProposal({
-        title: "Motoko blocked: Hermes Codex OAuth re-login required",
+        title: wrongProvider
+          ? "Motoko blocked: Hermes model provider must be openai-codex"
+          : "Motoko blocked: Hermes Codex OAuth re-login required",
         summary: `Hermes was not spawned: ${preflight.reason}.`,
-        detail: `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable (${preflight.reason}). Run \`${preflight.command}\` on this host, then retry.`,
+        detail: wrongProvider
+          ? `${preflight.reason}. Run \`${preflight.command}\` on this host to reconfigure, then retry.`
+          : `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable (${preflight.reason}). Run \`${preflight.command}\` on this host, then retry.`,
         actionKind: "read-only",
         status: "blocked",
-        blockedReason: `Hermes Codex OAuth chain requires re-login. Run \`${preflight.command}\`.`,
+        blockedReason: wrongProvider
+          ? `Hermes is pinned to the codex provider for autonomy (decision 19). Run \`${preflight.command}\`.`
+          : `Hermes Codex OAuth chain requires re-login. Run \`${preflight.command}\`.`,
         source: "hermes chat -q",
         projectDir: input.projectDir,
         now,
@@ -1798,19 +1837,30 @@ export const makeChat =
       });
       if (preflight !== null) {
         const now = yield* nowIso();
+        const wrongProvider = preflight.kind === "wrong-provider";
         return {
           status: "setup-required",
           actionKind,
-          response:
-            "Motoko chat is blocked until the Hermes Codex OAuth chain is re-authenticated.",
+          response: wrongProvider
+            ? "Motoko chat is blocked until Hermes is reconfigured to the openai-codex provider."
+            : "Motoko chat is blocked until the Hermes Codex OAuth chain is re-authenticated.",
           proposal: null,
-          blockedReason: `Hermes Codex OAuth chain requires re-login: ${preflight.reason}.`,
-          setupTitle: "Re-authenticate Hermes Codex OAuth",
-          setupDetail: [
-            `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable: ${preflight.reason}.`,
-            `Run \`${preflight.command}\` in a local terminal on this host (device-code OAuth flow).`,
-            "Hermes owns this chain and its token refresh. Do not copy credentials from ~/.codex or another machine; a second refresher kills the chain with refresh_token_reused.",
-          ].join("\n"),
+          blockedReason: wrongProvider
+            ? `${preflight.reason}.`
+            : `Hermes Codex OAuth chain requires re-login: ${preflight.reason}.`,
+          setupTitle: wrongProvider
+            ? "Reconfigure Hermes model provider to openai-codex"
+            : "Re-authenticate Hermes Codex OAuth",
+          setupDetail: wrongProvider
+            ? [
+                `${preflight.reason}.`,
+                `Run \`${preflight.command}\` on this host and select openai-codex; this is a reconfiguration, not a re-login.`,
+              ].join("\n")
+            : [
+                `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable: ${preflight.reason}.`,
+                `Run \`${preflight.command}\` in a local terminal on this host (device-code OAuth flow).`,
+                "Hermes owns this chain and its token refresh. Do not copy credentials from ~/.codex or another machine; a second refresher kills the chain with refresh_token_reused.",
+              ].join("\n"),
           setupCommand: preflight.command,
           createdAt: now,
         } satisfies HermesChatResult;
