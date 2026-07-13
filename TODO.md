@@ -13,7 +13,7 @@ Current status: documentation is ready for VPS provisioning and Notion Markdown 
 - [x] Render proposal cards with defer/reject/approve/draft inline in the chat (live status)
 - [x] Redesign the proposal card and move the list into a header-triggered Proposals sheet
 - [x] Approve now dispatches: decide → draft → delamain.spawnPeer for delamain-peer drafts, outcome posted to chat
-- [ ] Optional follow-up: persist per-repo transcripts across reloads (currently in-memory client state)
+- [x] Persist per-repo transcripts across reloads (localStorage, capped at 200 entries per route)
 
 Verified: tsgo/oxlint clean, apps/web vitest 1048/1048, headless Playwright run over the isolated harness (empty `GITS_HERMES_HOME` keeps hermes calls zero-cost; proposals seeded via `gits-proposals.json`).
 

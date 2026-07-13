@@ -1867,6 +1867,60 @@ const EMPTY_MOTOKO_TRANSCRIPT: ReadonlyArray<MotokoTranscriptEntry> = [];
 
 type MotokoProposalDecision = "approve" | "reject" | "defer";
 
+const MOTOKO_TRANSCRIPTS_STORAGE_KEY = "gits:motoko:transcripts:v1";
+const MOTOKO_TRANSCRIPT_PERSIST_LIMIT = 200;
+
+type MotokoTranscriptState = Readonly<Record<string, ReadonlyArray<MotokoTranscriptEntry>>>;
+
+function loadMotokoTranscripts(): MotokoTranscriptState {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(MOTOKO_TRANSCRIPTS_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
+      return {};
+    }
+    const transcripts: Record<string, ReadonlyArray<MotokoTranscriptEntry>> = {};
+    for (const [routeKey, entries] of Object.entries(parsed)) {
+      if (!Array.isArray(entries)) {
+        continue;
+      }
+      transcripts[routeKey] = entries.filter(
+        (entry): entry is MotokoTranscriptEntry =>
+          isRecord(entry) &&
+          typeof entry.id === "string" &&
+          (entry.role === "operator" || entry.role === "motoko") &&
+          typeof entry.message === "string" &&
+          typeof entry.createdAt === "string",
+      );
+    }
+    return transcripts;
+  } catch {
+    return {};
+  }
+}
+
+function saveMotokoTranscripts(transcripts: MotokoTranscriptState): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const bounded = Object.fromEntries(
+    Object.entries(transcripts)
+      .filter(([, entries]) => entries.length > 0)
+      .map(([routeKey, entries]) => [routeKey, entries.slice(-MOTOKO_TRANSCRIPT_PERSIST_LIMIT)]),
+  );
+  try {
+    window.localStorage.setItem(MOTOKO_TRANSCRIPTS_STORAGE_KEY, JSON.stringify(bounded));
+  } catch {
+    // Quota or private-mode failure: keep the in-memory transcript, drop persistence.
+  }
+}
+
 const MOTOKO_PROPOSAL_STATUS_ACCENT: Record<HermesProposalCard["status"], string> = {
   proposed: "border-l-amber-500/60",
   approved: "border-l-emerald-500/60",
@@ -4648,9 +4702,12 @@ export function GitsCockpit() {
   const [selectedProjectRoot, setSelectedProjectRoot] = useState("");
   const [motokoChatInput, setMotokoChatInput] = useState("");
   // One chat per Motoko route: keyed by trimmed project root ("" = root/gits).
-  const [motokoTranscripts, setMotokoTranscripts] = useState<
-    Readonly<Record<string, ReadonlyArray<MotokoTranscriptEntry>>>
-  >({});
+  const [motokoTranscripts, setMotokoTranscripts] = useState<MotokoTranscriptState>(() =>
+    loadMotokoTranscripts(),
+  );
+  useEffect(() => {
+    saveMotokoTranscripts(motokoTranscripts);
+  }, [motokoTranscripts]);
   const motokoRoute = selectedProjectRoot.trim();
   const motokoTranscript = motokoTranscripts[motokoRoute] ?? EMPTY_MOTOKO_TRANSCRIPT;
   const appendMotokoTranscript = (routeKey: string, entry: MotokoTranscriptEntry) => {
