@@ -14,6 +14,7 @@ import {
   HERMES_ACP_CHECK_ARGS,
   HERMES_ACP_START_ARGS,
   HERMES_CODEX_OAUTH_ARGS,
+  HERMES_COCKPIT_CHAT_MAX_TURNS,
   HERMES_DOCTOR_ARGS,
   HERMES_VERSION_ARGS,
   classifyHermesChatAction,
@@ -77,10 +78,13 @@ describe("HermesCliAdapter command construction", () => {
       "--source",
       "gits-cockpit",
       "--max-turns",
-      "1",
+      String(HERMES_COCKPIT_CHAT_MAX_TURNS),
       "-q",
       "operator request",
     ]);
+    // 1 starved read-only look-then-answer chats into the hermes
+    // "Reached maximum iterations" summary fallback; must stay multi-step.
+    expect(HERMES_COCKPIT_CHAT_MAX_TURNS).toBeGreaterThan(1);
   });
 
   it("sets HERMES_HOME and strips YOLO mode from child process env", () => {

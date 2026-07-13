@@ -83,6 +83,13 @@ export const HERMES_DOCTOR_ARGS = ["doctor"] as const;
 export const HERMES_ACP_CHECK_ARGS = ["acp", "--check"] as const;
 export const HERMES_ACP_START_ARGS = ["acp"] as const;
 export const HERMES_CODEX_OAUTH_ARGS = ["auth", "add", "openai-codex", "--type", "oauth"] as const;
+// Tool-iteration budget per cockpit chat message. Governance is enforced by the
+// proposal gate (classifyHermesChatAction + hermesDirectExecutionBlocked), NOT by
+// starving iterations: at 1, any read-only look-then-answer question (find a
+// file, read it, reply) died in hermes's "Reached maximum iterations" summary
+// fallback. 15 covers multi-step read-only chains while staying far below
+// hermes's own agent.max_turns ceiling.
+export const HERMES_COCKPIT_CHAT_MAX_TURNS = 15;
 export const GITS_HERMES_SOUL_MARKER = "<!-- GITS-HERMES-SOUL:v1 -->";
 
 export const GITS_HERMES_SOUL_CONTENT = `${GITS_HERMES_SOUL_MARKER}
@@ -822,7 +829,16 @@ export function buildHermesInspectGitsArgs(prompt: string): string[] {
 }
 
 export function buildHermesCockpitChatArgs(prompt: string): string[] {
-  return ["chat", "-Q", "--source", "gits-cockpit", "--max-turns", "1", "-q", prompt];
+  return [
+    "chat",
+    "-Q",
+    "--source",
+    "gits-cockpit",
+    "--max-turns",
+    String(HERMES_COCKPIT_CHAT_MAX_TURNS),
+    "-q",
+    prompt,
+  ];
 }
 
 export function classifyHermesChatAction(message: string): HermesProposalActionKind {
