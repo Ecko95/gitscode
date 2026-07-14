@@ -33,6 +33,7 @@ NOTE: PR #159 (open, unmerged) reworks the Motoko chat sections of GitsCockpit.t
 NO background fiber: pure state + clock service pulled by the driver tick and RPC reads. getSnapshot/checkStartAllowed derive EFFECTIVE arming from persisted arming + clock (pure derivation; expiry is never written back outside arm/disarm/boot — the cockpit polls snapshot, so derived expiry keeps it truthful without writes). Boot-disarm happens at layer init.
 
 Persisted state ({stateDir}/gits/automode-scheduler-state.json; versioned schema, withDecodingDefault forward-compat, atomic write, Ref + Semaphore(1) — mirror the supervisor):
+
 - config: { enabled: boolean (default false), maxGoalsPerNight: int >=1 (default 3), weeklyMaxUsedPercent: int 1-100 (default 80) }
 - arming: { status: "disarmed" | "armed", nightKey: string | null ("YYYY-MM-DD" London date of the autonomy day), armedAt: ISO | null, disarmedReason: string | null }
 - nightLog: array of { nightKey, goalId, episodeId, startedAt } (append per recorded start; prune entries older than ~14 nights on write)
@@ -40,11 +41,13 @@ Persisted state ({stateDir}/gits/automode-scheduler-state.json; versioned schema
 - lastEvent: string | null
 
 London time helper (pure, pinned shape — the ONLY tz code in the phase):
+
 - new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hourCycle: "h23", weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(epochMs) -> { dateKey: "YYYY-MM-DD", minutesOfDay, isWeekend }. hourCycle "h23" explicitly (hour12:false can yield "24" on some ICU builds).
 - nextNightKey = london(epochMs + 86_400_000).dateKey (DST-safe).
-- Slot boundaries + remaining time computed in wall-clock minutes: slotRemainingMs = (endMinutes - nowMinutes) * 60_000. ponytail comment: ±1h exactly two nights/year (DST transitions inside 00:00-05:00); autumn denies more (safe), spring overestimates runway bounded by the runtime-cap kill.
+- Slot boundaries + remaining time computed in wall-clock minutes: slotRemainingMs = (endMinutes - nowMinutes) \* 60_000. ponytail comment: ±1h exactly two nights/year (DST transitions inside 00:00-05:00); autumn denies more (safe), spring overestimates runway bounded by the runtime-cap kill.
 
 Slot model:
+
 - Default slots (decision 6): daily [00:00,05:00) and [05:00,10:00); Sat/Sun additionally [10:00,15:00).
 - Env override GITS_SCHEDULER_SLOTS_JSON: validated array of {days: "all"|"weekend", start: "HH:MM", end: "HH:MM"} (start<end, same-day windows). Invalid -> log warning, use defaults. (e2e + ops calibration knob.)
 - Autonomy day (nightKey) = London date D; its slots run 00:00-10:00 of D (+10:00-15:00 when D is Sat/Sun). DOCUMENTED CHOICE (operator sign-off in PR body): a weekend arm covers 00:00-15:00 of D under ONE maxGoalsPerNight cap.
@@ -52,6 +55,7 @@ Slot model:
 - Armed state auto-expires (derived) once D's last slot ends.
 
 Service API:
+
 - getSnapshot() -> { config, arming (effective), currentSlot: {start: "HH:MM", end: "HH:MM"} | null, slotRemainingMs: number | null, goalsStartedTonight: number, lastGateDecision, lastEvent, checkedAt }
 - setConfig({enabled?, maxGoalsPerNight?, weeklyMaxUsedPercent?}) — validated
 - arm() — errors if config.enabled === false ("Enable the scheduler before arming."); idempotent for same nightKey
@@ -60,6 +64,7 @@ Service API:
 - recordGoalStart({goalId, episodeId})
 
 checkStartAllowed order (first reason wins):
+
 1. config.enabled === false -> ALLOWED (bypass; preserves today's interactive behavior). Records nothing.
 2. effective arming !== armed for current nightKey -> deny "Not armed for tonight" / "Armed night ended".
 3. now outside every slot -> deny "Outside slot window (next slot HH:MM)".
@@ -79,17 +84,19 @@ Layer wiring: GitsSlotSchedulerLayerLive provided to AutomodeDriverLayerLive and
 ## Deliverable 2 — RPC + cockpit surface
 
 New WS RPCs (5-layer pattern; payload/success/error schemas in gits.ts):
+
 - gits.automode.scheduler.snapshot -> GitsSchedulerSnapshot
 - gits.automode.scheduler.setConfig {enabled?, maxGoalsPerNight?, weeklyMaxUsedPercent?} -> GitsSchedulerSnapshot
 - gits.automode.scheduler.arm {} -> GitsSchedulerSnapshot
 - gits.automode.scheduler.disarm {reason?} -> GitsSchedulerSnapshot
 - gits.automode.driver.resume {} -> AutomodeSnapshot (wires EXISTING supervisor.resumeDriver — no new logic)
-Error type: GitsSlotSchedulerError (TaggedError, mirror AutomodeSupervisorError).
-Cockpit (GitsCockpit.tsx, AutomodePanel ONLY — PR #159 reworks other sections of this file): (a) scheduler status card — enabled toggle, armed/nightKey, current slot + remaining, goals-tonight vs cap, last gate decision, Arm/Disarm buttons; include hint copy when enabled ("scheduler gates autonomous starts — disable for supervised daytime runs, or dispatch manually"); (b) Resume-driver button on the existing halted banner (:4066-4073). Follow the existing useMutation + refetch shape.
+  Error type: GitsSlotSchedulerError (TaggedError, mirror AutomodeSupervisorError).
+  Cockpit (GitsCockpit.tsx, AutomodePanel ONLY — PR #159 reworks other sections of this file): (a) scheduler status card — enabled toggle, armed/nightKey, current slot + remaining, goals-tonight vs cap, last gate decision, Arm/Disarm buttons; include hint copy when enabled ("scheduler gates autonomous starts — disable for supervised daytime runs, or dispatch manually"); (b) Resume-driver button on the existing halted banner (:4066-4073). Follow the existing useMutation + refetch shape.
 
 ## Deliverable 3 — Episode ID (decision 23; pinned into the phase-1 schema)
 
 Format epi-<uuid> (crypto randomUUID). Threading:
+
 - HermesProposalCard gains episodeId: string (required in domain type). Mint in makeProposal. Legacy store backfill = ONE LINE inside normalizeProposal's return literal (HermesCliAdapter.ts:1051-1082): episodeId from record.episodeId ?? `epi-legacy-${id}`. Do NOT add any Schema decode to the proposals store path (it is deliberately lenient).
 - AutomodeGoal gains episodeId: string via schema-level backfill so old automode-state.json still decodes: episodeId: Schema.String.pipe(Schema.withDecodingDefault(Effect.sync(() => `epi-legacy-${randomUUID()}`))) in gits.ts (CRITICAL: without the decoding default, PersistedAutomodeState decode fails and silently WIPES all persisted automode state on first boot — the reviewer-confirmed blocker). AutomodeEnqueueGoalInput gains optional episodeId; enqueueGoal (AutomodeSupervisor.ts:~560) mints epi-<uuid> when absent.
 - Bridge: the existing priorStatus lookup (HermesAutomodeBridge.ts:35-39) captures the whole proposal card; pass its episodeId into enqueueGoal at :46. Zero extra reads. Update HermesAutomodeBridge.test.ts:96 fixture.
@@ -127,6 +134,7 @@ Format epi-<uuid> (crypto randomUUID). Threading:
 ## E2E (headless; per gits-headless-verify-harness + review amendment)
 
 node apps/server/src/bin.ts serve, isolated T3CODE_HOME, throwaway project dir (no .planning), GITS_AUTOMODE_DRIVER_TICK_MS small; WS-RPC via `auth session issue --token-only` -> POST /api/auth/ws-token -> ws?wsToken=… (mint per connection, 5-min TTL).
+
 1. setConfig{enabled:true} + arm -> snapshot armed with correct nightKey.
 2. Slot edge: boot with GITS_SCHEDULER_SLOTS_JSON NOT covering now; arm policy (autonomous, killswitch off, runtime cap <=90, maxActivePeers 1, allowlist, integrationBranch) + approve goal + arm scheduler -> goal STAYS queued, gate decision "Outside slot window". Then boot with slots covering now and RE-APPLY via RPC (killSwitchEnabled:false + approveGoal + scheduler.arm — reArmOnBoot clears all three on every boot) -> dispatch attempt observed (delamain spawn fails in test env -> driver halt whose reason proves the gate opened).
 3. reArmOnBoot: arm scheduler, kill server, boot -> snapshot disarmed with "Server restarted mid-night" reason.
