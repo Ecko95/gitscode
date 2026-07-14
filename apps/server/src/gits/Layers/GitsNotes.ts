@@ -72,13 +72,22 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
       if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
     }
   };
-  const write = async (id: string, body: string, metadata: Metadata) => {
+  const write = async (id: string, body: string, metadata: Metadata, replace = true) => {
     assertId(id);
     await ensureVault();
     const target = filePath(id);
     const temp = `${target}.tmp-${randomUUID()}`;
     await fs.writeFile(temp, serialize(body, metadata), "utf8");
-    await rename(temp, target);
+    try {
+      if (replace) await rename(temp, target);
+      else {
+        await fs.link(temp, target);
+        await fs.unlink(temp);
+      }
+    } catch (cause) {
+      await fs.unlink(temp).catch(() => undefined);
+      throw cause;
+    }
   };
   const readFile = async (id: string): Promise<GitsNote> => {
     assertId(id);
@@ -122,8 +131,14 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
       const previous = exists
         ? parse(await fs.readFile(filePath(input.id), "utf8"))
         : { metadata: { pageId: null, hash: null } };
-      await write(input.id, input.content, previous.metadata);
-      return readFile(input.id);
+      const id = exists ? `${input.title}.md` : input.id;
+      assertId(id);
+      if (id === input.id) await write(id, input.content, previous.metadata, exists);
+      else {
+        await write(id, input.content, previous.metadata, false);
+        await fs.unlink(filePath(input.id));
+      }
+      return readFile(id);
     });
 
   const request = async (url: string, init: RequestInit, token: string) => {
@@ -234,8 +249,14 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
           result.conflicts.push(local.id);
         } else if (localChanged) {
           await request(
-            `https://api.notion.com/v1/pages/${stored.pageId}`,
-            { method: "PATCH", body: JSON.stringify({ markdown: local.content }) },
+            `https://api.notion.com/v1/pages/${stored.pageId}/markdown`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                type: "replace_content",
+                replace_content: { new_str: local.content },
+              }),
+            },
             token,
           );
           await write(local.id, local.content, {

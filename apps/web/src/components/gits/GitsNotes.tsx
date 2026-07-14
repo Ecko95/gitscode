@@ -24,6 +24,7 @@ type GitsNotesEditor = {
 type GitsNotesEditorAction =
   | { readonly type: "select"; readonly note: GitsNote }
   | { readonly type: "clear" }
+  | { readonly type: "title"; readonly value: string }
   | { readonly type: "content"; readonly value: string }
   | { readonly type: "preview" }
   | { readonly type: "error"; readonly message: string }
@@ -61,6 +62,8 @@ function reduceGitsNotesEditor(
       };
     case "clear":
       return { ...state, selectedId: null, title: "", content: "", error: null };
+    case "title":
+      return { ...state, title: action.value };
     case "content":
       return { ...state, content: action.value };
     case "preview":
@@ -178,8 +181,8 @@ export function GitsNotes() {
         title: editor.title.trim(),
         content: editor.content,
       }),
-    onSuccess: async () => {
-      dispatch({ type: "saved" });
+    onSuccess: async (note) => {
+      dispatch({ type: "select", note });
       toastManager.add({ title: "Note saved", type: "success" });
       await invalidateNotes();
     },
@@ -264,9 +267,13 @@ export function GitsNotes() {
       </aside>
       <section className="flex min-h-0 flex-col gap-3 p-4">
         <div className="flex flex-wrap gap-2">
-          <h1 className="min-w-0 flex-1 truncate px-3 py-2 font-medium">
-            {editor.title || "Untitled note"}
-          </h1>
+          <Input
+            aria-label="Note title"
+            className="min-w-0 flex-1"
+            value={editor.title}
+            onChange={(event) => dispatch({ type: "title", value: event.target.value })}
+            placeholder="Untitled note"
+          />
           <Button
             size="sm"
             onClick={() => saveMutation.mutate()}

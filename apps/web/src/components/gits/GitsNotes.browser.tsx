@@ -99,7 +99,7 @@ describe("GitsNotes", () => {
     }
   });
 
-  it("saves through update, sync refreshes, and title is not editable", async () => {
+  it("saves a renamed title through update and keeps the renamed note selected", async () => {
     notes.list
       .mockReset()
       .mockResolvedValueOnce([sshSummary])
@@ -109,16 +109,17 @@ describe("GitsNotes", () => {
     try {
       const editor = page.getByLabelText("Note content");
       await expect.element(editor).toHaveValue(sshNote.content);
+      await userEvent.fill(page.getByLabelText("Note title"), "SSH access renamed");
       await userEvent.fill(editor, "updated SSH command");
       await page.getByRole("button", { name: "Save" }).click();
       await vi.waitFor(() =>
         expect(notes.update).toHaveBeenCalledWith({
           id: "ssh.md",
-          title: "SSH access",
+          title: "SSH access renamed",
           content: "updated SSH command",
         }),
       );
-      expect(document.querySelector('[aria-label="Note title"]')).toBeNull();
+      expect(notes.update).toHaveBeenCalledTimes(1);
       await page.getByRole("button", { name: "Sync" }).click();
       await vi.waitFor(() => expect(notes.sync).toHaveBeenCalledTimes(1));
       await expect

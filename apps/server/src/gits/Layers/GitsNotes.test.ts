@@ -64,6 +64,46 @@ describe("GitsNotesLive vault", () => {
       });
     }));
 
+  it("does not overwrite an existing note during create", () =>
+    withVault(async (notes, dir) => {
+      await fs.writeFile(path.join(dir, "one.md"), "previous", "utf8");
+      await expect(
+        Effect.runPromise(notes.create({ id: "one.md", title: "One", content: "next" })),
+      ).rejects.toThrow();
+      expect(await fs.readFile(path.join(dir, "one.md"), "utf8")).toBe("previous");
+    }));
+
+  it("renames an updated note from its title without losing frontmatter", () =>
+    withVault(async (notes, dir) => {
+      await fs.writeFile(
+        path.join(dir, "one.md"),
+        "---\ngitsNotionPageId: page-one\ngitsLastSyncedHash: hash-one\n---\nprevious",
+      );
+      await expect(
+        Effect.runPromise(notes.update({ id: "one.md", title: "Renamed", content: "next" })),
+      ).resolves.toMatchObject({
+        id: "Renamed.md",
+        title: "Renamed",
+        content: "next",
+        notionPageId: "page-one",
+      });
+      await expect(fs.access(path.join(dir, "one.md"))).rejects.toThrow();
+      expect(await fs.readFile(path.join(dir, "Renamed.md"), "utf8")).toContain(
+        "gitsNotionPageId: page-one",
+      );
+    }));
+
+  it("does not lose the source note when its rename target exists", () =>
+    withVault(async (notes, dir) => {
+      await fs.writeFile(path.join(dir, "one.md"), "previous", "utf8");
+      await fs.writeFile(path.join(dir, "Taken.md"), "taken", "utf8");
+      await expect(
+        Effect.runPromise(notes.update({ id: "one.md", title: "Taken", content: "next" })),
+      ).rejects.toThrow();
+      expect(await fs.readFile(path.join(dir, "one.md"), "utf8")).toBe("previous");
+      expect(await fs.readFile(path.join(dir, "Taken.md"), "utf8")).toBe("taken");
+    }));
+
   it("deletes only the selected note", () =>
     withVault(async (notes) => {
       await Effect.runPromise(notes.create({ id: "one.md", title: "One", content: "one" }));
@@ -83,7 +123,7 @@ describe("GitsNotesLive vault", () => {
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, "one.md"), "previous", "utf8");
     await expect(
-      Effect.runPromise(notes.update({ id: "one.md", title: "One", content: "next" })),
+      Effect.runPromise(notes.update({ id: "one.md", title: "one", content: "next" })),
     ).rejects.toThrow();
     expect(await fs.readFile(path.join(dir, "one.md"), "utf8")).toBe("previous");
   });
@@ -98,7 +138,7 @@ const json = (value: unknown) =>
 describe("GitsNotesLive Notion sync", () => {
   it("creates a Notion Markdown page for a local note", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-gits-notes-"));
-    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/query")) return json({ results: [] });
       if (url.endsWith("/pages")) return json({ id: "page-local" });
@@ -156,6 +196,65 @@ describe("GitsNotesLive Notion sync", () => {
       content: "remote markdown",
       notionPageId: "page-remote",
     });
+  });
+
+  it("replaces mapped remote Markdown through the enhanced Markdown endpoint", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-gits-notes-"));
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, "Local.md"),
+      "---\ngitsNotionPageId: page-local\ngitsLastSyncedHash: 4794cd39245362643b1c7ba2aaf611a97734f5759157a303c76af75825d77555\n---\nlocal markdown",
+    );
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/query"))
+        return json({
+          results: [
+            { id: "page-local", properties: { Name: { title: [{ plain_text: "Local" }] } } },
+          ],
+        });
+      if (url.endsWith("/page-local/markdown")) return json({ markdown: "remote markdown" });
+      if (url.endsWith("/pages")) return json({ id: "page-seed" });
+      throw new Error(`unexpected request ${url}`);
+    });
+    const notes = makeGitsNotes({
+      env: {
+        GITS_NOTES_DIR: dir,
+        GITS_NOTES_NOTION_TOKEN: "token",
+        GITS_NOTES_NOTION_DATA_SOURCE_ID: "source",
+      },
+      fetch,
+    });
+    await Effect.runPromise(notes.sync());
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.notion.com/v1/pages/page-local/markdown",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          type: "replace_content",
+          replace_content: { new_str: "local markdown" },
+        }),
+      }),
+    );
+  });
+
+  it("rejects unsafe remote titles before writing to the vault", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith("/query")
+        ? json({
+            results: [
+              { id: "page-unsafe", properties: { Name: { title: [{ plain_text: "../unsafe" }] } } },
+            ],
+          })
+        : String(input).endsWith("/markdown")
+          ? json({ markdown: "remote markdown" })
+          : json({ id: "page-seed" }),
+    );
+    const notes = makeGitsNotes({
+      env: { GITS_NOTES_NOTION_TOKEN: "token", GITS_NOTES_NOTION_DATA_SOURCE_ID: "source" },
+      fetch,
+    });
+    await expect(Effect.runPromise(notes.sync())).rejects.toThrow(/basename/i);
   });
 
   it("writes a conflict copy when both sides changed", async () => {
