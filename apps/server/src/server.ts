@@ -139,6 +139,7 @@ import {
   gitsMcpInventoryRouteLayer,
   gitsSkillInventoryRouteLayer,
   gitsUsageRouteLayer,
+  hermesTelegramRelayRouteLayer,
 } from "./gits/http.ts";
 import { codexMcpOauthRoutesLayer } from "./gits/http/CodexMcpOauthRoutes.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
@@ -558,6 +559,7 @@ const GitsRoutesLayer = Layer.mergeAll(
   gitsMcpInventoryRouteLayer,
   gitsUsageRouteLayer,
   codexMcpOauthRoutesLayer,
+  hermesTelegramRelayRouteLayer,
   visualPlanMcpRouteLayer,
 );
 

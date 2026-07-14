@@ -140,6 +140,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  hermesTelegramRelayToken: Config.string("GITS_HERMES_TELEGRAM_RELAY_TOKEN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   vapidPublicKey: Config.string("T3CODE_VAPID_PUBLIC_KEY").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -391,6 +395,7 @@ export const resolveServerConfig = (
       tailscaleServeEnabled,
       tailscaleServePort,
       ...(env.mcpOauthCallbackUrl ? { mcpOauthCallbackUrl: env.mcpOauthCallbackUrl } : {}),
+      hermesTelegramRelayToken: env.hermesTelegramRelayToken,
       vapidPublicKey: env.vapidPublicKey,
       vapidPrivateKey: env.vapidPrivateKey,
       vapidSubject: env.vapidSubject,
