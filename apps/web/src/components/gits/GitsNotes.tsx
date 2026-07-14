@@ -23,7 +23,7 @@ type GitsNotesEditor = {
 
 type GitsNotesEditorAction =
   | { readonly type: "select"; readonly note: GitsNote }
-  | { readonly type: "title"; readonly value: string }
+  | { readonly type: "clear" }
   | { readonly type: "content"; readonly value: string }
   | { readonly type: "preview" }
   | { readonly type: "error"; readonly message: string }
@@ -32,7 +32,7 @@ type GitsNotesEditorAction =
 
 const EMPTY_NOTES: ReadonlyArray<GitsNoteSummary> = [];
 
-export function initialGitsNotesEditor(
+function initialGitsNotesEditor(
   notes: ReadonlyArray<GitsNoteSummary>,
   selectedNote: GitsNote | undefined,
 ): GitsNotesEditor {
@@ -46,7 +46,7 @@ export function initialGitsNotesEditor(
   };
 }
 
-export function reduceGitsNotesEditor(
+function reduceGitsNotesEditor(
   state: GitsNotesEditor,
   action: GitsNotesEditorAction,
 ): GitsNotesEditor {
@@ -59,8 +59,8 @@ export function reduceGitsNotesEditor(
         content: action.note.content,
         error: null,
       };
-    case "title":
-      return { ...state, title: action.value };
+    case "clear":
+      return { ...state, selectedId: null, title: "", content: "", error: null };
     case "content":
       return { ...state, content: action.value };
     case "preview":
@@ -73,7 +73,7 @@ export function reduceGitsNotesEditor(
   }
 }
 
-export function filterGitsNotes(
+function filterGitsNotes(
   notes: ReadonlyArray<GitsNoteSummary>,
   loadedNotes: ReadonlyMap<string, GitsNote>,
   query: string,
@@ -90,7 +90,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Notes operation failed.";
 }
 
-export function GitsNotesMarkdownPreview({ content }: { readonly content: string }) {
+function GitsNotesMarkdownPreview({ content }: { readonly content: string }) {
   return (
     <article className="prose prose-sm mt-4 max-w-none overflow-auto dark:prose-invert">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
@@ -103,6 +103,9 @@ export function GitsNotes() {
   const client = environmentId ? readGitsEnvironmentClient(environmentId)?.notes : null;
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [deleteSelectionState, setDeleteSelectionState] = useState<"none" | "waiting" | "ready">(
+    "none",
+  );
   const [editor, dispatch] = useReducer(
     reduceGitsNotesEditor,
     initialGitsNotesEditor([], undefined),
@@ -137,17 +140,33 @@ export function GitsNotes() {
     return new Map(entries);
   }, [searchQueries, selectedNoteQuery.data]);
   const filteredNotes = filterGitsNotes(notes, loadedNotes, search);
+  const queryError =
+    listQuery.error ??
+    selectedNoteQuery.error ??
+    searchQueries.find((query) => query.error)?.error ??
+    null;
 
   useEffect(() => {
-    if (!editor.selectedId && notes[0])
+    if (!editor.selectedId && deleteSelectionState === "none" && notes[0])
       dispatch({
         type: "select",
         note: loadedNotes.get(notes[0].id) ?? { ...notes[0], content: "" },
       });
-  }, [editor.selectedId, loadedNotes, notes]);
+  }, [deleteSelectionState, editor.selectedId, loadedNotes, notes]);
   useEffect(() => {
     if (selectedNoteQuery.data) dispatch({ type: "select", note: selectedNoteQuery.data });
   }, [selectedNoteQuery.data]);
+  useEffect(() => {
+    if (deleteSelectionState !== "ready") return;
+    const nextNote = notes[0];
+    setDeleteSelectionState("none");
+    if (nextNote) {
+      dispatch({
+        type: "select",
+        note: loadedNotes.get(nextNote.id) ?? { ...nextNote, content: "" },
+      });
+    }
+  }, [deleteSelectionState, loadedNotes, notes]);
 
   const invalidateNotes = async () => {
     await queryClient.invalidateQueries({ queryKey: ["gits", "notes", environmentId] });
@@ -176,13 +195,12 @@ export function GitsNotes() {
     onError: (error) => dispatch({ type: "error", message: errorMessage(error) }),
   });
   const deleteMutation = useMutation({
-    mutationFn: () => client!.remove({ id: editor.selectedId! }),
+    mutationFn: (id: string) => client!.remove({ id }),
     onSuccess: async () => {
-      dispatch({
-        type: "select",
-        note: { id: "", title: "", content: "", updatedAt: "", notionPageId: null },
-      });
+      dispatch({ type: "clear" });
+      setDeleteSelectionState("waiting");
       await invalidateNotes();
+      setDeleteSelectionState("ready");
     },
     onError: (error) => dispatch({ type: "error", message: errorMessage(error) }),
   });
@@ -246,12 +264,9 @@ export function GitsNotes() {
       </aside>
       <section className="flex min-h-0 flex-col gap-3 p-4">
         <div className="flex flex-wrap gap-2">
-          <Input
-            aria-label="Note title"
-            value={editor.title}
-            onChange={(event) => dispatch({ type: "title", value: event.target.value })}
-            placeholder="Note title"
-          />
+          <h1 className="min-w-0 flex-1 truncate px-3 py-2 font-medium">
+            {editor.title || "Untitled note"}
+          </h1>
           <Button
             size="sm"
             onClick={() => saveMutation.mutate()}
@@ -272,17 +287,17 @@ export function GitsNotes() {
           <Button
             size="sm"
             variant="destructive-outline"
-            onClick={() => deleteMutation.mutate()}
+            onClick={() => editor.selectedId && deleteMutation.mutate(editor.selectedId)}
             disabled={!editor.selectedId || deleteMutation.isPending}
           >
             <Trash2Icon />
             Delete
           </Button>
         </div>
-        {editor.error ? (
+        {editor.error || queryError ? (
           <Alert variant="error">
             <AlertTitle>Notes error</AlertTitle>
-            <AlertDescription>{editor.error}</AlertDescription>
+            <AlertDescription>{editor.error ?? errorMessage(queryError)}</AlertDescription>
           </Alert>
         ) : null}
         <Textarea
