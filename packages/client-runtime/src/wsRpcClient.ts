@@ -147,6 +147,14 @@ export interface WsRpcClient {
       readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsList>;
       readonly init: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsInit>;
     };
+    readonly notes: {
+      readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsNotesList>;
+      readonly read: RpcUnaryMethod<typeof WS_METHODS.gitsNotesRead>;
+      readonly create: RpcUnaryMethod<typeof WS_METHODS.gitsNotesCreate>;
+      readonly update: RpcUnaryMethod<typeof WS_METHODS.gitsNotesUpdate>;
+      readonly remove: RpcUnaryMethod<typeof WS_METHODS.gitsNotesRemove>;
+      readonly sync: RpcUnaryMethod<typeof WS_METHODS.gitsNotesSync>;
+    };
     readonly visualPlan: {
       readonly mutate: RpcUnaryMethod<typeof WS_METHODS.gitsVisualPlanMutate>;
     };
@@ -387,6 +395,14 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsDevCommandsList](input)),
         init: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDevCommandsInit](input)),
+      },
+      notes: {
+        list: (input) => transport.request((client) => client[WS_METHODS.gitsNotesList](input)),
+        read: (input) => transport.request((client) => client[WS_METHODS.gitsNotesRead](input)),
+        create: (input) => transport.request((client) => client[WS_METHODS.gitsNotesCreate](input)),
+        update: (input) => transport.request((client) => client[WS_METHODS.gitsNotesUpdate](input)),
+        remove: (input) => transport.request((client) => client[WS_METHODS.gitsNotesRemove](input)),
+        sync: (input) => transport.request((client) => client[WS_METHODS.gitsNotesSync](input)),
       },
       visualPlan: {
         mutate: (input) =>

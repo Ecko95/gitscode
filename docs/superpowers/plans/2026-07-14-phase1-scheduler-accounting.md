@@ -8,10 +8,10 @@
 
 **Files:**
 
-| File | Change |
-| --- | --- |
+| File                                                 | Change                                                                                                                     |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `apps/server/src/gits/Layers/AutomodeDriver.test.ts` | Instrument the Delamain mock and extend the existing `recordGoalStart` failure test to prove `spawnPeer` was never called. |
-| `apps/server/src/gits/Layers/AutomodeDriver.ts` | Move the existing scheduler recording and fail-closed halt before peer dispatch. |
+| `apps/server/src/gits/Layers/AutomodeDriver.ts`      | Move the existing scheduler recording and fail-closed halt before peer dispatch.                                           |
 
 ## Task 1: Record the slot before dispatch
 

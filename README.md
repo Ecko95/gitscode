@@ -8,6 +8,21 @@ GITS can attach an isolated `gsd-browser` session to each chat so you can watch 
 
 Install `gsd-browser` on the GITS server host and ensure Chrome/Chromium is available. GITS automatically detects common system and Playwright browser locations; set `GSD_BROWSER_BROWSER_PATH` when using a custom binary. Remote/Tailnet clients use the authenticated same-origin relay and never connect to the loopback viewer directly.
 
+## Dev Notes Notion sync deployment
+
+Mount persistent storage for the server notes vault and configure the Notion sync environment on the server only:
+
+```bash
+GITS_NOTES_DIR=/var/lib/gits/notes
+GITS_NOTES_NOTION_TOKEN=secret_notion_integration_token
+GITS_NOTES_NOTION_DATA_SOURCE_ID=4857724c-1eaf-4cd7-83a5-63984800c85d
+```
+
+For example, mount a persistent volume at `/var/lib/gits/notes` and set `GITS_NOTES_DIR` to that path. Share the `GITS Dev Notes` parent page with the server's Notion integration before syncing. The configured target is the [GITS Dev Notes page](https://app.notion.com/p/39d09f3b05dc810b8df5c0cf6ffcb8f0) and its [Notes data source](https://app.notion.com/p/eec6ee17bd064f618bd0393963aa18ab), whose title property is `Name`.
+
+> [!WARNING]
+> `GITS_NOTES_NOTION_TOKEN` is server-only. Never expose it to browser clients.
+
 ## Installation
 
 > [!WARNING]

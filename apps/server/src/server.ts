@@ -58,6 +58,7 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { DelamainCliAdapterLive } from "./gits/Layers/DelamainCliAdapter.ts";
 import { GitsBuildInfoResolverLive } from "./gits/Layers/GitsBuildInfo.ts";
+import { GitsNotesLive } from "./gits/Layers/GitsNotes.ts";
 import { GitsCapacityMonitorLive } from "./gits/Layers/GitsCapacityMonitor.ts";
 import { GitsCodexVerifierAdapterLive } from "./gits/Layers/GitsCodexVerifierAdapter.ts";
 import { GitsReviewPipelineLive } from "./gits/Layers/GitsReviewPipeline.ts";
@@ -348,6 +349,7 @@ const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
 
 const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsBuildInfoResolverLive),
+  Layer.provideMerge(GitsNotesLive),
   Layer.provideMerge(GitsCapacityMonitorLive),
   Layer.provideMerge(GitsCodexVerifierAdapterLive),
   Layer.provideMerge(GitsSliceCriteriaStoreLive),

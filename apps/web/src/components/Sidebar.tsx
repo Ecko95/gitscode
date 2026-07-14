@@ -9,6 +9,7 @@ import {
   RadarIcon,
   SearchIcon,
   SettingsIcon,
+  StickyNoteIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -2654,6 +2655,12 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const { isMobile, setOpenMobile } = useSidebar();
+  const handleNotesClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/notes" });
+  }, [isMobile, navigate, setOpenMobile]);
   const handleGitsClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -2678,6 +2685,17 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            isActive={pathname.startsWith("/notes")}
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleNotesClick}
+          >
+            <StickyNoteIcon className="size-3.5" />
+            <span className="text-xs">Dev Notes</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"

@@ -11,6 +11,8 @@ import {
   type GitsCapacitySnapshot,
   type GitsDevCommandListResult,
   type GitsMcpInventorySnapshot,
+  type GitsNote,
+  type GitsNotesSyncResult,
   type GitsSchedulerSnapshot,
   type GitsSkillInventorySnapshot,
   type HermesCommandResult,
@@ -117,6 +119,7 @@ import {
   type GitsMcpInventoryResolverShape,
 } from "./gits/Services/GitsMcpInventory.ts";
 import { GitsDevCommands, type GitsDevCommandsShape } from "./gits/Services/GitsDevCommands.ts";
+import { GitsNotes, type GitsNotesShape } from "./gits/Services/GitsNotes.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
 import {
@@ -324,6 +327,19 @@ const defaultGitsDevCommands: GitsDevCommandListResult = {
         "GITS_DEV_NAME='Web dev' bash '/tmp/default-project/scripts/dev/run-dev-command.sh'",
     },
   ],
+  warnings: [],
+};
+const defaultGitsNote: GitsNote = {
+  id: "test.md",
+  title: "Test note",
+  content: "Test content",
+  updatedAt: "1970-01-01T00:00:00.000Z",
+  notionPageId: null,
+};
+const defaultGitsNotesSyncResult: GitsNotesSyncResult = {
+  created: [],
+  updated: [],
+  conflicts: [],
   warnings: [],
 };
 const defaultGitsSkillInventory: GitsSkillInventorySnapshot = {
@@ -794,6 +810,7 @@ const buildAppUnderTest = (options?: {
     gitsSkillInventoryResolver?: Partial<GitsSkillInventoryResolverShape>;
     gitsMcpInventoryResolver?: Partial<GitsMcpInventoryResolverShape>;
     gitsDevCommands?: Partial<GitsDevCommandsShape>;
+    gitsNotes?: Partial<GitsNotesShape>;
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
     automodeSupervisor?: Partial<AutomodeSupervisorShape>;
@@ -995,6 +1012,17 @@ const buildAppUnderTest = (options?: {
         listCommands: () => Effect.succeed(defaultGitsDevCommands),
         initCommands: () => Effect.succeed(defaultGitsDevCommands),
         ...options?.layers?.gitsDevCommands,
+      }),
+      Layer.mock(GitsNotes)({
+        list: () => Effect.succeed([]),
+        read: (input) => Effect.succeed({ ...defaultGitsNote, id: input.id }),
+        create: (input) =>
+          Effect.succeed({ ...input, updatedAt: "1970-01-01T00:00:00.000Z", notionPageId: null }),
+        update: (input) =>
+          Effect.succeed({ ...input, updatedAt: "1970-01-01T00:00:00.000Z", notionPageId: null }),
+        remove: () => Effect.void,
+        sync: () => Effect.succeed(defaultGitsNotesSyncResult),
+        ...options?.layers?.gitsNotes,
       }),
       Layer.mock(GitsPlanningScanner)({
         scan: () =>
@@ -4156,6 +4184,70 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(scannedProjectCount, 1);
       assert.equal(scannedThreadCount, 1);
       assert.equal(scannedFallbackCwd, process.cwd());
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc GITS notes methods", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      yield* buildAppUnderTest({
+        layers: {
+          gitsNotes: {
+            list: () =>
+              Effect.sync(() => {
+                calls.push("list");
+                return [defaultGitsNote];
+              }),
+            read: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return { ...defaultGitsNote, id: input.id };
+              }),
+            create: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return { ...input, updatedAt: defaultGitsNote.updatedAt, notionPageId: null };
+              }),
+            update: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return { ...input, updatedAt: defaultGitsNote.updatedAt, notionPageId: null };
+              }),
+            remove: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+              }),
+            sync: () =>
+              Effect.sync(() => {
+                calls.push("sync");
+                return defaultGitsNotesSyncResult;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const note = { id: "dispatch.md", title: "Dispatch", content: "Decoded request" };
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsNotesList]({})),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsNotesRead]({ id: note.id })),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsNotesCreate](note)),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsNotesUpdate](note)),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsNotesRemove]({ id: note.id })),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsNotesSync]({})),
+      );
+
+      assert.deepEqual(calls, ["list", { id: note.id }, note, note, { id: note.id }, "sync"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -83,6 +83,45 @@ describe("createWsRpcClient", () => {
     expect(isHeartbeatFresh).toHaveBeenCalledOnce();
   });
 
+  it("routes GITS notes requests through their matching RPC methods", () => {
+    const request = vi.fn();
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      isHeartbeatFresh: vi.fn(() => true),
+      request,
+      requestStream: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    } satisfies Pick<
+      WsTransport,
+      "dispose" | "isHeartbeatFresh" | "reconnect" | "request" | "requestStream" | "subscribe"
+    >;
+
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+    const write = { id: "note.md", title: "Note", content: "# Note" };
+
+    client.gits.notes.list({});
+    client.gits.notes.read({ id: write.id });
+    client.gits.notes.create(write);
+    client.gits.notes.update(write);
+    client.gits.notes.remove({ id: write.id });
+    client.gits.notes.sync({});
+
+    expect(request).toHaveBeenCalledTimes(6);
+    const transportClient = new Proxy({}, { get: (_target, method) => () => method }) as Record<
+      string,
+      () => string
+    >;
+    expect(request.mock.calls.map(([send]) => send(transportClient))).toEqual([
+      WS_METHODS.gitsNotesList,
+      WS_METHODS.gitsNotesRead,
+      WS_METHODS.gitsNotesCreate,
+      WS_METHODS.gitsNotesUpdate,
+      WS_METHODS.gitsNotesRemove,
+      WS_METHODS.gitsNotesSync,
+    ]);
+  });
+
   it("reduces vcs status stream events into flat status snapshots", () => {
     const subscribe = vi.fn(<TValue>(_connect: unknown, listener: (value: TValue) => void) => {
       for (const event of [

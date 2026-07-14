@@ -3796,6 +3796,42 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("applies runtime mode changes immediately to an existing thread", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-runtime-mode" as MessageId,
+        targetText: "change permissions",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      (await waitForButtonByText("Full access")).click();
+      await page.getByText("Supervised", { exact: true }).click();
+
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.runtime-mode.set",
+          ),
+        ).toMatchObject({
+          threadId: THREAD_ID,
+          runtimeMode: "approval-required",
+        });
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps removed terminal context pills removed when a new one is added", async () => {
     const removedLabel = "Terminal 1 lines 1-2";
     const addedLabel = "Terminal 2 lines 9-10";

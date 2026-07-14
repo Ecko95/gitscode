@@ -2516,16 +2516,47 @@ export default function ChatView(props: ChatViewProps) {
       setComposerDraftRuntimeMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
+      } else if (isServerThread && activeThread) {
+        const api = readEnvironmentApi(environmentId);
+        const rollback = (error: unknown) => {
+          if (
+            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.runtimeMode ===
+            mode
+          ) {
+            setComposerDraftRuntimeMode(composerDraftTarget, runtimeMode);
+          }
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Could not update permissions.",
+          );
+        };
+        if (!api) {
+          rollback(new Error("Reconnect the environment before updating permissions."));
+          return;
+        }
+        void api.orchestration
+          .dispatchCommand({
+            type: "thread.runtime-mode.set",
+            commandId: newCommandId(),
+            threadId: activeThread.id,
+            runtimeMode: mode,
+            createdAt: new Date().toISOString(),
+          })
+          .catch(rollback);
       }
       scheduleComposerFocus();
     },
     [
+      activeThread,
+      environmentId,
       isLocalDraftThread,
+      isServerThread,
       runtimeMode,
       scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftRuntimeMode,
       setDraftThreadContext,
+      setThreadError,
     ],
   );
 
