@@ -40,6 +40,7 @@ import {
   GitsCapacityError,
   GitsCockpitError,
   GitsDevCommandError,
+  GitsNotesError,
   HermesAdapterError,
   OpenGsdAdapterError,
   ThreadId,
@@ -86,6 +87,7 @@ import { ReviewService } from "./review/ReviewService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { GitsDevCommands } from "./gits/Services/GitsDevCommands.ts";
+import { GitsNotes } from "./gits/Services/GitsNotes.ts";
 import { mutateVisualPlan } from "./gits/mcp/visualPlanWrite.ts";
 import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
 import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
@@ -134,6 +136,9 @@ const to_browser_preview_error = (cause: unknown) =>
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isGitsCockpitError = Schema.is(GitsCockpitError);
 const isGitsDevCommandError = Schema.is(GitsDevCommandError);
+const isGitsNotesError = Schema.is(GitsNotesError);
+const toGitsNotesError = (cause: unknown, message: string) =>
+  isGitsNotesError(cause) ? cause : new GitsNotesError({ message, cause });
 const isDelamainAdapterError = Schema.is(DelamainAdapterError);
 const isGitsCapacityError = Schema.is(GitsCapacityError);
 const isHermesAdapterError = Schema.is(HermesAdapterError);
@@ -320,6 +325,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const gitsDevCommands = yield* GitsDevCommands;
+      const gitsNotes = yield* GitsNotes;
       const gitsPlanningScanner = yield* GitsPlanningScanner;
       const delamainAdapter = yield* DelamainAdapter;
       const gitsCapacityMonitor = yield* GitsCapacityMonitor;
@@ -1546,6 +1552,66 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                     }),
               ),
             ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsNotesList]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsNotesList,
+            gitsNotes
+              .list()
+              .pipe(
+                Effect.mapError((cause) => toGitsNotesError(cause, "Failed to list GITS notes.")),
+              ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsNotesRead]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsNotesRead,
+            gitsNotes
+              .read(input)
+              .pipe(
+                Effect.mapError((cause) => toGitsNotesError(cause, "Failed to read GITS note.")),
+              ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsNotesCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsNotesCreate,
+            gitsNotes
+              .create(input)
+              .pipe(
+                Effect.mapError((cause) => toGitsNotesError(cause, "Failed to create GITS note.")),
+              ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsNotesUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsNotesUpdate,
+            gitsNotes
+              .update(input)
+              .pipe(
+                Effect.mapError((cause) => toGitsNotesError(cause, "Failed to update GITS note.")),
+              ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsNotesRemove]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsNotesRemove,
+            gitsNotes
+              .remove(input)
+              .pipe(
+                Effect.mapError((cause) => toGitsNotesError(cause, "Failed to remove GITS note.")),
+              ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsNotesSync]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsNotesSync,
+            gitsNotes
+              .sync()
+              .pipe(
+                Effect.mapError((cause) => toGitsNotesError(cause, "Failed to sync GITS notes.")),
+              ),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsDevCommandsList]: (input) =>
