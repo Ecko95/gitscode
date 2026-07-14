@@ -32,7 +32,11 @@
 | `apps/server/src/gits/http.test.ts` | Route token, loopback, and service-wiring tests. |
 | `apps/server/src/config.ts` | Relay-token runtime configuration. |
 | `apps/server/src/server.ts` | Provide notifier and route dependencies. |
+| `apps/server/src/gits/Services/AutomodeTelegramDigest.ts` | Persisted once-per-London-day digest/report scheduling service. |
+| `apps/server/src/gits/Layers/AutomodeTelegramDigest.ts` | Render and send the 22:00 digest and 10:00 morning report. |
+| `apps/server/src/gits/Layers/AutomodeTelegramDigest.test.ts` | Clock-driven digest/report and restart-deduplication tests. |
 | `apps/server/src/gits/Layers/AutomodeDriver.ts` | Emit halt and held-PR notifications without changing outcomes. |
+| `apps/server/src/gits/Layers/HermesCliAdapter.ts` | Emit the Codex auth-chain-death alert. |
 | `profiles/motoko-gits/SOUL.md` | Hermes relay instruction for the six exact commands. |
 | `docs/gits/HERMES.md` | Deployment instructions for the relay token and behaviour. |
 
@@ -144,7 +148,51 @@
   /usr/bin/git commit -m "feat(gits): add Hermes Telegram relay route"
   ```
 
-## Task 4: Notifications and Hermes profile documentation
+## Task 4: Persisted digest, morning report, and chain-death alert
+
+**Files:**
+
+- Create: `apps/server/src/gits/Services/AutomodeTelegramDigest.ts`
+- Create: `apps/server/src/gits/Layers/AutomodeTelegramDigest.ts`
+- Test: `apps/server/src/gits/Layers/AutomodeTelegramDigest.test.ts`
+- Modify: `apps/server/src/gits/Layers/HermesCliAdapter.ts`
+- Modify: `apps/server/src/server.ts`
+
+**Interfaces:**
+
+- Consumes the Task 1 notifier, `AutomodeSupervisor.getSnapshot`, `GitsSlotScheduler.getSnapshot`, `AutomodeEpisodeLedger.list_episodes`, and `Clock`.
+- Produces `AutomodeTelegramDigest.tick(): Effect<void>` and persists the last successful London date for each report in its own state file under `config.stateDir/gits`.
+
+- [ ] **Step 1: Write failing digest tests.** Set a London test clock at 22:00 and 10:00. Assert each rendered message is delivered once per London date, a send failure is retried on the following tick, and a fresh layer reading the state file does not duplicate a successfully delivered report. Assert the digest includes at most five queued/proposed goal titles and the report includes held PR URL, terminal outcomes, and scheduler goal count.
+
+- [ ] **Step 2: Run the focused digest test.**
+
+  ```bash
+  cd apps/server && bun run test -- src/gits/Layers/AutomodeTelegramDigest.test.ts
+  ```
+
+  Expected: fail because the digest service does not exist.
+
+- [ ] **Step 3: Implement the narrow persisted scheduler.** Store only `{ version: 1, lastDigestDate: string | null, lastMorningReportDate: string | null }` with the existing atomic JSON persistence pattern. Calculate London date/time using the Phase 1 scheduler helper; do not add a cron process. Call `tick()` from the existing driver tick and persist a date only after `notify` succeeds.
+
+- [ ] **Step 4: Add the auth-chain alert.** When `codexChainPreflight` blocks a Hermes invocation because Codex credentials are expired or revoked, notify with the fixed re-login instruction already returned by the adapter. Bound repeats to one alert per process for the same reason so a blocked chat does not flood Telegram.
+
+- [ ] **Step 5: Re-run the focused tests.**
+
+  ```bash
+  cd apps/server && bun run test -- src/gits/Layers/AutomodeTelegramDigest.test.ts src/gits/Layers/HermesCliAdapter.test.ts
+  ```
+
+  Expected: pass.
+
+- [ ] **Step 6: Commit.**
+
+  ```bash
+  /usr/bin/git add apps/server/src/gits/Services/AutomodeTelegramDigest.ts apps/server/src/gits/Layers/AutomodeTelegramDigest.ts apps/server/src/gits/Layers/AutomodeTelegramDigest.test.ts apps/server/src/gits/Layers/HermesCliAdapter.ts apps/server/src/server.ts
+  /usr/bin/git commit -m "feat(gits): send Hermes Telegram reports and auth alerts"
+  ```
+
+## Task 5: Driver notifications and Hermes profile documentation
 
 **Files:**
 
@@ -168,7 +216,7 @@
 
   Expected: fail because the notifier is not injected.
 
-- [ ] **Step 3: Add non-blocking alerts.** Notify on driver halts and held-PR creation with title, goal ID, reason, and PR URL when present. Add a `ponytail:` comment documenting that digests, morning report, and auth-chain alerts require their respective future event sources rather than a polling subsystem.
+- [ ] **Step 3: Add non-blocking alerts.** Notify on driver halts and held-PR creation with title, goal ID, reason, and PR URL when present. Call the Task 4 digest service from the existing tick after the normal driver outcome; notification failure is logged and does not change the driver result.
 
 - [ ] **Step 4: Add exact Hermes relay instructions.** The profile must recognize only the six command forms, call the local route with the bearer token, and return response text verbatim; malformed input returns the route's help message. Document the two service environment variables and that Hermes remains the sole Telegram long-poll owner.
 
@@ -181,14 +229,14 @@
   /usr/bin/git commit -m "feat(gits): notify Hermes Telegram for automode events"
   ```
 
-## Task 5: Verify and hand off
+## Task 6: Verify and hand off
 
 **Files:** No production changes.
 
 - [ ] **Step 1: Run Phase 2 tests.**
 
   ```bash
-  cd apps/server && GITS_REAL_GIT=/usr/bin/git bun run test -- src/gits/Layers/HermesTelegramNotifier.test.ts src/gits/HermesTelegramCommand.test.ts src/gits/http.test.ts src/gits/Layers/AutomodeDriver.test.ts
+  cd apps/server && GITS_REAL_GIT=/usr/bin/git bun run test -- src/gits/Layers/HermesTelegramNotifier.test.ts src/gits/HermesTelegramCommand.test.ts src/gits/http.test.ts src/gits/Layers/AutomodeTelegramDigest.test.ts src/gits/Layers/HermesCliAdapter.test.ts src/gits/Layers/AutomodeDriver.test.ts
   ```
 
   Expected: all selected files pass.
