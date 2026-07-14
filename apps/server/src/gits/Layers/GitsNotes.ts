@@ -155,38 +155,46 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
         conflicts: [] as string[],
         warnings: [] as string[],
       };
-      const query = await request(
-        `https://api.notion.com/v1/data_sources/${source}/query`,
-        { method: "POST", body: "{}" },
-        token,
-      );
-      if (!Array.isArray(query.results)) throw error("Notion data source response is malformed.");
       const remote = new Map<string, { id: string; title: string; body: string }>();
-      for (const item of query.results) {
-        if (!item || typeof item !== "object")
-          throw error("Notion data source contains a malformed page.");
-        const page = item as Record<string, unknown>;
-        const id = page.id;
-        const title = (
-          (page.properties as Record<string, unknown> | undefined)?.Name as
-            | { title?: Array<{ plain_text?: string }> }
-            | undefined
-        )?.title?.[0]?.plain_text;
-        if (typeof id !== "string" || !title) throw error("Notion page is missing its Name title.");
-        const markdown = await request(
-          `https://api.notion.com/v1/pages/${id}/markdown`,
-          { method: "GET" },
+      let cursor: string | null = null;
+      do {
+        const query = await request(
+          `https://api.notion.com/v1/data_sources/${source}/query`,
+          { method: "POST", body: JSON.stringify(cursor ? { start_cursor: cursor } : {}) },
           token,
         );
-        if (typeof markdown.markdown !== "string" || markdown.truncated === true)
-          throw error("Notion Markdown response is malformed or truncated.");
-        remote.set(id, { id, title, body: markdown.markdown });
-      }
+        if (!Array.isArray(query.results)) throw error("Notion data source response is malformed.");
+        for (const item of query.results) {
+          if (!item || typeof item !== "object")
+            throw error("Notion data source contains a malformed page.");
+          const page = item as Record<string, unknown>;
+          const id = page.id;
+          const title = (
+            (page.properties as Record<string, unknown> | undefined)?.Name as
+              | { title?: Array<{ plain_text?: string }> }
+              | undefined
+          )?.title?.[0]?.plain_text;
+          if (typeof id !== "string" || !title)
+            throw error("Notion page is missing its Name title.");
+          const markdown = await request(
+            `https://api.notion.com/v1/pages/${id}/markdown`,
+            { method: "GET" },
+            token,
+          );
+          if (typeof markdown.markdown !== "string" || markdown.truncated === true)
+            throw error("Notion Markdown response is malformed or truncated.");
+          remote.set(id, { id, title, body: markdown.markdown });
+        }
+        if (query.has_more === true && typeof query.next_cursor !== "string")
+          throw error("Notion data source pagination is malformed.");
+        cursor = query.has_more === true ? query.next_cursor : null;
+      } while (cursor);
       const locals = await Effect.runPromise(list());
       for (const summary of locals) {
         const local = await readFile(summary.id);
         const stored = parse(await fs.readFile(filePath(summary.id), "utf8")).metadata;
         if (!stored.pageId) {
+          if ([...remote.values()].some((page) => `${page.title}.md` === local.id)) continue;
           const created = await request(
             "https://api.notion.com/v1/pages",
             {
@@ -238,6 +246,20 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
       for (const page of remote.values()) {
         const id = `${page.title}.md`;
         assertId(id);
+        try {
+          await fs.access(filePath(id));
+          const stamp = now()
+            .replace(/\.\d{3}Z$/, "Z")
+            .replace(/:/g, "-");
+          await write(`${id.slice(0, -3)} (Notion conflict ${stamp}).md`, page.body, {
+            pageId: null,
+            hash: null,
+          });
+          result.conflicts.push(id);
+          continue;
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+        }
         await write(id, page.body, { pageId: page.id, hash: hash(page.body) });
         result.created.push(id);
       }

@@ -193,6 +193,72 @@ describe("GitsNotesLive Notion sync", () => {
     ).toBe("remote changed");
   });
 
+  it("preserves an existing unmapped filename when remote import collides", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-gits-notes-"));
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "Remote.md"), "local content");
+    const fetch = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith("/query")
+        ? json({
+            results: [
+              { id: "page-remote", properties: { Name: { title: [{ plain_text: "Remote" }] } } },
+            ],
+          })
+        : String(input).endsWith("/page-remote/markdown")
+          ? json({ markdown: "remote content" })
+          : json({ id: "page-seed" }),
+    );
+    const notes = makeGitsNotes({
+      env: {
+        GITS_NOTES_DIR: dir,
+        GITS_NOTES_NOTION_TOKEN: "token",
+        GITS_NOTES_NOTION_DATA_SOURCE_ID: "source",
+      },
+      fetch,
+      now: () => "2026-07-14T10:00:00.000Z",
+    });
+    const result = await Effect.runPromise(notes.sync());
+    expect(await fs.readFile(path.join(dir, "Remote.md"), "utf8")).toBe("local content");
+    expect(
+      await fs.readFile(path.join(dir, "Remote (Notion conflict 2026-07-14T10-00-00Z).md"), "utf8"),
+    ).toBe("remote content");
+    expect(result.conflicts).toContain("Remote.md");
+  });
+
+  it("queries every Notion data-source page", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-gits-notes-"));
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/query")) {
+        return String(init?.body).includes("cursor-2")
+          ? json({
+              results: [{ id: "page-2", properties: { Name: { title: [{ plain_text: "Two" }] } } }],
+              has_more: false,
+            })
+          : json({
+              results: [{ id: "page-1", properties: { Name: { title: [{ plain_text: "One" }] } } }],
+              has_more: true,
+              next_cursor: "cursor-2",
+            });
+      }
+      if (url.endsWith("/page-1/markdown")) return json({ markdown: "one" });
+      if (url.endsWith("/page-2/markdown")) return json({ markdown: "two" });
+      return json({ id: "page-seed" });
+    });
+    const notes = makeGitsNotes({
+      env: {
+        GITS_NOTES_DIR: dir,
+        GITS_NOTES_NOTION_TOKEN: "token",
+        GITS_NOTES_NOTION_DATA_SOURCE_ID: "source",
+      },
+      fetch,
+    });
+    await Effect.runPromise(notes.sync());
+    expect(await Effect.runPromise(notes.read({ id: "One.md" }))).toMatchObject({ content: "one" });
+    expect(await Effect.runPromise(notes.read({ id: "Two.md" }))).toMatchObject({ content: "two" });
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/query"))).toHaveLength(2);
+  });
+
   it("returns a typed configuration error without HTTP when Notion is unconfigured", async () => {
     const fetch = vi.fn();
     const notes = makeGitsNotes({ env: {}, fetch });
