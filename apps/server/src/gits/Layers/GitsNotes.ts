@@ -185,9 +185,14 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
             throw error("Notion Markdown response is malformed or truncated.");
           remote.set(id, { id, title, body: markdown.markdown });
         }
-        if (query.has_more === true && typeof query.next_cursor !== "string")
-          throw error("Notion data source pagination is malformed.");
-        cursor = query.has_more === true ? query.next_cursor : null;
+        const nextCursor = query.next_cursor;
+        if (query.has_more === true) {
+          if (typeof nextCursor !== "string")
+            throw error("Notion data source pagination is malformed.");
+          cursor = nextCursor;
+        } else {
+          cursor = null;
+        }
       } while (cursor);
       const locals = await Effect.runPromise(list());
       for (const summary of locals) {
