@@ -76,6 +76,7 @@ import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
 import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
+import { GitsSlotSchedulerLive } from "./gits/Layers/GitsSlotScheduler.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { GraveyardOrphanAdopterLive } from "./vcs/GraveyardOrphanAdopter.ts";
 import { GraveyardReaperLive } from "./vcs/GraveyardReaper.ts";
@@ -306,12 +307,25 @@ const AutomodeSupervisorLayerLive = AutomodeSupervisorLive.pipe(
 
 const AutomodeHeldPrLayerLive = AutomodeHeldPrLive.pipe(Layer.provide(GitHubCli.layer));
 
+// Slot scheduler (off-hours autonomy phase 1). The push layer needs the subscription
+// repository explicitly — nothing later in the runtime pipe provides it to gits layers.
+// ServerEnvironment/ServerConfig/FileSystem/Path arrive from the outer runtime layers,
+// mirroring PushNotificationReactorLive. Same layer reference feeds the driver and
+// GitsLayerLive below; Effect memoizes by reference, so it is built once.
+const GitsSlotSchedulerLayerLive = GitsSlotSchedulerLive.pipe(
+  Layer.provide(GitsCapacityMonitorLive),
+  Layer.provide(
+    PushNotificationLayerLive.pipe(Layer.provide(WebPushSubscriptionRepositoryLayerLive)),
+  ),
+);
+
 const AutomodeEpisodeLedgerLayerLive = AutomodeEpisodeLedgerLive.pipe(
   Layer.provide(PersistenceLayerLive),
 );
 
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(GitsSlotSchedulerLayerLive),
   Layer.provide(DelamainCliAdapterLive),
   Layer.provide(AutomodeLandingLayerLive),
   Layer.provide(AutomodeHeldPrLayerLive),
@@ -346,6 +360,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsPlanningScannerLive),
   Layer.provideMerge(HermesAdapterLayerLive),
   Layer.provideMerge(AutomodeSupervisorLayerLive),
+  Layer.provideMerge(GitsSlotSchedulerLayerLive),
   Layer.provideMerge(AutomodeDriverLayerLive),
   // GitsReviewPipeline composes the gate/verifier/criteria services. Provide them
   // directly to it so its own requirements are satisfied here rather than leaking

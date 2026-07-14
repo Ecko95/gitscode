@@ -1007,7 +1007,7 @@ function nullableStringFromUnknown(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function normalizeProposal(value: unknown): HermesProposalCard | null {
+export function normalizeProposal(value: unknown): HermesProposalCard | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
@@ -1050,6 +1050,9 @@ function normalizeProposal(value: unknown): HermesProposalCard | null {
       : recommendedExecutor(actionKind);
   return {
     id,
+    // Legacy stored cards predate episode threading (decision 23) — backfill here, the
+    // store's single lenient read path (no Schema decode on purpose).
+    episodeId: nullableStringFromUnknown(record.episodeId) ?? `epi-legacy-${id}`,
     title,
     summary: nullableStringFromUnknown(record.summary) ?? title,
     detail:
@@ -1107,11 +1110,21 @@ async function writeProposals(
   await Fs.writeFile(proposalStorePath(config), `${JSON.stringify(proposals, null, 2)}\n`, "utf8");
 }
 
-function summarizeProposal(output: string): { readonly title: string; readonly summary: string } {
+export function summarizeProposal(output: string): {
+  readonly title: string;
+  readonly summary: string;
+} {
   const lines = output
     .split(/\r?\n/)
     .map((line) => line.trim().replace(/^#+\s*/, ""))
-    .filter((line) => line.length > 0);
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        // Hermes chrome, not proposal content: status-glyph lines and the
+        // "Reached maximum iterations (N)" runner banner.
+        !/^[⚠ℹ✓✗]/u.test(line) &&
+        !/reached maximum iterations/i.test(line),
+    );
   const first = lines[0] ?? "Hermes GITS improvement proposal";
   return {
     title: first.slice(0, 120),
@@ -1184,7 +1197,7 @@ function nextPromptFor(
   ].join("\n");
 }
 
-function makeProposal(input: {
+export function makeProposal(input: {
   readonly title: string;
   readonly summary: string;
   readonly detail: string;
@@ -1202,6 +1215,8 @@ function makeProposal(input: {
   const risk = input.blockedReason !== null ? "blocked" : actionRisk(input.actionKind);
   return {
     id: `hermes-${randomUUID()}`,
+    // Episode thread (decision 23): minted at proposal creation, carried into the goal.
+    episodeId: `epi-${randomUUID()}`,
     title: input.title,
     summary: input.summary,
     detail: input.detail,

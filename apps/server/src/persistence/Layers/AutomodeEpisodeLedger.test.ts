@@ -37,6 +37,7 @@ const review: GitsReviewResult = {
 function episode(overrides: Partial<AutomodeEpisode>): AutomodeEpisode {
   return {
     id: "ep-1",
+    episodeId: "epi-1",
     repo: "/tmp/source-repo",
     goalId: "goal-1",
     goalTitle: "Slice one",
@@ -65,6 +66,16 @@ layer("AutomodeEpisodeLedger", (it) => {
       assert.equal(all[0]?.verdict, "pass");
       assert.equal(all[0]?.flagged, false);
       assert.equal(all[0]?.review.semantic?.reasons[0], "looks good");
+      assert.equal(all[0]?.episodeId, "epi-1");
+    }),
+  );
+
+  it.effect("round-trips a null episodeId (pre-036 rows)", () =>
+    Effect.gen(function* () {
+      const ledger = yield* AutomodeEpisodeLedger;
+      yield* ledger.record_episode(episode({ id: "ep-legacy", episodeId: null }));
+      const all = yield* ledger.list_episodes({});
+      assert.equal(all.find((e) => e.id === "ep-legacy")?.episodeId, null);
     }),
   );
 
