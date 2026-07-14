@@ -348,6 +348,7 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeHeldPrLayerLive),
   Layer.provide(AutomodeEpisodeLedgerLayerLive),
   Layer.provide(AutomodeTelegramDigestLayerLive),
+  Layer.provide(HermesTelegramNotifierLive),
   Layer.provide(
     GitsReviewPipelineLive.pipe(
       Layer.provide(GitsCodexVerifierAdapterLive),

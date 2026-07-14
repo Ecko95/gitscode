@@ -29,6 +29,17 @@ Override it with:
 GITS_HERMES_HOME=/path/to/hermes-home
 ```
 
+## Telegram relay deployment
+
+The GITS server service and the Hermes gateway's managed service environment both require these two variables:
+
+```sh
+GITS_HERMES_HOME=/path/to/hermes-home
+GITS_HERMES_TELEGRAM_RELAY_TOKEN=<high-entropy-shared-token>
+```
+
+Use the same high-entropy relay token in both services. Hermes is the sole Telegram credential holder and long-poll owner. It relays only `APPROVE <goal-id>`, `REJECT <goal-id>`, `DEFER <goal-id>`, `ARM`, `SKIP <goal-id>`, and `STOP` to GITS's loopback-only `POST /api/gits/hermes-telegram/command` route with that bearer token, then returns the route response text verbatim. GITS does not run a Telegram poller, bot, or external listener.
+
 The setup path creates or updates only a GITS-managed `SOUL.md`. Existing custom non-empty `SOUL.md` files are not overwritten. The Motoko profile distribution lives in:
 
 ```text
