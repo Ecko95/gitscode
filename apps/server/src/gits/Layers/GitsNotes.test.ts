@@ -257,6 +257,35 @@ describe("GitsNotesLive Notion sync", () => {
     await expect(Effect.runPromise(notes.sync())).rejects.toThrow(/basename/i);
   });
 
+  it("rejects remote titles containing control characters before writing to the vault", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-gits-notes-"));
+    const unsafeId = "Unsafe\nTitle.md";
+    const fetch = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith("/query")
+        ? json({
+            results: [
+              {
+                id: "page-unsafe",
+                properties: { Name: { title: [{ plain_text: "Unsafe\nTitle" }] } },
+              },
+            ],
+          })
+        : String(input).endsWith("/markdown")
+          ? json({ markdown: "remote markdown" })
+          : json({ id: "page-seed" }),
+    );
+    const notes = makeGitsNotes({
+      env: {
+        GITS_NOTES_DIR: dir,
+        GITS_NOTES_NOTION_TOKEN: "token",
+        GITS_NOTES_NOTION_DATA_SOURCE_ID: "source",
+      },
+      fetch,
+    });
+    await expect(Effect.runPromise(notes.sync())).rejects.toMatchObject({ _tag: "GitsNotesError" });
+    await expect(fs.access(path.join(dir, unsafeId))).rejects.toThrow();
+  });
+
   it("writes a conflict copy when both sides changed", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-gits-notes-"));
     const oldHash = "b".repeat(64);

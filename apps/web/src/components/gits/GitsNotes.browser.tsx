@@ -21,6 +21,12 @@ const deploySummary: GitsNoteSummary = {
 };
 const sshNote: GitsNote = { ...sshSummary, content: "```sh\nssh deploy@example.com\n```" };
 const deployNote: GitsNote = { ...deploySummary, content: "Deploy with confidence." };
+const renamedSshNote: GitsNote = {
+  ...sshNote,
+  id: "SSH access renamed.md",
+  title: "SSH access renamed",
+  content: "updated SSH command",
+};
 
 const notes = vi.hoisted(() => ({
   create: vi.fn(),
@@ -100,11 +106,11 @@ describe("GitsNotes", () => {
   });
 
   it("saves a renamed title through update and keeps the renamed note selected", async () => {
+    notes.update.mockResolvedValue(renamedSshNote);
     notes.list
       .mockReset()
       .mockResolvedValueOnce([sshSummary])
-      .mockResolvedValueOnce([sshSummary])
-      .mockResolvedValue([sshSummary, deploySummary]);
+      .mockResolvedValue([renamedSshNote, deploySummary]);
     const screen = await renderNotes();
     try {
       const editor = page.getByLabelText("Note content");
@@ -120,11 +126,9 @@ describe("GitsNotes", () => {
         }),
       );
       expect(notes.update).toHaveBeenCalledTimes(1);
-      await page.getByRole("button", { name: "Sync" }).click();
-      await vi.waitFor(() => expect(notes.sync).toHaveBeenCalledTimes(1));
-      await expect
-        .element(page.getByRole("button", { name: "Deploy runbook" }))
-        .toBeInTheDocument();
+      await vi.waitFor(() => expect(notes.list).toHaveBeenCalledTimes(2));
+      await expect.element(page.getByLabelText("Note title")).toHaveValue("SSH access renamed");
+      await expect.element(page.getByLabelText("Note content")).toHaveValue("updated SSH command");
     } finally {
       await screen.unmount();
     }

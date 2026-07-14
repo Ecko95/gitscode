@@ -53,7 +53,7 @@ function serialize(body: string, metadata: Metadata): string {
 }
 
 function assertId(id: string): void {
-  if (path.basename(id) !== id || !id.endsWith(".md"))
+  if (path.basename(id) !== id || !id.endsWith(".md") || /\p{Cc}/u.test(id))
     throw error("Note ID must be a Markdown basename.");
 }
 
@@ -191,6 +191,7 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
           )?.title?.[0]?.plain_text;
           if (typeof id !== "string" || !title)
             throw error("Notion page is missing its Name title.");
+          assertId(`${title}.md`);
           const markdown = await request(
             `https://api.notion.com/v1/pages/${id}/markdown`,
             { method: "GET" },
