@@ -1,6 +1,5 @@
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -27,6 +26,11 @@ const PersistedState = Schema.Struct({
 type PersistedState = typeof PersistedState.Type;
 const decodePersistedState = Schema.decodeUnknownEffect(Schema.fromJsonString(PersistedState));
 
+class AutomodeTelegramDigestStateError extends Schema.TaggedErrorClass<AutomodeTelegramDigestStateError>()(
+  "AutomodeTelegramDigestStateError",
+  { message: Schema.String },
+) {}
+
 const emptyState: PersistedState = {
   version: 1,
   lastDigestDate: null,
@@ -36,10 +40,25 @@ const emptyState: PersistedState = {
 function loadState(statePath: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    if (!(yield* fs.exists(statePath).pipe(Effect.orElseSucceed(() => false)))) return emptyState;
-    const raw = yield* fs.readFileString(statePath).pipe(Effect.orElseSucceed(() => ""));
-    if (raw.trim() === "") return emptyState;
-    return yield* decodePersistedState(raw).pipe(Effect.orElseSucceed(() => emptyState));
+    const exists = yield* fs.exists(statePath);
+    if (!exists) return emptyState;
+    const raw = yield* fs.readFileString(statePath);
+    if (raw.trim() === "") {
+      return yield* Effect.fail(
+        new AutomodeTelegramDigestStateError({ message: "Telegram digest state is empty." }),
+      );
+    }
+    return yield* decodePersistedState(raw).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("gits.telegram.state-invalid", { cause: Cause.pretty(cause) }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new AutomodeTelegramDigestStateError({ message: "Telegram digest state is invalid." }),
+            ),
+          ),
+        ),
+      ),
+    );
   });
 }
 
@@ -141,10 +160,6 @@ export const AutomodeTelegramDigestLive = Layer.effect(
           ),
         ),
       );
-
-    yield* Effect.forever(Effect.sleep(Duration.seconds(5)).pipe(Effect.andThen(tick()))).pipe(
-      Effect.forkScoped,
-    );
 
     return { tick };
   }),

@@ -347,6 +347,7 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeLandingLayerLive),
   Layer.provide(AutomodeHeldPrLayerLive),
   Layer.provide(AutomodeEpisodeLedgerLayerLive),
+  Layer.provide(AutomodeTelegramDigestLayerLive),
   Layer.provide(
     GitsReviewPipelineLive.pipe(
       Layer.provide(GitsCodexVerifierAdapterLive),
@@ -398,7 +399,6 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(AutomodeSupervisorLayerLive),
   Layer.provideMerge(GitsSlotSchedulerLayerLive),
   Layer.provideMerge(AutomodeDriverLayerLive),
-  Layer.provideMerge(AutomodeTelegramDigestLayerLive),
   // GitsReviewPipeline composes the gate/verifier/criteria services. Provide them
   // directly to it so its own requirements are satisfied here rather than leaking
   // into the server launch layer (which must only require ServerConfig). The dep

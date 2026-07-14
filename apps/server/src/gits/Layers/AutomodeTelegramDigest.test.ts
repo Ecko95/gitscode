@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -122,6 +123,26 @@ describe("AutomodeTelegramDigest", () => {
           assert.match(state, /"lastMorningReportDate": "2026-01-07"/);
         }).pipe(Effect.provide(makeLayer({ sent, baseDir }))),
       ),
+    );
+  });
+
+  it.effect("fails closed without delivery when persisted state is malformed", () => {
+    const sent: string[] = [];
+    const baseDir = mkdtempSync(join(tmpdir(), "gits-digest-corrupt-state-"));
+    mkdirSync(join(baseDir, "userdata", "gits"), { recursive: true });
+    writeFileSync(
+      join(baseDir, "userdata", "gits", "automode-telegram-digest-state.json"),
+      "not json",
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(MORNING);
+      const digest = yield* AutomodeTelegramDigest;
+      yield* digest.tick();
+    }).pipe(
+      Effect.provide(makeLayer({ sent, baseDir })),
+      Effect.exit,
+      Effect.tap((exit) => Effect.sync(() => assert.isTrue(Exit.isFailure(exit)))),
+      Effect.tap(() => Effect.sync(() => assert.equal(sent.length, 0))),
     );
   });
 });

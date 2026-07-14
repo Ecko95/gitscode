@@ -21,6 +21,7 @@ import {
 } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
+import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import {
   GitsSlotScheduler,
@@ -123,6 +124,7 @@ interface MakeLayerOptions {
   readonly recordGoalStartError?: GitsSlotSchedulerError;
   readonly onListPeers?: () => void;
   readonly onReadBudget?: () => void;
+  readonly onDigestTick?: () => void;
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -225,6 +227,9 @@ function makeLayer(
       }),
     list_episodes: () => Effect.succeed([]),
   });
+  const digest = Layer.mock(AutomodeTelegramDigest)({
+    tick: () => Effect.sync(() => options?.onDigestTick?.()),
+  });
   const config = ServerConfig.layerTest(process.cwd(), {
     prefix: "gits-automode-driver-test-",
   }).pipe(Layer.provide(NodeServices.layer));
@@ -243,6 +248,7 @@ function makeLayer(
     Layer.provide(landing),
     Layer.provide(heldPr),
     Layer.provide(ledger),
+    Layer.provide(digest),
   );
 }
 
@@ -263,6 +269,16 @@ function armAutonomous(supervisor: AutomodeSupervisorShape) {
 }
 
 describe("AutomodeDriver", () => {
+  it.effect("ticks the Telegram digest with each driver step", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let ticks = 0;
+    return Effect.gen(function* () {
+      const driver = yield* AutomodeDriver;
+      yield* driver.tickOnce();
+      assert.equal(ticks, 1);
+    }).pipe(Effect.provide(makeLayer(peerStatus, { onDigestTick: () => ticks++ })));
+  });
+
   it.effect("dispatches the oldest queued goal when idle and autonomous", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
     return Effect.gen(function* () {

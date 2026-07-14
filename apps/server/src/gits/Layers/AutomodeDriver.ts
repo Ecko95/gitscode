@@ -15,6 +15,7 @@ import {
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeDriver, type AutomodeDriverShape } from "../Services/AutomodeDriver.ts";
+import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { GitsSlotScheduler } from "../Services/GitsSlotScheduler.ts";
 import { AUTOMODE_BASE_REF, AutomodeLanding } from "../Services/AutomodeLanding.ts";
@@ -74,6 +75,7 @@ export const AutomodeDriverLive = Layer.effect(
     const heldPr = yield* AutomodeHeldPr;
     const ledger = yield* AutomodeEpisodeLedger;
     const scheduler = yield* GitsSlotScheduler;
+    const telegramDigest = yield* AutomodeTelegramDigest;
 
     const toDriverError = (message: string) => (cause: unknown) =>
       new AutomodeSupervisorError({ message, cause });
@@ -133,6 +135,9 @@ export const AutomodeDriverLive = Layer.effect(
 
     const tickOnce: AutomodeDriverShape["tickOnce"] = () =>
       Effect.gen(function* () {
+        // Telegram digest runs every tick regardless of automode state.
+        yield* telegramDigest.tick();
+
         // Gate first on the cheap policy read (stateRef only). When automode is off
         // — the steady state — this skips the full getSnapshot (peer-list subprocess +
         // budget read) that used to run on every 5 s tick.
