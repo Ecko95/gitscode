@@ -103,6 +103,7 @@ describe("GitsNotes", () => {
     notes.list
       .mockReset()
       .mockResolvedValueOnce([sshSummary])
+      .mockResolvedValueOnce([sshSummary])
       .mockResolvedValue([sshSummary, deploySummary]);
     const screen = await renderNotes();
     try {
@@ -119,6 +120,7 @@ describe("GitsNotes", () => {
       );
       expect(document.querySelector('[aria-label="Note title"]')).toBeNull();
       await page.getByRole("button", { name: "Sync" }).click();
+      await vi.waitFor(() => expect(notes.sync).toHaveBeenCalledTimes(1));
       await expect
         .element(page.getByRole("button", { name: "Deploy runbook" }))
         .toBeInTheDocument();
