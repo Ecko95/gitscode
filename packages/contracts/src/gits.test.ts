@@ -76,7 +76,7 @@ describe("Gits notes contracts", () => {
     ).toMatchObject({ _tag: "GitsNotesError", message: "Vault unavailable" });
   });
 
-  it.each(["", "notes.txt", "../notes.md"])("rejects invalid note id %j", (id) => {
+  it.each(["", "notes.txt", "../notes.md", "\0.md"])("rejects invalid note id %j", (id) => {
     expect(() => decodeGitsNoteSummary({ ...summary, id })).toThrow();
   });
 });

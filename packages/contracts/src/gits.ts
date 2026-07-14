@@ -274,7 +274,7 @@ export type GitsDevCommandListResult = typeof GitsDevCommandListResult.Type;
 
 const GitsNoteId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(255),
-  Schema.isPattern(/^[^/\\]+\.md$/),
+  Schema.isPattern(/^[^/\\\p{Cc}]+\.md$/u),
 );
 const GitsNoteTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(255));
 const GitsNoteContent = Schema.String.check(Schema.isMaxLength(2 * 1024 * 1024));
