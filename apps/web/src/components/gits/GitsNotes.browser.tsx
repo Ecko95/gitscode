@@ -61,7 +61,7 @@ beforeEach(() => {
   notes.create.mockResolvedValue({ ...sshNote, id: "new.md" });
   notes.list.mockResolvedValue([sshSummary, deploySummary]);
   notes.read.mockImplementation(async ({ id }: { id: string }) =>
-    id === sshNote.id ? sshNote : deployNote,
+    id === sshNote.id ? sshNote : id === renamedSshNote.id ? renamedSshNote : deployNote,
   );
   notes.remove.mockResolvedValue(undefined);
   notes.sync.mockResolvedValue({ created: [], updated: [], conflicts: [], warnings: [] });
