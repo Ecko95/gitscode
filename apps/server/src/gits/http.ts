@@ -2,7 +2,6 @@ import * as Crypto from "node:crypto";
 
 import * as Effect from "effect/Effect";
 import * as Data from "effect/Data";
-import * as Option from "effect/Option";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
@@ -55,14 +54,6 @@ const isExpectedRelayBearer = (authorization: string | undefined, token: string)
   );
 };
 
-export const validateHermesTelegramRelayHostname = (hostname: string) =>
-  isLoopbackHostname(hostname)
-    ? undefined
-    : new HermesTelegramRelayRouteError({
-        status: 403,
-        message: "Hermes Telegram relay accepts loopback requests only.",
-      });
-
 export const hermesTelegramRelayRouteLayer = HttpRouter.add(
   "POST",
   "/api/gits/hermes-telegram/command",
@@ -77,15 +68,18 @@ export const hermesTelegramRelayRouteLayer = HttpRouter.add(
     }
 
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
-    const hostnameError = Option.isNone(url)
-      ? new HermesTelegramRelayRouteError({
-          status: 403,
-          message: "Hermes Telegram relay accepts loopback requests only.",
-        })
-      : validateHermesTelegramRelayHostname(url.value.hostname);
-    if (hostnameError !== undefined) {
-      return yield* hostnameError;
+    const source = request.source as {
+      readonly remoteAddress?: string | null;
+      readonly socket?: { readonly remoteAddress?: string | null };
+    };
+    const remoteAddress = source.socket?.remoteAddress ?? source.remoteAddress;
+    const peerAddress =
+      typeof remoteAddress === "string" ? remoteAddress.trim().replace(/^::ffff:/, "") : undefined;
+    if (!peerAddress || !isLoopbackHostname(peerAddress)) {
+      return yield* new HermesTelegramRelayRouteError({
+        status: 403,
+        message: "Hermes Telegram relay accepts loopback requests only.",
+      });
     }
 
     if (!isExpectedRelayBearer(request.headers.authorization, relayToken)) {

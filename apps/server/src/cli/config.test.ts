@@ -92,6 +92,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_NO_BROWSER: "true",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
                   T3CODE_LOG_WS_EVENTS: "true",
+                  GITS_HERMES_TELEGRAM_RELAY_TOKEN: "relay-token",
                 },
               }),
             ),
@@ -118,6 +119,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        hermesTelegramRelayToken: "relay-token",
       });
     }),
   );

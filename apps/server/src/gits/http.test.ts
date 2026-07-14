@@ -14,6 +14,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpRouter,
+  HttpServerRequest,
   HttpServer,
 } from "effect/unstable/http";
 
@@ -37,7 +38,6 @@ import {
   gitsSkillInventoryRouteLayer,
   gitsUsageRouteLayer,
   hermesTelegramRelayRouteLayer,
-  validateHermesTelegramRelayHostname,
 } from "./http.ts";
 
 // ---------------------------------------------------------------------------
@@ -241,6 +241,39 @@ const post_hermes_telegram_command = (
     return yield* client.execute(request);
   });
 
+const execute_hermes_telegram_route = (
+  config: ServerConfigShape,
+  source: { readonly socket?: { readonly remoteAddress?: string } },
+) => {
+  const baseRequest = HttpServerRequest.fromWeb(
+    new Request("http://localhost/api/gits/hermes-telegram/command", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer relay-token",
+        "content-type": "application/json",
+        host: "localhost",
+      },
+      body: JSON.stringify({ command: "ARM" }),
+    }),
+  );
+  const request = Object.assign(baseRequest, {
+    source: new Proxy(baseRequest.source, {
+      get(target, property) {
+        return property === "socket" ? source.socket : Reflect.get(target, property, target);
+      },
+    }),
+  });
+
+  return Effect.scoped(
+    HttpRouter.toHttpEffect(hermesTelegramRelayRouteLayer).pipe(
+      Effect.flatMap((handler) => handler),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      Effect.provide(make_stub_telegram_services([])),
+      Effect.provideService(ServerConfig, config),
+    ),
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -362,9 +395,16 @@ it.layer(NodeServices.layer)("gits http routes require authentication", (it) => 
 });
 
 it.layer(NodeServices.layer)("Hermes Telegram relay route", (it) => {
-  it("rejects non-loopback hosts with 403", () => {
-    assert.equal(validateHermesTelegramRelayHostname("relay.example.test")?.status, 403);
-  });
+  it.effect("POST rejects a non-loopback peer despite a spoofed loopback Host", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-gits-http-test-"));
+      const config = yield* make_test_server_config(baseDir, "relay-token");
+      const response = yield* execute_hermes_telegram_route(config, {
+        socket: { remoteAddress: "10.0.0.24" },
+      });
+      assert.equal(response.status, 403);
+    }),
+  );
 
   it.effect("POST rejects missing and incorrect relay bearer tokens", () =>
     Effect.gen(function* () {
