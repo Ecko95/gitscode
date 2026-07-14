@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
 import {
+  AutomodeGoal,
   GitsBuildInfo,
   GitsCapacitySnapshot,
   GitsMcpInventorySnapshot,
@@ -23,6 +24,7 @@ const decodeGitsNoteSummary = Schema.decodeUnknownSync(GitsNoteSummary);
 const decodeGitsNote = Schema.decodeUnknownSync(GitsNote);
 const decodeGitsNoteWriteInput = Schema.decodeUnknownSync(GitsNoteWriteInput);
 const decodeGitsNotesError = Schema.decodeUnknownSync(GitsNotesError);
+const decodeAutomodeGoal = Schema.decodeUnknownSync(AutomodeGoal);
 const decodeGitsSkillInventorySnapshot = Schema.decodeUnknownSync(GitsSkillInventorySnapshot);
 const decodeGitsMcpInventorySnapshot = Schema.decodeUnknownSync(GitsMcpInventorySnapshot);
 const decodeGitsCapacitySnapshot = Schema.decodeUnknownSync(GitsCapacitySnapshot);
@@ -263,9 +265,45 @@ describe("GitsCapacitySnapshot", () => {
   });
 });
 
+describe("AutomodeGoal", () => {
+  const legacyGoal = {
+    id: "goal-legacy-1",
+    title: "Legacy goal",
+    prompt: "do the thing",
+    repo: "/home/test/project",
+    model: null,
+    status: "queued",
+    peerId: null,
+    blockedReason: null,
+    createdAt: "2026-06-02T10:00:00.000Z",
+    updatedAt: "2026-06-02T10:00:00.000Z",
+    approvedAt: null,
+    rejectedAt: null,
+  } as const;
+
+  it("backfills episodeId when decoding a legacy persisted goal without one", () => {
+    // Regression guard for the persisted-state wipe: PersistedAutomodeState embeds this
+    // schema, so a legacy automode-state.json (no episodeId) must still decode.
+    const parsed = decodeAutomodeGoal(legacyGoal);
+    expect(parsed.episodeId).toMatch(/^epi-legacy-[0-9a-f-]{36}$/);
+  });
+
+  it("mints a fresh legacy episodeId per decode", () => {
+    expect(decodeAutomodeGoal(legacyGoal).episodeId).not.toBe(
+      decodeAutomodeGoal(legacyGoal).episodeId,
+    );
+  });
+
+  it("keeps a provided episodeId", () => {
+    const parsed = decodeAutomodeGoal({ ...legacyGoal, episodeId: "epi-abc" });
+    expect(parsed.episodeId).toBe("epi-abc");
+  });
+});
+
 describe("Hermes Motoko contracts", () => {
   const baseProposal = {
     id: "proposal-1",
+    episodeId: "epi-proposal-1",
     title: "Inspect project status",
     summary: "Review current project blockers.",
     detail: "Motoko proposes a read-only inspection.",

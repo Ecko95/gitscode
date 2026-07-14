@@ -480,6 +480,20 @@ export const AutomodeSupervisorLive = Layer.effect(
       Effect.gen(function* () {
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         yield* Effect.sleep(Duration.millis(Math.max(0, deadlineEpochMs - nowMs)));
+        // Re-read state after the sleep: the goal may have completed/failed (deadline
+        // dropped) or been re-dispatched to a NEW peer under a NEW deadline while this
+        // fiber slept — killing then would SIGTERM the wrong (or a finished) peer.
+        // Deadline equality distinguishes this timer from a re-dispatch's timer.
+        const current = yield* Ref.get(stateRef);
+        const currentGoal = findGoal(current, goalId);
+        if (
+          currentGoal === null ||
+          currentGoal.status !== "running" ||
+          currentGoal.peerId !== peerId ||
+          current.runtimeDeadlines[goalId] !== deadlineEpochMs
+        ) {
+          return;
+        }
         yield* delamainAdapter.killPeer({ peerId, signal: "SIGTERM" });
         const updatedAt = yield* nowIso;
         yield* commitState((state) =>
@@ -559,6 +573,8 @@ export const AutomodeSupervisorLive = Layer.effect(
           const createdAt = yield* nowIso;
           const goal: AutomodeGoal = {
             id: `goal-${randomUUID()}`,
+            // Episode thread (decision 23): carried from the proposal when present.
+            episodeId: input.episodeId ?? `epi-${randomUUID()}`,
             title: input.title,
             prompt: input.prompt,
             repo: input.repo,
@@ -736,7 +752,8 @@ export const AutomodeSupervisorLive = Layer.effect(
           const peer = yield* delamainAdapter
             .spawnPeer({
               repo: goal.repo,
-              prompt: goal.prompt,
+              // Episode threading v1: traceability via the prompt (delamain untouched).
+              prompt: `Episode: ${goal.episodeId}\n${goal.prompt}`,
               name: goal.title,
               ...(effectiveModel ? { model: effectiveModel } : {}),
               ...(state.policy.integrationBranch

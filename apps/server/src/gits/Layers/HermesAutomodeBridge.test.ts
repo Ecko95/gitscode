@@ -96,6 +96,7 @@ function makeSupervisorLayer(options?: { readonly onSpawn?: () => void }) {
 function makeProposal(status: HermesProposalStatus): HermesProposalCard {
   return {
     id: "proposal-1",
+    episodeId: "epi-proposal-1",
     title: "Fix flaky retry test",
     summary: "Retry test is flaky.",
     detail: "Deflake the retry test in the server package.",
@@ -197,6 +198,8 @@ describe("decideProposalWithAutomodeBridge", () => {
       assert.equal(snapshot.goals[0]!.title, "Fix flaky retry test");
       assert.equal(snapshot.goals[0]!.repo, "/tmp/source-repo");
       assert.equal(snapshot.goals[0]!.status, "queued");
+      // Episode thread (decision 23): the goal carries the proposal's episodeId.
+      assert.equal(snapshot.goals[0]!.episodeId, "epi-proposal-1");
 
       const dispatched = yield* supervisor.dispatchGoal({ goalId: snapshot.goals[0]!.id });
       assert.equal(dispatched.goal.status, "running");

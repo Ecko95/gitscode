@@ -45,6 +45,7 @@ const makeAutomodeEpisodeLedger = Effect.gen(function* () {
       sql`
         INSERT INTO automode_episodes (
           id,
+          episode_id,
           repo,
           goal_id,
           goal_title,
@@ -59,6 +60,7 @@ const makeAutomodeEpisodeLedger = Effect.gen(function* () {
         )
         VALUES (
           ${row.id},
+          ${row.episodeId},
           ${row.repo},
           ${row.goalId},
           ${row.goalTitle},
@@ -72,6 +74,7 @@ const makeAutomodeEpisodeLedger = Effect.gen(function* () {
           ${row.createdAt}
         )
         ON CONFLICT (id) DO UPDATE SET
+          episode_id = excluded.episode_id,
           repo = excluded.repo,
           goal_id = excluded.goal_id,
           goal_title = excluded.goal_title,
@@ -93,6 +96,7 @@ const makeAutomodeEpisodeLedger = Effect.gen(function* () {
       sql`
         SELECT
           id,
+          episode_id AS "episodeId",
           repo,
           goal_id AS "goalId",
           goal_title AS "goalTitle",
@@ -116,6 +120,7 @@ const makeAutomodeEpisodeLedger = Effect.gen(function* () {
       sql`
         SELECT
           id,
+          episode_id AS "episodeId",
           repo,
           goal_id AS "goalId",
           goal_title AS "goalTitle",

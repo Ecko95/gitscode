@@ -64,8 +64,8 @@ step_base() {
 step_packages() {
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq && apt-get full-upgrade -y -qq
-	# unzip: bun installer hard-requires it; pkg-config: native module builds
-	apt-get install -y -qq unattended-upgrades git tmux curl build-essential systemd-zram-generator unzip pkg-config
+	# unzip: bun installer hard-requires it; pkg-config: native module builds; bubblewrap: gits-confine.sh sandbox
+	apt-get install -y -qq unattended-upgrades git tmux curl build-essential systemd-zram-generator unzip pkg-config bubblewrap
 }
 
 step_upgrades() {

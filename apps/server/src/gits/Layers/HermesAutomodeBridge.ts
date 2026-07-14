@@ -32,18 +32,24 @@ export const decideProposalWithAutomodeBridge = (
         Effect.catch(() => Effect.succeed(false)),
       ));
     // Prior status must be read before deciding: approve→approve must not re-enqueue.
-    const priorStatus = bridgeArmed
+    // Capture the whole card — its episodeId threads proposal → goal (decision 23).
+    const priorProposal = bridgeArmed
       ? ((yield* hermes.listProposals()).proposals.find(
           (proposal) => proposal.id === input.proposalId,
-        )?.status ?? null)
+        ) ?? null)
       : null;
     const decided = yield* hermes.decideProposal(input);
-    if (bridgeArmed && priorStatus !== "approved") {
+    if (bridgeArmed && priorProposal?.status !== "approved") {
       yield* hermes.draftFromProposal({ proposalId: input.proposalId }).pipe(
         Effect.flatMap((draft) =>
           draft.kind === "delamain-peer" && draft.status === "draft" && draft.repo !== null
             ? automode
-                .enqueueGoal({ title: draft.title, prompt: draft.prompt, repo: draft.repo })
+                .enqueueGoal({
+                  title: draft.title,
+                  prompt: draft.prompt,
+                  repo: draft.repo,
+                  ...(priorProposal === null ? {} : { episodeId: priorProposal.episodeId }),
+                })
                 .pipe(Effect.asVoid)
             : Effect.void,
         ),

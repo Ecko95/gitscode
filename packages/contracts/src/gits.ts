@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   IsoDateTime,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -12,6 +13,7 @@ import {
 const PathString = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
 const SummaryString = TrimmedNonEmptyString.check(Schema.isMaxLength(10_000));
 const NonNegativeNumber = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+const PercentInt = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
 
 export const GitsRepo = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -759,6 +761,14 @@ export type AutomodePolicy = typeof AutomodePolicy.Type;
 
 export const AutomodeGoal = Schema.Struct({
   id: TrimmedNonEmptyString,
+  // Episode thread (decision 23): proposal → goal → peer → ledger row. The decoding
+  // default is load-bearing: PersistedAutomodeState embeds this schema, so a legacy
+  // automode-state.json without episodeId must still decode (a failed decode silently
+  // resets ALL persisted automode state to locked defaults).
+  episodeId: TrimmedNonEmptyString.pipe(
+    // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
+    Schema.withDecodingDefault(Effect.sync(() => `epi-legacy-${crypto.randomUUID()}`)),
+  ),
   title: TrimmedNonEmptyString,
   prompt: SummaryString,
   repo: PathString,
@@ -830,6 +840,8 @@ export const AutomodeEnqueueGoalInput = Schema.Struct({
   prompt: SummaryString,
   repo: PathString,
   model: Schema.optional(TrimmedNonEmptyString),
+  // Carries the proposal's episode thread into the goal; the supervisor mints one when absent.
+  episodeId: Schema.optional(TrimmedNonEmptyString),
 });
 export type AutomodeEnqueueGoalInput = typeof AutomodeEnqueueGoalInput.Type;
 
@@ -869,6 +881,74 @@ export const AutomodeDispatchResult = Schema.Struct({
   blockedReason: Schema.NullOr(SummaryString),
 });
 export type AutomodeDispatchResult = typeof AutomodeDispatchResult.Type;
+
+// --- Slot scheduler (off-hours autonomy phase 1) -------------------------------------------
+// Gates autonomous goal STARTS to London night slots (decisions 6, 7, 11, 20).
+// Disabled scheduler = bypass (today's interactive behavior); slots never stop a running goal.
+
+export const GitsSchedulerConfig = Schema.Struct({
+  enabled: Schema.Boolean,
+  maxGoalsPerNight: PositiveInt,
+  weeklyMaxUsedPercent: PercentInt,
+});
+export type GitsSchedulerConfig = typeof GitsSchedulerConfig.Type;
+
+export const GitsSchedulerArmingStatus = Schema.Literals(["disarmed", "armed"]);
+export type GitsSchedulerArmingStatus = typeof GitsSchedulerArmingStatus.Type;
+
+export const GitsSchedulerArming = Schema.Struct({
+  status: GitsSchedulerArmingStatus,
+  /** "YYYY-MM-DD" London date of the autonomy day the arm covers. */
+  nightKey: Schema.NullOr(TrimmedNonEmptyString),
+  armedAt: Schema.NullOr(IsoDateTime),
+  disarmedReason: Schema.NullOr(SummaryString),
+});
+export type GitsSchedulerArming = typeof GitsSchedulerArming.Type;
+
+export const GitsSchedulerSlot = Schema.Struct({
+  start: TrimmedNonEmptyString, // "HH:MM" London wall clock
+  end: TrimmedNonEmptyString,
+});
+export type GitsSchedulerSlot = typeof GitsSchedulerSlot.Type;
+
+export const GitsSchedulerGateDecision = Schema.Struct({
+  at: IsoDateTime,
+  allowed: Schema.Boolean,
+  reason: Schema.NullOr(SummaryString),
+});
+export type GitsSchedulerGateDecision = typeof GitsSchedulerGateDecision.Type;
+
+export const GitsSchedulerSnapshot = Schema.Struct({
+  config: GitsSchedulerConfig,
+  arming: GitsSchedulerArming,
+  currentSlot: Schema.NullOr(GitsSchedulerSlot),
+  slotRemainingMs: Schema.NullOr(NonNegativeInt),
+  goalsStartedTonight: NonNegativeInt,
+  lastGateDecision: Schema.NullOr(GitsSchedulerGateDecision),
+  lastEvent: Schema.NullOr(SummaryString),
+  checkedAt: IsoDateTime,
+});
+export type GitsSchedulerSnapshot = typeof GitsSchedulerSnapshot.Type;
+
+export const GitsSchedulerSetConfigInput = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  maxGoalsPerNight: Schema.optional(PositiveInt),
+  weeklyMaxUsedPercent: Schema.optional(PercentInt),
+});
+export type GitsSchedulerSetConfigInput = typeof GitsSchedulerSetConfigInput.Type;
+
+export const GitsSchedulerDisarmInput = Schema.Struct({
+  reason: Schema.optional(SummaryString),
+});
+export type GitsSchedulerDisarmInput = typeof GitsSchedulerDisarmInput.Type;
+
+export class GitsSlotSchedulerError extends Schema.TaggedErrorClass<GitsSlotSchedulerError>()(
+  "GitsSlotSchedulerError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
 
 export const GitsProviderName = Schema.Literals(["codex", "cursor"]);
 export type GitsProviderName = typeof GitsProviderName.Type;
@@ -1234,6 +1314,9 @@ export type HermesLogTailResult = typeof HermesLogTailResult.Type;
 
 export const HermesProposalCard = Schema.Struct({
   id: TrimmedNonEmptyString,
+  // Episode thread (decision 23): minted at proposal creation; legacy stored cards are
+  // backfilled inside normalizeProposal (the proposals store is deliberately schema-free).
+  episodeId: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
   summary: SummaryString,
   detail: SummaryString,

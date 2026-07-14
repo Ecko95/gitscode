@@ -13,6 +13,7 @@ import {
   type GitsMcpInventorySnapshot,
   type GitsNote,
   type GitsNotesSyncResult,
+  type GitsSchedulerSnapshot,
   type GitsSkillInventorySnapshot,
   type HermesCommandResult,
   type HermesChatResult,
@@ -130,6 +131,10 @@ import {
   GitsCapacityMonitor,
   type GitsCapacityMonitorShape,
 } from "./gits/Services/GitsCapacityMonitor.ts";
+import {
+  GitsSlotScheduler,
+  type GitsSlotSchedulerShape,
+} from "./gits/Services/GitsSlotScheduler.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
 import { setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -227,6 +232,7 @@ const defaultOpenGsdCommandResult: OpenGsdCommandResult = {
 };
 const defaultAutomodeGoal: AutomodeGoal = {
   id: "goal-test",
+  episodeId: "epi-goal-test",
   title: "Test goal",
   prompt: "Spawn a safe test peer.",
   repo: "/tmp/source-repo",
@@ -282,6 +288,16 @@ const defaultAutomodeDispatchResult: AutomodeDispatchResult = {
   peer: null,
   approvalRequired: false,
   blockedReason: null,
+};
+const defaultGitsSchedulerSnapshot: GitsSchedulerSnapshot = {
+  config: { enabled: false, maxGoalsPerNight: 3, weeklyMaxUsedPercent: 80 },
+  arming: { status: "disarmed", nightKey: null, armedAt: null, disarmedReason: null },
+  currentSlot: null,
+  slotRemainingMs: null,
+  goalsStartedTonight: 0,
+  lastGateDecision: null,
+  lastEvent: null,
+  checkedAt: "2026-01-01T00:00:00.000Z",
 };
 const defaultGitsBuildInfo: GitsBuildInfo = {
   branch: null,
@@ -421,6 +437,7 @@ const defaultHermesCommandResult: HermesCommandResult = {
 };
 const defaultHermesProposal: HermesProposalCard = {
   id: "proposal-test",
+  episodeId: "epi-proposal-test",
   title: "Test proposal",
   summary: "Review test cockpit state.",
   detail: "Review test cockpit state.",
@@ -797,6 +814,7 @@ const buildAppUnderTest = (options?: {
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
     automodeSupervisor?: Partial<AutomodeSupervisorShape>;
+    gitsSlotScheduler?: Partial<GitsSlotSchedulerShape>;
     gitsCapacityMonitor?: Partial<GitsCapacityMonitorShape>;
     hermesAdapter?: Partial<HermesAdapterShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
@@ -1076,6 +1094,13 @@ const buildAppUnderTest = (options?: {
           }),
         dispatchGoal: () => Effect.succeed(defaultAutomodeDispatchResult),
         ...options?.layers?.automodeSupervisor,
+      }),
+      Layer.mock(GitsSlotScheduler)({
+        getSnapshot: () => Effect.succeed(defaultGitsSchedulerSnapshot),
+        setConfig: () => Effect.succeed(defaultGitsSchedulerSnapshot),
+        arm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
+        disarm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
+        ...options?.layers?.gitsSlotScheduler,
       }),
       Layer.mock(GitsCapacityMonitor)({
         getSnapshot: () => Effect.succeed(defaultGitsCapacitySnapshot),
@@ -4645,6 +4670,87 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "reject:goal-test:not now",
         "dispatch:goal-test",
       ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc scheduler surface and driver resume", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const armedSnapshot: GitsSchedulerSnapshot = {
+        ...defaultGitsSchedulerSnapshot,
+        config: { ...defaultGitsSchedulerSnapshot.config, enabled: true },
+        arming: {
+          status: "armed",
+          nightKey: "2026-01-07",
+          armedAt: "2026-01-06T22:00:00.000Z",
+          disarmedReason: null,
+        },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          gitsSlotScheduler: {
+            getSnapshot: () =>
+              Effect.sync(() => {
+                calls.push("snapshot");
+                return defaultGitsSchedulerSnapshot;
+              }),
+            setConfig: (input) =>
+              Effect.sync(() => {
+                calls.push(`setConfig:${input.enabled}`);
+                return armedSnapshot;
+              }),
+            arm: () =>
+              Effect.sync(() => {
+                calls.push("arm");
+                return armedSnapshot;
+              }),
+            disarm: (input) =>
+              Effect.sync(() => {
+                calls.push(`disarm:${input.reason}`);
+                return defaultGitsSchedulerSnapshot;
+              }),
+          },
+          automodeSupervisor: {
+            resumeDriver: () =>
+              Effect.sync(() => {
+                calls.push("resume");
+                return defaultAutomodeSnapshot;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const snapshot = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsAutomodeSchedulerSnapshot]({})),
+      );
+      assert.equal(snapshot.arming.status, "disarmed");
+
+      const configured = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeSchedulerSetConfig]({ enabled: true }),
+        ),
+      );
+      assert.equal(configured.config.enabled, true);
+
+      const armed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsAutomodeSchedulerArm]({})),
+      );
+      assert.equal(armed.arming.nightKey, "2026-01-07");
+
+      const disarmed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeSchedulerDisarm]({ reason: "test" }),
+        ),
+      );
+      assert.equal(disarmed.arming.status, "disarmed");
+
+      const resumed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.gitsAutomodeDriverResume]({})),
+      );
+      assert.equal(resumed.driverHalted, false);
+
+      assert.deepEqual(calls, ["snapshot", "setConfig:true", "arm", "disarm:test", "resume"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

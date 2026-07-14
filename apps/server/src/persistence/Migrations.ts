@@ -48,6 +48,7 @@ import Migration0032 from "./Migrations/032_AutomodeEpisodeLedger.ts";
 import Migration0033 from "./Migrations/033_EventRetentionArchiveTable.ts";
 import Migration0034 from "./Migrations/034_ConversationTreeAnchors.ts";
 import Migration0035 from "./Migrations/035_WebPushSubscriptions.ts";
+import Migration0036 from "./Migrations/036_AutomodeEpisodeId.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -95,6 +96,7 @@ export const migrationEntries = [
   [33, "EventRetentionArchiveTable", Migration0033],
   [34, "ConversationTreeAnchors", Migration0034],
   [35, "WebPushSubscriptions", Migration0035],
+  [36, "AutomodeEpisodeId", Migration0036],
 ] as const;
 
 /**

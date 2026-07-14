@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import type {
   AutomodeBudgetUsage,
@@ -996,6 +997,108 @@ describe("AutomodeSupervisorLive", () => {
         assert.equal(goal?.blockedReason, "Runtime limit reached and peer was terminated.");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("enqueueGoal mints an episodeId and keeps a provided one", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const minted = yield* supervisor.enqueueGoal({
+        title: "Minted",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      assert.match(minted.goals[0]?.episodeId ?? "", /^epi-[0-9a-f-]{36}$/);
+
+      const carried = yield* supervisor.enqueueGoal({
+        title: "Carried",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+        episodeId: "epi-from-proposal",
+      });
+      assert.equal(
+        carried.goals.find((g) => g.title === "Carried")?.episodeId,
+        "epi-from-proposal",
+      );
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("dispatch prepends the Episode line to the peer prompt", () => {
+    let spawnInput: DelamainSpawnPeerInput | null = null;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Threaded goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+        episodeId: "epi-threaded",
+      });
+      yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(spawnInput?.prompt, "Episode: epi-threaded\nRun a safe task.");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          onSpawn: (input) => {
+            spawnInput = input;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("enforceRuntimeLimit is a no-op when the goal completed before the deadline", () => {
+    let killCount = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: 30,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Quick finisher",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(dispatched.goal.status, "running");
+
+      // Goal resolves well before the runtime deadline…
+      yield* supervisor.completeGoal({ goalId: dispatched.goal.id });
+
+      // …then the detached limit fiber wakes: it must re-read state and exit silently.
+      yield* TestClock.adjust("31 minutes");
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(killCount, 0);
+      const goal = snapshot.goals.find((g) => g.id === dispatched.goal.id);
+      assert.equal(goal?.status, "completed");
+      assert.notInclude(snapshot.lastEvent ?? "", "Runtime limit");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          makeLayer({
+            budgetUsage: availableBudgetUsage,
+            onKill: () => {
+              killCount += 1;
+            },
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    );
+  });
 
   it.effect("sendPeerMessage: observe authority (default) blocks all sends", () => {
     let sent = false;
