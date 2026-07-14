@@ -205,7 +205,7 @@ describe("GitsNotesLive Notion sync", () => {
       path.join(dir, "Local.md"),
       "---\ngitsNotionPageId: page-local\ngitsLastSyncedHash: 4794cd39245362643b1c7ba2aaf611a97734f5759157a303c76af75825d77555\n---\nlocal markdown",
     );
-    const fetch = vi.fn(async (input: string | URL | Request) => {
+    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/query"))
         return json({
@@ -319,6 +319,55 @@ describe("GitsNotesLive Notion sync", () => {
     expect(
       await fs.readFile(path.join(dir, "dual (Notion conflict 2026-07-14T10-00-00Z).md"), "utf8"),
     ).toBe("remote changed");
+  });
+
+  it("preserves repeated dual-edit conflicts without uploading the copies", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-gits-notes-"));
+    const oldHash = "b".repeat(64);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, "dual.md"),
+      `---\ngitsNotionPageId: page-dual\ngitsLastSyncedHash: ${oldHash}\n---\nlocal changed`,
+    );
+    let remoteReads = 0;
+    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      if (String(input).endsWith("/query")) {
+        return json({
+          results: [{ id: "page-dual", properties: { Name: { title: [{ plain_text: "dual" }] } } }],
+        });
+      }
+      if (String(input).endsWith("/markdown")) {
+        return json({ markdown: remoteReads++ === 0 ? "remote first" : "remote second" });
+      }
+      return json({ id: "page-seed" });
+    });
+    const notes = makeGitsNotes({
+      env: {
+        GITS_NOTES_DIR: dir,
+        GITS_NOTES_NOTION_TOKEN: "token",
+        GITS_NOTES_NOTION_DATA_SOURCE_ID: "source",
+      },
+      fetch,
+      now: () => "2026-07-14T10:00:00.000Z",
+    });
+
+    await Effect.runPromise(notes.sync());
+    await Effect.runPromise(notes.sync());
+
+    const conflicts = (await fs.readdir(dir)).filter((id) => id.includes("Notion conflict"));
+    expect(conflicts).toHaveLength(2);
+    expect(
+      await fs.readFile(path.join(dir, "dual (Notion conflict 2026-07-14T10-00-00Z).md"), "utf8"),
+    ).toBe("remote first");
+    expect(
+      await fs.readFile(path.join(dir, "dual (Notion conflict 2026-07-14T10-00-00Z) 2.md"), "utf8"),
+    ).toBe("remote second");
+    expect(
+      fetch.mock.calls.filter(
+        ([url, init]) =>
+          String(url).endsWith("/pages") && String(init?.body).includes("Notion conflict"),
+      ),
+    ).toHaveLength(0);
   });
 
   it("preserves an existing unmapped filename when remote import collides", async () => {

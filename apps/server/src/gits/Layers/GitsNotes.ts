@@ -15,6 +15,7 @@ import { GitsNotes, type GitsNotesShape } from "../Services/GitsNotes.ts";
 const seedId = "VPS localhost callback redirect for windows powershell.md";
 const seedContent = "ssh -N -o ExitOnForwardFailure=yes -L 1455:127.0.0.1:1455 user@your-vps";
 const notionVersion = "2026-03-11";
+const conflictMarker = " (Notion conflict ";
 
 type Metadata = { readonly pageId: string | null; readonly hash: string | null };
 type ParsedNote = { readonly body: string; readonly metadata: Metadata };
@@ -87,6 +88,28 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
     } catch (cause) {
       await fs.unlink(temp).catch(() => undefined);
       throw cause;
+    }
+  };
+  const writeConflict = async (id: string, body: string) => {
+    const stamp = now()
+      .replace(/\.\d{3}Z$/, "Z")
+      .replace(/:/g, "-");
+    const base = `${id.slice(0, -3)}${conflictMarker}${stamp})`;
+    for (let suffix = 1; ; suffix++) {
+      try {
+        await write(
+          `${base}${suffix === 1 ? "" : ` ${suffix}`}.md`,
+          body,
+          {
+            pageId: null,
+            hash: null,
+          },
+          false,
+        );
+        return;
+      } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+      }
     }
   };
   const readFile = async (id: string): Promise<GitsNote> => {
@@ -210,7 +233,9 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
           cursor = null;
         }
       } while (cursor);
-      const locals = await Effect.runPromise(list());
+      const locals = (await Effect.runPromise(list())).filter(
+        (summary) => !summary.id.includes(conflictMarker),
+      );
       for (const summary of locals) {
         const local = await readFile(summary.id);
         const stored = parse(await fs.readFile(filePath(summary.id), "utf8")).metadata;
@@ -240,13 +265,7 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
         const localChanged = stored.hash !== hash(local.content);
         const remoteChanged = stored.hash !== hash(other.body);
         if (localChanged && remoteChanged) {
-          const stamp = now()
-            .replace(/\.\d{3}Z$/, "Z")
-            .replace(/:/g, "-");
-          await write(`${local.id.slice(0, -3)} (Notion conflict ${stamp}).md`, other.body, {
-            pageId: null,
-            hash: null,
-          });
+          await writeConflict(local.id, other.body);
           result.conflicts.push(local.id);
         } else if (localChanged) {
           await request(
@@ -275,13 +294,7 @@ export function makeGitsNotes(options: GitsNotesOptions = {}): GitsNotesShape {
         assertId(id);
         try {
           await fs.access(filePath(id));
-          const stamp = now()
-            .replace(/\.\d{3}Z$/, "Z")
-            .replace(/:/g, "-");
-          await write(`${id.slice(0, -3)} (Notion conflict ${stamp}).md`, page.body, {
-            pageId: null,
-            hash: null,
-          });
+          await writeConflict(id, page.body);
           result.conflicts.push(id);
           continue;
         } catch (cause) {
