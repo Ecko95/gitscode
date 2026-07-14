@@ -272,6 +272,48 @@ export const GitsDevCommandListResult = Schema.Struct({
 });
 export type GitsDevCommandListResult = typeof GitsDevCommandListResult.Type;
 
+const GitsNoteId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(255),
+  Schema.isPattern(/^[^/\\]+\.md$/),
+);
+const GitsNoteTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(255));
+const GitsNoteContent = Schema.String.check(Schema.isMaxLength(2 * 1024 * 1024));
+
+export const GitsNoteSummary = Schema.Struct({
+  id: GitsNoteId,
+  title: GitsNoteTitle,
+  updatedAt: IsoDateTime,
+  notionPageId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
+});
+export type GitsNoteSummary = typeof GitsNoteSummary.Type;
+
+export const GitsNote = Schema.Struct({
+  ...GitsNoteSummary.fields,
+  content: GitsNoteContent,
+});
+export type GitsNote = typeof GitsNote.Type;
+
+export const GitsNotesListInput = Schema.Struct({});
+export type GitsNotesListInput = typeof GitsNotesListInput.Type;
+
+export const GitsNoteIdInput = Schema.Struct({ id: GitsNoteId });
+export type GitsNoteIdInput = typeof GitsNoteIdInput.Type;
+
+export const GitsNoteWriteInput = Schema.Struct({
+  id: GitsNoteId,
+  title: GitsNoteTitle,
+  content: GitsNoteContent,
+});
+export type GitsNoteWriteInput = typeof GitsNoteWriteInput.Type;
+
+export const GitsNotesSyncResult = Schema.Struct({
+  created: Schema.Array(GitsNoteId),
+  updated: Schema.Array(GitsNoteId),
+  conflicts: Schema.Array(GitsNoteId),
+  warnings: Schema.Array(TrimmedNonEmptyString),
+});
+export type GitsNotesSyncResult = typeof GitsNotesSyncResult.Type;
+
 export const GitsSkillProvider = Schema.Literals(["codex", "claude", "cursor", "gits", "unknown"]);
 export type GitsSkillProvider = typeof GitsSkillProvider.Type;
 
@@ -1344,6 +1386,11 @@ export class GitsDevCommandError extends Schema.TaggedErrorClass<GitsDevCommandE
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+export class GitsNotesError extends Schema.TaggedErrorClass<GitsNotesError>()("GitsNotesError", {
+  message: TrimmedNonEmptyString,
+  cause: Schema.optional(Schema.Defect),
+}) {}
 
 export class HermesAdapterError extends Schema.TaggedErrorClass<HermesAdapterError>()(
   "HermesAdapterError",

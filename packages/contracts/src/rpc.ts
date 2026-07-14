@@ -52,6 +52,13 @@ import {
   GitsDevCommandInitInput,
   GitsDevCommandListInput,
   GitsDevCommandListResult,
+  GitsNote,
+  GitsNoteIdInput,
+  GitsNoteSummary,
+  GitsNoteWriteInput,
+  GitsNotesError,
+  GitsNotesListInput,
+  GitsNotesSyncResult,
   HermesAdapterError,
   HermesChatInput,
   HermesChatResult,
@@ -240,6 +247,12 @@ export const WS_METHODS = {
   gitsGetCockpit: "gits.cockpit.get",
   gitsDevCommandsList: "gits.devCommands.list",
   gitsDevCommandsInit: "gits.devCommands.init",
+  gitsNotesList: "gits.notes.list",
+  gitsNotesRead: "gits.notes.read",
+  gitsNotesCreate: "gits.notes.create",
+  gitsNotesUpdate: "gits.notes.update",
+  gitsNotesRemove: "gits.notes.remove",
+  gitsNotesSync: "gits.notes.sync",
   gitsVisualPlanMutate: "gits.visualPlan.mutate",
   gitsDelamainListPeers: "gits.delamain.peers.list",
   gitsDelamainGetPeerStatus: "gits.delamain.peers.status",
@@ -620,6 +633,42 @@ export const WsGitsDevCommandsInitRpc = Rpc.make(WS_METHODS.gitsDevCommandsInit,
   payload: GitsDevCommandInitInput,
   success: GitsDevCommandListResult,
   error: GitsDevCommandError,
+});
+
+export const WsGitsNotesListRpc = Rpc.make(WS_METHODS.gitsNotesList, {
+  payload: GitsNotesListInput,
+  success: Schema.Array(GitsNoteSummary),
+  error: GitsNotesError,
+});
+
+export const WsGitsNotesReadRpc = Rpc.make(WS_METHODS.gitsNotesRead, {
+  payload: GitsNoteIdInput,
+  success: GitsNote,
+  error: GitsNotesError,
+});
+
+export const WsGitsNotesCreateRpc = Rpc.make(WS_METHODS.gitsNotesCreate, {
+  payload: GitsNoteWriteInput,
+  success: GitsNote,
+  error: GitsNotesError,
+});
+
+export const WsGitsNotesUpdateRpc = Rpc.make(WS_METHODS.gitsNotesUpdate, {
+  payload: GitsNoteWriteInput,
+  success: GitsNote,
+  error: GitsNotesError,
+});
+
+export const WsGitsNotesRemoveRpc = Rpc.make(WS_METHODS.gitsNotesRemove, {
+  payload: GitsNoteIdInput,
+  success: Schema.Void,
+  error: GitsNotesError,
+});
+
+export const WsGitsNotesSyncRpc = Rpc.make(WS_METHODS.gitsNotesSync, {
+  payload: GitsNotesListInput,
+  success: GitsNotesSyncResult,
+  error: GitsNotesError,
 });
 
 export const WsGitsVisualPlanMutateRpc = Rpc.make(WS_METHODS.gitsVisualPlanMutate, {
@@ -1008,6 +1057,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsGetCockpitRpc,
   WsGitsDevCommandsListRpc,
   WsGitsDevCommandsInitRpc,
+  WsGitsNotesListRpc,
+  WsGitsNotesReadRpc,
+  WsGitsNotesCreateRpc,
+  WsGitsNotesUpdateRpc,
+  WsGitsNotesRemoveRpc,
+  WsGitsNotesSyncRpc,
   WsGitsVisualPlanMutateRpc,
   WsGitsDelamainListPeersRpc,
   WsGitsDelamainGetPeerStatusRpc,

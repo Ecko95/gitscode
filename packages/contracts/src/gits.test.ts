@@ -5,6 +5,10 @@ import {
   GitsBuildInfo,
   GitsCapacitySnapshot,
   GitsMcpInventorySnapshot,
+  GitsNote,
+  GitsNoteSummary,
+  GitsNoteWriteInput,
+  GitsNotesError,
   GitsSkillInventorySnapshot,
   HermesChatResult,
   HermesCodexAuthStatus,
@@ -15,6 +19,10 @@ import {
 } from "./gits.ts";
 
 const decodeGitsBuildInfo = Schema.decodeUnknownSync(GitsBuildInfo);
+const decodeGitsNoteSummary = Schema.decodeUnknownSync(GitsNoteSummary);
+const decodeGitsNote = Schema.decodeUnknownSync(GitsNote);
+const decodeGitsNoteWriteInput = Schema.decodeUnknownSync(GitsNoteWriteInput);
+const decodeGitsNotesError = Schema.decodeUnknownSync(GitsNotesError);
 const decodeGitsSkillInventorySnapshot = Schema.decodeUnknownSync(GitsSkillInventorySnapshot);
 const decodeGitsMcpInventorySnapshot = Schema.decodeUnknownSync(GitsMcpInventorySnapshot);
 const decodeGitsCapacitySnapshot = Schema.decodeUnknownSync(GitsCapacitySnapshot);
@@ -40,6 +48,36 @@ describe("GitsBuildInfo", () => {
     expect(parsed.time).toBe("2026-06-02T10:00:00.000Z");
     expect(parsed.dirty).toBe(false);
     expect(parsed.sourcePath).toBe("/srv/t3code/current");
+  });
+});
+
+describe("Gits notes contracts", () => {
+  const summary = {
+    id: "VPS localhost callback redirect for windows powershell.md",
+    title: "VPS localhost callback redirect for windows powershell",
+    updatedAt: "2026-07-14T10:00:00.000Z",
+    notionPageId: null,
+  };
+
+  it("decodes a note summary, full note, write payload, and typed error", () => {
+    expect(decodeGitsNoteSummary(summary)).toEqual(summary);
+    expect(
+      decodeGitsNote({ ...summary, content: "ssh -N -L 1455:127.0.0.1:1455 user@your-vps" }),
+    ).toMatchObject({ id: summary.id, content: expect.stringContaining("ssh -N") });
+    expect(
+      decodeGitsNoteWriteInput({
+        id: summary.id,
+        title: summary.title,
+        content: "# Callback redirect\n",
+      }),
+    ).toMatchObject({ id: summary.id, title: summary.title });
+    expect(
+      decodeGitsNotesError({ _tag: "GitsNotesError", message: "Vault unavailable" }),
+    ).toMatchObject({ _tag: "GitsNotesError", message: "Vault unavailable" });
+  });
+
+  it.each(["", "notes.txt", "../notes.md"])("rejects invalid note id %j", (id) => {
+    expect(() => decodeGitsNoteSummary({ ...summary, id })).toThrow();
   });
 });
 
