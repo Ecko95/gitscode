@@ -324,25 +324,31 @@ export const AutomodeDriverLive = Layer.effect(
           yield* maintainHeldPr(snapshot);
           return;
         }
+        // Disabled-scheduler bypass: a supervised daytime dispatch must not consume the night cap.
+        if (gate.bypassed !== true) {
+          const recorded = yield* scheduler
+            .recordGoalStart({ goalId: next.id, episodeId: next.episodeId })
+            .pipe(
+              Effect.as(true),
+              // Fail closed: an unrecorded start would undercount the decision-11 night cap.
+              Effect.catch((error) =>
+                supervisor
+                  .haltDriver({
+                    reason: `Halted: scheduler failed to record the start of ${next.title} — ${error.message}`,
+                  })
+                  .pipe(Effect.as(false)),
+              ),
+            );
+          if (!recorded) {
+            return;
+          }
+        }
         const result = yield* supervisor.dispatchGoal({ goalId: next.id });
         if (result.peer === null) {
           yield* supervisor.haltDriver({
             reason: result.blockedReason ?? `Dispatch of ${next.title} did not spawn a peer.`,
           });
-          return;
         }
-        // Disabled-scheduler bypass: a supervised daytime dispatch must not consume the night cap.
-        if (gate.bypassed === true) {
-          return;
-        }
-        yield* scheduler.recordGoalStart({ goalId: next.id, episodeId: next.episodeId }).pipe(
-          // Fail closed: an unrecorded start would undercount the decision-11 night cap.
-          Effect.catch((error) =>
-            supervisor.haltDriver({
-              reason: `Halted: scheduler failed to record the start of ${next.title} — ${error.message}`,
-            }),
-          ),
-        );
       });
 
     // Forked, scoped polling fiber — runs for the lifetime of the layer.

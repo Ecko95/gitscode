@@ -119,6 +119,7 @@ interface MakeLayerOptions {
   readonly onRecordEpisode?: (episode: AutomodeEpisode) => void;
   readonly gateResult?: GitsSchedulerGateResult;
   readonly onRecordGoalStart?: (input: GitsSchedulerGoalStartInput) => void;
+  readonly onSpawnPeer?: () => void;
   readonly recordGoalStartError?: GitsSlotSchedulerError;
 }
 
@@ -145,15 +146,18 @@ function makeLayer(
               ],
       }),
     spawnPeer: (input) =>
-      Effect.succeed({
-        ...basePeer,
-        id: spawnedPeerId,
-        name: input.name ?? basePeer.name,
-        model: input.model ?? basePeer.model,
-        sourceRepo: input.repo,
-        task: input.prompt,
-        status: "running",
-        rawStatus: "running",
+      Effect.sync(() => {
+        options?.onSpawnPeer?.();
+        return {
+          ...basePeer,
+          id: spawnedPeerId,
+          name: input.name ?? basePeer.name,
+          model: input.model ?? basePeer.model,
+          sourceRepo: input.repo,
+          task: input.prompt,
+          status: "running",
+          rawStatus: "running",
+        };
       }),
     killPeer: () => Effect.succeed({ ...basePeer, status: "killed", rawStatus: "killed" }),
   });
@@ -802,6 +806,7 @@ describe("AutomodeDriver", () => {
 
   it.effect("halts (fail-closed) when the scheduler cannot record a goal start", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let spawnCalls = 0;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       const driver = yield* AutomodeDriver;
@@ -813,10 +818,15 @@ describe("AutomodeDriver", () => {
       const snapshot = yield* supervisor.getSnapshot();
       assert.equal(snapshot.driverHalted, true);
       assert.include(snapshot.driverHaltedReason ?? "", "failed to record the start");
+      assert.equal(snapshot.goals.find((g) => g.title === "Uncounted")?.status, "queued");
+      assert.equal(spawnCalls, 0);
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
           recordGoalStartError: new GitsSlotSchedulerError({ message: "scheduler disk full" }),
+          onSpawnPeer: () => {
+            spawnCalls += 1;
+          },
         }),
       ),
     );
