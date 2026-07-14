@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
+import { Route as NotesRouteImport } from './routes/notes'
 import { Route as GitsRouteImport } from './routes/gits'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ChatRouteImport } from './routes/_chat'
@@ -35,6 +36,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const PairRoute = PairRouteImport.update({
   id: '/pair',
   path: '/pair',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotesRoute = NotesRouteImport.update({
+  id: '/notes',
+  path: '/notes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GitsRoute = GitsRouteImport.update({
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/docs': typeof DocsRouteWithChildren
   '/gits': typeof GitsRoute
+  '/notes': typeof NotesRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/docs/$section': typeof DocsSectionRoute
@@ -134,6 +141,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/docs': typeof DocsRouteWithChildren
   '/gits': typeof GitsRoute
+  '/notes': typeof NotesRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/docs/$section': typeof DocsSectionRoute
@@ -154,6 +162,7 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
   '/gits': typeof GitsRoute
+  '/notes': typeof NotesRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/docs/$section': typeof DocsSectionRoute
@@ -175,6 +184,7 @@ export interface FileRouteTypes {
     | '/'
     | '/docs'
     | '/gits'
+    | '/notes'
     | '/pair'
     | '/settings'
     | '/docs/$section'
@@ -192,6 +202,7 @@ export interface FileRouteTypes {
   to:
     | '/docs'
     | '/gits'
+    | '/notes'
     | '/pair'
     | '/settings'
     | '/docs/$section'
@@ -211,6 +222,7 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/docs'
     | '/gits'
+    | '/notes'
     | '/pair'
     | '/settings'
     | '/docs/$section'
@@ -231,6 +243,7 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   DocsRoute: typeof DocsRouteWithChildren
   GitsRoute: typeof GitsRoute
+  NotesRoute: typeof NotesRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
 }
@@ -249,6 +262,13 @@ declare module '@tanstack/react-router' {
       path: '/pair'
       fullPath: '/pair'
       preLoaderRoute: typeof PairRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notes': {
+      id: '/notes'
+      path: '/notes'
+      fullPath: '/notes'
+      preLoaderRoute: typeof NotesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/gits': {
@@ -413,6 +433,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   DocsRoute: DocsRouteWithChildren,
   GitsRoute: GitsRoute,
+  NotesRoute: NotesRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
 }
