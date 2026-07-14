@@ -80,7 +80,9 @@ import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
 import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
+import { AutomodeTelegramDigestLive } from "./gits/Layers/AutomodeTelegramDigest.ts";
 import { GitsSlotSchedulerLive } from "./gits/Layers/GitsSlotScheduler.ts";
+import { HermesTelegramNotifierLive } from "./gits/Layers/HermesTelegramNotifier.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { GraveyardOrphanAdopterLive } from "./vcs/GraveyardOrphanAdopter.ts";
 import { GraveyardReaperLive } from "./vcs/GraveyardReaper.ts";
@@ -331,6 +333,13 @@ const AutomodeEpisodeLedgerLayerLive = AutomodeEpisodeLedgerLive.pipe(
   Layer.provide(PersistenceLayerLive),
 );
 
+const AutomodeTelegramDigestLayerLive = AutomodeTelegramDigestLive.pipe(
+  Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(GitsSlotSchedulerLayerLive),
+  Layer.provide(AutomodeEpisodeLedgerLayerLive),
+  Layer.provide(HermesTelegramNotifierLive),
+);
+
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(GitsSlotSchedulerLayerLive),
@@ -352,6 +361,7 @@ const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
   Layer.provide(DelamainCliAdapterLive),
   Layer.provide(OpenGsdCliAdapterLive),
   Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(HermesTelegramNotifierLive),
 );
 
 const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
@@ -388,6 +398,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(AutomodeSupervisorLayerLive),
   Layer.provideMerge(GitsSlotSchedulerLayerLive),
   Layer.provideMerge(AutomodeDriverLayerLive),
+  Layer.provideMerge(AutomodeTelegramDigestLayerLive),
   // GitsReviewPipeline composes the gate/verifier/criteria services. Provide them
   // directly to it so its own requirements are satisfied here rather than leaking
   // into the server launch layer (which must only require ServerConfig). The dep
