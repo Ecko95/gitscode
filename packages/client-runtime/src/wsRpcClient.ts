@@ -251,6 +251,9 @@ export interface WsRpcClient {
   };
   readonly provider: {
     readonly steerTurn: RpcUnaryMethod<typeof WS_METHODS.providerSteerTurn>;
+    readonly generateFollowUpSuggestions: RpcUnaryMethod<
+      typeof WS_METHODS.providerGenerateFollowUpSuggestions
+    >;
   };
 }
 
@@ -566,6 +569,10 @@ export function createWsRpcClient(
     provider: {
       steerTurn: (input) =>
         transport.request((client) => client[WS_METHODS.providerSteerTurn](input)),
+      generateFollowUpSuggestions: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.providerGenerateFollowUpSuggestions](input),
+        ),
     },
   };
 }

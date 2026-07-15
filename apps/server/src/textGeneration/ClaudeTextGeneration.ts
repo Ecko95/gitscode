@@ -17,13 +17,14 @@ import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { TextGenerationError } from "@t3tools/contracts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import { normalizeFollowUpSuggestions, type TextGenerationShape } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadForkSummaryPrompt,
   buildThreadTitlePrompt,
+  buildFollowUpSuggestionsPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -86,7 +87,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateThreadForkSummary",
+      | "generateThreadForkSummary"
+      | "generateFollowUpSuggestions",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -117,7 +119,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateThreadForkSummary";
+      | "generateThreadForkSummary"
+      | "generateFollowUpSuggestions";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -379,11 +382,26 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     };
   });
 
+  const generateFollowUpSuggestions: NonNullable<
+    TextGenerationShape["generateFollowUpSuggestions"]
+  > = Effect.fn("ClaudeTextGeneration.generateFollowUpSuggestions")(function* (input) {
+    const { prompt, outputSchema } = buildFollowUpSuggestionsPrompt(input.transcript);
+    const generated = yield* runClaudeJson({
+      operation: "generateFollowUpSuggestions",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+    return { suggestions: normalizeFollowUpSuggestions(generated.suggestions) };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateThreadForkSummary,
+    generateFollowUpSuggestions,
   } satisfies TextGenerationShape;
 });

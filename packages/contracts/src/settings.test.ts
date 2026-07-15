@@ -2,11 +2,26 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+describe("ClientSettings.automaticFollowUpSuggestions", () => {
+  it("defaults on for legacy settings without the key", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.automaticFollowUpSuggestions).toBe(true);
+    expect(Schema.decodeUnknownSync(ClientSettingsSchema)({}).automaticFollowUpSuggestions).toBe(
+      true,
+    );
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {

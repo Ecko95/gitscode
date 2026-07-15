@@ -110,6 +110,11 @@ interface FakeGitTextGeneration {
     seedPrompt?: string | undefined;
     modelSelection: ModelSelection;
   }) => Effect.Effect<{ summary: string }, TextGenerationError>;
+  generateFollowUpSuggestions: (input: {
+    cwd: string;
+    transcript: string;
+    modelSelection: ModelSelection;
+  }) => Effect.Effect<{ suggestions: string[] }, TextGenerationError>;
 }
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
@@ -343,6 +348,7 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
       Effect.succeed({
         summary: "Fork summary",
       }),
+    generateFollowUpSuggestions: () => Effect.succeed({ suggestions: [] }),
     ...overrides,
   };
 
@@ -397,6 +403,17 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadForkSummary",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateFollowUpSuggestions: (input) =>
+      implementation.generateFollowUpSuggestions(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateFollowUpSuggestions",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

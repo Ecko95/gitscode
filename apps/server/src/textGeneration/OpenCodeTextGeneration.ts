@@ -23,8 +23,9 @@ import {
   buildPrContentPrompt,
   buildThreadForkSummaryPrompt,
   buildThreadTitlePrompt,
+  buildFollowUpSuggestionsPrompt,
 } from "./TextGenerationPrompts.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import { normalizeFollowUpSuggestions, type TextGenerationShape } from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
@@ -162,7 +163,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateThreadForkSummary";
+      | "generateThreadForkSummary"
+      | "generateFollowUpSuggestions";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -273,7 +275,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateThreadForkSummary";
+      | "generateThreadForkSummary"
+      | "generateFollowUpSuggestions";
     readonly cwd: string;
     readonly prompt: string;
     readonly outputSchemaJson: S;
@@ -481,11 +484,26 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     };
   });
 
+  const generateFollowUpSuggestions: NonNullable<
+    TextGenerationShape["generateFollowUpSuggestions"]
+  > = Effect.fn("OpenCodeTextGeneration.generateFollowUpSuggestions")(function* (input) {
+    const { prompt, outputSchema } = buildFollowUpSuggestionsPrompt(input.transcript);
+    const generated = yield* runOpenCodeJson({
+      operation: "generateFollowUpSuggestions",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+    return { suggestions: normalizeFollowUpSuggestions(generated.suggestions) };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateThreadForkSummary,
+    generateFollowUpSuggestions,
   } satisfies TextGenerationShape;
 });

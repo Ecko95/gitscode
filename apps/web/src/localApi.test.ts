@@ -40,6 +40,10 @@ const gitStatusListeners = new Set<(event: VcsStatusResult) => void>();
 
 const rpcClientMock = {
   dispose: vi.fn(),
+  provider: {
+    steerTurn: vi.fn(),
+    generateFollowUpSuggestions: vi.fn(),
+  },
   crit: {
     ensureSidecar: vi.fn(),
     sidecarStatus: vi.fn(),
@@ -641,6 +645,7 @@ describe("wsApi", () => {
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const clientSettings = {
       autoOpenPlanSidebar: false,
+      automaticFollowUpSuggestions: true,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       critReviewEnabled: false,
@@ -705,6 +710,7 @@ describe("wsApi", () => {
     const api = createLocalApi(rpcClientMock as never);
     const clientSettings = {
       autoOpenPlanSidebar: false,
+      automaticFollowUpSuggestions: true,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       critReviewEnabled: false,

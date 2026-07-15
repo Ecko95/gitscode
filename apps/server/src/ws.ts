@@ -63,6 +63,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProviderService } from "./provider/Services/ProviderService.ts";
+import { TextGeneration } from "./textGeneration/TextGeneration.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
@@ -309,6 +310,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
       const providerService = yield* Effect.serviceOption(ProviderService);
+      const textGeneration = yield* Effect.serviceOption(TextGeneration);
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -898,6 +900,19 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 : Effect.fail(
                     new ProviderOperationError({ message: "Active-turn steering unavailable" }),
                   ),
+          }),
+        [WS_METHODS.providerGenerateFollowUpSuggestions]: (input) =>
+          Option.match(textGeneration, {
+            onNone: () =>
+              Effect.fail(new ProviderOperationError({ message: "Text generation unavailable" })),
+            onSome: (service) =>
+              service
+                .generateFollowUpSuggestions(input)
+                .pipe(
+                  Effect.mapError(
+                    (error) => new ProviderOperationError({ message: error.message }),
+                  ),
+                ),
           }),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(

@@ -12,6 +12,28 @@ import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 
 export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "opencode";
 
+export function normalizeFollowUpSuggestions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim().slice(0, 160))
+        .filter(Boolean),
+    ),
+  ].slice(0, 3);
+}
+
+export interface FollowUpSuggestionGenerationInput {
+  cwd: string;
+  transcript: string;
+  modelSelection: ModelSelection;
+}
+
+export interface FollowUpSuggestionGenerationResult {
+  suggestions: string[];
+}
+
 export interface CommitMessageGenerationInput {
   cwd: string;
   branch: string | null;
@@ -92,6 +114,9 @@ export interface TextGenerationService {
   generateThreadForkSummary(
     input: ThreadForkSummaryGenerationInput,
   ): Promise<ThreadForkSummaryGenerationResult>;
+  generateFollowUpSuggestions(
+    input: FollowUpSuggestionGenerationInput,
+  ): Promise<FollowUpSuggestionGenerationResult>;
 }
 
 /**
@@ -132,6 +157,9 @@ export interface TextGenerationShape {
   readonly generateThreadForkSummary: (
     input: ThreadForkSummaryGenerationInput,
   ) => Effect.Effect<ThreadForkSummaryGenerationResult, TextGenerationError>;
+  readonly generateFollowUpSuggestions: (
+    input: FollowUpSuggestionGenerationInput,
+  ) => Effect.Effect<FollowUpSuggestionGenerationResult, TextGenerationError>;
 }
 
 /**
@@ -146,7 +174,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateThreadForkSummary";
+  | "generateThreadForkSummary"
+  | "generateFollowUpSuggestions";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistryShape,
@@ -188,6 +217,10 @@ export const makeTextGenerationFromRegistry = (
   generateThreadForkSummary: (input) =>
     resolveInstance(registry, "generateThreadForkSummary", input.modelSelection.instanceId).pipe(
       Effect.flatMap((textGeneration) => textGeneration.generateThreadForkSummary(input)),
+    ),
+  generateFollowUpSuggestions: (input) =>
+    resolveInstance(registry, "generateFollowUpSuggestions", input.modelSelection.instanceId).pipe(
+      Effect.flatMap((textGeneration) => textGeneration.generateFollowUpSuggestions(input)),
     ),
 });
 

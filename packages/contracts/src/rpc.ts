@@ -151,7 +151,12 @@ import {
   VisualPlanMutateResult,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { ProviderOperationError, ProviderSteerTurnInput } from "./provider.ts";
+import {
+  FollowUpSuggestionsInput,
+  FollowUpSuggestionsResult,
+  ProviderOperationError,
+  ProviderSteerTurnInput,
+} from "./provider.ts";
 import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
@@ -322,6 +327,7 @@ export const WS_METHODS = {
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
   providerSteerTurn: "provider.steerTurn",
+  providerGenerateFollowUpSuggestions: "provider.generateFollowUpSuggestions",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -382,6 +388,15 @@ export const WsProviderSteerTurnRpc = Rpc.make(WS_METHODS.providerSteerTurn, {
   success: Schema.Void,
   error: ProviderOperationError,
 });
+
+export const WsProviderGenerateFollowUpSuggestionsRpc = Rpc.make(
+  WS_METHODS.providerGenerateFollowUpSuggestions,
+  {
+    payload: FollowUpSuggestionsInput,
+    success: FollowUpSuggestionsResult,
+    error: ProviderOperationError,
+  },
+);
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
@@ -1072,6 +1087,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderSteerTurnRpc,
+  WsProviderGenerateFollowUpSuggestionsRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,

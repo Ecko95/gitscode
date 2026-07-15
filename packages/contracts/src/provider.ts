@@ -107,6 +107,18 @@ export class ProviderOperationError extends Schema.TaggedErrorClass<ProviderOper
   { message: Schema.String },
 ) {}
 
+export const FollowUpSuggestionsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  transcript: TrimmedNonEmptyString.check(Schema.isMaxLength(12_000)),
+  modelSelection: ModelSelection,
+});
+export type FollowUpSuggestionsInput = typeof FollowUpSuggestionsInput.Type;
+
+export const FollowUpSuggestionsResult = Schema.Struct({
+  suggestions: Schema.Array(Schema.String),
+});
+export type FollowUpSuggestionsResult = typeof FollowUpSuggestionsResult.Type;
+
 export const ProviderTurnStartResult = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
