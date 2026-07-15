@@ -249,6 +249,12 @@ export interface WsRpcClient {
     readonly subscribeShell: RpcStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeShell>;
     readonly subscribeThread: RpcInputStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeThread>;
   };
+  readonly provider: {
+    readonly steerTurn: RpcUnaryMethod<typeof WS_METHODS.providerSteerTurn>;
+    readonly generateFollowUpSuggestions: RpcUnaryMethod<
+      typeof WS_METHODS.providerGenerateFollowUpSuggestions
+    >;
+  };
 }
 
 export interface CreateWsRpcClientOptions {
@@ -558,6 +564,14 @@ export function createWsRpcClient(
           (client) => client[ORCHESTRATION_WS_METHODS.subscribeThread](input),
           listener,
           subscriptionOptions(options, ORCHESTRATION_WS_METHODS.subscribeThread),
+        ),
+    },
+    provider: {
+      steerTurn: (input) =>
+        transport.request((client) => client[WS_METHODS.providerSteerTurn](input)),
+      generateFollowUpSuggestions: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.providerGenerateFollowUpSuggestions](input),
         ),
     },
   };

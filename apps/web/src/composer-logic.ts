@@ -11,6 +11,54 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+export interface ComposerHistoryNavigation {
+  index: number | null;
+  preservedDraft: string;
+  prompt: string;
+}
+
+export function navigateComposerHistory(
+  history: ReadonlyArray<string>,
+  navigation: ComposerHistoryNavigation | null,
+  currentPrompt: string,
+  key: "ArrowDown" | "ArrowUp",
+  selection?: { cursor: number; selectionStart: number; selectionEnd: number },
+): ComposerHistoryNavigation | null {
+  if (history.length === 0 || selection?.selectionStart !== selection?.selectionEnd) return null;
+  if (currentPrompt.includes("\n")) {
+    const cursor = selection?.cursor ?? currentPrompt.length;
+    if (key === "ArrowUp" && cursor > currentPrompt.indexOf("\n")) return null;
+    if (key === "ArrowDown" && cursor <= currentPrompt.lastIndexOf("\n")) return null;
+  }
+
+  if (key === "ArrowUp") {
+    const index =
+      navigation?.index === null || navigation?.index === undefined
+        ? history.length - 1
+        : Math.max(0, navigation.index - 1);
+    return {
+      index,
+      preservedDraft: navigation?.preservedDraft ?? currentPrompt,
+      prompt: history[index] ?? currentPrompt,
+    };
+  }
+
+  if (navigation?.index === null || navigation?.index === undefined) return null;
+  if (navigation.index === history.length - 1) {
+    return {
+      index: null,
+      preservedDraft: navigation.preservedDraft,
+      prompt: navigation.preservedDraft,
+    };
+  }
+  const index = navigation.index + 1;
+  return {
+    index,
+    preservedDraft: navigation.preservedDraft,
+    prompt: history[index] ?? currentPrompt,
+  };
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }

@@ -129,11 +129,49 @@ function resetComposerDraftStore() {
     draftsByThreadKey: {},
     draftThreadsByThreadKey: {},
     queuedMessagesByThreadKey: {},
+    sentMessageHistoryByThreadKey: {},
     logicalProjectDraftThreadKeyByLogicalProjectKey: {},
     stickyModelSelectionByProvider: {},
     stickyActiveProvider: null,
   });
 }
+
+describe("composerDraftStore sent message history", () => {
+  const threadRef = scopeThreadRef(
+    EnvironmentId.make("environment-local"),
+    ThreadId.make("thread-history"),
+  );
+  const otherThreadRef = scopeThreadRef(
+    EnvironmentId.make("environment-remote"),
+    ThreadId.make("thread-history"),
+  );
+
+  beforeEach(resetComposerDraftStore);
+
+  it("records nonempty messages per scoped thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.recordSentMessage(threadRef, " first ");
+    store.recordSentMessage(threadRef, "");
+    store.recordSentMessage(otherThreadRef, "other");
+
+    expect(useComposerDraftStore.getState().getSentMessageHistory(threadRef)).toEqual(["first"]);
+    expect(useComposerDraftStore.getState().getSentMessageHistory(otherThreadRef)).toEqual([
+      "other",
+    ]);
+  });
+
+  it("keeps only the newest 100 messages", () => {
+    const store = useComposerDraftStore.getState();
+    for (let index = 0; index < 101; index += 1) {
+      store.recordSentMessage(threadRef, `message-${index}`);
+    }
+
+    const history = useComposerDraftStore.getState().getSentMessageHistory(threadRef);
+    expect(history).toHaveLength(100);
+    expect(history[0]).toBe("message-1");
+    expect(history.at(-1)).toBe("message-100");
+  });
+});
 
 function modelSelection(
   provider: ProviderDriverKind,
@@ -343,6 +381,30 @@ describe("composerDraftStore queued messages", () => {
         .getState()
         .queuedMessagesByThreadKey[otherThreadKey]?.map((m) => m.text),
     ).toEqual(["other"]);
+  });
+
+  it("takes one queued message atomically without reordering the rest", () => {
+    const first = {
+      id: MessageId.make("message-take-1"),
+      text: "first",
+      rawPrompt: "first",
+      titleSeed: "first",
+      createdAt: "2026-07-06T10:00:00.000Z",
+      attachments: [],
+      modelSelection: modelSelection(CODEX_DRIVER, "gpt-5"),
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    };
+    const second = { ...first, id: MessageId.make("message-take-2"), text: "second" };
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedMessage(threadRef, first);
+    store.enqueueQueuedMessage(threadRef, second);
+
+    expect(store.takeQueuedMessage(threadRef, first.id)).toEqual(first);
+    expect(store.takeQueuedMessage(threadRef, MessageId.make("missing"))).toBeNull();
+    expect(
+      useComposerDraftStore.getState().queuedMessagesByThreadKey[threadKey]?.map(({ id }) => id),
+    ).toEqual([second.id]);
   });
 
   it("persists and hydrates queued messages", () => {

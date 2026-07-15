@@ -47,7 +47,7 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 7;
+const COMPOSER_DRAFT_STORAGE_VERSION = 8;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -213,6 +213,7 @@ const PersistedComposerDraftStoreState = Schema.Struct({
     Schema.String,
     Schema.Array(PersistedQueuedComposerMessage),
   ),
+  sentMessageHistoryByThreadKey: Schema.Record(Schema.String, Schema.Array(Schema.String)),
   logicalProjectDraftThreadKeyByLogicalProjectKey: Schema.Record(Schema.String, Schema.String),
   stickyModelSelectionByProvider: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ModelSelection),
@@ -301,6 +302,7 @@ interface ComposerDraftStoreState {
   draftsByThreadKey: Record<string, ComposerThreadDraftState>;
   draftThreadsByThreadKey: Record<string, DraftThreadState>;
   queuedMessagesByThreadKey: Record<string, QueuedComposerMessage[]>;
+  sentMessageHistoryByThreadKey: Record<string, string[]>;
   logicalProjectDraftThreadKeyByLogicalProjectKey: Record<string, string>;
   stickyModelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   stickyActiveProvider: ProviderInstanceId | null;
@@ -424,8 +426,14 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => void;
   enqueueQueuedMessage: (threadRef: ScopedThreadRef, message: QueuedComposerMessage) => void;
+  takeQueuedMessage: (
+    threadRef: ScopedThreadRef,
+    messageId: MessageId,
+  ) => QueuedComposerMessage | null;
   removeQueuedMessage: (threadRef: ScopedThreadRef, messageId: MessageId) => void;
   clearQueuedMessages: (threadRef: ScopedThreadRef) => void;
+  recordSentMessage: (threadRef: ScopedThreadRef, text: string) => void;
+  getSentMessageHistory: (threadRef: ScopedThreadRef) => string[];
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
 }
 
@@ -488,6 +496,7 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE = Object.freeze<PersistedComposerDraftSt
   draftsByThreadKey: {},
   draftThreadsByThreadKey: {},
   queuedMessagesByThreadKey: {},
+  sentMessageHistoryByThreadKey: {},
   logicalProjectDraftThreadKeyByLogicalProjectKey: {},
   stickyModelSelectionByProvider: {},
   stickyActiveProvider: null,
@@ -1637,6 +1646,21 @@ function normalizeQueuedMessagesByThreadKey(
   return queuedMessagesByThreadKey;
 }
 
+function normalizeSentMessageHistoryByThreadKey(rawHistory: unknown): Record<string, string[]> {
+  if (!rawHistory || typeof rawHistory !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(rawHistory as Record<string, unknown>).flatMap(([threadKey, messages]) => {
+      if (!threadKey || !Array.isArray(messages)) return [];
+      const normalized = messages
+        .filter((message): message is string => typeof message === "string")
+        .map((message) => message.trim())
+        .filter(Boolean)
+        .slice(-100);
+      return normalized.length > 0 ? [[threadKey, normalized]] : [];
+    }),
+  );
+}
+
 function migratePersistedComposerDraftStoreState(
   persistedState: unknown,
 ): PersistedComposerDraftStoreState {
@@ -1685,6 +1709,9 @@ function migratePersistedComposerDraftStoreState(
     draftThreadsByThreadKey,
     queuedMessagesByThreadKey: normalizeQueuedMessagesByThreadKey(
       candidate.queuedMessagesByThreadKey,
+    ),
+    sentMessageHistoryByThreadKey: normalizeSentMessageHistoryByThreadKey(
+      candidate.sentMessageHistoryByThreadKey,
     ),
     logicalProjectDraftThreadKeyByLogicalProjectKey,
     stickyModelSelectionByProvider: compactModelSelectionByProvider(stickyModelSelectionByProvider),
@@ -1747,6 +1774,7 @@ function partializeComposerDraftStoreState(
     draftsByThreadKey: persistedDraftsByThreadKey,
     draftThreadsByThreadKey: state.draftThreadsByThreadKey,
     queuedMessagesByThreadKey: state.queuedMessagesByThreadKey,
+    sentMessageHistoryByThreadKey: state.sentMessageHistoryByThreadKey,
     logicalProjectDraftThreadKeyByLogicalProjectKey:
       state.logicalProjectDraftThreadKeyByLogicalProjectKey,
     stickyModelSelectionByProvider: compactModelSelectionByProvider(
@@ -1822,6 +1850,9 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     draftThreadsByThreadKey,
     queuedMessagesByThreadKey: normalizeQueuedMessagesByThreadKey(
       normalizedPersistedState.queuedMessagesByThreadKey,
+    ),
+    sentMessageHistoryByThreadKey: normalizeSentMessageHistoryByThreadKey(
+      normalizedPersistedState.sentMessageHistoryByThreadKey,
     ),
     logicalProjectDraftThreadKeyByLogicalProjectKey,
     stickyModelSelectionByProvider: compactModelSelectionByProvider(stickyModelSelectionByProvider),
@@ -1931,7 +1962,7 @@ function hydratePersistedComposerImageAttachment(
   }
 }
 
-function hydrateImagesFromPersisted(
+export function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
@@ -2016,6 +2047,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         draftsByThreadKey: {},
         draftThreadsByThreadKey: {},
         queuedMessagesByThreadKey: {},
+        sentMessageHistoryByThreadKey: {},
         logicalProjectDraftThreadKeyByLogicalProjectKey: {},
         stickyModelSelectionByProvider: {},
         stickyActiveProvider: null,
@@ -2953,8 +2985,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
-        removeQueuedMessage: (threadRef, messageId) => {
+        takeQueuedMessage: (threadRef, messageId) => {
           const threadKey = scopedThreadKey(threadRef);
+          let removed: QueuedComposerMessage | null = null;
           set((state) => {
             const current = state.queuedMessagesByThreadKey[threadKey];
             if (!current) {
@@ -2964,6 +2997,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (nextMessages.length === current.length) {
               return state;
             }
+            removed = current.find((message) => message.id === messageId) ?? null;
             const queuedMessagesByThreadKey = { ...state.queuedMessagesByThreadKey };
             if (nextMessages.length === 0) {
               delete queuedMessagesByThreadKey[threadKey];
@@ -2972,6 +3006,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { queuedMessagesByThreadKey };
           });
+          return removed;
+        },
+        removeQueuedMessage: (threadRef, messageId) => {
+          get().takeQueuedMessage(threadRef, messageId);
         },
         clearQueuedMessages: (threadRef) => {
           const threadKey = scopedThreadKey(threadRef);
@@ -2984,6 +3022,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { queuedMessagesByThreadKey };
           });
         },
+        recordSentMessage: (threadRef, text) => {
+          const message = text.trim();
+          if (!message) return;
+          const threadKey = scopedThreadKey(threadRef);
+          set((state) => ({
+            sentMessageHistoryByThreadKey: {
+              ...state.sentMessageHistoryByThreadKey,
+              [threadKey]: [
+                ...(state.sentMessageHistoryByThreadKey[threadKey] ?? []),
+                message,
+              ].slice(-100),
+            },
+          }));
+        },
+        getSentMessageHistory: (threadRef) =>
+          get().sentMessageHistoryByThreadKey[scopedThreadKey(threadRef)] ?? [],
         clearComposerContent: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {

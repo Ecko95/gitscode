@@ -13,7 +13,12 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  type DraftThreadState,
+  hydrateImagesFromPersisted,
+  type QueuedComposerMessage,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { selectThreadByRef, selectThreadExistsByRef, useStore } from "../store";
 import {
@@ -28,6 +33,18 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const THREAD_FORK_MODE = "full" as const;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export function queuedMessageToComposerDraft(message: QueuedComposerMessage) {
+  const images = hydrateImagesFromPersisted(message.attachments);
+  if (images.length !== message.attachments.length) return null;
+  return {
+    prompt: message.rawPrompt,
+    images,
+    modelSelection: message.modelSelection,
+    runtimeMode: message.runtimeMode,
+    interactionMode: message.interactionMode,
+  };
+}
 
 type ThreadForkCommand = Extract<ClientOrchestrationCommand, { type: "thread.fork" }>;
 

@@ -240,6 +240,7 @@ function createMockEnvironmentApi(input: {
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
 }): EnvironmentApi {
   return {
+    provider: {} as EnvironmentApi["provider"],
     terminal: {} as EnvironmentApi["terminal"],
     projects: {} as EnvironmentApi["projects"],
     filesystem: {

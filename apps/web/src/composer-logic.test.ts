@@ -6,10 +6,53 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  navigateComposerHistory,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+describe("navigateComposerHistory", () => {
+  const history = ["oldest", "newest"];
+
+  it("moves newest-first and restores the preserved draft", () => {
+    const newest = navigateComposerHistory(history, null, "draft", "ArrowUp");
+    expect(newest).toEqual({ index: 1, preservedDraft: "draft", prompt: "newest" });
+
+    const oldest = navigateComposerHistory(history, newest, newest!.prompt, "ArrowUp");
+    expect(oldest).toEqual({ index: 0, preservedDraft: "draft", prompt: "oldest" });
+
+    const newer = navigateComposerHistory(history, oldest, oldest!.prompt, "ArrowDown");
+    expect(newer).toEqual({ index: 1, preservedDraft: "draft", prompt: "newest" });
+
+    expect(navigateComposerHistory(history, newer, newer!.prompt, "ArrowDown")).toEqual({
+      index: null,
+      preservedDraft: "draft",
+      prompt: "draft",
+    });
+  });
+
+  it("does nothing without history", () => {
+    expect(navigateComposerHistory([], null, "", "ArrowUp")).toBeNull();
+  });
+
+  it("leaves multiline caret and selection movement to the editor", () => {
+    expect(
+      navigateComposerHistory(history, null, "first\nsecond", "ArrowUp", {
+        cursor: 12,
+        selectionStart: 12,
+        selectionEnd: 12,
+      }),
+    ).toBeNull();
+    expect(
+      navigateComposerHistory(history, null, "", "ArrowUp", {
+        cursor: 0,
+        selectionStart: 0,
+        selectionEnd: 1,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("detectComposerTrigger", () => {
   it("detects @path trigger at cursor", () => {

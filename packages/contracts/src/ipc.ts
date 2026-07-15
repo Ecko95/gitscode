@@ -34,6 +34,11 @@ import type {
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
+  FollowUpSuggestionsInput,
+  FollowUpSuggestionsResult,
+  ProviderSteerTurnInput,
+} from "./provider.ts";
+import type {
   ServerConfig,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
@@ -513,6 +518,12 @@ export interface LocalApi {
  * `environmentId` rather than reaching through the local desktop bridge.
  */
 export interface EnvironmentApi {
+  provider: {
+    steerTurn: (input: ProviderSteerTurnInput) => Promise<void>;
+    generateFollowUpSuggestions: (
+      input: FollowUpSuggestionsInput,
+    ) => Promise<FollowUpSuggestionsResult>;
+  };
   terminal: {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
     attach: (

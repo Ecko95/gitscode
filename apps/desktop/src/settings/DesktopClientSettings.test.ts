@@ -13,6 +13,7 @@ import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 
 const clientSettings: ClientSettings = {
   autoOpenPlanSidebar: false,
+  automaticFollowUpSuggestions: true,
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   critReviewEnabled: false,

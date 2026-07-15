@@ -45,6 +45,7 @@ import {
   type CodexSessionRuntimeOptions,
   type CodexForkResumeCursor,
   type CodexSessionRuntimeSendTurnInput,
+  type CodexSessionRuntimeSteerTurnInput,
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
@@ -119,6 +120,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       Promise.resolve(undefined),
   );
 
+  public readonly steerTurnImpl = vi.fn(
+    (_input: CodexSessionRuntimeSteerTurnInput): Promise<void> => Promise.resolve(undefined),
+  );
+
   public readonly respondToUserInputImpl = vi.fn(
     (_requestId: ApprovalRequestId, _answers: ProviderUserInputAnswers): Promise<void> =>
       Promise.resolve(undefined),
@@ -140,6 +145,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   sendTurn(input: CodexSessionRuntimeSendTurnInput) {
     return Effect.promise(() => this.sendTurnImpl(input));
+  }
+
+  steerTurn(input: CodexSessionRuntimeSteerTurnInput) {
+    return Effect.promise(() => this.steerTurnImpl(input));
   }
 
   interruptTurn(turnId?: TurnId) {
@@ -359,6 +368,28 @@ const sessionErrorLayer = it.layer(
 );
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+  it.effect("advertises and routes native active-turn steering", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      assert.equal(adapter.capabilities.activeTurnSteering, true);
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-steer"),
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+
+      assert.ok(adapter.steerTurn);
+      yield* adapter.steerTurn({
+        threadId: asThreadId("sess-steer"),
+        input: "change direction",
+      });
+
+      assert.deepStrictEqual(runtime.steerTurnImpl.mock.calls, [[{ input: "change direction" }]]);
+    }),
+  );
+
   it.effect("maps missing adapter sessions to ProviderAdapterSessionNotFoundError", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

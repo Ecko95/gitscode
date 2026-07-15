@@ -18,6 +18,7 @@ import {
   type BranchNameGenerationInput,
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
+  normalizeFollowUpSuggestions,
 } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -25,6 +26,7 @@ import {
   buildPrContentPrompt,
   buildThreadForkSummaryPrompt,
   buildThreadTitlePrompt,
+  buildFollowUpSuggestionsPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -103,7 +105,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateThreadForkSummary",
+      | "generateThreadForkSummary"
+      | "generateFollowUpSuggestions",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -168,7 +171,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateThreadForkSummary";
+      | "generateThreadForkSummary"
+      | "generateFollowUpSuggestions";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -429,11 +433,26 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     };
   });
 
+  const generateFollowUpSuggestions: NonNullable<
+    TextGenerationShape["generateFollowUpSuggestions"]
+  > = Effect.fn("CodexTextGeneration.generateFollowUpSuggestions")(function* (input) {
+    const { prompt, outputSchema } = buildFollowUpSuggestionsPrompt(input.transcript);
+    const generated = yield* runCodexJson({
+      operation: "generateFollowUpSuggestions",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+    return { suggestions: normalizeFollowUpSuggestions(generated.suggestions) };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateThreadForkSummary,
+    generateFollowUpSuggestions,
   } satisfies TextGenerationShape;
 });

@@ -34,6 +34,8 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  navigateComposerHistory,
+  type ComposerHistoryNavigation,
   replaceTextRange,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
@@ -663,6 +665,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (store) => store.syncPersistedAttachments,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const getSentMessageHistory = useComposerDraftStore((store) => store.getSentMessageHistory);
 
   // ------------------------------------------------------------------
   // Model state
@@ -897,6 +900,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
+  const historyNavigationRef = useRef<ComposerHistoryNavigation | null>(null);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1315,6 +1319,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    historyNavigationRef.current = null;
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
   }, [draftId, activeThreadId, promptRef]);
@@ -1473,7 +1478,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         return;
       }
+      const promptChanged = promptRef.current !== nextPrompt;
       promptRef.current = nextPrompt;
+      if (promptChanged) historyNavigationRef.current = null;
       setPrompt(nextPrompt);
       if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
         setComposerDraftTerminalContexts(
@@ -1555,16 +1562,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     value: string;
     cursor: number;
     expandedCursor: number;
+    selectionStart: number;
+    selectionEnd: number;
     terminalContextIds: string[];
   } => {
     const editorSnapshot = composerEditorRef.current?.readSnapshot();
     if (editorSnapshot) {
       return editorSnapshot;
     }
+    const expandedCursor = expandCollapsedComposerCursor(promptRef.current, composerCursor);
     return {
       value: promptRef.current,
       cursor: composerCursor,
-      expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+      expandedCursor,
+      selectionStart: expandedCursor,
+      selectionEnd: expandedCursor,
       terminalContextIds: composerTerminalContexts.map((context) => context.id),
     };
   }, [composerCursor, composerTerminalContexts, promptRef]);
@@ -1792,6 +1804,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if ((key === "Enter" || key === "Tab") && selectedItem) {
         onSelectComposerItem(selectedItem);
         return true;
+      }
+    }
+    if ((key === "ArrowUp" || key === "ArrowDown") && pendingUserInputs.length === 0) {
+      const snapshot = readComposerSnapshot();
+      if (snapshot.value.length === 0 || historyNavigationRef.current !== null) {
+        const next = navigateComposerHistory(
+          getSentMessageHistory(routeThreadRef),
+          historyNavigationRef.current,
+          snapshot.value,
+          key,
+          {
+            cursor: snapshot.expandedCursor,
+            selectionStart: snapshot.selectionStart,
+            selectionEnd: snapshot.selectionEnd,
+          },
+        );
+        if (next) {
+          historyNavigationRef.current = next.index === null ? null : next;
+          promptRef.current = next.prompt;
+          setPrompt(next.prompt);
+          const cursor = collapseExpandedComposerCursor(next.prompt, next.prompt.length);
+          setComposerCursor(cursor);
+          setComposerTrigger(null);
+          window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
+          return true;
+        }
       }
     }
     if (key === "Enter" && !event.shiftKey) {

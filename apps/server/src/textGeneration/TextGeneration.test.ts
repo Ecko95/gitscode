@@ -13,6 +13,23 @@ import type { ProviderInstanceRegistryShape } from "../provider/Services/Provide
 import type { TextGenerationShape } from "./TextGeneration.ts";
 
 import { makeTextGenerationFromRegistry } from "./TextGeneration.ts";
+import { normalizeFollowUpSuggestions } from "./TextGeneration.ts";
+
+describe("normalizeFollowUpSuggestions", () => {
+  it("trims, deduplicates, caps length, and keeps at most three strings", () => {
+    expect(
+      normalizeFollowUpSuggestions([
+        "  Run the tests  ",
+        "Run the tests",
+        "x".repeat(200),
+        "Review the diff",
+        "Ship it",
+        42,
+      ]),
+    ).toEqual(["Run the tests", "x".repeat(160), "Review the diff"]);
+    expect(normalizeFollowUpSuggestions("bad")).toEqual([]);
+  });
+});
 
 const makeStubTextGeneration = (overrides: Partial<TextGenerationShape>): TextGenerationShape => ({
   generateCommitMessage: () =>
@@ -22,6 +39,8 @@ const makeStubTextGeneration = (overrides: Partial<TextGenerationShape>): TextGe
   generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
   generateThreadForkSummary: () =>
     Effect.die("generateThreadForkSummary stub not configured for this test"),
+  generateFollowUpSuggestions: () =>
+    Effect.die("generateFollowUpSuggestions stub not configured for this test"),
   ...overrides,
 });
 

@@ -14,6 +14,7 @@ import type {
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
+  ProviderSteerTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
   ThreadId,
@@ -30,6 +31,7 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  readonly activeTurnSteering?: boolean;
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -62,6 +64,8 @@ export interface ProviderAdapterShape<TError> {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
+
+  readonly steerTurn?: (input: ProviderSteerTurnInput) => Effect.Effect<void, TError>;
 
   /**
    * Interrupt an active turn.

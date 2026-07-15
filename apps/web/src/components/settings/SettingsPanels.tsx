@@ -717,6 +717,20 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Automatic follow-up suggestions"
+          description="Generate three suggested next prompts after successful turns. Uses provider capacity."
+          control={
+            <Switch
+              checked={settings.automaticFollowUpSuggestions}
+              onCheckedChange={(checked) =>
+                updateSettings({ automaticFollowUpSuggestions: checked })
+              }
+              aria-label="Automatic follow-up suggestions"
+            />
+          }
+        />
+
+        <SettingsRow
           title="Push to phone"
           description="Use Web Push for the same turn-complete and attention events when this installed PWA is closed."
           resetAction={

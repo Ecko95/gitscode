@@ -248,3 +248,18 @@ export function buildThreadForkSummaryPrompt(input: ThreadForkSummaryPromptInput
 
   return { prompt, outputSchema };
 }
+
+export function buildFollowUpSuggestionsPrompt(transcript: string) {
+  return {
+    prompt: [
+      "Suggest exactly three concise next prompts for this coding conversation.",
+      "Return a JSON object with key: suggestions (an array of strings).",
+      "Each suggestion must be actionable, distinct, and at most 160 characters.",
+      "Do not claim work was completed unless the transcript says so.",
+      "",
+      "Conversation transcript:",
+      limitSection(transcript, 12_000),
+    ].join("\n"),
+    outputSchema: Schema.Struct({ suggestions: Schema.Array(Schema.String) }),
+  };
+}

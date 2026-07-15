@@ -157,6 +157,8 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../terminalSessionState";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { ComposerQueue } from "./chat/ComposerQueue";
+import { ComposerSuggestions } from "./chat/ComposerSuggestions";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -184,6 +186,7 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  queuedMessageToComposerDraft,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -857,7 +860,9 @@ export default function ChatView(props: ChatViewProps) {
     (store) => store.queuedMessagesByThreadKey[routeThreadKey] ?? EMPTY_QUEUED_MESSAGES,
   );
   const enqueueQueuedComposerMessage = useComposerDraftStore((store) => store.enqueueQueuedMessage);
+  const takeQueuedComposerMessage = useComposerDraftStore((store) => store.takeQueuedMessage);
   const removeQueuedComposerMessage = useComposerDraftStore((store) => store.removeQueuedMessage);
+  const recordSentMessage = useComposerDraftStore((store) => store.recordSentMessage);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
@@ -912,6 +917,8 @@ export default function ChatView(props: ChatViewProps) {
     [],
   );
   const queuedDispatchFailedMessageIdsRef = useRef<Set<string>>(new Set());
+  const suggestedTurnIdRef = useRef<string | null>(null);
+  const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
@@ -1490,21 +1497,6 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
-    if (queuedComposerMessages.length > 0) {
-      items.push({
-        id: `queued-messages:${routeThreadKey}`,
-        variant: "info",
-        icon: <TriangleAlertIcon />,
-        title:
-          queuedComposerMessages.length === 1
-            ? "1 message queued"
-            : `${queuedComposerMessages.length} messages queued`,
-        description:
-          phase === "running"
-            ? "It will send when the current turn finishes."
-            : "Sending queued message...",
-      });
-    }
     if (activeEnvironmentUnavailableState) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
@@ -1576,7 +1568,6 @@ export default function ChatView(props: ChatViewProps) {
     handleReconnectActiveEnvironment,
     navigate,
     phase,
-    queuedComposerMessages.length,
     reconnectingEnvironmentId,
     routeThreadKey,
     showVersionMismatchBanner,
@@ -2000,6 +1991,56 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  useEffect(() => {
+    setFollowUpSuggestions([]);
+    suggestedTurnIdRef.current = null;
+  }, [routeThreadKey]);
+  useEffect(() => {
+    setFollowUpSuggestions([]);
+  }, [activeThread?.modelSelection.instanceId]);
+  useEffect(() => {
+    if (
+      !settings.automaticFollowUpSuggestions ||
+      !activeWorkspaceRoot ||
+      !activeThread ||
+      activeLatestTurn?.state !== "completed" ||
+      !latestTurnSettled ||
+      suggestedTurnIdRef.current === activeLatestTurn.turnId
+    ) {
+      return;
+    }
+    suggestedTurnIdRef.current = activeLatestTurn.turnId;
+    const api = readEnvironmentApi(environmentId);
+    if (!api) return;
+    const transcript = activeThread.messages
+      .slice(-8)
+      .map((message) => `${message.role}: ${message.text}`)
+      .join("\n\n")
+      .slice(-12_000);
+    let cancelled = false;
+    void api.provider
+      .generateFollowUpSuggestions({
+        cwd: activeWorkspaceRoot,
+        transcript,
+        modelSelection: activeThread.modelSelection,
+      })
+      .then((result) => {
+        if (!cancelled) setFollowUpSuggestions([...result.suggestions]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeLatestTurn?.state,
+    activeLatestTurn?.turnId,
+    activeThread,
+    activeWorkspaceRoot,
+    environmentId,
+    latestTurnSettled,
+    routeThreadKey,
+    settings.automaticFollowUpSuggestions,
+  ]);
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -3190,6 +3231,7 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      setFollowUpSuggestions([]);
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
       try {
@@ -3305,6 +3347,96 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  const editQueuedComposerMessage = useCallback(
+    (message: QueuedComposerMessage) => {
+      const restored = queuedMessageToComposerDraft(message);
+      if (!restored) {
+        toastManager.add({
+          type: "error",
+          title: "Could not edit queued message",
+          description: "One or more queued attachments could not be restored.",
+        });
+        return;
+      }
+      if (!takeQueuedComposerMessage(routeThreadRef, message.id)) return;
+      queuedDispatchFailedMessageIdsRef.current.delete(message.id);
+      clearComposerDraftContent(composerDraftTarget);
+      setComposerDraftPrompt(composerDraftTarget, restored.prompt);
+      addComposerDraftImages(composerDraftTarget, restored.images);
+      setComposerDraftModelSelection(composerDraftTarget, restored.modelSelection);
+      setComposerDraftRuntimeMode(composerDraftTarget, restored.runtimeMode);
+      setComposerDraftInteractionMode(composerDraftTarget, restored.interactionMode);
+      promptRef.current = restored.prompt;
+      composerRef.current?.resetCursorState({
+        prompt: restored.prompt,
+        cursor: restored.prompt.length,
+      });
+      scheduleComposerFocus();
+    },
+    [
+      addComposerDraftImages,
+      clearComposerDraftContent,
+      composerDraftTarget,
+      routeThreadRef,
+      scheduleComposerFocus,
+      setComposerDraftInteractionMode,
+      setComposerDraftModelSelection,
+      setComposerDraftPrompt,
+      setComposerDraftRuntimeMode,
+      takeQueuedComposerMessage,
+    ],
+  );
+
+  const removeQueuedComposerMessageFromQueue = useCallback(
+    (message: QueuedComposerMessage) => {
+      removeQueuedComposerMessage(routeThreadRef, message.id);
+      queuedDispatchFailedMessageIdsRef.current.delete(message.id);
+    },
+    [removeQueuedComposerMessage, routeThreadRef],
+  );
+
+  const sendQueuedComposerMessageNow = useCallback(
+    async (message: QueuedComposerMessage) => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        phase !== "running" ||
+        !activeProviderStatus?.activeTurnSteering
+      ) {
+        return;
+      }
+      setThreadError(activeThread.id, null);
+      try {
+        await api.provider.steerTurn({
+          threadId: activeThread.id,
+          input: message.text,
+          attachments: message.attachments.map((attachment) => ({
+            type: "image" as const,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            dataUrl: attachment.dataUrl,
+          })),
+        });
+        removeQueuedComposerMessageFromQueue(message);
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to steer the active turn.",
+        );
+      }
+    },
+    [
+      activeProviderStatus?.activeTurnSteering,
+      activeThread,
+      environmentId,
+      phase,
+      removeQueuedComposerMessageFromQueue,
+      setThreadError,
+    ],
+  );
+
   useEffect(() => {
     const nextQueuedMessage = queuedComposerMessages.find(
       (message) => !queuedDispatchFailedMessageIdsRef.current.has(message.id),
@@ -3317,6 +3449,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
+    setFollowUpSuggestions([]);
     const api = readEnvironmentApi(environmentId);
     const threadKeyForSend = routeThreadKey;
     if (!api || !activeThread || isConnecting || activeEnvironmentUnavailable) {
@@ -3466,6 +3599,7 @@ export default function ChatView(props: ChatViewProps) {
         runtimeMode,
         interactionMode,
       });
+      recordSentMessage(routeThreadRef, promptForSend);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -3657,6 +3791,7 @@ export default function ChatView(props: ChatViewProps) {
         ...(bootstrap ? { bootstrap } : {}),
         createdAt: messageCreatedAt,
       });
+      recordSentMessage(routeThreadRef, promptForSend);
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
       if (!turnStartSucceeded) {
@@ -4210,6 +4345,7 @@ export default function ChatView(props: ChatViewProps) {
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
       );
+      setFollowUpSuggestions([]);
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();
     },
@@ -4442,6 +4578,27 @@ export default function ChatView(props: ChatViewProps) {
           >
             <div className="relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+              <ComposerSuggestions
+                suggestions={followUpSuggestions}
+                onSelect={(suggestion) => {
+                  setComposerDraftPrompt(composerDraftTarget, suggestion);
+                  promptRef.current = suggestion;
+                  composerRef.current?.resetCursorState({
+                    prompt: suggestion,
+                    cursor: suggestion.length,
+                  });
+                  scheduleComposerFocus();
+                }}
+              />
+              <ComposerQueue
+                messages={queuedComposerMessages}
+                canSendNow={
+                  phase === "running" && activeProviderStatus?.activeTurnSteering === true
+                }
+                onEdit={editQueuedComposerMessage}
+                onSendNow={(message) => void sendQueuedComposerMessageNow(message)}
+                onRemove={removeQueuedComposerMessageFromQueue}
+              />
               <div className="relative z-10">
                 <ChatComposer
                   composerRef={composerRef}
