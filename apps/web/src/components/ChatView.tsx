@@ -858,6 +858,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const enqueueQueuedComposerMessage = useComposerDraftStore((store) => store.enqueueQueuedMessage);
   const removeQueuedComposerMessage = useComposerDraftStore((store) => store.removeQueuedMessage);
+  const recordSentMessage = useComposerDraftStore((store) => store.recordSentMessage);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
@@ -3466,6 +3467,7 @@ export default function ChatView(props: ChatViewProps) {
         runtimeMode,
         interactionMode,
       });
+      recordSentMessage(routeThreadRef, promptForSend);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -3657,6 +3659,7 @@ export default function ChatView(props: ChatViewProps) {
         ...(bootstrap ? { bootstrap } : {}),
         createdAt: messageCreatedAt,
       });
+      recordSentMessage(routeThreadRef, promptForSend);
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
       if (!turnStartSucceeded) {
