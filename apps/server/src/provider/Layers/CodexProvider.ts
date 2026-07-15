@@ -35,6 +35,7 @@ const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnErro
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
+  activeTurnSteering: true,
 } as const;
 
 export interface CodexAppServerProviderSnapshot {

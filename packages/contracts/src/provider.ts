@@ -12,6 +12,7 @@ import {
   ChatAttachment,
   ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
@@ -76,6 +77,35 @@ export const ProviderSendTurnInput = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
+
+export const ProviderSteerTurnInput = Schema.Struct({
+  threadId: ThreadId,
+  input: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  attachments: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        type: Schema.Literal("image"),
+        name: TrimmedNonEmptyString,
+        mimeType: TrimmedNonEmptyString,
+        sizeBytes: Schema.Number.pipe(
+          Schema.check(Schema.isInt()),
+          Schema.check(
+            Schema.isBetween({ minimum: 1, maximum: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES }),
+          ),
+        ),
+        dataUrl: Schema.String.check(
+          Schema.isMaxLength(Math.ceil((PROVIDER_SEND_TURN_MAX_IMAGE_BYTES * 4) / 3) + 256),
+        ),
+      }),
+    ).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
+});
+export type ProviderSteerTurnInput = typeof ProviderSteerTurnInput.Type;
+
+export class ProviderOperationError extends Schema.TaggedErrorClass<ProviderOperationError>()(
+  "ProviderOperationError",
+  { message: Schema.String },
+) {}
 
 export const ProviderTurnStartResult = Schema.Struct({
   threadId: ThreadId,

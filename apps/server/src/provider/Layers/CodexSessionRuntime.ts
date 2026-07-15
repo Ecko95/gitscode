@@ -48,6 +48,8 @@ import {
   browser_preview_mcp_env,
 } from "../browser-preview-mcp.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2TurnSteerParams = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerParams);
+const decodeV2TurnSteerResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -151,6 +153,11 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly interactionMode?: ProviderInteractionMode;
 }
 
+export interface CodexSessionRuntimeSteerTurnInput {
+  readonly input: string;
+  readonly attachments?: ReadonlyArray<{ readonly type: "image"; readonly url: string }>;
+}
+
 export interface CodexThreadTurnSnapshot {
   readonly id: TurnId;
   readonly items: ReadonlyArray<CodexThreadItem>;
@@ -167,6 +174,9 @@ export interface CodexSessionRuntimeShape {
   readonly sendTurn: (
     input: CodexSessionRuntimeSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
+  readonly steerTurn: (
+    input: CodexSessionRuntimeSteerTurnInput,
+  ) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
   readonly forkThread: (
@@ -1595,6 +1605,29 @@ export const makeCodexSessionRuntime = (
               ? { resumeCursor: { threadId: resumedProviderThreadId } }
               : {}),
           } satisfies ProviderTurnStartResult;
+        }),
+      steerTurn: (input) =>
+        Effect.gen(function* () {
+          const session = yield* Ref.get(sessionRef);
+          if (!session.activeTurnId) {
+            return yield* CodexErrors.CodexAppServerRequestError.invalidParams(
+              "No active turn to steer.",
+              { method: "turn/steer" },
+            );
+          }
+          const params = yield* decodeV2TurnSteerParams({
+            threadId: yield* readProviderThreadId,
+            expectedTurnId: session.activeTurnId,
+            input: [{ type: "text", text: input.input }, ...(input.attachments ?? [])],
+          }).pipe(
+            Effect.mapError((error) => toProtocolParseError("Invalid turn/steer payload", error)),
+          );
+          const rawResponse = yield* client.raw.request("turn/steer", params);
+          yield* decodeV2TurnSteerResponse(rawResponse).pipe(
+            Effect.mapError((error) =>
+              toProtocolParseError("Invalid turn/steer response payload", error),
+            ),
+          );
         }),
       interruptTurn: (turnId) =>
         Effect.gen(function* () {

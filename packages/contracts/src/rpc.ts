@@ -151,6 +151,7 @@ import {
   VisualPlanMutateResult,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderOperationError, ProviderSteerTurnInput } from "./provider.ts";
 import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
@@ -320,6 +321,7 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+  providerSteerTurn: "provider.steerTurn",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -373,6 +375,12 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: ServerProviderUpdateError,
+});
+
+export const WsProviderSteerTurnRpc = Rpc.make(WS_METHODS.providerSteerTurn, {
+  payload: ProviderSteerTurnInput,
+  success: Schema.Void,
+  error: ProviderOperationError,
 });
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
@@ -1063,6 +1071,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsProviderSteerTurnRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,

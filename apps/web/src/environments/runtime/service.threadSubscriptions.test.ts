@@ -80,6 +80,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     dispose: async () => undefined,
     reconnect: async () => undefined,
     isHeartbeatFresh: () => false,
+    provider: { steerTurn: vi.fn() },
     orchestration: {
       dispatchCommand: vi.fn(),
       getTurnDiff: vi.fn(),

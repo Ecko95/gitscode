@@ -43,6 +43,7 @@ import {
   GitsNotesError,
   HermesAdapterError,
   OpenGsdAdapterError,
+  ProviderOperationError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -61,6 +62,7 @@ import { Keybindings } from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
+import { ProviderService } from "./provider/Services/ProviderService.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
@@ -306,6 +308,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
+      const providerService = yield* Effect.serviceOption(ProviderService);
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -879,6 +882,23 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
         isCritError(cause) ? cause : new CritError({ message, cause });
 
       return WsRpcGroup.of({
+        [WS_METHODS.providerSteerTurn]: (input) =>
+          Option.match(providerService, {
+            onNone: () =>
+              Effect.fail(new ProviderOperationError({ message: "Provider service unavailable" })),
+            onSome: (service) =>
+              service.steerTurn
+                ? service
+                    .steerTurn(input)
+                    .pipe(
+                      Effect.mapError(
+                        (error) => new ProviderOperationError({ message: error.message }),
+                      ),
+                    )
+                : Effect.fail(
+                    new ProviderOperationError({ message: "Active-turn steering unavailable" }),
+                  ),
+          }),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

@@ -33,6 +33,7 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
+import type { ProviderSteerTurnInput } from "./provider.ts";
 import type {
   ServerConfig,
   ServerProcessDiagnosticsResult,
@@ -513,6 +514,9 @@ export interface LocalApi {
  * `environmentId` rather than reaching through the local desktop bridge.
  */
 export interface EnvironmentApi {
+  provider: {
+    steerTurn: (input: ProviderSteerTurnInput) => Promise<void>;
+  };
   terminal: {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
     attach: (

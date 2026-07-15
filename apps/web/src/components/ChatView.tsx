@@ -3341,6 +3341,48 @@ export default function ChatView(props: ChatViewProps) {
     [removeQueuedComposerMessage, routeThreadRef],
   );
 
+  const sendQueuedComposerMessageNow = useCallback(
+    async (message: QueuedComposerMessage) => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        phase !== "running" ||
+        !activeProviderStatus?.activeTurnSteering
+      ) {
+        return;
+      }
+      setThreadError(activeThread.id, null);
+      try {
+        await api.provider.steerTurn({
+          threadId: activeThread.id,
+          input: message.text,
+          attachments: message.attachments.map((attachment) => ({
+            type: "image" as const,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            dataUrl: attachment.dataUrl,
+          })),
+        });
+        removeQueuedComposerMessageFromQueue(message);
+      } catch (error) {
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to steer the active turn.",
+        );
+      }
+    },
+    [
+      activeProviderStatus?.activeTurnSteering,
+      activeThread,
+      environmentId,
+      phase,
+      removeQueuedComposerMessageFromQueue,
+      setThreadError,
+    ],
+  );
+
   useEffect(() => {
     const nextQueuedMessage = queuedComposerMessages.find(
       (message) => !queuedDispatchFailedMessageIdsRef.current.has(message.id),
@@ -4482,9 +4524,11 @@ export default function ChatView(props: ChatViewProps) {
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
               <ComposerQueue
                 messages={queuedComposerMessages}
-                canSendNow={false}
+                canSendNow={
+                  phase === "running" && activeProviderStatus?.activeTurnSteering === true
+                }
                 onEdit={editQueuedComposerMessage}
-                onSendNow={() => undefined}
+                onSendNow={(message) => void sendQueuedComposerMessageNow(message)}
                 onRemove={removeQueuedComposerMessageFromQueue}
               />
               <div className="relative z-10">

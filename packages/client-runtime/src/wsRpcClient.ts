@@ -249,6 +249,9 @@ export interface WsRpcClient {
     readonly subscribeShell: RpcStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeShell>;
     readonly subscribeThread: RpcInputStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeThread>;
   };
+  readonly provider: {
+    readonly steerTurn: RpcUnaryMethod<typeof WS_METHODS.providerSteerTurn>;
+  };
 }
 
 export interface CreateWsRpcClientOptions {
@@ -559,6 +562,10 @@ export function createWsRpcClient(
           listener,
           subscriptionOptions(options, ORCHESTRATION_WS_METHODS.subscribeThread),
         ),
+    },
+    provider: {
+      steerTurn: (input) =>
+        transport.request((client) => client[WS_METHODS.providerSteerTurn](input)),
     },
   };
 }
