@@ -426,6 +426,10 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => void;
   enqueueQueuedMessage: (threadRef: ScopedThreadRef, message: QueuedComposerMessage) => void;
+  takeQueuedMessage: (
+    threadRef: ScopedThreadRef,
+    messageId: MessageId,
+  ) => QueuedComposerMessage | null;
   removeQueuedMessage: (threadRef: ScopedThreadRef, messageId: MessageId) => void;
   clearQueuedMessages: (threadRef: ScopedThreadRef) => void;
   recordSentMessage: (threadRef: ScopedThreadRef, text: string) => void;
@@ -1958,7 +1962,7 @@ function hydratePersistedComposerImageAttachment(
   }
 }
 
-function hydrateImagesFromPersisted(
+export function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
@@ -2981,8 +2985,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
-        removeQueuedMessage: (threadRef, messageId) => {
+        takeQueuedMessage: (threadRef, messageId) => {
           const threadKey = scopedThreadKey(threadRef);
+          let removed: QueuedComposerMessage | null = null;
           set((state) => {
             const current = state.queuedMessagesByThreadKey[threadKey];
             if (!current) {
@@ -2992,6 +2997,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (nextMessages.length === current.length) {
               return state;
             }
+            removed = current.find((message) => message.id === messageId) ?? null;
             const queuedMessagesByThreadKey = { ...state.queuedMessagesByThreadKey };
             if (nextMessages.length === 0) {
               delete queuedMessagesByThreadKey[threadKey];
@@ -3000,6 +3006,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { queuedMessagesByThreadKey };
           });
+          return removed;
+        },
+        removeQueuedMessage: (threadRef, messageId) => {
+          get().takeQueuedMessage(threadRef, messageId);
         },
         clearQueuedMessages: (threadRef) => {
           const threadKey = scopedThreadKey(threadRef);

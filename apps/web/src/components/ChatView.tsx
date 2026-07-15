@@ -157,6 +157,7 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../terminalSessionState";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { ComposerQueue } from "./chat/ComposerQueue";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -184,6 +185,7 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  queuedMessageToComposerDraft,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -857,6 +859,7 @@ export default function ChatView(props: ChatViewProps) {
     (store) => store.queuedMessagesByThreadKey[routeThreadKey] ?? EMPTY_QUEUED_MESSAGES,
   );
   const enqueueQueuedComposerMessage = useComposerDraftStore((store) => store.enqueueQueuedMessage);
+  const takeQueuedComposerMessage = useComposerDraftStore((store) => store.takeQueuedMessage);
   const removeQueuedComposerMessage = useComposerDraftStore((store) => store.removeQueuedMessage);
   const recordSentMessage = useComposerDraftStore((store) => store.recordSentMessage);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -1491,21 +1494,6 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
-    if (queuedComposerMessages.length > 0) {
-      items.push({
-        id: `queued-messages:${routeThreadKey}`,
-        variant: "info",
-        icon: <TriangleAlertIcon />,
-        title:
-          queuedComposerMessages.length === 1
-            ? "1 message queued"
-            : `${queuedComposerMessages.length} messages queued`,
-        description:
-          phase === "running"
-            ? "It will send when the current turn finishes."
-            : "Sending queued message...",
-      });
-    }
     if (activeEnvironmentUnavailableState) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
@@ -1577,7 +1565,6 @@ export default function ChatView(props: ChatViewProps) {
     handleReconnectActiveEnvironment,
     navigate,
     phase,
-    queuedComposerMessages.length,
     reconnectingEnvironmentId,
     routeThreadKey,
     showVersionMismatchBanner,
@@ -3306,6 +3293,54 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  const editQueuedComposerMessage = useCallback(
+    (message: QueuedComposerMessage) => {
+      const restored = queuedMessageToComposerDraft(message);
+      if (!restored) {
+        toastManager.add({
+          type: "error",
+          title: "Could not edit queued message",
+          description: "One or more queued attachments could not be restored.",
+        });
+        return;
+      }
+      if (!takeQueuedComposerMessage(routeThreadRef, message.id)) return;
+      queuedDispatchFailedMessageIdsRef.current.delete(message.id);
+      clearComposerDraftContent(composerDraftTarget);
+      setComposerDraftPrompt(composerDraftTarget, restored.prompt);
+      addComposerDraftImages(composerDraftTarget, restored.images);
+      setComposerDraftModelSelection(composerDraftTarget, restored.modelSelection);
+      setComposerDraftRuntimeMode(composerDraftTarget, restored.runtimeMode);
+      setComposerDraftInteractionMode(composerDraftTarget, restored.interactionMode);
+      promptRef.current = restored.prompt;
+      composerRef.current?.resetCursorState({
+        prompt: restored.prompt,
+        cursor: restored.prompt.length,
+      });
+      scheduleComposerFocus();
+    },
+    [
+      addComposerDraftImages,
+      clearComposerDraftContent,
+      composerDraftTarget,
+      routeThreadRef,
+      scheduleComposerFocus,
+      setComposerDraftInteractionMode,
+      setComposerDraftModelSelection,
+      setComposerDraftPrompt,
+      setComposerDraftRuntimeMode,
+      takeQueuedComposerMessage,
+    ],
+  );
+
+  const removeQueuedComposerMessageFromQueue = useCallback(
+    (message: QueuedComposerMessage) => {
+      removeQueuedComposerMessage(routeThreadRef, message.id);
+      queuedDispatchFailedMessageIdsRef.current.delete(message.id);
+    },
+    [removeQueuedComposerMessage, routeThreadRef],
+  );
+
   useEffect(() => {
     const nextQueuedMessage = queuedComposerMessages.find(
       (message) => !queuedDispatchFailedMessageIdsRef.current.has(message.id),
@@ -4445,6 +4480,13 @@ export default function ChatView(props: ChatViewProps) {
           >
             <div className="relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+              <ComposerQueue
+                messages={queuedComposerMessages}
+                canSendNow={false}
+                onEdit={editQueuedComposerMessage}
+                onSendNow={() => undefined}
+                onRemove={removeQueuedComposerMessageFromQueue}
+              />
               <div className="relative z-10">
                 <ChatComposer
                   composerRef={composerRef}

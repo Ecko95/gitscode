@@ -383,6 +383,30 @@ describe("composerDraftStore queued messages", () => {
     ).toEqual(["other"]);
   });
 
+  it("takes one queued message atomically without reordering the rest", () => {
+    const first = {
+      id: MessageId.make("message-take-1"),
+      text: "first",
+      rawPrompt: "first",
+      titleSeed: "first",
+      createdAt: "2026-07-06T10:00:00.000Z",
+      attachments: [],
+      modelSelection: modelSelection(CODEX_DRIVER, "gpt-5"),
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    };
+    const second = { ...first, id: MessageId.make("message-take-2"), text: "second" };
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedMessage(threadRef, first);
+    store.enqueueQueuedMessage(threadRef, second);
+
+    expect(store.takeQueuedMessage(threadRef, first.id)).toEqual(first);
+    expect(store.takeQueuedMessage(threadRef, MessageId.make("missing"))).toBeNull();
+    expect(
+      useComposerDraftStore.getState().queuedMessagesByThreadKey[threadKey]?.map(({ id }) => id),
+    ).toEqual([second.id]);
+  });
+
   it("persists and hydrates queued messages", () => {
     const message = {
       id: MessageId.make("message-persist"),

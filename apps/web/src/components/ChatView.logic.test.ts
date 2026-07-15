@@ -22,10 +22,46 @@ import {
   deriveThreadForkPrefillPrompt,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  queuedMessageToComposerDraft,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+
+describe("queuedMessageToComposerDraft", () => {
+  it("restores prompt, attachments, model, runtime, and interaction selections", () => {
+    const modelSelection = {
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5",
+    };
+    const restored = queuedMessageToComposerDraft({
+      id: MessageId.make("queued-edit"),
+      text: "formatted prompt",
+      rawPrompt: "editable prompt",
+      titleSeed: "editable prompt",
+      createdAt: "2026-07-15T12:00:00.000Z",
+      attachments: [
+        {
+          id: "queued-image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+          dataUrl: "data:image/png;base64,AA==",
+        },
+      ],
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+    });
+
+    expect(restored?.prompt).toBe("editable prompt");
+    expect(restored?.images).toHaveLength(1);
+    expect(restored?.modelSelection).toEqual(modelSelection);
+    expect(restored?.runtimeMode).toBe("full-access");
+    expect(restored?.interactionMode).toBe("plan");
+  });
+});
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
