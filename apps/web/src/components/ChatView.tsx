@@ -132,6 +132,11 @@ import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
+  readUsageSummary,
+  selectProviderUsageWindows,
+  usageProviderForDriver,
+} from "../lib/providerUsage";
+import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
@@ -159,6 +164,7 @@ import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../termin
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ComposerQueue } from "./chat/ComposerQueue";
 import { ComposerSuggestions } from "./chat/ComposerSuggestions";
+import { ComposerUsageBars } from "./chat/ComposerUsageBars";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -1988,6 +1994,17 @@ export default function ChatView(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const usageProvider = usageProviderForDriver(activeProviderStatus?.driver ?? null);
+  const providerUsageQuery = useQuery({
+    queryKey: ["gits", "usage"],
+    queryFn: readUsageSummary,
+    enabled: usageProvider !== null,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const providerUsageWindows = usageProvider
+    ? selectProviderUsageWindows(providerUsageQuery.data, usageProvider)
+    : null;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -4578,6 +4595,9 @@ export default function ChatView(props: ChatViewProps) {
           >
             <div className="relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+              {usageProvider && providerUsageWindows ? (
+                <ComposerUsageBars provider={usageProvider} windows={providerUsageWindows} />
+              ) : null}
               <ComposerSuggestions
                 suggestions={followUpSuggestions}
                 onSelect={(suggestion) => {

@@ -80,6 +80,7 @@ import {
 } from "../../environments/runtime";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { cn } from "../../lib/utils";
+import { readUsageSummary } from "../../lib/providerUsage";
 import { useStore } from "../../store";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -5063,15 +5064,7 @@ export function GitsCockpit() {
   });
   const usageQuery = useQuery({
     queryKey: ["gits", "usage"],
-    queryFn: async (): Promise<UsageSummary> => {
-      const response = await fetch("/api/gits/usage", {
-        headers: { accept: "application/json" },
-      });
-      if (!response.ok) {
-        throw new Error(`Usage request failed with ${response.status}.`);
-      }
-      return (await response.json()) as UsageSummary;
-    },
+    queryFn: readUsageSummary,
     enabled: activeTab === "usage",
     refetchOnMount: "always",
     retry: false,
