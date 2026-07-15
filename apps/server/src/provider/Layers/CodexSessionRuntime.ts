@@ -13,6 +13,7 @@ import {
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
   RuntimeMode,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -1087,12 +1088,10 @@ export const makeCodexSessionRuntime = (
         const payload = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
-        const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return providerConversationId
-            ? collabReceiverTurns.get(providerConversationId)
-            : undefined;
-        })();
+        const providerConversationId = readNotificationThreadId(notification);
+        const childParentTurnId = providerConversationId
+          ? collabReceiverTurns.get(providerConversationId)
+          : undefined;
 
         rememberCollabReceiverTurns(collabReceiverTurns, notification, route.turnId);
         if (childParentTurnId && shouldSuppressChildConversationNotification(notification.method)) {
@@ -1133,6 +1132,9 @@ export const makeCodexSessionRuntime = (
           method: notification.method,
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
+          ...(childParentTurnId && providerConversationId
+            ? { taskId: RuntimeTaskId.make(providerConversationId) }
+            : {}),
           ...(requestId ? { requestId } : {}),
           ...(requestKind ? { requestKind } : {}),
           ...(notification.method === "item/agentMessage/delta"

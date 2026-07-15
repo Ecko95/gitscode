@@ -10,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderItemId,
+  RuntimeTaskId,
   type ProviderApprovalDecision,
   type ProviderEvent,
   type ProviderSession,
@@ -587,6 +588,199 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.itemId, "msg_1");
       assert.equal(firstEvent.value.turnId, "turn-1");
       assert.equal(firstEvent.value.payload.itemType, "assistant_message");
+    }),
+  );
+
+  it.effect("maps spawned Codex agents to structured task lifecycle events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-spawn-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab_1"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "provider-main-thread",
+          turnId: "turn-1",
+          item: {
+            type: "collabAgentToolCall",
+            id: "collab_1",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: "provider-main-thread",
+            receiverThreadIds: ["provider-agent-thread-1"],
+            prompt: "Inspect the websocket reconnect behavior.",
+            agentsStates: {
+              "provider-agent-thread-1": { status: "running" },
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      // Sentinels keep this test from waiting for its timeout before the mapping exists.
+      yield* runtime.emit({
+        id: asEventId("evt-collab-spawn-sentinel-1"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.001Z",
+        method: "session/ready",
+        threadId: asThreadId("thread-1"),
+      });
+      yield* runtime.emit({
+        id: asEventId("evt-collab-spawn-sentinel-2"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.002Z",
+        method: "session/ready",
+        threadId: asThreadId("thread-1"),
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["item.completed", "task.started", "task.progress"],
+      );
+
+      const started = events[1];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.taskId, "provider-agent-thread-1");
+        assert.equal(started.payload.taskId, "provider-agent-thread-1");
+        assert.equal(started.payload.taskType, "subagent");
+        assert.equal(started.payload.description, "Inspect the websocket reconnect behavior.");
+      }
+
+      const progress = events[2];
+      assert.equal(progress?.type, "task.progress");
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.taskId, "provider-agent-thread-1");
+        assert.equal(progress.payload.taskId, "provider-agent-thread-1");
+      }
+    }),
+  );
+
+  it.effect("maps terminal Codex agent states to task completion events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-wait-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab_2"),
+        payload: {
+          completedAtMs: 1_778_000_000_001,
+          threadId: "provider-main-thread",
+          turnId: "turn-1",
+          item: {
+            type: "collabAgentToolCall",
+            id: "collab_2",
+            tool: "wait",
+            status: "completed",
+            senderThreadId: "provider-main-thread",
+            receiverThreadIds: ["provider-agent-thread-1", "provider-agent-thread-2"],
+            agentsStates: {
+              "provider-agent-thread-1": {
+                status: "completed",
+                message: "Reconnect behavior is safe and the focused tests pass.",
+              },
+              "provider-agent-thread-2": {
+                status: "errored",
+                message: "The review agent lost its provider connection.",
+              },
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-collab-wait-sentinel"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.001Z",
+        method: "session/ready",
+        threadId: asThreadId("thread-1"),
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["item.completed", "task.completed", "task.completed"],
+      );
+      const completed = events[1];
+      assert.equal(completed?.type, "task.completed");
+      if (completed?.type === "task.completed") {
+        assert.equal(completed.taskId, "provider-agent-thread-1");
+        assert.equal(completed.payload.status, "completed");
+        assert.equal(
+          completed.payload.summary,
+          "Reconnect behavior is safe and the focused tests pass.",
+        );
+      }
+      const failed = events[2];
+      assert.equal(failed?.type, "task.completed");
+      if (failed?.type === "task.completed") {
+        assert.equal(failed.taskId, "provider-agent-thread-2");
+        assert.equal(failed.payload.status, "failed");
+        assert.equal(failed.payload.summary, "The review agent lost its provider connection.");
+      }
+    }),
+  );
+
+  it.effect("preserves child task identity on ordinary runtime items", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-child-command-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("command_1"),
+        taskId: RuntimeTaskId.make("provider-agent-thread-1"),
+        payload: {
+          completedAtMs: 1_778_000_000_002,
+          threadId: "provider-agent-thread-1",
+          turnId: "child-turn-1",
+          item: {
+            type: "commandExecution",
+            id: "command_1",
+            command: "bun run test",
+            cwd: "/workspace",
+            processId: null,
+            status: "completed",
+            commandActions: [],
+            aggregatedOutput: "Tests passed",
+            exitCode: 0,
+            durationMs: 100,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag === "Some") {
+        assert.equal(firstEvent.value.taskId, "provider-agent-thread-1");
+      }
     }),
   );
 

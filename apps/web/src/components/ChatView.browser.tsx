@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   type EnvironmentApi,
   type MessageId,
+  type OrchestrationEvent,
   type OrchestrationReadModel,
   type ProjectId,
   ProviderDriverKind,
@@ -939,6 +940,68 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithSubagentTask(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-subagent-task" as MessageId,
+    targetText: "inspect reconnect behavior",
+  });
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            activities: [
+              {
+                id: EventId.make("activity-subagent-started"),
+                tone: "info",
+                kind: "task.started",
+                summary: "subagent task started",
+                payload: {
+                  taskId: "provider-agent-browser-1",
+                  taskType: "subagent",
+                  description: "Inspect reconnect behavior",
+                },
+                turnId: null,
+                sequence: 1,
+                createdAt: isoAt(1),
+              },
+              {
+                id: EventId.make("activity-subagent-tool"),
+                tone: "tool",
+                kind: "tool.started",
+                summary: "Ran command started",
+                payload: {
+                  taskId: "provider-agent-browser-1",
+                  itemType: "command_execution",
+                  detail: "bun run test",
+                },
+                turnId: null,
+                sequence: 2,
+                createdAt: isoAt(2),
+              },
+              {
+                id: EventId.make("activity-subagent-progress"),
+                tone: "info",
+                kind: "task.progress",
+                summary: "Reasoning update",
+                payload: {
+                  taskId: "provider-agent-browser-1",
+                  description: "Checking reconnect ordering",
+                  summary: "Checking reconnect ordering",
+                },
+                turnId: null,
+                sequence: 3,
+                createdAt: isoAt(3),
+              },
+            ],
+          }
+        : thread,
+    ),
+  };
+}
+
 function createSnapshotWithPlanFollowUpPrompt(options?: {
   modelSelection?: { instanceId: ProviderInstanceId; model: string };
   planMarkdown?: string;
@@ -1794,6 +1857,140 @@ describe("ChatView timeline estimator parity (full app)", () => {
     __resetPrimaryEnvironmentBootstrapForTests();
     __resetServerAuthBootstrapForTests();
     document.body.innerHTML = "";
+  });
+
+  it("opens sidebar agent tasks as closable tabs with a live transcript", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSubagentTask(),
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            '[data-slot="toast-viewport"][data-position="bottom-right"]',
+          ),
+        "Unable to find the bottom-right agent notification stack.",
+      );
+      const taskToggle = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            'button[title="Show tasks sidebar"], button[title="Hide tasks sidebar"]',
+          ),
+        "Unable to find tasks sidebar toggle for an active agent.",
+      );
+      if (taskToggle.title === "Show tasks sidebar") {
+        taskToggle.click();
+      }
+
+      const taskCard = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Open agent task Inspect reconnect behavior"]',
+          ),
+        "Unable to find clickable agent task card.",
+      );
+      taskCard.click();
+
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLHeadingElement>("h2")).find(
+            (heading) => heading.textContent?.trim() === "Inspect reconnect behavior",
+          ) ?? null,
+        "Unable to find selected agent transcript.",
+      );
+      expect(document.body.textContent).toContain("Checking reconnect ordering");
+      expect(document.body.textContent).toContain("bun run test");
+      expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+        "Inspect reconnect behavior",
+      );
+      expect(document.querySelector('[contenteditable="true"]')).toBeNull();
+
+      const mainTab = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+            (tab) => tab.textContent?.trim() === "Main",
+          ) ?? null,
+        "Unable to find permanent Main tab.",
+      );
+      mainTab.click();
+      await waitForComposerEditor();
+
+      useStore.getState().applyOrchestrationEvent(
+        {
+          sequence: 10,
+          eventId: EventId.make("event-subagent-completed"),
+          aggregateKind: "thread",
+          aggregateId: THREAD_ID,
+          occurredAt: isoAt(4),
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "thread.activity-appended",
+          payload: {
+            threadId: THREAD_ID,
+            activity: {
+              id: EventId.make("activity-subagent-completed"),
+              tone: "info",
+              kind: "task.completed",
+              summary: "Task completed",
+              payload: {
+                taskId: "provider-agent-browser-1",
+                status: "completed",
+                summary: "Reconnect review complete",
+              },
+              turnId: null,
+              sequence: 4,
+              createdAt: isoAt(4),
+            },
+          },
+        } satisfies OrchestrationEvent,
+        LOCAL_ENVIRONMENT_ID,
+      );
+
+      const agentToastViewport = await waitForElement(
+        () =>
+          Array.from(
+            document.querySelectorAll<HTMLElement>(
+              '[data-slot="toast-viewport"][data-position="bottom-right"]',
+            ),
+          ).find((viewport) => viewport.textContent?.includes("Agent finished")) ?? null,
+        "Unable to find agent completion toast in the bottom-right stack.",
+      );
+      const viewTaskButton = await waitForElement(
+        () =>
+          Array.from(agentToastViewport.querySelectorAll<HTMLButtonElement>("button")).find(
+            (button) => button.textContent?.trim() === "View",
+          ) ?? null,
+        "Unable to find agent completion toast action.",
+      );
+      viewTaskButton.click();
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLHeadingElement>("h2")).find(
+            (heading) => heading.textContent?.trim() === "Inspect reconnect behavior",
+          ) ?? null,
+        "Agent toast did not reopen the completed task.",
+      );
+      expect(document.body.textContent).toContain("Reconnect review complete");
+      expect(document.body.textContent).toContain("Completed");
+
+      const closeButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Close Inspect reconnect behavior tab"]',
+          ),
+        "Unable to find agent task close button.",
+      );
+      closeButton.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[aria-label="Chat tabs"]')).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("renders locked single-environment mobile run context as a static workspace label", async () => {

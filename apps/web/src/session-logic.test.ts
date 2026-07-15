@@ -13,6 +13,8 @@ import {
   deriveActivePlanState,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveSubagentTaskNotifications,
+  deriveSubagentTasks,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
@@ -20,6 +22,7 @@ import {
   hasActionableProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
+  snapshotSubagentTaskStatuses,
 } from "./session-logic";
 
 let nextActivityId = 0;
@@ -46,6 +49,177 @@ function makeActivity(overrides: {
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
+
+describe("deriveSubagentTasks", () => {
+  it("rebuilds task status and a chronological transcript from persisted activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-task-start",
+        sequence: 1,
+        kind: "task.started",
+        tone: "info",
+        payload: { taskId: "plan-task", taskType: "plan", detail: "Write a plan" },
+      }),
+      makeActivity({
+        id: "agent-task-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        sequence: 2,
+        kind: "task.started",
+        summary: "subagent task started",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          taskId: "provider-agent-thread-1",
+          taskType: "subagent",
+          description: "Inspect reconnect behavior\nand report any race conditions.",
+          detail: "Inspect reconnect behavior",
+        },
+      }),
+      makeActivity({
+        id: "agent-tool-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        sequence: 3,
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          taskId: "provider-agent-thread-1",
+          itemType: "command_execution",
+          detail: "bun run test",
+        },
+      }),
+      makeActivity({
+        id: "agent-progress",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        sequence: 4,
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        payload: {
+          taskId: "provider-agent-thread-1",
+          summary: "Checking reconnect ordering",
+        },
+      }),
+      makeActivity({
+        id: "agent-output",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        sequence: 5,
+        kind: "task.output",
+        summary: "Agent response",
+        tone: "info",
+        payload: {
+          taskId: "provider-agent-thread-1",
+          detail: "The reconnect path is safe.",
+        },
+      }),
+      makeActivity({
+        id: "agent-completed",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        sequence: 6,
+        kind: "task.completed",
+        summary: "Task completed",
+        tone: "info",
+        payload: {
+          taskId: "provider-agent-thread-1",
+          status: "completed",
+          summary: "Reconnect review complete.",
+        },
+      }),
+    ];
+
+    expect(deriveSubagentTasks(activities)).toEqual([
+      expect.objectContaining({
+        id: "provider-agent-thread-1",
+        title: "Inspect reconnect behavior",
+        description: "Inspect reconnect behavior\nand report any race conditions.",
+        status: "completed",
+        startedAt: "2026-02-23T00:00:01.000Z",
+        completedAt: "2026-02-23T00:00:05.000Z",
+        turnId: TurnId.make("turn-1"),
+        logs: expect.arrayContaining([
+          expect.objectContaining({ id: "agent-tool-start", label: "Ran command started" }),
+          expect.objectContaining({
+            id: "agent-progress",
+            detail: "Checking reconnect ordering",
+          }),
+          expect.objectContaining({ id: "agent-output", detail: "The reconnect path is safe." }),
+          expect.objectContaining({ id: "agent-completed", detail: "Reconnect review complete." }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("orders reconstructed tasks by their persisted lifecycle order", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "agent-b",
+        sequence: 20,
+        kind: "task.started",
+        tone: "info",
+        payload: { taskId: "agent-b", taskType: "subagent", description: "Agent B" },
+      }),
+      makeActivity({
+        id: "agent-a",
+        sequence: 10,
+        kind: "task.started",
+        tone: "info",
+        payload: { taskId: "agent-a", taskType: "subagent", description: "Agent A" },
+      }),
+    ];
+
+    expect(deriveSubagentTasks(activities).map((task) => task.id)).toEqual(["agent-a", "agent-b"]);
+  });
+});
+
+describe("deriveSubagentTaskNotifications", () => {
+  const started = makeActivity({
+    id: "notification-agent-started",
+    sequence: 1,
+    kind: "task.started",
+    tone: "info",
+    payload: {
+      taskId: "notification-agent",
+      taskType: "subagent",
+      description: "Review notification behavior",
+    },
+  });
+  const completed = makeActivity({
+    id: "notification-agent-completed",
+    sequence: 2,
+    kind: "task.completed",
+    tone: "info",
+    payload: {
+      taskId: "notification-agent",
+      status: "completed",
+      summary: "Review complete",
+    },
+  });
+
+  it("does not replay completion notifications while hydrating a thread", () => {
+    const tasks = deriveSubagentTasks([started, completed]);
+    expect(deriveSubagentTaskNotifications(null, tasks)).toEqual([]);
+  });
+
+  it("notifies once when a running task becomes terminal", () => {
+    const runningTasks = deriveSubagentTasks([started]);
+    const completedTasks = deriveSubagentTasks([started, completed]);
+    const runningStatuses = snapshotSubagentTaskStatuses(runningTasks);
+    const completedStatuses = snapshotSubagentTaskStatuses(completedTasks);
+
+    expect(
+      deriveSubagentTaskNotifications(runningStatuses, completedTasks).map((task) => task.id),
+    ).toEqual(["notification-agent"]);
+    expect(deriveSubagentTaskNotifications(completedStatuses, completedTasks)).toEqual([]);
+  });
+
+  it("does not replay a terminal notification after a reconnect gap", () => {
+    const completedTasks = deriveSubagentTasks([started, completed]);
+    const hydratedStatuses = snapshotSubagentTaskStatuses(completedTasks);
+    const statusesDuringReconnect = snapshotSubagentTaskStatuses([], hydratedStatuses);
+
+    expect(statusesDuringReconnect).toEqual(hydratedStatuses);
+    expect(deriveSubagentTaskNotifications(statusesDuringReconnect, completedTasks)).toEqual([]);
+  });
+});
 
 describe("derivePendingApprovals", () => {
   it("tracks open approvals and removes resolved ones", () => {

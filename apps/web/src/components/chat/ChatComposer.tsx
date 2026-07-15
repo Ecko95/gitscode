@@ -483,6 +483,7 @@ export interface ChatComposerProps {
   sidebarProposedPlan: { turnId?: TurnId } | null;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
+  hasSubagentTasks: boolean;
   visualPlanOpen: boolean;
   hasVisualPlan: boolean;
   hasDeployedDelamainPeers: boolean;
@@ -590,6 +591,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sidebarProposedPlan,
     planSidebarLabel,
     planSidebarOpen,
+    hasSubagentTasks,
     visualPlanOpen,
     hasVisualPlan,
     hasDeployedDelamainPeers,
@@ -1069,7 +1071,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
-  const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
+  const showPlanSidebarToggle = Boolean(
+    activePlan || sidebarProposedPlan || hasSubagentTasks || planSidebarOpen,
+  );
   const showDelamainSidebarToggle = Boolean(hasDeployedDelamainPeers || delamainSidebarOpen);
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {

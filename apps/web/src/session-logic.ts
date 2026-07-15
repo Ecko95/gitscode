@@ -61,6 +61,30 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
 }
 
+export type SubagentTaskStatus = "running" | "completed" | "failed" | "stopped";
+
+export interface SubagentTaskLogEntry {
+  id: string;
+  createdAt: string;
+  kind: string;
+  label: string;
+  detail?: string;
+  tone: WorkLogEntry["tone"];
+}
+
+export interface SubagentTask {
+  id: string;
+  title: string;
+  description?: string;
+  status: SubagentTaskStatus;
+  startedAt: string;
+  completedAt?: string;
+  turnId: TurnId | null;
+  logs: SubagentTaskLogEntry[];
+}
+
+export type SubagentTaskStatusSnapshot = Readonly<Record<string, SubagentTaskStatus>>;
+
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
@@ -487,6 +511,8 @@ export function deriveWorkLogEntries(
     if (latestTurnId && activity.turnId !== latestTurnId) continue;
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
+    if (activity.kind === "task.output" || activity.kind === "task.reasoning") continue;
+    if (activity.kind.startsWith("tool.") && activityTaskId(activity)) continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
@@ -495,6 +521,145 @@ export function deriveWorkLogEntries(
   return collapseDerivedWorkLogEntries(entries).map(
     ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
   );
+}
+
+export function deriveSubagentTasks(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): SubagentTask[] {
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const tasks = new Map<string, SubagentTask>();
+
+  for (const activity of ordered) {
+    if (activity.kind !== "task.started") continue;
+    const payload = asRecord(activity.payload);
+    if (asTrimmedString(payload?.taskType) !== "subagent") continue;
+    const taskId = asTrimmedString(payload?.taskId);
+    if (!taskId) continue;
+
+    const description =
+      asTrimmedString(payload?.description) ?? asTrimmedString(payload?.detail) ?? undefined;
+    const existing = tasks.get(taskId);
+    if (existing) {
+      if (!existing.description && description) {
+        existing.description = description;
+        existing.title = subagentTaskTitle(description, taskId);
+      }
+      continue;
+    }
+
+    tasks.set(taskId, {
+      id: taskId,
+      title: subagentTaskTitle(description, taskId),
+      ...(description ? { description } : {}),
+      status: "running",
+      startedAt: activity.createdAt,
+      turnId: activity.turnId,
+      logs: [],
+    });
+  }
+
+  for (const activity of ordered) {
+    const taskId = activityTaskId(activity);
+    if (!taskId) continue;
+    const task = tasks.get(taskId);
+    if (!task) continue;
+
+    const payload = asRecord(activity.payload);
+    if (activity.kind === "task.completed") {
+      const status = asTrimmedString(payload?.status);
+      task.status =
+        status === "failed" || status === "stopped" || status === "completed"
+          ? status
+          : "completed";
+      task.completedAt = activity.createdAt;
+    }
+
+    task.logs.push(toSubagentTaskLogEntry(activity));
+  }
+
+  return [...tasks.values()];
+}
+
+export function snapshotSubagentTaskStatuses(
+  tasks: ReadonlyArray<SubagentTask>,
+  previousStatuses: SubagentTaskStatusSnapshot = {},
+): SubagentTaskStatusSnapshot {
+  return {
+    ...previousStatuses,
+    ...Object.fromEntries(tasks.map((task) => [task.id, task.status])),
+  };
+}
+
+export function deriveSubagentTaskNotifications(
+  previousStatuses: SubagentTaskStatusSnapshot | null,
+  tasks: ReadonlyArray<SubagentTask>,
+): SubagentTask[] {
+  if (previousStatuses === null) return [];
+  return tasks.filter(
+    (task) =>
+      isTerminalSubagentTaskStatus(task.status) &&
+      !isTerminalSubagentTaskStatus(previousStatuses[task.id]),
+  );
+}
+
+function activityTaskId(activity: OrchestrationThreadActivity): string | null {
+  return asTrimmedString(asRecord(activity.payload)?.taskId);
+}
+
+function isTerminalSubagentTaskStatus(
+  status: SubagentTaskStatus | undefined,
+): status is Exclude<SubagentTaskStatus, "running"> {
+  return status === "completed" || status === "failed" || status === "stopped";
+}
+
+function subagentTaskTitle(description: string | undefined, taskId: string): string {
+  const firstLine = description
+    ?.split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!firstLine) {
+    return `Agent ${taskId.slice(0, 8)}`;
+  }
+  return firstLine.length > 64 ? `${firstLine.slice(0, 63).trimEnd()}…` : firstLine;
+}
+
+function toSubagentTaskLogEntry(activity: OrchestrationThreadActivity): SubagentTaskLogEntry {
+  const payload = asRecord(activity.payload);
+  const workEntry = toDerivedWorkLogEntry(activity);
+  const lifecycleDetail = (() => {
+    if (activity.kind === "task.progress") {
+      return (
+        asTrimmedString(payload?.summary) ??
+        asTrimmedString(payload?.description) ??
+        asTrimmedString(payload?.detail)
+      );
+    }
+    if (activity.kind === "task.completed") {
+      return asTrimmedString(payload?.summary) ?? asTrimmedString(payload?.detail);
+    }
+    if (activity.kind === "task.output" || activity.kind === "task.reasoning") {
+      return asTrimmedString(payload?.detail);
+    }
+    if (activity.kind === "runtime.error" || activity.kind === "runtime.warning") {
+      return asTrimmedString(payload?.message) ?? asTrimmedString(payload?.detail);
+    }
+    return null;
+  })();
+  const detail = lifecycleDetail ?? workEntry.command ?? workEntry.detail;
+
+  return {
+    id: activity.id,
+    createdAt: activity.createdAt,
+    kind: activity.kind,
+    label:
+      activity.kind === "task.started"
+        ? "Agent started"
+        : activity.kind === "task.progress"
+          ? "Agent update"
+          : activity.summary,
+    ...(detail ? { detail } : {}),
+    tone: workEntry.tone,
+  };
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {

@@ -18,6 +18,7 @@ import {
   MessageId,
   ProjectId,
   ProviderItemId,
+  RuntimeTaskId,
   type ServerSettings,
   ThreadId,
   TurnId,
@@ -821,6 +822,7 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-tool-completed"),
       itemId: asItemId("item-tool-completed"),
+      taskId: RuntimeTaskId.make("provider-agent-thread-1"),
       payload: {
         itemType: "dynamic_tool_call",
         status: "completed",
@@ -859,10 +861,64 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activity?.kind).toBe("tool.completed");
     expect(activity?.summary).toBe("Read file");
     expect(payload?.itemType).toBe("dynamic_tool_call");
+    expect(payload?.taskId).toBe("provider-agent-thread-1");
     expect(payload?.detail).toBeUndefined();
     expect(data?.toolCallId).toBe("tool-read-1");
     expect(data?.kind).toBe("read");
     expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
+  });
+
+  it("projects child agent output without appending it to the main chat", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-child-agent-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-child-agent"),
+      itemId: asItemId("item-child-agent"),
+      taskId: RuntimeTaskId.make("provider-agent-thread-1"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "This belongs in the child task transcript.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-child-agent-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-child-agent"),
+      itemId: asItemId("item-child-agent"),
+      taskId: RuntimeTaskId.make("provider-agent-thread-1"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "This belongs in the child task transcript.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-child-agent-completed",
+      ),
+    );
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.id === "evt-child-agent-completed",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("task.output");
+    expect(payload?.taskId).toBe("provider-agent-thread-1");
+    expect(payload?.detail).toBe("This belongs in the child task transcript.");
+    expect(thread.messages).toHaveLength(0);
   });
 
   it("normalizes command execution activities to ran-command summaries", async () => {

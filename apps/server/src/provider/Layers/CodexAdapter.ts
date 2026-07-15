@@ -12,6 +12,7 @@ import {
   type CanonicalRequestType,
   type CodexAccountUsage,
   type CodexSettings,
+  EventId,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ import {
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
@@ -469,6 +471,7 @@ function runtimeEventBase(
     createdAt: event.createdAt,
     ...(event.turnId ? { turnId: event.turnId } : {}),
     ...(event.itemId ? { itemId: asRuntimeItemId(event.itemId) } : {}),
+    ...(event.taskId ? { taskId: event.taskId } : {}),
     ...(event.requestId ? { requestId: asRuntimeRequestId(event.requestId) } : {}),
     ...(refs ? { providerRefs: refs } : {}),
     raw: {
@@ -477,6 +480,83 @@ function runtimeEventBase(
       payload: event.payload ?? {},
     },
   };
+}
+
+function mapCollabTaskLifecycleEvents(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  item: CodexLifecycleItem,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  if (item.type !== "collabAgentToolCall") {
+    return [];
+  }
+
+  const taskEvents: ProviderRuntimeEvent[] = [];
+  const taskIds = new Set([...item.receiverThreadIds, ...Object.keys(item.agentsStates)]);
+  for (const rawTaskId of taskIds) {
+    const taskId = RuntimeTaskId.make(rawTaskId);
+    const state = item.agentsStates[rawTaskId];
+    const prompt = trimText(item.prompt);
+    const message = trimText(state?.message);
+    const taskEventBase = (phase: "started" | "progress" | "completed") => ({
+      ...runtimeEventBase(event, canonicalThreadId),
+      eventId: EventId.make(`${event.id}:task:${taskId}:${phase}`),
+      taskId,
+    });
+
+    if (item.tool === "spawnAgent") {
+      taskEvents.push({
+        ...taskEventBase("started"),
+        type: "task.started",
+        payload: {
+          taskId,
+          taskType: "subagent",
+          ...(prompt ? { description: prompt } : {}),
+        },
+      });
+    }
+
+    switch (state?.status) {
+      case "pendingInit":
+      case "running": {
+        const description = message ?? prompt ?? "Agent is working.";
+        taskEvents.push({
+          ...taskEventBase("progress"),
+          type: "task.progress",
+          payload: {
+            taskId,
+            description,
+            ...(message ? { summary: message } : {}),
+          },
+        });
+        break;
+      }
+      case "completed":
+      case "errored":
+      case "interrupted":
+      case "shutdown":
+      case "notFound":
+        taskEvents.push({
+          ...taskEventBase("completed"),
+          type: "task.completed",
+          payload: {
+            taskId,
+            status:
+              state.status === "completed"
+                ? "completed"
+                : state.status === "interrupted" || state.status === "shutdown"
+                  ? "stopped"
+                  : "failed",
+            ...(message ? { summary: message } : {}),
+          },
+        });
+        break;
+      default:
+        break;
+    }
+  }
+
+  return taskEvents;
 }
 
 function mapItemLifecycle(
@@ -885,7 +965,10 @@ function mapToRuntimeEvents(
       ];
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    return completed ? [completed] : [];
+    return [
+      ...(completed ? [completed] : []),
+      ...mapCollabTaskLifecycleEvents(event, canonicalThreadId, item),
+    ];
   }
 
   if (

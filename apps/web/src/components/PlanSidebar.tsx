@@ -14,8 +14,7 @@ import {
   PanelRightCloseIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
-import type { ActivePlanState } from "../session-logic";
-import type { LatestProposedPlanState } from "../session-logic";
+import type { ActivePlanState, LatestProposedPlanState, SubagentTask } from "../session-logic";
 import { formatTimestamp } from "../timestampFormat";
 import {
   proposedPlanTitle,
@@ -28,6 +27,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { readEnvironmentApi } from "~/environmentApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { SubagentTaskCard } from "./SubagentTaskSurface";
 
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
@@ -59,7 +59,9 @@ interface PlanSidebarProps {
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
   timestampFormat: TimestampFormat;
+  subagentTasks: ReadonlyArray<SubagentTask>;
   mode?: "sheet" | "sidebar";
+  onOpenSubagentTask: (taskId: string) => void;
   onClose: () => void;
 }
 
@@ -71,7 +73,9 @@ const PlanSidebar = memo(function PlanSidebar({
   markdownCwd,
   workspaceRoot,
   timestampFormat,
+  subagentTasks,
   mode = "sidebar",
+  onOpenSubagentTask,
   onClose,
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
@@ -201,6 +205,17 @@ const PlanSidebar = memo(function PlanSidebar({
             </p>
           ) : null}
 
+          {subagentTasks.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase">
+                Agents
+              </p>
+              {subagentTasks.map((task) => (
+                <SubagentTaskCard key={task.id} task={task} onOpen={onOpenSubagentTask} />
+              ))}
+            </div>
+          ) : null}
+
           {/* Plan Steps */}
           {activePlan && activePlan.steps.length > 0 ? (
             <div className="space-y-1">
@@ -264,7 +279,7 @@ const PlanSidebar = memo(function PlanSidebar({
           ) : null}
 
           {/* Empty state */}
-          {!activePlan && !planMarkdown ? (
+          {!activePlan && !planMarkdown && subagentTasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <p className="text-[13px] text-muted-foreground/40">No active plan yet.</p>
               <p className="mt-1 text-[11px] text-muted-foreground/30">
