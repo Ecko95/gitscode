@@ -52,6 +52,7 @@ import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch"
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
+  resolveCodexAccountCommand,
 } from "../composer-logic";
 import {
   deriveCompletionDividerBeforeEntryId,
@@ -3574,16 +3575,23 @@ export default function ChatView(props: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
+      const codexAccountCommand = resolveCodexAccountCommand(
+        standaloneSlashCommand,
+        ctxSelectedProvider,
+      );
       if (standaloneSlashCommand === "browser") {
         onToggleBrowser();
-      } else if (
-        (standaloneSlashCommand === "status" || standaloneSlashCommand === "usage") &&
-        activeProviderStatus?.driver === "codex"
-      ) {
+      } else if (codexAccountCommand) {
         setCodexRedeemError(null);
-        setCodexAccountDialog(standaloneSlashCommand);
+        setCodexAccountDialog(codexAccountCommand);
       } else if (standaloneSlashCommand === "status" || standaloneSlashCommand === "usage") {
-        return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Codex command unavailable",
+            description: `/${standaloneSlashCommand} is available in Codex sessions only.`,
+          }),
+        );
       } else {
         handleInteractionModeChange(standaloneSlashCommand);
       }

@@ -19,10 +19,12 @@
 ### Task 1: Center and collapse the usage panel
 
 **Files:**
+
 - Modify: `apps/web/src/components/chat/ComposerUsageBars.tsx`
 - Test: `apps/web/src/components/chat/ComposerUsageBars.test.tsx`
 
 **Interfaces:**
+
 - Consumes: existing `ComposerUsageBars` props.
 - Produces: the same component API with persisted expanded/collapsed rendering.
 
@@ -34,11 +36,13 @@
 ### Task 2: Route Codex account commands from composer state
 
 **Files:**
+
 - Modify: `apps/web/src/components/ChatView.tsx`
 - Modify: `apps/web/src/composer-logic.ts`
 - Test: `apps/web/src/composer-logic.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ctxSelectedProvider` returned by `composerRef.current.getSendContext()`.
 - Produces: `resolveCodexAccountCommand(command, provider)` returning `"status" | "usage" | null`.
 
@@ -50,9 +54,11 @@
 ### Task 3: Verify and ship
 
 **Files:**
+
 - No production files beyond Tasks 1 and 2.
 
 **Interfaces:**
+
 - Produces: a mergeable PR and hosted deployment at the merge commit.
 
 - [ ] Run `bun fmt`, `bun lint`, `bun typecheck`, and `PATH=/usr/bin:/bin:/home/ops/.bun/bin bun run test`.
