@@ -8,6 +8,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   navigateComposerHistory,
   parseStandaloneComposerSlashCommand,
+  resolveCodexAccountCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -359,5 +360,14 @@ describe("parseStandaloneComposerSlashCommand", () => {
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
     expect(parseStandaloneComposerSlashCommand("/usage now")).toBeNull();
+  });
+});
+
+describe("resolveCodexAccountCommand", () => {
+  it("uses the composer-selected provider for Codex account commands", () => {
+    expect(resolveCodexAccountCommand("status", "codex")).toBe("status");
+    expect(resolveCodexAccountCommand("usage", "codex")).toBe("usage");
+    expect(resolveCodexAccountCommand("usage", "claude")).toBeNull();
+    expect(resolveCodexAccountCommand("plan", "codex")).toBeNull();
   });
 });

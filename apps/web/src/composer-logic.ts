@@ -318,6 +318,13 @@ export function parseStandaloneComposerSlashCommand(
   return "default";
 }
 
+export function resolveCodexAccountCommand(
+  command: Exclude<ComposerSlashCommand, "model">,
+  provider: string,
+): "status" | "usage" | null {
+  return provider === "codex" && (command === "status" || command === "usage") ? command : null;
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,

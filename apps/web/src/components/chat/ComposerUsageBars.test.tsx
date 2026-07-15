@@ -31,7 +31,7 @@ describe("ComposerUsageBars", () => {
     expect(markup).toContain("25%");
     expect(markup).toContain("61%");
     expect(markup).toContain("Resets");
-    expect(markup).toContain("w-[30%]");
+    expect(markup).toContain("grid-cols-[minmax(0,1fr)_30%_minmax(0,1fr)]");
   });
 
   it("keeps missing windows visible as unavailable", () => {
