@@ -209,6 +209,12 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  CodexAccountUsage,
+  CodexAccountUsageInput,
+  CodexResetCreditConsumeInput,
+  CodexResetCreditConsumeResult,
+} from "./usage.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -328,6 +334,8 @@ export const WS_METHODS = {
   serverSignalProcess: "server.signalProcess",
   providerSteerTurn: "provider.steerTurn",
   providerGenerateFollowUpSuggestions: "provider.generateFollowUpSuggestions",
+  providerCodexAccountUsage: "provider.codexAccountUsage",
+  providerConsumeCodexResetCredit: "provider.consumeCodexResetCredit",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -394,6 +402,21 @@ export const WsProviderGenerateFollowUpSuggestionsRpc = Rpc.make(
   {
     payload: FollowUpSuggestionsInput,
     success: FollowUpSuggestionsResult,
+    error: ProviderOperationError,
+  },
+);
+
+export const WsProviderCodexAccountUsageRpc = Rpc.make(WS_METHODS.providerCodexAccountUsage, {
+  payload: CodexAccountUsageInput,
+  success: CodexAccountUsage,
+  error: ProviderOperationError,
+});
+
+export const WsProviderConsumeCodexResetCreditRpc = Rpc.make(
+  WS_METHODS.providerConsumeCodexResetCredit,
+  {
+    payload: CodexResetCreditConsumeInput,
+    success: CodexResetCreditConsumeResult,
     error: ProviderOperationError,
   },
 );
@@ -1088,6 +1111,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsProviderSteerTurnRpc,
   WsProviderGenerateFollowUpSuggestionsRpc,
+  WsProviderCodexAccountUsageRpc,
+  WsProviderConsumeCodexResetCreditRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,

@@ -1,5 +1,6 @@
 import {
   type ApprovalRequestId,
+  type CodexResetCredit,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
@@ -165,7 +166,9 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ComposerQueue } from "./chat/ComposerQueue";
 import { ComposerSuggestions } from "./chat/ComposerSuggestions";
 import { ComposerUsageBars } from "./chat/ComposerUsageBars";
+import { CodexUsageDialog } from "./chat/CodexUsageDialog";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
+import { collectDueResetWarnings } from "../lib/codexResetWarnings";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -891,6 +894,9 @@ export default function ChatView(props: ChatViewProps) {
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [codexAccountDialog, setCodexAccountDialog] = useState<"status" | "usage" | null>(null);
+  const [codexRedeemError, setCodexRedeemError] = useState<string | null>(null);
+  const [isRedeemingCodexCredit, setIsRedeemingCodexCredit] = useState(false);
   const [optimisticUserMessagesByThreadKey, setOptimisticUserMessagesByThreadKey] = useState<
     Record<string, ChatMessage[]>
   >({});
@@ -2005,6 +2011,57 @@ export default function ChatView(props: ChatViewProps) {
   const providerUsageWindows = usageProvider
     ? selectProviderUsageWindows(providerUsageQuery.data, usageProvider)
     : null;
+  const codexAccountUsageQuery = useQuery({
+    queryKey: ["codex", "account-usage", environmentId, activeThread?.id],
+    queryFn: () => {
+      if (!activeThread) throw new Error("No active thread");
+      const environmentApi = readEnvironmentApi(environmentId);
+      if (!environmentApi) throw new Error("Provider service unavailable");
+      return environmentApi.provider.codexAccountUsage({
+        threadId: activeThread.id,
+      });
+    },
+    enabled: activeProviderStatus?.driver === "codex" && activeThread !== null,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  useEffect(() => {
+    const credits = codexAccountUsageQuery.data?.resetCredits;
+    if (!credits || typeof window === "undefined") return;
+    const storageKey = "t3.codex-reset-warnings";
+    let delivered = new Set<string>();
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey) ?? "[]") as unknown;
+      if (Array.isArray(stored)) {
+        delivered = new Set(stored.filter((key): key is string => typeof key === "string"));
+      }
+    } catch {
+      // Invalid or blocked storage should not suppress a time-sensitive warning.
+    }
+    const warnings = collectDueResetWarnings(credits, delivered);
+    for (const warning of warnings) {
+      const title = `Codex reset expires within ${warning.thresholdHours} hours`;
+      const description = `A usage limit reset expires ${new Date(warning.expiresAt).toLocaleString()}.`;
+      let deliveredBySystem = false;
+      try {
+        if ("Notification" in window && Notification.permission === "granted") {
+          const _notification = new Notification(title, { body: description });
+          deliveredBySystem = true;
+        }
+      } catch {
+        // The in-app toast below is the fallback for browser notification failures.
+      }
+      if (!deliveredBySystem) {
+        toastManager.add(stackedThreadToast({ type: "warning", title, description }));
+      }
+      delivered.add(warning.key);
+    }
+    try {
+      localStorage.setItem(storageKey, JSON.stringify([...delivered]));
+    } catch {
+      // Private browsing can deny storage; warnings remain best-effort in that mode.
+    }
+  }, [codexAccountUsageQuery.data?.resetCredits]);
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -3519,6 +3576,14 @@ export default function ChatView(props: ChatViewProps) {
     if (standaloneSlashCommand) {
       if (standaloneSlashCommand === "browser") {
         onToggleBrowser();
+      } else if (
+        (standaloneSlashCommand === "status" || standaloneSlashCommand === "usage") &&
+        activeProviderStatus?.driver === "codex"
+      ) {
+        setCodexRedeemError(null);
+        setCodexAccountDialog(standaloneSlashCommand);
+      } else if (standaloneSlashCommand === "status" || standaloneSlashCommand === "usage") {
+        return;
       } else {
         handleInteractionModeChange(standaloneSlashCommand);
       }
@@ -4845,6 +4910,49 @@ export default function ChatView(props: ChatViewProps) {
       {expandedImage && (
         <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />
       )}
+      <CodexUsageDialog
+        mode={codexAccountDialog}
+        model={activeThread?.modelSelection.model ?? null}
+        workspace={activeWorkspaceRoot ?? null}
+        usage={codexAccountUsageQuery.data}
+        error={
+          codexRedeemError ??
+          (codexAccountUsageQuery.error instanceof Error
+            ? codexAccountUsageQuery.error.message
+            : codexAccountUsageQuery.isError
+              ? "Usage unavailable"
+              : null)
+        }
+        isLoading={codexAccountUsageQuery.isLoading}
+        isRedeeming={isRedeemingCodexCredit}
+        onClose={() => setCodexAccountDialog(null)}
+        onRedeem={(credit: CodexResetCredit) => {
+          if (!activeThread) return;
+          const expiry = credit.expiresAt
+            ? new Date(credit.expiresAt).toLocaleString()
+            : "an unavailable date";
+          if (!window.confirm(`Redeem this Codex usage reset? It expires ${expiry}.`)) return;
+          setIsRedeemingCodexCredit(true);
+          setCodexRedeemError(null);
+          const environmentApi = readEnvironmentApi(environmentId);
+          if (!environmentApi) {
+            setCodexRedeemError("Provider service unavailable");
+            setIsRedeemingCodexCredit(false);
+            return;
+          }
+          void environmentApi.provider
+            .consumeCodexResetCredit({ threadId: activeThread.id, creditId: credit.id })
+            .then((result) => {
+              if (result.outcome !== "reset")
+                setCodexRedeemError(`Reset was not applied: ${result.outcome}`);
+              return codexAccountUsageQuery.refetch();
+            })
+            .catch((error: unknown) =>
+              setCodexRedeemError(error instanceof Error ? error.message : String(error)),
+            )
+            .finally(() => setIsRedeemingCodexCredit(false));
+        }}
+      />
     </div>
   );
 }

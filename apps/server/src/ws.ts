@@ -914,6 +914,40 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                   ),
                 ),
           }),
+        [WS_METHODS.providerCodexAccountUsage]: (input) =>
+          Option.match(providerService, {
+            onNone: () =>
+              Effect.fail(new ProviderOperationError({ message: "Provider service unavailable" })),
+            onSome: (service) =>
+              service.readCodexAccountUsage
+                ? service
+                    .readCodexAccountUsage(input)
+                    .pipe(
+                      Effect.mapError(
+                        (error) => new ProviderOperationError({ message: error.message }),
+                      ),
+                    )
+                : Effect.fail(
+                    new ProviderOperationError({ message: "Codex account usage unavailable" }),
+                  ),
+          }),
+        [WS_METHODS.providerConsumeCodexResetCredit]: (input) =>
+          Option.match(providerService, {
+            onNone: () =>
+              Effect.fail(new ProviderOperationError({ message: "Provider service unavailable" })),
+            onSome: (service) =>
+              service.consumeCodexResetCredit
+                ? service
+                    .consumeCodexResetCredit(input)
+                    .pipe(
+                      Effect.mapError(
+                        (error) => new ProviderOperationError({ message: error.message }),
+                      ),
+                    )
+                : Effect.fail(
+                    new ProviderOperationError({ message: "Codex reset credits unavailable" }),
+                  ),
+          }),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

@@ -21,6 +21,7 @@
 ### Task 1: Typed Codex account operations
 
 **Files:**
+
 - Modify: `packages/contracts/src/usage.ts`
 - Modify: `packages/contracts/src/rpc.ts`
 - Modify: `packages/contracts/src/index.ts`
@@ -31,6 +32,7 @@
 - Test: `apps/server/src/provider/Layers/ProviderService.test.ts`
 
 **Interfaces:**
+
 - Produces: `CodexAccountUsage`, `CodexAccountUsageInput`, `CodexResetCreditConsumeInput`, and RPC methods `provider.codexAccountUsage` / `provider.consumeCodexResetCredit`.
 - Consumes: Codex app-server `account/rateLimits/read` and `account/rateLimitResetCredit/consume`.
 
@@ -43,6 +45,7 @@
 ### Task 2: Composer commands and account panels
 
 **Files:**
+
 - Modify: `apps/web/src/composer-logic.ts`
 - Modify: `apps/web/src/composer-logic.test.ts`
 - Modify: `apps/web/src/components/chat/ChatComposer.tsx`
@@ -51,6 +54,7 @@
 - Test: `apps/web/src/components/chat/CodexUsageDialog.test.tsx`
 
 **Interfaces:**
+
 - Consumes: Task 1 RPC operations and account schemas.
 - Produces: standalone commands `status | usage` and a dialog that renders usage windows, credits, expiry dates, unavailable/error states, and confirmed redemption.
 
@@ -65,12 +69,14 @@
 ### Task 3: Reset expiry notifications
 
 **Files:**
+
 - Create: `apps/web/src/lib/codexResetWarnings.ts`
 - Create: `apps/web/src/lib/codexResetWarnings.test.ts`
 - Modify: `apps/web/src/hooks/useNotifications.ts`
 - Modify: `apps/web/src/components/ChatView.tsx`
 
 **Interfaces:**
+
 - Consumes: Task 1 reset credits and existing notification subscription/toast facilities.
 - Produces: `collectDueResetWarnings(credits, deliveredKeys, now)` returning due 48-hour/24-hour warnings and stable `<creditId>:<threshold>` keys.
 
@@ -83,11 +89,13 @@
 ### Task 4: Composer-width layout and final verification
 
 **Files:**
+
 - Modify: `apps/web/src/components/chat/ComposerUsageBars.tsx`
 - Modify: `apps/web/src/components/chat/ComposerUsageBars.test.tsx`
 - Modify: `apps/web/src/components/ChatView.tsx`
 
 **Interfaces:**
+
 - Consumes: existing chat content/composer wrapper.
 - Produces: composer and usage panel aligned to the chat content width, with progress tracks limited to 30%.
 

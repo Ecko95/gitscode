@@ -12,6 +12,10 @@
  * @module ProviderService
  */
 import type {
+  CodexAccountUsage,
+  CodexAccountUsageInput,
+  CodexResetCreditConsumeInput,
+  CodexResetCreditConsumeResult,
   ProviderInterruptTurnInput,
   ProviderInstanceId,
   ProviderRespondToRequestInput,
@@ -107,6 +111,13 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly readCodexAccountUsage?: (
+    input: CodexAccountUsageInput,
+  ) => Effect.Effect<CodexAccountUsage, ProviderServiceError>;
+  readonly consumeCodexResetCredit?: (
+    input: CodexResetCreditConsumeInput,
+  ) => Effect.Effect<CodexResetCreditConsumeResult, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

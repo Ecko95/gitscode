@@ -39,6 +39,12 @@ import type {
   ProviderSteerTurnInput,
 } from "./provider.ts";
 import type {
+  CodexAccountUsage,
+  CodexAccountUsageInput,
+  CodexResetCreditConsumeInput,
+  CodexResetCreditConsumeResult,
+} from "./usage.ts";
+import type {
   ServerConfig,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
@@ -523,6 +529,10 @@ export interface EnvironmentApi {
     generateFollowUpSuggestions: (
       input: FollowUpSuggestionsInput,
     ) => Promise<FollowUpSuggestionsResult>;
+    codexAccountUsage: (input: CodexAccountUsageInput) => Promise<CodexAccountUsage>;
+    consumeCodexResetCredit: (
+      input: CodexResetCreditConsumeInput,
+    ) => Promise<CodexResetCreditConsumeResult>;
   };
   terminal: {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;

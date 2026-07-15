@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const PathString = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
 const SummaryString = TrimmedNonEmptyString.check(Schema.isMaxLength(10_000));
@@ -70,3 +70,44 @@ export const UsageSummary = Schema.Struct({
   notes: Schema.Array(SummaryString),
 });
 export type UsageSummary = typeof UsageSummary.Type;
+
+export const CodexAccountUsageInput = Schema.Struct({ threadId: ThreadId });
+export type CodexAccountUsageInput = typeof CodexAccountUsageInput.Type;
+
+export const CodexAccountUsageWindow = Schema.Struct({
+  usedPercent: NonNegativeNumber,
+  windowMinutes: Schema.NullOr(NonNegativeInt),
+  resetAt: Schema.NullOr(IsoDateTime),
+});
+export type CodexAccountUsageWindow = typeof CodexAccountUsageWindow.Type;
+
+export const CodexResetCredit = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  title: Schema.NullOr(TrimmedNonEmptyString),
+  description: Schema.NullOr(TrimmedNonEmptyString),
+  grantedAt: IsoDateTime,
+  expiresAt: Schema.NullOr(IsoDateTime),
+  status: Schema.Literals(["available", "redeeming", "redeemed", "unknown"]),
+});
+export type CodexResetCredit = typeof CodexResetCredit.Type;
+
+export const CodexAccountUsage = Schema.Struct({
+  checkedAt: IsoDateTime,
+  planType: Schema.NullOr(TrimmedNonEmptyString),
+  primary: Schema.NullOr(CodexAccountUsageWindow),
+  secondary: Schema.NullOr(CodexAccountUsageWindow),
+  availableResetCount: NonNegativeInt,
+  resetCredits: Schema.Array(CodexResetCredit),
+});
+export type CodexAccountUsage = typeof CodexAccountUsage.Type;
+
+export const CodexResetCreditConsumeInput = Schema.Struct({
+  threadId: ThreadId,
+  creditId: TrimmedNonEmptyString,
+});
+export type CodexResetCreditConsumeInput = typeof CodexResetCreditConsumeInput.Type;
+
+export const CodexResetCreditConsumeResult = Schema.Struct({
+  outcome: Schema.Literals(["reset", "nothingToReset", "noCredit", "alreadyRedeemed"]),
+});
+export type CodexResetCreditConsumeResult = typeof CodexResetCreditConsumeResult.Type;
