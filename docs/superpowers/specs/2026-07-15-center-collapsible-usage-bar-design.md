@@ -15,8 +15,18 @@ Keep the composer usage display visually centered and let users reclaim its vert
 
 ## Scope
 
-This change is confined to the existing composer usage component and its focused test. It adds no dependency or new shared abstraction.
+The slash-command menu currently decides whether to show Codex commands from the
+composer-selected provider, while submission gates them on a separately resolved active-provider
+snapshot. If those values differ or the snapshot is temporarily unavailable after reconnect, the
+command silently returns. Command visibility and execution must use the same composer-selected
+provider, and an unsupported command must produce visible feedback instead of doing nothing.
+
+The change is confined to the existing composer usage component, command submission path, and
+focused tests. It adds no dependency or new shared abstraction.
 
 ## Verification
 
-The component test verifies centered progress styling, the far-right accessible toggle, and both expanded and collapsed rendering. Repository format, lint, typecheck, and test commands remain the completion gates.
+The component test verifies centered progress styling, the far-right accessible toggle, and both
+expanded and collapsed rendering. A command-routing regression test verifies that the provider
+selected in the composer controls Codex command handling. Repository format, lint, typecheck, and
+test commands remain the completion gates.
