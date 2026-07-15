@@ -254,6 +254,10 @@ export interface WsRpcClient {
     readonly generateFollowUpSuggestions: RpcUnaryMethod<
       typeof WS_METHODS.providerGenerateFollowUpSuggestions
     >;
+    readonly codexAccountUsage: RpcUnaryMethod<typeof WS_METHODS.providerCodexAccountUsage>;
+    readonly consumeCodexResetCredit: RpcUnaryMethod<
+      typeof WS_METHODS.providerConsumeCodexResetCredit
+    >;
   };
 }
 
@@ -573,6 +577,10 @@ export function createWsRpcClient(
         transport.request((client) =>
           client[WS_METHODS.providerGenerateFollowUpSuggestions](input),
         ),
+      codexAccountUsage: (input) =>
+        transport.request((client) => client[WS_METHODS.providerCodexAccountUsage](input)),
+      consumeCodexResetCredit: (input) =>
+        transport.request((client) => client[WS_METHODS.providerConsumeCodexResetCredit](input)),
     },
   };
 }

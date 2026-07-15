@@ -10,6 +10,7 @@
 import {
   type CanonicalItemType,
   type CanonicalRequestType,
+  type CodexAccountUsage,
   type CodexSettings,
   ProviderDriverKind,
   type ProviderEvent,
@@ -26,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -1707,6 +1709,65 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
   };
 
+  const readCodexAccountUsage: NonNullable<CodexAdapterShape["readCodexAccountUsage"]> = (
+    threadId,
+  ) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.readAccountUsage!),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "account/rateLimits/read", cause),
+      ),
+      Effect.map((response) => {
+        const mapWindow = (
+          window:
+            | EffectCodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow
+            | null
+            | undefined,
+        ) =>
+          window
+            ? {
+                usedPercent: window.usedPercent,
+                windowMinutes: window.windowDurationMins ?? null,
+                resetAt: window.resetsAt
+                  ? DateTime.formatIso(DateTime.makeUnsafe(window.resetsAt * 1_000))
+                  : null,
+              }
+            : null;
+        return {
+          checkedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+          planType: response.rateLimits.planType ?? null,
+          primary: mapWindow(response.rateLimits.primary),
+          secondary: mapWindow(response.rateLimits.secondary),
+          availableResetCount: response.rateLimitResetCredits?.availableCount ?? 0,
+          resetCredits: (response.rateLimitResetCredits?.credits ?? []).map((credit) => ({
+            id: credit.id,
+            title: credit.title ?? null,
+            description: credit.description ?? null,
+            grantedAt: DateTime.formatIso(DateTime.makeUnsafe(credit.grantedAt * 1_000)),
+            expiresAt: credit.expiresAt
+              ? DateTime.formatIso(DateTime.makeUnsafe(credit.expiresAt * 1_000))
+              : null,
+            status: credit.status,
+          })),
+        } satisfies CodexAccountUsage;
+      }),
+    );
+
+  const consumeCodexResetCredit: NonNullable<CodexAdapterShape["consumeCodexResetCredit"]> = (
+    threadId,
+    creditId,
+  ) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.consumeResetCredit!(creditId)),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "account/rateLimitResetCredit/consume", cause),
+      ),
+    );
+
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
@@ -1796,6 +1857,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    readCodexAccountUsage,
+    consumeCodexResetCredit,
     respondToRequest,
     respondToUserInput,
     stopSession,

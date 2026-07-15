@@ -969,6 +969,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/default",
           description: "Switch this thread back to normal build mode",
         },
+        ...(selectedProviderStatus?.driver === "codex"
+          ? [
+              {
+                id: "slash:status",
+                type: "slash-command" as const,
+                command: "status" as const,
+                label: "/status",
+                description: "View Codex session status and limits",
+              },
+              {
+                id: "slash:usage",
+                type: "slash-command" as const,
+                command: "usage" as const,
+                label: "/usage",
+                description: "View usage or redeem a reset",
+              },
+            ]
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
         (command) => ({

@@ -351,7 +351,13 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/browser")).toBe("browser");
   });
 
+  it("parses standalone Codex account commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/status")).toBe("status");
+    expect(parseStandaloneComposerSlashCommand(" /usage ")).toBe("usage");
+  });
+
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/usage now")).toBeNull();
   });
 });

@@ -15,15 +15,15 @@ function UsageRow(props: {
   const name = props.provider === "codex" ? "Codex" : "Claude";
   const used = props.window?.usedPercent;
   return (
-    <div className="grid min-w-0 grid-cols-[3rem_minmax(5rem,1fr)_auto] items-center gap-2 text-[11px]">
-      <span className="font-medium text-muted-foreground">{props.label}</span>
+    <div className="flex min-w-0 items-center gap-2 text-[11px]">
+      <span className="w-12 shrink-0 font-medium text-muted-foreground">{props.label}</span>
       {used === null || used === undefined ? (
-        <span className="col-span-2 text-muted-foreground">Usage unavailable</span>
+        <span className="text-muted-foreground">Usage unavailable</span>
       ) : (
         <>
           <progress
             aria-label={`${name} ${props.label} usage`}
-            className="h-1.5 w-full accent-primary"
+            className="h-1.5 w-[30%] min-w-16 accent-primary"
             max={100}
             value={clampUsagePercent(used)}
           />

@@ -9,6 +9,8 @@
  */
 import type {
   ApprovalRequestId,
+  CodexAccountUsage,
+  CodexResetCreditConsumeResult,
   ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderUserInputAnswers,
@@ -117,6 +119,12 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  readonly readCodexAccountUsage?: (threadId: ThreadId) => Effect.Effect<CodexAccountUsage, TError>;
+  readonly consumeCodexResetCredit?: (
+    threadId: ThreadId,
+    creditId: string,
+  ) => Effect.Effect<CodexResetCreditConsumeResult, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

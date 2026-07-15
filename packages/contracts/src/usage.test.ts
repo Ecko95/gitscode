@@ -1,9 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { UsageSummary } from "./usage.ts";
+import { CodexAccountUsage, UsageSummary } from "./usage.ts";
 
 const decodeUsageSummary = Schema.decodeUnknownSync(UsageSummary);
+const decodeCodexAccountUsage = Schema.decodeUnknownSync(CodexAccountUsage);
 
 it("decodes usage summaries", () => {
   const parsed = decodeUsageSummary({
@@ -78,4 +79,31 @@ it("decodes usage summaries", () => {
 
   assert.equal(parsed.models[0]?.model, "gpt-5.5");
   assert.equal(parsed.windows[0]?.label, "5h");
+});
+
+it("decodes Codex account usage and reset credits", () => {
+  const parsed = decodeCodexAccountUsage({
+    checkedAt: "2026-07-15T12:00:00.000Z",
+    planType: "plus",
+    primary: { usedPercent: 40, windowMinutes: 300, resetAt: "2026-07-15T17:00:00.000Z" },
+    secondary: {
+      usedPercent: 60,
+      windowMinutes: 10080,
+      resetAt: "2026-07-20T12:00:00.000Z",
+    },
+    availableResetCount: 1,
+    resetCredits: [
+      {
+        id: "credit-1",
+        title: "Full reset",
+        description: null,
+        grantedAt: "2026-07-01T12:00:00.000Z",
+        expiresAt: "2026-07-18T02:38:00.000Z",
+        status: "available",
+      },
+    ],
+  });
+
+  assert.equal(parsed.primary?.windowMinutes, 300);
+  assert.equal(parsed.resetCredits[0]?.id, "credit-1");
 });

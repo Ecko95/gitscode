@@ -185,6 +185,16 @@ export interface CodexSessionRuntimeShape {
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly readAccountUsage?: Effect.Effect<
+    EffectCodexSchema.V2GetAccountRateLimitsResponse,
+    CodexSessionRuntimeError
+  >;
+  readonly consumeResetCredit?: (
+    creditId: string,
+  ) => Effect.Effect<
+    EffectCodexSchema.V2ConsumeAccountRateLimitResetCreditResponse,
+    CodexSessionRuntimeError
+  >;
   readonly respondToRequest: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -957,6 +967,7 @@ export const makeCodexSessionRuntime = (
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const closedRef = yield* Ref.make(false);
+    const availableResetCreditIdsRef = yield* Ref.make(new Set<string>());
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1652,6 +1663,33 @@ export const makeCodexSessionRuntime = (
       }),
       forkThread: forkRuntimeThread,
       rollbackThread: rollbackCurrentThread,
+      readAccountUsage: client
+        .request("account/rateLimits/read", undefined)
+        .pipe(
+          Effect.tap((response) =>
+            Ref.set(
+              availableResetCreditIdsRef,
+              new Set(
+                (response.rateLimitResetCredits?.credits ?? [])
+                  .filter((credit) => credit.status === "available")
+                  .map((credit) => credit.id),
+              ),
+            ),
+          ),
+        ),
+      consumeResetCredit: (creditId) =>
+        Effect.gen(function* () {
+          if (!(yield* Ref.get(availableResetCreditIdsRef)).has(creditId)) {
+            return yield* CodexErrors.CodexAppServerRequestError.invalidParams(
+              "Reset credit is not available in the latest account snapshot.",
+              { method: "account/rateLimitResetCredit/consume" },
+            );
+          }
+          return yield* client.request("account/rateLimitResetCredit/consume", {
+            creditId,
+            idempotencyKey: yield* randomUUIDv4,
+          });
+        }),
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);

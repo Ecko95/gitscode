@@ -10,6 +10,8 @@
  * @module ProviderServiceLive
  */
 import {
+  CodexAccountUsageInput,
+  CodexResetCreditConsumeInput,
   CommandId,
   ModelSelection,
   NonNegativeInt,
@@ -1041,6 +1043,50 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const readCodexAccountUsage: ProviderServiceShape["readCodexAccountUsage"] = Effect.fn(
+    "readCodexAccountUsage",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.readCodexAccountUsage",
+      schema: CodexAccountUsageInput,
+      payload: rawInput,
+    });
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.readCodexAccountUsage",
+      allowRecovery: false,
+    });
+    if (routed.adapter.provider !== "codex" || !routed.adapter.readCodexAccountUsage) {
+      return yield* toValidationError(
+        "ProviderService.readCodexAccountUsage",
+        "Codex account usage is available only in Codex sessions.",
+      );
+    }
+    return yield* routed.adapter.readCodexAccountUsage(routed.threadId);
+  });
+
+  const consumeCodexResetCredit: ProviderServiceShape["consumeCodexResetCredit"] = Effect.fn(
+    "consumeCodexResetCredit",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.consumeCodexResetCredit",
+      schema: CodexResetCreditConsumeInput,
+      payload: rawInput,
+    });
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.consumeCodexResetCredit",
+      allowRecovery: false,
+    });
+    if (routed.adapter.provider !== "codex" || !routed.adapter.consumeCodexResetCredit) {
+      return yield* toValidationError(
+        "ProviderService.consumeCodexResetCredit",
+        "Codex reset credits can be consumed only in Codex sessions.",
+      );
+    }
+    return yield* routed.adapter.consumeCodexResetCredit(routed.threadId, input.creditId);
+  });
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
@@ -1109,6 +1155,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,
+    readCodexAccountUsage,
+    consumeCodexResetCredit,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.
