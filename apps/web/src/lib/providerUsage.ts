@@ -18,7 +18,7 @@ export function usageProviderForDriver(driver: ProviderDriverKind | null): Usage
 }
 
 export function selectProviderUsageWindows(
-  summary: UsageSummary | undefined,
+  summary: Pick<UsageSummary, "windows"> | undefined,
   provider: UsageProvider,
 ): { fiveHour: UsageWindowSummary | null; weekly: UsageWindowSummary | null } {
   const windows = summary?.windows.filter((window) => window.provider === provider) ?? [];

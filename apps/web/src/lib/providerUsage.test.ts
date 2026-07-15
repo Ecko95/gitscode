@@ -1,4 +1,4 @@
-import { ProviderDriverKind, type UsageSummary } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,13 +7,22 @@ import {
   usageProviderForDriver,
 } from "./providerUsage";
 
+const usageWindow = (provider: "codex" | "claude", windowMinutes: number, usedPercent: number) => ({
+  provider,
+  label: "usage",
+  usedPercent,
+  remainingPercent: 100 - usedPercent,
+  windowMinutes,
+  resetAt: null,
+  sourcePath: null,
+});
 const summary = {
   windows: [
-    { provider: "codex", windowMinutes: 300, usedPercent: 25 },
-    { provider: "codex", windowMinutes: 10080, usedPercent: 60 },
-    { provider: "claude", windowMinutes: 300, usedPercent: 80 },
+    usageWindow("codex", 300, 25),
+    usageWindow("codex", 10080, 60),
+    usageWindow("claude", 300, 80),
   ],
-} as UsageSummary;
+};
 
 describe("provider usage", () => {
   it("maps supported chat drivers to usage providers", () => {

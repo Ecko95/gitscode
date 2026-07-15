@@ -21,11 +21,13 @@
 ### Task 1: Shared usage selection and request
 
 **Files:**
+
 - Create: `apps/web/src/lib/providerUsage.ts`
 - Test: `apps/web/src/lib/providerUsage.test.ts`
 - Modify: `apps/web/src/components/gits/GitsCockpit.tsx`
 
 **Interfaces:**
+
 - Produces: `readUsageSummary(): Promise<UsageSummary>`.
 - Produces: `usageProviderForDriver(driver): UsageProvider | null`.
 - Produces: `selectProviderUsageWindows(summary, provider): { fiveHour; weekly }`.
@@ -57,11 +59,13 @@ Commit: `feat(web): normalize provider usage windows`
 ### Task 2: Composer usage panel
 
 **Files:**
+
 - Create: `apps/web/src/components/chat/ComposerUsageBars.tsx`
 - Test: `apps/web/src/components/chat/ComposerUsageBars.test.tsx`
 - Modify: `apps/web/src/components/ChatView.tsx`
 
 **Interfaces:**
+
 - Consumes: `readUsageSummary`, `usageProviderForDriver`, and `selectProviderUsageWindows` from Task 1.
 - Produces: `ComposerUsageBars({ provider, windows, unavailable })`.
 
