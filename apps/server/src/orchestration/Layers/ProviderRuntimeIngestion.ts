@@ -369,6 +369,7 @@ function runtimeEventToActivities(
           summary: "Runtime error",
           payload: {
             message: truncateDetail(event.payload.message),
+            ...(event.taskId ? { taskId: event.taskId } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -386,6 +387,7 @@ function runtimeEventToActivities(
           summary: "Runtime warning",
           payload: {
             message: truncateDetail(event.payload.message),
+            ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -466,6 +468,7 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
+            ...(event.payload.description ? { description: event.payload.description } : {}),
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
               : {}),
@@ -487,7 +490,8 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             detail: truncateDetail(event.payload.summary ?? event.payload.description),
-            ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
+            description: event.payload.description,
+            ...(event.payload.summary ? { summary: event.payload.summary } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
@@ -513,6 +517,7 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             status: event.payload.status,
+            ...(event.payload.summary ? { summary: event.payload.summary } : {}),
             ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
@@ -597,6 +602,7 @@ function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool updated",
           payload: {
             itemType: event.payload.itemType,
+            ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
@@ -608,6 +614,31 @@ function runtimeEventToActivities(
     }
 
     case "item.completed": {
+      if (
+        event.taskId &&
+        (event.payload.itemType === "assistant_message" || event.payload.itemType === "reasoning")
+      ) {
+        const detail = event.payload.detail?.trim();
+        if (!detail) {
+          return [];
+        }
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: event.payload.itemType === "assistant_message" ? "task.output" : "task.reasoning",
+            summary:
+              event.payload.itemType === "assistant_message" ? "Agent response" : "Agent reasoning",
+            payload: {
+              taskId: event.taskId,
+              detail,
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -620,6 +651,7 @@ function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
+            ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
@@ -642,6 +674,7 @@ function runtimeEventToActivities(
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
             itemType: event.payload.itemType,
+            ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -1395,7 +1428,9 @@ const make = Effect.gen(function* () {
       }
 
       const assistantDelta =
-        event.type === "content.delta" && event.payload.streamKind === "assistant_text"
+        event.taskId === undefined &&
+        event.type === "content.delta" &&
+        event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
       const proposedPlanDelta =
@@ -1499,7 +1534,9 @@ const make = Effect.gen(function* () {
       }
 
       const assistantCompletion =
-        event.type === "item.completed" && event.payload.itemType === "assistant_message"
+        event.taskId === undefined &&
+        event.type === "item.completed" &&
+        event.payload.itemType === "assistant_message"
           ? {
               messageId: MessageId.make(
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,

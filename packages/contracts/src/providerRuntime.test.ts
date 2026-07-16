@@ -181,4 +181,24 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
   });
+
+  it("preserves task identity on child runtime events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "item.completed",
+      eventId: "event-subagent-tool-1",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:05.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      taskId: "provider-subagent-thread-1",
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Ran command",
+      },
+    });
+
+    expect(parsed.taskId).toBe("provider-subagent-thread-1");
+  });
 });

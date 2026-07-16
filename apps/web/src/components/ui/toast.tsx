@@ -70,9 +70,22 @@ export type ThreadToastData = {
 };
 
 const toastManager = Toast.createToastManager<ThreadToastData>();
+const agentToastManager = Toast.createToastManager<ThreadToastData>();
 const anchoredToastManager = Toast.createToastManager<ThreadToastData>();
+type ThreadToastManager = typeof toastManager;
 type ToastId = ReturnType<typeof toastManager.add>;
-const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
+const threadToastVisibleTimeoutRemainingMs = new WeakMap<
+  ThreadToastManager,
+  Map<ToastId, number>
+>();
+
+function visibleTimeoutsFor(manager: ThreadToastManager): Map<ToastId, number> {
+  const existing = threadToastVisibleTimeoutRemainingMs.get(manager);
+  if (existing) return existing;
+  const created = new Map<ToastId, number>();
+  threadToastVisibleTimeoutRemainingMs.set(manager, created);
+  return created;
+}
 
 const TOAST_ICONS = {
   error: CircleAlertIcon,
@@ -103,7 +116,7 @@ const toastCornerOrbClass = cn(
 );
 
 function handleToastDismissClick(
-  manager: typeof toastManager | typeof anchoredToastManager,
+  manager: ThreadToastManager,
   toastId: ToastId,
   onClose: (() => void) | undefined,
 ) {
@@ -415,9 +428,11 @@ function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
 }
 
 function ThreadToastVisibleAutoDismiss({
+  manager,
   toastId,
   dismissAfterVisibleMs,
 }: {
+  manager: ThreadToastManager;
   toastId: ToastId;
   dismissAfterVisibleMs: number | undefined;
 }) {
@@ -425,7 +440,8 @@ function ThreadToastVisibleAutoDismiss({
     if (!dismissAfterVisibleMs || dismissAfterVisibleMs <= 0) return;
     if (typeof window === "undefined" || typeof document === "undefined") return;
 
-    let remainingMs = threadToastVisibleTimeoutRemainingMs.get(toastId) ?? dismissAfterVisibleMs;
+    const visibleTimeouts = visibleTimeoutsFor(manager);
+    let remainingMs = visibleTimeouts.get(toastId) ?? dismissAfterVisibleMs;
     let startedAtMs: number | null = null;
     let timeoutId: number | null = null;
     let closed = false;
@@ -439,8 +455,8 @@ function ThreadToastVisibleAutoDismiss({
     const closeToast = () => {
       if (closed) return;
       closed = true;
-      threadToastVisibleTimeoutRemainingMs.delete(toastId);
-      toastManager.close(toastId);
+      visibleTimeouts.delete(toastId);
+      manager.close(toastId);
     };
 
     const pause = () => {
@@ -448,7 +464,7 @@ function ThreadToastVisibleAutoDismiss({
       remainingMs = Math.max(0, remainingMs - (Date.now() - startedAtMs));
       startedAtMs = null;
       clearTimer();
-      threadToastVisibleTimeoutRemainingMs.set(toastId, remainingMs);
+      visibleTimeouts.set(toastId, remainingMs);
     };
 
     const start = () => {
@@ -487,7 +503,7 @@ function ThreadToastVisibleAutoDismiss({
       pause();
       clearTimer();
     };
-  }, [dismissAfterVisibleMs, toastId]);
+  }, [dismissAfterVisibleMs, manager, toastId]);
 
   return null;
 }
@@ -496,12 +512,27 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
   return (
     <Toast.Provider toastManager={toastManager} {...props}>
       {children}
-      <Toasts position={position} />
+      <Toasts manager={toastManager} position={position} />
     </Toast.Provider>
   );
 }
 
-function Toasts({ position = "top-right" }: { position: ToastPosition }) {
+function AgentToastProvider({ children, ...props }: Toast.Provider.Props) {
+  return (
+    <Toast.Provider toastManager={agentToastManager} {...props}>
+      {children}
+      <Toasts manager={agentToastManager} position="bottom-right" />
+    </Toast.Provider>
+  );
+}
+
+function Toasts({
+  manager,
+  position = "top-right",
+}: {
+  manager: ThreadToastManager;
+  position: ToastPosition;
+}) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
@@ -511,13 +542,14 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
 
   useEffect(() => {
+    const visibleTimeouts = visibleTimeoutsFor(manager);
     const activeToastIds = new Set(toasts.map((toast) => toast.id));
-    for (const toastId of threadToastVisibleTimeoutRemainingMs.keys()) {
+    for (const toastId of visibleTimeouts.keys()) {
       if (!activeToastIds.has(toastId)) {
-        threadToastVisibleTimeoutRemainingMs.delete(toastId);
+        visibleTimeouts.delete(toastId);
       }
     }
-  }, [toasts]);
+  }, [manager, toasts]);
 
   return (
     <Toast.Portal data-slot="toast-portal">
@@ -622,6 +654,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
             >
               <ThreadToastVisibleAutoDismiss
                 dismissAfterVisibleMs={toast.data?.dismissAfterVisibleMs}
+                manager={manager}
                 toastId={toast.id}
               />
               <div className={toastCornerDismissClass}>
@@ -629,9 +662,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                   aria-label="Dismiss notification"
                   className={toastCornerOrbClass}
                   data-slot="toast-close"
-                  onClick={() =>
-                    handleToastDismissClick(toastManager, toast.id, toast.data?.onClose)
-                  }
+                  onClick={() => handleToastDismissClick(manager, toast.id, toast.data?.onClose)}
                   type="button"
                 >
                   <XIcon className="size-3" strokeWidth={2.25} />
@@ -770,8 +801,10 @@ export type { StackedThreadToastOptions } from "./toastHelpers";
 
 export {
   ToastProvider,
+  AgentToastProvider,
   type ToastPosition,
   toastManager,
+  agentToastManager,
   AnchoredToastProvider,
   anchoredToastManager,
 };

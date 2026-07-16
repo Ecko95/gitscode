@@ -255,6 +255,7 @@ const ProviderRuntimeEventBase = Schema.Struct({
   createdAt: IsoDateTime,
   turnId: Schema.optional(TurnId),
   itemId: Schema.optional(RuntimeItemId),
+  taskId: Schema.optional(RuntimeTaskId),
   requestId: Schema.optional(RuntimeRequestId),
   providerRefs: Schema.optional(ProviderRefs),
   raw: Schema.optional(RuntimeEventRaw),

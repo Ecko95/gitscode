@@ -23,6 +23,7 @@ import {
 } from "../components/WebSocketConnectionSurface";
 import { Button } from "../components/ui/button";
 import {
+  AgentToastProvider,
   AnchoredToastProvider,
   stackedThreadToast,
   ToastProvider,
@@ -134,23 +135,25 @@ function RootRouteView() {
 
   return (
     <ToastProvider>
-      <AnchoredToastProvider>
-        {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-        {primaryEnvironmentAuthenticated ? <ServerStateBootstrap /> : null}
-        <EnvironmentConnectionManagerBootstrap />
-        <SshPasswordPromptDialog />
-        <HostedStaticEnvironmentBootstrap />
-        <NotificationsBootstrap />
-        {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
-        {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
-        {primaryEnvironmentAuthenticated ? <WebSocketConnectionCoordinator /> : null}
-        {primaryEnvironmentAuthenticated ? <SlowRpcAckToastCoordinator /> : null}
-        {primaryEnvironmentAuthenticated ? (
-          <WebSocketConnectionSurface>{appShell}</WebSocketConnectionSurface>
-        ) : (
-          appShell
-        )}
-      </AnchoredToastProvider>
+      <AgentToastProvider>
+        <AnchoredToastProvider>
+          {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
+          {primaryEnvironmentAuthenticated ? <ServerStateBootstrap /> : null}
+          <EnvironmentConnectionManagerBootstrap />
+          <SshPasswordPromptDialog />
+          <HostedStaticEnvironmentBootstrap />
+          <NotificationsBootstrap />
+          {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+          {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+          {primaryEnvironmentAuthenticated ? <WebSocketConnectionCoordinator /> : null}
+          {primaryEnvironmentAuthenticated ? <SlowRpcAckToastCoordinator /> : null}
+          {primaryEnvironmentAuthenticated ? (
+            <WebSocketConnectionSurface>{appShell}</WebSocketConnectionSurface>
+          ) : (
+            appShell
+          )}
+        </AnchoredToastProvider>
+      </AgentToastProvider>
     </ToastProvider>
   );
 }
