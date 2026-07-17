@@ -1846,6 +1846,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             source: "config-file",
             status: "unknown",
             authStatus: "unknown",
+            canAuthenticate: false,
             enabled: true,
             command: "npx -y @upstash/context7-mcp",
             transport: "stdio",

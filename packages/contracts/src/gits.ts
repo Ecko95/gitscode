@@ -9,6 +9,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 const PathString = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
 const SummaryString = TrimmedNonEmptyString.check(Schema.isMaxLength(10_000));
@@ -432,10 +433,14 @@ export type GitsMcpServerStatus = typeof GitsMcpServerStatus.Type;
 export const GitsMcpServerItem = Schema.Struct({
   id: TrimmedNonEmptyString,
   provider: GitsMcpServerProvider,
+  providerInstanceId: Schema.optionalKey(ProviderInstanceId),
   name: TrimmedNonEmptyString,
   source: GitsMcpServerSource,
+  runtimeSource: Schema.optionalKey(GitsMcpServerSource),
   status: GitsMcpServerStatus,
+  runtimeStatus: Schema.optionalKey(GitsMcpServerStatus),
   authStatus: GitsMcpAuthStatus,
+  canAuthenticate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enabled: Schema.Boolean,
   command: Schema.NullOr(TrimmedNonEmptyString),
   transport: Schema.NullOr(TrimmedNonEmptyString),

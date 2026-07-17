@@ -348,6 +348,16 @@ const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
 );
 
+const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(ProviderEventLoggersLive),
+  Layer.provideMerge(Layer.merge(OpenCodeRuntimeLive, GitShimManagerLive)),
+  Layer.provideMerge(ServerSettingsLive),
+);
+
+const GitsMcpInventoryResolverLayerLive = GitsMcpInventoryResolverLive.pipe(
+  Layer.provide(ProviderInstanceRegistryLayerLive),
+);
+
 const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsBuildInfoResolverLive),
   Layer.provideMerge(GitsNotesLive),
@@ -357,7 +367,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsConfinedVerifyAdapterLive),
   Layer.provideMerge(GitsDevCommandsLive),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
-  Layer.provideMerge(GitsMcpInventoryResolverLive),
+  Layer.provideMerge(GitsMcpInventoryResolverLayerLive),
   Layer.provideMerge(DelamainCliAdapterLive),
   Layer.provideMerge(OpenGsdCliAdapterLive),
   Layer.provideMerge(GitsPlanningScannerLive),
@@ -442,7 +452,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(ProviderInstanceRegistryLayerLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

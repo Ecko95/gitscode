@@ -46,6 +46,14 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+/** Redacted subset of Codex MCP runtime state safe for the GITS inventory. */
+export interface CodexMcpRuntimeServerStatus {
+  readonly name: string;
+  readonly authStatus: "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
+  readonly tools: ReadonlyArray<string>;
+  readonly resourceCount: number;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -125,6 +133,11 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     creditId: string,
   ) => Effect.Effect<CodexResetCreditConsumeResult, TError>;
+
+  readonly listCodexMcpServers?: () => Effect.Effect<
+    ReadonlyArray<CodexMcpRuntimeServerStatus>,
+    TError
+  >;
 
   /**
    * Stop all sessions owned by this adapter.

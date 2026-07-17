@@ -1851,6 +1851,26 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
+  const listCodexMcpServers: NonNullable<CodexAdapterShape["listCodexMcpServers"]> = () => {
+    const session = Array.from(sessions.values()).find((candidate) => !candidate.stopped);
+    if (!session) {
+      return Effect.succeed([]);
+    }
+    return session.runtime.listMcpServers.pipe(
+      Effect.map((servers) =>
+        servers.map((server) => ({
+          name: server.name,
+          authStatus: server.authStatus,
+          tools: Object.keys(server.tools),
+          resourceCount: server.resources.length + server.resourceTemplates.length,
+        })),
+      ),
+      Effect.mapError((cause) =>
+        mapCodexRuntimeError(session.threadId, "mcpServerStatus/list", cause),
+      ),
+    );
+  };
+
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
@@ -1942,6 +1962,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     rollbackThread,
     readCodexAccountUsage,
     consumeCodexResetCredit,
+    listCodexMcpServers,
     respondToRequest,
     respondToUserInput,
     stopSession,
