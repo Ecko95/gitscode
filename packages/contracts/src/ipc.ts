@@ -90,7 +90,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema } from "./baseSchemas.ts";
 import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
@@ -271,6 +271,28 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
   port: Schema.NullOr(Schema.Number),
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
+
+export const DesktopSshForwardPolicySchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("flexible") }),
+  Schema.Struct({ kind: Schema.Literal("exact"), localPort: PortSchema }),
+]);
+export type DesktopSshForwardPolicy = typeof DesktopSshForwardPolicySchema.Type;
+
+export const DesktopSshForwardRequestSchema = Schema.Struct({
+  remoteHost: Schema.Literal("127.0.0.1"),
+  remotePort: PortSchema,
+  policy: DesktopSshForwardPolicySchema,
+});
+export type DesktopSshForwardRequest = typeof DesktopSshForwardRequestSchema.Type;
+
+export const DesktopSshForwardReleaseInputSchema = Schema.Struct({
+  remotePort: PortSchema,
+  localPort: PortSchema,
+});
+export type DesktopSshForwardReleaseInput = typeof DesktopSshForwardReleaseInputSchema.Type;
+
+export const DesktopSshForwardResultSchema = Schema.Struct({ localPort: PortSchema });
+export type DesktopSshForwardResult = typeof DesktopSshForwardResultSchema.Type;
 
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
 export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);

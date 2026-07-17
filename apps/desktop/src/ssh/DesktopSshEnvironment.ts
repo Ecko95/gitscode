@@ -2,6 +2,9 @@ import type {
   DesktopDiscoveredSshHost,
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
+  DesktopSshForwardReleaseInput,
+  DesktopSshForwardRequest,
+  DesktopSshForwardResult,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import {
@@ -62,6 +65,14 @@ export interface DesktopSshEnvironmentShape {
   ) => Effect.Effect<DesktopSshEnvironmentBootstrap, DesktopSshEnvironmentOperationError>;
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
+  ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
+  readonly ensureForward: (
+    target: DesktopSshEnvironmentTarget,
+    input: DesktopSshForwardRequest,
+  ) => Effect.Effect<DesktopSshForwardResult, DesktopSshEnvironmentOperationError>;
+  readonly releaseForward: (
+    target: DesktopSshEnvironmentTarget,
+    input: DesktopSshForwardReleaseInput,
   ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
 }
 
@@ -131,6 +142,22 @@ const make = Effect.gen(function* () {
           Effect.provideService(SshPasswordPrompt, passwordPrompt),
           Effect.provide(runtimeContext),
           Effect.withSpan("desktop.ssh.disconnectEnvironment"),
+        ),
+    ensureForward: (target, input) =>
+      manager
+        .ensureForward(target, input)
+        .pipe(
+          Effect.provideService(SshPasswordPrompt, passwordPrompt),
+          Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.ensureForward"),
+        ),
+    releaseForward: (target, input) =>
+      manager
+        .releaseForward(target, input)
+        .pipe(
+          Effect.provideService(SshPasswordPrompt, passwordPrompt),
+          Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.releaseForward"),
         ),
   });
 });

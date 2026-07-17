@@ -7,6 +7,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopSshEnvironment from "./DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
@@ -17,6 +20,27 @@ function makeTempHomeDir() {
     return yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-env-test-" });
   });
 }
+
+function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
+  return command._tag === "StandardCommand" ? command.args : [];
+}
+
+const makeSuccessfulProcess = (stdout: string) => {
+  const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    stdout: stdoutStream,
+    stderr: Stream.empty,
+    all: stdoutStream,
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+};
 
 describe("sshEnvironment", () => {
   it("treats password prompt timeouts as cancellable authentication prompts", () => {
@@ -115,4 +139,89 @@ describe("sshEnvironment", () => {
       Effect.scoped,
     ),
   );
+
+  it.effect("wires auxiliary forward ensure and release through the desktop service", () => {
+    const listeningPorts = new Set<number>();
+    let killCount = 0;
+    let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        const forwardIndex = args.indexOf("-L");
+        if (forwardIndex < 0) {
+          return makeSuccessfulProcess("hostname devbox.example.com\nuser julius\nport 2222\n");
+        }
+        const forward = args[forwardIndex + 1] ?? "";
+        const localPort = Number.parseInt(forward.split(":")[1] ?? "", 10);
+        listeningPorts.add(localPort);
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(124),
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
+            finish = (exitCode) => resume(Effect.succeed(exitCode));
+            return Effect.sync(() => {
+              finish = null;
+            });
+          }),
+          isRunning: Effect.succeed(true),
+          kill: () =>
+            Effect.sync(() => {
+              killCount += 1;
+              listeningPorts.delete(localPort);
+              finish?.(ChildProcessSpawner.ExitCode(143));
+            }),
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        });
+      }),
+    );
+    const net = NetService.NetService.of({
+      canListenOnHost: (port) => Effect.sync(() => !listeningPorts.has(port)),
+      isPortAvailableOnLoopback: (port) => Effect.sync(() => !listeningPorts.has(port)),
+      reserveLoopbackPort: () => Effect.succeed(43_001),
+      findAvailablePort: (preferred) => Effect.succeed(preferred),
+    });
+    const runtimeLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(NetService.NetService, net),
+      NodeHttpClient.layerUndici,
+    );
+    const layer = DesktopSshEnvironment.layer().pipe(
+      Layer.provideMerge(
+        Layer.succeed(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
+          request: () => Effect.die("unexpected password prompt request"),
+          resolve: () => Effect.die("unexpected password prompt resolution"),
+          cancelPending: () => Effect.void,
+        }),
+      ),
+      Layer.provideMerge(runtimeLayer),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+      const forward = yield* sshEnvironment.ensureForward(target, {
+        remoteHost: "127.0.0.1",
+        remotePort: 5173,
+        policy: { kind: "flexible" },
+      });
+      assert.deepEqual(forward, { localPort: 43_001 });
+
+      yield* sshEnvironment.releaseForward(target, {
+        remotePort: 5173,
+        localPort: forward.localPort,
+      });
+      assert.equal(killCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
 });
