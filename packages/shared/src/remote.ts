@@ -11,10 +11,10 @@ const normalizeRemoteBaseUrl = (rawValue: string): URL => {
     throw new Error("Enter a backend URL.");
   }
 
-  const normalizedInput =
-    /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(trimmed) || trimmed.startsWith("//")
-      ? trimmed
-      : `https://${trimmed}`;
+  const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
+  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
+    ? withoutLeadingSlashes
+    : `https://${withoutLeadingSlashes}`;
   const url = new URL(normalizedInput);
   url.pathname = "/";
   url.search = "";
