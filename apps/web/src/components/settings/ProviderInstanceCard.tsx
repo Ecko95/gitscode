@@ -540,6 +540,7 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
+  const reportedAuthMethods = liveProvider?.auth.methods ?? [];
   const authProviderName =
     driverKind === "codex"
       ? "Codex"
@@ -547,9 +548,10 @@ export function ProviderInstanceCard({
         ? "Claude"
         : driverKind === "opencode"
           ? "OpenCode"
-          : null;
+          : reportedAuthMethods.length > 0
+            ? displayName
+            : null;
   const showManagedAuth = authProviderName !== null && authActions !== undefined;
-  const reportedAuthMethods = liveProvider?.auth.methods ?? [];
   const [authResult, setAuthResult] = useState<ProviderAuthStartResult | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -932,7 +934,9 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {showManagedAuth && driverKind !== "opencode" ? (
+            {showManagedAuth &&
+            driverKind !== "opencode" &&
+            (liveProvider?.auth.status === "authenticated" || reportedAuthMethods.length === 0) ? (
               liveProvider?.auth.status === "authenticated" ? (
                 <>
                   <Button
@@ -1001,6 +1005,11 @@ export function ProviderInstanceCard({
               <p className="text-muted-foreground">
                 Authentication methods are reported by the connected OpenCode server. GITS does not
                 infer unreported browser callbacks or subscription methods.
+              </p>
+            ) : reportedAuthMethods.length > 0 ? (
+              <p className="text-muted-foreground">
+                Authentication methods are reported by this provider runtime. GITS does not infer
+                unreported browser callbacks or token methods.
               </p>
             ) : (
               <p className="text-muted-foreground">

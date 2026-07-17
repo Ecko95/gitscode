@@ -267,3 +267,59 @@ describe("ProviderInstanceCard OpenCode authentication", () => {
     });
   });
 });
+
+describe("ProviderInstanceCard reported authentication", () => {
+  it("renders a reported GitHub device flow for an extension provider", async () => {
+    const githubInstanceId = ProviderInstanceId.make("github-cli");
+    const githubInstance: ProviderInstanceConfig = {
+      driver: ProviderDriverKind.make("github"),
+      enabled: true,
+      config: {},
+    };
+    const start = vi.fn<ProviderAuthActions["start"]>().mockResolvedValue({ session });
+    const capabilityId = ProviderAuthCapabilityId.make("github-cli:device-code");
+    const authActions: ProviderAuthActions = {
+      start,
+      get: vi.fn().mockResolvedValue(session),
+      cancel: vi.fn().mockResolvedValue(undefined),
+      submitCode: vi.fn(),
+      logout: vi.fn().mockResolvedValue(undefined),
+      openExternal: vi.fn().mockResolvedValue(undefined),
+    };
+
+    mounted = await render(
+      <ProviderInstanceCard
+        instanceId={githubInstanceId}
+        instance={githubInstance}
+        driverOption={undefined}
+        liveProvider={{
+          ...makeProvider(false),
+          instanceId: githubInstanceId,
+          driver: ProviderDriverKind.make("github"),
+          displayName: "GitHub CLI",
+          auth: {
+            status: "unauthenticated",
+            methods: [{ id: capabilityId, method: "device-code", label: "GitHub device login" }],
+          },
+        }}
+        isExpanded={false}
+        onExpandedChange={() => undefined}
+        onUpdate={() => undefined}
+        hiddenModels={[]}
+        favoriteModels={[]}
+        modelOrder={[]}
+        onHiddenModelsChange={() => undefined}
+        onFavoriteModelsChange={() => undefined}
+        onModelOrderChange={() => undefined}
+        authActions={authActions}
+      />,
+    );
+
+    await page.getByRole("button", { name: "GitHub device login" }).click();
+    expect(start).toHaveBeenCalledWith({
+      providerInstanceId: githubInstanceId,
+      method: "device-code",
+      capabilityId,
+    });
+  });
+});
