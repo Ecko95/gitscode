@@ -128,6 +128,7 @@ import {
   browserPreviewSocketRouteLayer,
   browserPreviewViewRouteLayer,
 } from "./browser-preview/browser-preview-routes.ts";
+import { browser_preview_manager } from "./browser-preview/browser-preview-manager.ts";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import {
   gitsBuildInfoRouteLayer,
@@ -649,6 +650,11 @@ export const makeServerLayer = Layer.unwrap(
           ),
         )
       : Layer.empty;
+    const browserPreviewCleanupLayer = Layer.effectDiscard(
+      Effect.acquireRelease(Effect.void, () =>
+        Effect.promise(() => browser_preview_manager.stopAll()),
+      ),
+    );
 
     const serverApplicationLayer = Layer.mergeAll(
       HttpRouter.serve(makeRoutesLayer, {
@@ -657,6 +663,7 @@ export const makeServerLayer = Layer.unwrap(
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
+      browserPreviewCleanupLayer,
     );
 
     return serverApplicationLayer.pipe(

@@ -4,7 +4,7 @@ import type {
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ExternalLinkIcon,
   HandIcon,
@@ -16,25 +16,23 @@ import {
 } from "lucide-react";
 
 import { readEnvironmentApi } from "../environmentApi";
+import { getEnvironmentHttpBaseUrl } from "../environments/runtime";
+import { resolveEnvironmentPreviewUrl } from "../openEnvironmentUrl";
 import { Button } from "./ui/button";
 
 interface BrowserPreviewPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly cwd: string | null;
   readonly onClose: () => void;
 }
 
 export function BrowserPreviewPanel({
   environmentId,
   threadId,
-  cwd,
   onClose,
 }: BrowserPreviewPanelProps) {
   const [preview_status, set_preview_status] = useState<BrowserPreviewStatus | null>(null);
-  const [busy_action, set_busy_action] = useState<BrowserPreviewAction | "open" | "run-dev" | null>(
-    "open",
-  );
+  const [busy_action, set_busy_action] = useState<BrowserPreviewAction | "open" | null>("open");
   const [browser_url, set_browser_url] = useState("");
   const [control_error, set_control_error] = useState<string | null>(null);
   const [console_open, set_console_open] = useState(false);
@@ -87,38 +85,14 @@ export function BrowserPreviewPanel({
 
   const is_paused = preview_status?.status === "paused";
   const is_takeover = preview_status?.status === "takeover";
-
-  const run_dev = useCallback(async () => {
-    const api = readEnvironmentApi(environmentId);
-    if (!api || !cwd) return;
-    set_busy_action("run-dev");
-    set_control_error(null);
-    try {
-      await api.terminal.close({ threadId, terminalId: "browser-dev" }).catch(() => undefined);
-      await api.terminal.open({ threadId, terminalId: "browser-dev", cwd });
-      await api.terminal.write({
-        threadId,
-        terminalId: "browser-dev",
-        data: 'npm run dev -- --port "$GITS_PORT"\r',
-      });
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 750));
-        try {
-          set_preview_status(
-            await api.browserPreview.control({ threadId, action: "connect-localhost" }),
-          );
-          return;
-        } catch {
-          // The dev server may still be compiling.
-        }
-      }
-      throw new Error("npm run dev started, but no local listener appeared.");
-    } catch (cause) {
-      set_control_error(cause instanceof Error ? cause.message : "Failed to start npm run dev.");
-    } finally {
-      set_busy_action(null);
-    }
-  }, [cwd, environmentId, threadId]);
+  const preview_url = useMemo(() => {
+    const baseUrl = getEnvironmentHttpBaseUrl(environmentId);
+    return baseUrl && preview_status?.previewPath
+      ? resolveEnvironmentPreviewUrl(baseUrl, preview_status.previewPath)
+      : null;
+  }, [environmentId, preview_status?.previewPath]);
+  const can_embed_preview =
+    preview_url !== null && new URL(preview_url).origin === window.location.origin;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-card" aria-label="Live browser preview">
@@ -138,10 +112,8 @@ export function BrowserPreviewPanel({
           variant="ghost"
           size="icon-xs"
           aria-label="Open preview in new tab"
-          disabled={!preview_status?.previewPath}
-          onClick={() =>
-            window.open(preview_status?.previewPath ?? "", "_blank", "noopener,noreferrer")
-          }
+          disabled={!preview_url}
+          onClick={() => window.open(preview_url ?? "", "_blank", "noopener,noreferrer")}
         >
           <ExternalLinkIcon className="size-3.5" />
         </Button>
@@ -167,16 +139,6 @@ export function BrowserPreviewPanel({
           disabled={busy_action !== null}
           required
         />
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          disabled={busy_action !== null || !cwd}
-          onClick={() => void run_dev()}
-        >
-          <PlayIcon className="size-3" />
-          Run dev
-        </Button>
         <Button
           type="submit"
           size="xs"
@@ -255,15 +217,29 @@ export function BrowserPreviewPanel({
       ) : null}
 
       <div className="relative min-h-0 flex-1 bg-muted/30">
-        {preview_status?.previewPath ? (
+        {preview_url && can_embed_preview ? (
           <iframe
-            key={preview_status.previewPath}
-            src={preview_status.previewPath}
+            key={preview_url}
+            src={preview_url}
             title="Live automated browser"
             className="h-full w-full border-0"
             allow="clipboard-read; clipboard-write"
             sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-downloads"
           />
+        ) : preview_url ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+            <p className="max-w-sm text-sm text-muted-foreground">
+              This saved environment preview opens in a separate tab.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(preview_url, "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLinkIcon className="size-3.5" />
+              Open preview
+            </Button>
+          </div>
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="max-w-sm text-sm text-muted-foreground">

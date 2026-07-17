@@ -15,6 +15,7 @@ import {
   type ThreadDeletionReactorShape,
 } from "../Services/ThreadDeletionReactor.ts";
 import { retireWorktree } from "../../vcs/WorktreeGraveyardRetirement.ts";
+import { browser_preview_manager } from "../../browser-preview/browser-preview-manager.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
 
@@ -59,6 +60,9 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  const stopBrowserPreview = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    Effect.promise(() => browser_preview_manager.stop(threadId));
+
   const retireWorktreeForThread = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     Effect.gen(function* () {
       const worktreeInfo = yield* projectionSnapshotQuery
@@ -91,6 +95,7 @@ const make = Effect.gen(function* () {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* stopBrowserPreview(threadId);
     yield* retireWorktreeForThread(threadId);
   });
 

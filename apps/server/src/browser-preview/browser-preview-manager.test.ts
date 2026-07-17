@@ -1,14 +1,73 @@
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { parse_localhost_dev_ports } from "./browser-preview-manager.ts";
+import { BrowserPreviewManager } from "./browser-preview-manager.ts";
 
-describe("parse_localhost_dev_ports", () => {
-  it("prefers the chat port and ignores the GITS server", () => {
-    expect(
-      parse_localhost_dev_ports(
-        'LISTEN 0 511 127.0.0.1:13773 0.0.0.0:* users:(("node",pid=1))\nLISTEN 0 511 *:8080 *:* users:(("node",pid=2))\nLISTEN 0 511 *:39369 *:* users:(("bun",pid=3))',
-        39_369,
-      ),
-    ).toEqual([39_369, 8080]);
+const threadId = ThreadId.make("thread-browser-preview");
+
+describe("BrowserPreviewManager", () => {
+  it("rejects non-loopback viewer URLs", async () => {
+    const manager = new BrowserPreviewManager({
+      run: async () => ({ url: "https://viewer.example.test/" }),
+    });
+
+    await expect(manager.open(threadId)).resolves.toMatchObject({
+      status: "error",
+      previewPath: null,
+      message: expect.stringMatching(/loopback/i),
+    });
+  });
+
+  it("navigates only to the URL selected by the caller", async () => {
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const manager = new BrowserPreviewManager({
+      run: async (_session, command, args = []) => {
+        calls.push({ command, args });
+        if (command === "view") return { url: "http://127.0.0.1:9222/" };
+        if (command === "control-state") return { mode: "agent" };
+        return {};
+      },
+    });
+
+    await manager.open(threadId);
+    await manager.control(threadId, "navigate", "http://127.0.0.1:5173/path?q=1#selected");
+
+    expect(calls.filter(({ command }) => command === "navigate")).toEqual([
+      {
+        command: "navigate",
+        args: ["http://127.0.0.1:5173/path?q=1#selected"],
+      },
+    ]);
+  });
+
+  it("revokes a thread ticket before stopping its daemon", async () => {
+    const manager = new BrowserPreviewManager({
+      run: async (_session, command) =>
+        command === "view" ? { url: "http://127.0.0.1:9222/?viewer-secret=hidden" } : {},
+    });
+    const opened = await manager.open(threadId);
+    expect(opened.previewPath).not.toContain("viewer-secret");
+    const ticket = new URL(opened.previewPath!, "http://gits.test").searchParams.get("ticket")!;
+
+    expect(manager.resolve_ticket(ticket)).not.toBeNull();
+    await manager.stop(threadId);
+    expect(manager.resolve_ticket(ticket)).toBeNull();
+  });
+
+  it("stops every browser session during shutdown", async () => {
+    const stopped: string[] = [];
+    const manager = new BrowserPreviewManager({
+      run: async (session, command, args) => {
+        if (command === "view") return { url: "http://127.0.0.1:9222/" };
+        if (command === "daemon" && args?.[0] === "stop") stopped.push(session);
+        return {};
+      },
+    });
+    await manager.open(ThreadId.make("thread-one"));
+    await manager.open(ThreadId.make("thread-two"));
+
+    await manager.stopAll();
+
+    expect(stopped).toHaveLength(2);
   });
 });
