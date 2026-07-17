@@ -2,6 +2,8 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopSshOpenRemoteUrlInputSchema,
+  DesktopSshOpenRemoteUrlResultSchema,
   DesktopThemeSchema,
   PickFolderOptionsSchema,
 } from "@t3tools/contracts";
@@ -16,6 +18,7 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopSshEnvironment from "../../ssh/DesktopSshEnvironment.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
 
@@ -131,5 +134,15 @@ export const openExternal = makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const openRemoteSshUrl = makeIpcMethod({
+  channel: IpcChannels.OPEN_REMOTE_SSH_URL_CHANNEL,
+  payload: DesktopSshOpenRemoteUrlInputSchema,
+  result: DesktopSshOpenRemoteUrlResultSchema,
+  handler: Effect.fn("desktop.ipc.window.openRemoteSshUrl")(function* (input) {
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    return yield* sshEnvironment.openRemoteUrl(input);
   }),
 });

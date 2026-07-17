@@ -294,6 +294,36 @@ export type DesktopSshForwardReleaseInput = typeof DesktopSshForwardReleaseInput
 export const DesktopSshForwardResultSchema = Schema.Struct({ localPort: PortSchema });
 export type DesktopSshForwardResult = typeof DesktopSshForwardResultSchema.Type;
 
+export const DesktopSshOpenRemoteUrlInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  url: Schema.String,
+  oauthRedirectPort: Schema.optionalKey(PortSchema),
+});
+export type DesktopSshOpenRemoteUrlInput = typeof DesktopSshOpenRemoteUrlInputSchema.Type;
+
+export const DesktopSshOpenRemoteUrlErrorSchema = Schema.Literals([
+  "invalid-url",
+  "local-port-unavailable",
+  "authentication-cancelled",
+  "forward-failed",
+  "open-failed",
+]);
+export type DesktopSshOpenRemoteUrlError = typeof DesktopSshOpenRemoteUrlErrorSchema.Type;
+
+export const DesktopSshOpenRemoteUrlResultSchema = Schema.Union([
+  Schema.Struct({
+    opened: Schema.Literal(true),
+    kind: Schema.Literals(["external", "direct-forward", "oauth-forward"]),
+    remotePort: Schema.optionalKey(PortSchema),
+    localPort: Schema.optionalKey(PortSchema),
+  }),
+  Schema.Struct({
+    opened: Schema.Literal(false),
+    error: DesktopSshOpenRemoteUrlErrorSchema,
+  }),
+]);
+export type DesktopSshOpenRemoteUrlResult = typeof DesktopSshOpenRemoteUrlResultSchema.Type;
+
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
 export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
 
@@ -442,6 +472,9 @@ export interface DesktopBridge {
     target: DesktopSshEnvironmentTarget,
     options?: { issuePairingToken?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
+  ssh?: {
+    openRemoteUrl: (input: DesktopSshOpenRemoteUrlInput) => Promise<DesktopSshOpenRemoteUrlResult>;
+  };
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
   bootstrapSshBearerSession: (
