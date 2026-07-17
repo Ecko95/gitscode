@@ -514,6 +514,12 @@ export const GitsCodexMcpAuthStatus = Schema.Struct({
 });
 export type GitsCodexMcpAuthStatus = typeof GitsCodexMcpAuthStatus.Type;
 
+export const GitsCodexMcpAuthAvailability = Schema.Struct({
+  available: Schema.Boolean,
+  message: Schema.optionalKey(SummaryString),
+});
+export type GitsCodexMcpAuthAvailability = typeof GitsCodexMcpAuthAvailability.Type;
+
 export const DelamainEngine = Schema.Literals(["codex", "cursor", "unknown"]);
 export type DelamainEngine = typeof DelamainEngine.Type;
 

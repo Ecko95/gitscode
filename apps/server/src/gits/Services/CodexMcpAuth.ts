@@ -1,4 +1,8 @@
-import type { GitsCodexMcpAuthStartResult, GitsCodexMcpAuthStatus } from "@t3tools/contracts";
+import type {
+  GitsCodexMcpAuthAvailability,
+  GitsCodexMcpAuthStartResult,
+  GitsCodexMcpAuthStatus,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -46,6 +50,7 @@ export interface CodexMcpCallbackHandoff {
 }
 
 export interface CodexMcpAuthShape {
+  readonly getAvailability: () => Effect.Effect<GitsCodexMcpAuthAvailability>;
   readonly start: (
     input: StartCodexMcpAuthInput,
   ) => Effect.Effect<GitsCodexMcpAuthStartResult, CodexMcpAuthError>;

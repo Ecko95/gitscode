@@ -48,7 +48,7 @@ const makeHarness = (overrides?: {
           environment: {},
         }),
       reserveCallbackPort: () => Effect.succeed(41_337),
-      isCallbackPortIsolated: () => Effect.succeed(overrides?.isolated ?? true),
+      isCallbackListenerIsolated: () => Effect.succeed(overrides?.isolated ?? true),
       startHelper,
       randomId: overrides?.randomId ?? (() => Effect.succeed(`session_${++nextId}`)),
     });
@@ -248,4 +248,21 @@ describe("CodexMcpAuth", () => {
       } as never),
     ).toBe(false);
   });
+
+  it.effect("reports whether the advertised relay passes endpoint and isolation preflight", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const ready = yield* makeHarness();
+        expect(yield* ready.auth.getAvailability()).toEqual({ available: true });
+
+        const insecure = yield* makeHarness({
+          advertisedCallbackBaseUrl: "http://gits.example.test",
+        });
+        expect(yield* insecure.auth.getAvailability()).toMatchObject({ available: false });
+
+        const exposed = yield* makeHarness({ isolated: false });
+        expect(yield* exposed.auth.getAvailability()).toMatchObject({ available: false });
+      }),
+    ),
+  );
 });

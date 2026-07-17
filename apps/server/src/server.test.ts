@@ -110,6 +110,7 @@ import {
   GitsBuildInfoResolver,
   type GitsBuildInfoResolverShape,
 } from "./gits/Services/GitsBuildInfo.ts";
+import { CodexMcpAuth } from "./gits/Services/CodexMcpAuth.ts";
 import {
   GitsSkillInventoryResolver,
   type GitsSkillInventoryResolverShape,
@@ -1007,6 +1008,14 @@ const buildAppUnderTest = (options?: {
       Layer.mock(GitsMcpInventoryResolver)({
         getSnapshot: () => Effect.succeed(defaultGitsMcpInventory),
         ...options?.layers?.gitsMcpInventoryResolver,
+      }),
+      Layer.mock(CodexMcpAuth)({
+        getAvailability: () => Effect.succeed({ available: false }),
+        start: () => Effect.die("MCP auth is not configured in the router test harness."),
+        getStatus: () => Effect.die("MCP auth is not configured in the router test harness."),
+        cancel: () => Effect.void,
+        handleCallback: () => Effect.die("MCP auth is not configured in the router test harness."),
+        stopAll: () => Effect.void,
       }),
       Layer.mock(GitsDevCommands)({
         listCommands: () => Effect.succeed(defaultGitsDevCommands),

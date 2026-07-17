@@ -63,7 +63,7 @@ export interface CodexMcpAuthOptions {
     providerInstanceId: string,
   ) => Effect.Effect<CodexMcpAuthLaunchConfig, CodexMcpAuthError>;
   readonly reserveCallbackPort: () => Effect.Effect<number, CodexMcpAuthError>;
-  readonly isCallbackPortIsolated: (port: number) => Effect.Effect<boolean>;
+  readonly isCallbackListenerIsolated: () => Effect.Effect<boolean>;
   readonly startHelper: (input: {
     readonly launchConfig: CodexMcpAuthLaunchConfig;
     readonly serverName: string;
@@ -273,7 +273,7 @@ export const makeCodexMcpAuth = Effect.fn("makeCodexMcpAuth")(function* (
                 authError("relay-unavailable", "A private callback port is unavailable."),
               ),
             );
-          if (!(yield* options.isCallbackPortIsolated(callbackPort))) {
+          if (!(yield* options.isCallbackListenerIsolated())) {
             return yield* authError(
               "relay-unavailable",
               "The temporary callback listener cannot be proven private.",
@@ -413,9 +413,30 @@ export const makeCodexMcpAuth = Effect.fn("makeCodexMcpAuth")(function* (
       discard: true,
     });
 
+  const getAvailability: CodexMcpAuthShape["getAvailability"] = () =>
+    Effect.gen(function* () {
+      const callbackBaseUrl = normalizeCallbackBaseUrl(
+        yield* options.resolveAdvertisedCallbackBaseUrl(),
+      );
+      if (callbackBaseUrl && (yield* options.isCallbackListenerIsolated())) {
+        return { available: true } as const;
+      }
+      return {
+        available: false,
+        message: "Browser callback relay is unavailable on this host.",
+      } as const;
+    }).pipe(
+      Effect.catch(() =>
+        Effect.succeed({
+          available: false,
+          message: "Browser callback relay is unavailable on this host.",
+        } as const),
+      ),
+    );
+
   yield* Effect.addFinalizer(() => stopAll());
 
-  return CodexMcpAuth.of({ start, getStatus, cancel, handleCallback, stopAll });
+  return CodexMcpAuth.of({ getAvailability, start, getStatus, cancel, handleCallback, stopAll });
 });
 
 type NetworkInterfacesMap = ReturnType<typeof networkInterfaces>;
@@ -547,7 +568,7 @@ const makeCodexMcpAuthLive = Effect.gen(function* () {
         }),
       ),
     reserveCallbackPort,
-    isCallbackPortIsolated: () => Effect.succeed(canProveWildcardCallbackIsolation()),
+    isCallbackListenerIsolated: () => Effect.succeed(canProveWildcardCallbackIsolation()),
     startHelper,
     randomId: () =>
       crypto.randomUUIDv4.pipe(

@@ -137,6 +137,7 @@ import {
   gitsSkillInventoryRouteLayer,
   gitsUsageRouteLayer,
 } from "./gits/http.ts";
+import { codexMcpOauthRoutesLayer } from "./gits/http/CodexMcpOauthRoutes.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
 import { VisualPlanMcpServiceLive } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { WebPushSenderLive } from "./push/Layers/WebPushSender.ts";
@@ -550,6 +551,7 @@ const GitsRoutesLayer = Layer.mergeAll(
   gitsSkillInventoryRouteLayer,
   gitsMcpInventoryRouteLayer,
   gitsUsageRouteLayer,
+  codexMcpOauthRoutesLayer,
   visualPlanMcpRouteLayer,
 );
 
