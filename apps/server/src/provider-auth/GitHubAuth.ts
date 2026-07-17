@@ -12,14 +12,10 @@ import type {
   ProviderAuthAttempt,
 } from "../provider/Services/ProviderAdapter.ts";
 import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
+import { HTTPS_URL, stripTerminalControls } from "./terminalSanitize.ts";
 
 const MAX_TRANSCRIPT_LENGTH = 32_768;
 const SAFE_PROMPT = "Open the GitHub verification page and enter the one-time code.";
-const ESC = String.fromCharCode(27);
-const BEL = String.fromCharCode(7);
-const CSI_SEQUENCE = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "g");
-const OSC_SEQUENCE = new RegExp(`${ESC}\\][^${BEL}]*(?:${BEL}|${ESC}\\\\)`, "g");
-const HTTPS_URL = /https:\/\/[^\s<>"']+(?=[\s<>"'])/i;
 const ONE_TIME_CODE = /\bone-time\s+code\s*:\s*([a-z0-9]{4}-[a-z0-9]{4})\b/i;
 
 export interface GitHubAuthInput {
@@ -51,10 +47,6 @@ const validationError = (input: GitHubAuthInput, issue: string) =>
     operation: "providerAuth.start",
     issue,
   });
-
-function stripTerminalControls(value: string): string {
-  return value.replace(OSC_SEQUENCE, "").replace(CSI_SEQUENCE, "");
-}
 
 function normalizedHostname(input: GitHubAuthInput): string | null {
   const hostname = input.hostname.trim().toLowerCase();

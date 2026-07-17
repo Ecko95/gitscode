@@ -3,16 +3,12 @@ import * as Effect from "effect/Effect";
 
 import { ProviderAdapterRequestError } from "../provider/Errors.ts";
 import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
+import { HTTPS_URL, stripTerminalControls } from "./terminalSanitize.ts";
 
 const MAX_TRANSCRIPT_LENGTH = 32_768;
 const MAX_CODE_LENGTH = 4_096;
 const SAFE_PROMPT =
   "Open the Claude authorization page, then paste the code shown in your browser.";
-const ESC = String.fromCharCode(27);
-const BEL = String.fromCharCode(7);
-const CSI_SEQUENCE = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "g");
-const OSC_SEQUENCE = new RegExp(`${ESC}\\][^${BEL}]*(?:${BEL}|${ESC}\\\\)`, "g");
-const HTTPS_URL = /https:\/\/[^\s<>"']+(?=[\s<>"'])/i;
 
 export interface ClaudeGuidedLoginInput {
   readonly pty: PtyAdapterShape;
@@ -37,10 +33,6 @@ export interface ClaudeGuidedLoginHandle {
 
 const requestError = (method: string, detail: string) =>
   new ProviderAdapterRequestError({ provider: "claudeAgent", method, detail });
-
-function stripTerminalControls(value: string): string {
-  return value.replace(OSC_SEQUENCE, "").replace(CSI_SEQUENCE, "");
-}
 
 function findVerificationUri(transcript: string): string | undefined {
   const candidate = stripTerminalControls(transcript).match(HTTPS_URL)?.[0];
