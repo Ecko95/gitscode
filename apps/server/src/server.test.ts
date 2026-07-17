@@ -13,6 +13,7 @@ import {
   type GitsMcpInventorySnapshot,
   type GitsNote,
   type GitsNotesSyncResult,
+  type PortsListResult,
   type GitsSchedulerSnapshot,
   type GitsSkillInventorySnapshot,
   type HermesCommandResult,
@@ -120,6 +121,7 @@ import {
   type GitsMcpInventoryResolverShape,
 } from "./gits/Services/GitsMcpInventory.ts";
 import { GitsDevCommands, type GitsDevCommandsShape } from "./gits/Services/GitsDevCommands.ts";
+import { GitsPorts, type GitsPortsShape } from "./gits/Services/GitsPorts.ts";
 import { GitsNotes, type GitsNotesShape } from "./gits/Services/GitsNotes.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
@@ -332,6 +334,25 @@ const defaultGitsDevCommands: GitsDevCommandListResult = {
       previewUrl: "https://subject28.tail.ts.net:3000/",
       launchCommand:
         "GITS_DEV_NAME='Web dev' bash '/tmp/default-project/scripts/dev/run-dev-command.sh'",
+    },
+  ],
+  warnings: [],
+};
+const defaultGitsPorts: PortsListResult = {
+  projectDir: "/tmp/default-project",
+  scannedAt: "2026-01-01T00:00:00.000Z",
+  ports: [
+    {
+      id: "127.0.0.1:3000",
+      remoteHost: "127.0.0.1",
+      remotePort: 3000,
+      protocol: "http",
+      label: "Web dev",
+      sources: ["configured", "listener"],
+      listenerStatus: "ready",
+      ownership: "unmanaged",
+      supervisedStatus: "stopped",
+      exposureStatus: "none",
     },
   ],
   warnings: [],
@@ -818,6 +839,7 @@ const buildAppUnderTest = (options?: {
     gitsSkillInventoryResolver?: Partial<GitsSkillInventoryResolverShape>;
     gitsMcpInventoryResolver?: Partial<GitsMcpInventoryResolverShape>;
     gitsDevCommands?: Partial<GitsDevCommandsShape>;
+    gitsPorts?: Partial<GitsPortsShape>;
     gitsNotes?: Partial<GitsNotesShape>;
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
@@ -1028,6 +1050,10 @@ const buildAppUnderTest = (options?: {
         listCommands: () => Effect.succeed(defaultGitsDevCommands),
         initCommands: () => Effect.succeed(defaultGitsDevCommands),
         ...options?.layers?.gitsDevCommands,
+      }),
+      Layer.mock(GitsPorts)({
+        list: () => Effect.succeed(defaultGitsPorts),
+        ...options?.layers?.gitsPorts,
       }),
       Layer.mock(GitsNotes)({
         list: () => Effect.succeed([]),
@@ -5001,6 +5027,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(snapshot.recommendation.reason, "Capacity routed through test monitor.");
       assert.equal(calls, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc environment ports snapshot", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      yield* buildAppUnderTest({
+        layers: {
+          gitsPorts: {
+            list: (input) =>
+              Effect.sync(() => {
+                calls.push(`${input.projectDir}:${input.threadId ?? ""}`);
+                return {
+                  ...defaultGitsPorts,
+                  projectDir: input.projectDir,
+                  ...(input.threadId ? { threadId: input.threadId } : {}),
+                };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const threadId = ThreadId.make("thread-ports");
+      const snapshot = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsPortsList]({
+            projectDir: "/tmp/ports-project",
+            threadId,
+          }),
+        ),
+      );
+
+      assert.equal(snapshot.projectDir, "/tmp/ports-project");
+      assert.equal(snapshot.threadId, threadId);
+      assert.deepEqual(calls, ["/tmp/ports-project:thread-ports"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

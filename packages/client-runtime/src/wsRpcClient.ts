@@ -147,6 +147,9 @@ export interface WsRpcClient {
       readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsList>;
       readonly init: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsInit>;
     };
+    readonly ports: {
+      readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsPortsList>;
+    };
     readonly notes: {
       readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsNotesList>;
       readonly read: RpcUnaryMethod<typeof WS_METHODS.gitsNotesRead>;
@@ -412,6 +415,9 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsDevCommandsList](input)),
         init: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDevCommandsInit](input)),
+      },
+      ports: {
+        list: (input) => transport.request((client) => client[WS_METHODS.gitsPortsList](input)),
       },
       notes: {
         list: (input) => transport.request((client) => client[WS_METHODS.gitsNotesList](input)),

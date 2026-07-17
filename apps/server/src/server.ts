@@ -70,6 +70,7 @@ import { WebPushSubscriptionRepositoryLive } from "./persistence/Layers/WebPushS
 import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
+import { GitsPortsLive } from "./gits/Layers/GitsPorts.ts";
 import { GitsMcpInventoryResolverLive } from "./gits/Layers/GitsMcpInventory.ts";
 import { CodexMcpAuthLive } from "./gits/Layers/CodexMcpAuth.ts";
 import { GitsSkillInventoryResolverLive } from "./gits/Layers/GitsSkillInventory.ts";
@@ -374,6 +375,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsSliceCriteriaStoreLive),
   Layer.provideMerge(GitsConfinedVerifyAdapterLive),
   Layer.provideMerge(GitsDevCommandsLive),
+  Layer.provideMerge(GitsPortsLive.pipe(Layer.provide(GitsDevCommandsLive))),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
   Layer.provideMerge(GitsMcpInventoryResolverLayerLive),
   Layer.provideMerge(CodexMcpAuthLayerLive),

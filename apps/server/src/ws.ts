@@ -41,6 +41,7 @@ import {
   GitsCockpitError,
   GitsDevCommandError,
   GitsNotesError,
+  GitsPortsError,
   HermesAdapterError,
   OpenGsdAdapterError,
   ProviderAuthError,
@@ -93,6 +94,7 @@ import { ReviewService } from "./review/ReviewService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { GitsDevCommands } from "./gits/Services/GitsDevCommands.ts";
+import { GitsPorts } from "./gits/Services/GitsPorts.ts";
 import { GitsNotes } from "./gits/Services/GitsNotes.ts";
 import { mutateVisualPlan } from "./gits/mcp/visualPlanWrite.ts";
 import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
@@ -144,6 +146,7 @@ const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError)
 const isGitsCockpitError = Schema.is(GitsCockpitError);
 const isGitsDevCommandError = Schema.is(GitsDevCommandError);
 const isGitsNotesError = Schema.is(GitsNotesError);
+const isGitsPortsError = Schema.is(GitsPortsError);
 const toGitsNotesError = (cause: unknown, message: string) =>
   isGitsNotesError(cause) ? cause : new GitsNotesError({ message, cause });
 const isDelamainAdapterError = Schema.is(DelamainAdapterError);
@@ -336,6 +339,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const gitsDevCommands = yield* GitsDevCommands;
+      const gitsPorts = yield* GitsPorts;
       const gitsNotes = yield* GitsNotes;
       const gitsPlanningScanner = yield* GitsPlanningScanner;
       const delamainAdapter = yield* DelamainAdapter;
@@ -1835,6 +1839,21 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                   ? cause
                   : new GitsDevCommandError({
                       message: "Failed to initialize GITS dev commands.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsPortsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsPortsList,
+            gitsPorts.list(input).pipe(
+              Effect.mapError((cause) =>
+                isGitsPortsError(cause)
+                  ? cause
+                  : new GitsPortsError({
+                      message: "Failed to list environment ports.",
                       cause,
                     }),
               ),

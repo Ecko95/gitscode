@@ -218,6 +218,7 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import { GitsPortsError, PortsListInput, PortsListResult } from "./ports.ts";
 import {
   CodexAccountUsage,
   CodexAccountUsageInput,
@@ -272,6 +273,7 @@ export const WS_METHODS = {
   gitsGetCockpit: "gits.cockpit.get",
   gitsDevCommandsList: "gits.devCommands.list",
   gitsDevCommandsInit: "gits.devCommands.init",
+  gitsPortsList: "gits.ports.list",
   gitsNotesList: "gits.notes.list",
   gitsNotesRead: "gits.notes.read",
   gitsNotesCreate: "gits.notes.create",
@@ -732,6 +734,12 @@ export const WsGitsDevCommandsInitRpc = Rpc.make(WS_METHODS.gitsDevCommandsInit,
   payload: GitsDevCommandInitInput,
   success: GitsDevCommandListResult,
   error: GitsDevCommandError,
+});
+
+export const WsGitsPortsListRpc = Rpc.make(WS_METHODS.gitsPortsList, {
+  payload: PortsListInput,
+  success: PortsListResult,
+  error: GitsPortsError,
 });
 
 export const WsGitsNotesListRpc = Rpc.make(WS_METHODS.gitsNotesList, {
@@ -1202,6 +1210,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsGetCockpitRpc,
   WsGitsDevCommandsListRpc,
   WsGitsDevCommandsInitRpc,
+  WsGitsPortsListRpc,
   WsGitsNotesListRpc,
   WsGitsNotesReadRpc,
   WsGitsNotesCreateRpc,
