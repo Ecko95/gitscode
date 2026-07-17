@@ -264,6 +264,16 @@ export interface CodexAppServerCommandLayerOptions extends CodexAppServerClientO
   readonly args?: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly env?: Record<string, string>;
+  readonly inheritProcessEnv?: boolean;
+}
+
+export function resolveCommandEnvironment(
+  env: Record<string, string> | undefined,
+  inheritProcessEnv = true,
+  inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+): Record<string, string | undefined> | undefined {
+  if (inheritProcessEnv === false) return { ...env };
+  return env ? { ...inheritedEnvironment, ...env } : undefined;
 }
 
 export const layerCommand = (
@@ -277,9 +287,10 @@ export const layerCommand = (
     CodexAppServerClient,
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const env = resolveCommandEnvironment(options.env, options.inheritProcessEnv);
       const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
         ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+        ...(env ? { env } : {}),
         forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
         shell: process.platform === "win32",
       });

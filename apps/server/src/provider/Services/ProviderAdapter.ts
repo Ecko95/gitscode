@@ -54,6 +54,13 @@ export interface CodexMcpRuntimeServerStatus {
   readonly resourceCount: number;
 }
 
+export interface CodexMcpAuthLaunchConfig {
+  readonly binaryPath: string;
+  readonly credentialHome: string;
+  readonly homePath?: string;
+  readonly environment: NodeJS.ProcessEnv;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -138,6 +145,7 @@ export interface ProviderAdapterShape<TError> {
     ReadonlyArray<CodexMcpRuntimeServerStatus>,
     TError
   >;
+  readonly getCodexMcpAuthLaunchConfig?: () => CodexMcpAuthLaunchConfig;
 
   /**
    * Stop all sessions owned by this adapter.

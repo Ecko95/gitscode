@@ -479,6 +479,41 @@ export const GitsMcpInventorySnapshot = Schema.Struct({
 });
 export type GitsMcpInventorySnapshot = typeof GitsMcpInventorySnapshot.Type;
 
+export const GitsCodexMcpAuthSessionState = Schema.Literals([
+  "waiting-provider",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+]);
+export type GitsCodexMcpAuthSessionState = typeof GitsCodexMcpAuthSessionState.Type;
+
+export const GitsCodexMcpAuthStartInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  serverName: TrimmedNonEmptyString,
+});
+export type GitsCodexMcpAuthStartInput = typeof GitsCodexMcpAuthStartInput.Type;
+
+export const GitsCodexMcpAuthStartResult = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  authorizationUrl: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+});
+export type GitsCodexMcpAuthStartResult = typeof GitsCodexMcpAuthStartResult.Type;
+
+export const GitsCodexMcpAuthSessionInput = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+});
+export type GitsCodexMcpAuthSessionInput = typeof GitsCodexMcpAuthSessionInput.Type;
+
+export const GitsCodexMcpAuthStatus = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  state: GitsCodexMcpAuthSessionState,
+  expiresAt: IsoDateTime,
+  message: Schema.optionalKey(SummaryString),
+});
+export type GitsCodexMcpAuthStatus = typeof GitsCodexMcpAuthStatus.Type;
+
 export const DelamainEngine = Schema.Literals(["codex", "cursor", "unknown"]);
 export type DelamainEngine = typeof DelamainEngine.Type;
 

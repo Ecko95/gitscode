@@ -70,6 +70,7 @@ import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
 import { GitsMcpInventoryResolverLive } from "./gits/Layers/GitsMcpInventory.ts";
+import { CodexMcpAuthLive } from "./gits/Layers/CodexMcpAuth.ts";
 import { GitsSkillInventoryResolverLive } from "./gits/Layers/GitsSkillInventory.ts";
 import { GitsPlanningScannerLive } from "./gits/Layers/GitsPlanningScanner.ts";
 import { HermesCliAdapterLive } from "./gits/Layers/HermesCliAdapter.ts";
@@ -358,6 +359,10 @@ const GitsMcpInventoryResolverLayerLive = GitsMcpInventoryResolverLive.pipe(
   Layer.provide(ProviderInstanceRegistryLayerLive),
 );
 
+const CodexMcpAuthLayerLive = CodexMcpAuthLive.pipe(
+  Layer.provide(ProviderInstanceRegistryLayerLive),
+);
+
 const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsBuildInfoResolverLive),
   Layer.provideMerge(GitsNotesLive),
@@ -368,6 +373,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsDevCommandsLive),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
   Layer.provideMerge(GitsMcpInventoryResolverLayerLive),
+  Layer.provideMerge(CodexMcpAuthLayerLive),
   Layer.provideMerge(DelamainCliAdapterLive),
   Layer.provideMerge(OpenGsdCliAdapterLive),
   Layer.provideMerge(GitsPlanningScannerLive),

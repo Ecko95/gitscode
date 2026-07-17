@@ -56,6 +56,7 @@ import {
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   VISUAL_PLAN_MCP_PATH,
@@ -1483,6 +1484,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     RUNTIME_EVENT_QUEUE_CAPACITY,
   );
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const configuredCredentialHome =
+    codexConfig.homePath.trim() || options?.environment?.CODEX_HOME?.trim();
+  const credentialHome = expandHomePath(
+    configuredCredentialHome || `${options?.environment?.HOME ?? process.env.HOME ?? ""}/.codex`,
+  );
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1963,6 +1969,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     readCodexAccountUsage,
     consumeCodexResetCredit,
     listCodexMcpServers,
+    getCodexMcpAuthLaunchConfig: () => ({
+      binaryPath: codexConfig.binaryPath,
+      credentialHome,
+      ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
+      environment: { ...options?.environment },
+    }),
     respondToRequest,
     respondToUserInput,
     stopSession,

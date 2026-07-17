@@ -513,9 +513,13 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     const customLayer = Layer.effect(
       CodexAdapter,
       Effect.gen(function* () {
-        const codexConfig = decodeCodexSettings({});
+        const codexConfig = decodeCodexSettings({
+          binaryPath: "/opt/codex",
+          homePath: "/tmp/codex-personal",
+        });
         return yield* makeCodexAdapter(codexConfig, {
           instanceId: customInstanceId,
+          environment: { HOME: "/home/test", PATH: "/bin" },
           makeRuntime: customRuntimeFactory.factory,
         });
       }),
@@ -528,6 +532,12 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
 
     return Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
+      assert.deepStrictEqual(adapter.getCodexMcpAuthLaunchConfig?.(), {
+        binaryPath: "/opt/codex",
+        credentialHome: "/tmp/codex-personal",
+        homePath: "/tmp/codex-personal",
+        environment: { HOME: "/home/test", PATH: "/bin" },
+      });
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("codex"),
         threadId: asThreadId("sess-custom-instance"),
