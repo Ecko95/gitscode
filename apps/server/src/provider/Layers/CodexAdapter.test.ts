@@ -538,6 +538,8 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         homePath: "/tmp/codex-personal",
         environment: { HOME: "/home/test", PATH: "/bin" },
       });
+      assert.deepStrictEqual(adapter.providerAuth?.methods, ["device-code"]);
+      assert.equal(adapter.providerAuth?.credentialHome, "/tmp/codex-personal");
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("codex"),
         threadId: asThreadId("sess-custom-instance"),

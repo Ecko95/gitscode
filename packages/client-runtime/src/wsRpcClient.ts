@@ -258,6 +258,12 @@ export interface WsRpcClient {
     readonly consumeCodexResetCredit: RpcUnaryMethod<
       typeof WS_METHODS.providerConsumeCodexResetCredit
     >;
+    readonly auth: {
+      readonly start: RpcUnaryMethod<typeof WS_METHODS.providerAuthStart>;
+      readonly get: RpcUnaryMethod<typeof WS_METHODS.providerAuthGet>;
+      readonly cancel: RpcUnaryMethod<typeof WS_METHODS.providerAuthCancel>;
+      readonly logout: RpcUnaryMethod<typeof WS_METHODS.providerAuthLogout>;
+    };
   };
 }
 
@@ -581,6 +587,15 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.providerCodexAccountUsage](input)),
       consumeCodexResetCredit: (input) =>
         transport.request((client) => client[WS_METHODS.providerConsumeCodexResetCredit](input)),
+      auth: {
+        start: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthStart](input)),
+        get: (input) => transport.request((client) => client[WS_METHODS.providerAuthGet](input)),
+        cancel: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthCancel](input)),
+        logout: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthLogout](input)),
+      },
     },
   };
 }

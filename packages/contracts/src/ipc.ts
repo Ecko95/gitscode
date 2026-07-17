@@ -34,6 +34,13 @@ import type {
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
+  ProviderAuthLogoutInput,
+  ProviderAuthSession,
+  ProviderAuthSessionInput,
+  ProviderAuthStartInput,
+  ProviderAuthStartResult,
+} from "./providerAuth.ts";
+import type {
   FollowUpSuggestionsInput,
   FollowUpSuggestionsResult,
   ProviderSteerTurnInput,
@@ -533,6 +540,12 @@ export interface EnvironmentApi {
     consumeCodexResetCredit: (
       input: CodexResetCreditConsumeInput,
     ) => Promise<CodexResetCreditConsumeResult>;
+    auth: {
+      start: (input: ProviderAuthStartInput) => Promise<ProviderAuthStartResult>;
+      get: (input: ProviderAuthSessionInput) => Promise<ProviderAuthSession>;
+      cancel: (input: ProviderAuthSessionInput) => Promise<void>;
+      logout: (input: ProviderAuthLogoutInput) => Promise<void>;
+    };
   };
   terminal: {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;

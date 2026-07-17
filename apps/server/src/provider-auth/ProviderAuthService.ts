@@ -1,14 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { randomUUID } from "node:crypto";
 
-import type {
-  ProviderAuthMethod,
-  ProviderAuthPrompt,
-  ProviderAuthSession,
-  ProviderAuthSessionId,
-  ProviderAuthSessionState,
-  ProviderDriverKind,
-  ProviderInstanceId,
+import {
+  ProviderAuthError,
+  type ProviderAuthErrorCode,
+  type ProviderAuthMethod,
+  type ProviderAuthPrompt,
+  type ProviderAuthSession,
+  type ProviderAuthSessionId,
+  type ProviderAuthSessionState,
+  type ProviderAuthStartResult,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -16,9 +19,14 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+
+import type { ProviderAdapterError } from "../provider/Errors.ts";
+import type {
+  ProviderAuthAdapter,
+  ProviderAuthAttempt,
+} from "../provider/Services/ProviderAdapter.ts";
 
 const DEFAULT_TTL_MS = 10 * 60_000;
 const DEFAULT_TERMINAL_RETENTION_MS = 30_000;
@@ -30,22 +38,6 @@ type ActiveProviderAuthState = Extract<
 >;
 type TerminalProviderAuthState = Exclude<ProviderAuthSessionState, ActiveProviderAuthState>;
 
-export const ProviderAuthErrorCode = Schema.Literals([
-  "invalid-request",
-  "already-active",
-  "not-found",
-  "failed",
-]);
-export type ProviderAuthErrorCode = typeof ProviderAuthErrorCode.Type;
-
-export class ProviderAuthError extends Schema.TaggedErrorClass<ProviderAuthError>()(
-  "ProviderAuthError",
-  {
-    code: ProviderAuthErrorCode,
-    message: Schema.String,
-  },
-) {}
-
 export interface StartProviderAuthSessionInput {
   readonly provider: ProviderDriverKind;
   readonly providerInstanceId: ProviderInstanceId;
@@ -54,7 +46,24 @@ export interface StartProviderAuthSessionInput {
   readonly method: ProviderAuthMethod;
   readonly sanitizedPrompt?: string;
   readonly acceptsCode?: boolean;
+  readonly cancel?: Effect.Effect<void, ProviderAuthError>;
   readonly cleanup?: Effect.Effect<void, ProviderAuthError>;
+}
+
+export interface StartManagedProviderAuthInput {
+  readonly provider: ProviderDriverKind;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly connectionId: string;
+  readonly method: ProviderAuthMethod;
+  readonly adapter: ProviderAuthAdapter<ProviderAdapterError>;
+  readonly refresh: Effect.Effect<void>;
+}
+
+export interface LogoutManagedProviderAuthInput {
+  readonly provider: ProviderDriverKind;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly adapter: ProviderAuthAdapter<ProviderAdapterError>;
+  readonly refresh: Effect.Effect<void>;
 }
 
 export interface OwnedProviderAuthSessionInput {
@@ -78,6 +87,9 @@ export interface ProviderAuthServiceShape {
   readonly start: (
     input: StartProviderAuthSessionInput,
   ) => Effect.Effect<ProviderAuthSession, ProviderAuthError>;
+  readonly startProvider: (
+    input: StartManagedProviderAuthInput,
+  ) => Effect.Effect<ProviderAuthStartResult, ProviderAuthError>;
   readonly get: (
     input: OwnedProviderAuthSessionInput,
   ) => Effect.Effect<ProviderAuthSession, ProviderAuthError>;
@@ -86,6 +98,9 @@ export interface ProviderAuthServiceShape {
   ) => Effect.Effect<ProviderAuthSession, ProviderAuthError>;
   readonly finish: (input: FinishProviderAuthSessionInput) => Effect.Effect<void>;
   readonly cancel: (input: OwnedProviderAuthSessionInput) => Effect.Effect<void, ProviderAuthError>;
+  readonly logoutProvider: (
+    input: LogoutManagedProviderAuthInput,
+  ) => Effect.Effect<void, ProviderAuthError>;
   readonly stopAll: () => Effect.Effect<void>;
 }
 
@@ -104,6 +119,7 @@ interface ActiveSession {
   readonly ownerConnectionId: string;
   readonly singleFlightKey: string;
   readonly session: ProviderAuthSession;
+  readonly cancel: Effect.Effect<void, ProviderAuthError>;
   readonly cleanup: Effect.Effect<void, ProviderAuthError>;
 }
 
@@ -134,7 +150,7 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
     (() =>
       Effect.try({
         try: randomUUID,
-        catch: () => authError("failed", "Authentication could not start."),
+        catch: () => authError("provider-failed", "Authentication could not start."),
       }));
   const serviceScope = yield* Scope.Scope;
   const lock = yield* Semaphore.make(1);
@@ -144,6 +160,9 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
 
   const runCleanup = (session: ActiveSession) =>
     session.cleanup.pipe(Effect.ignoreCause({ log: false }));
+
+  const cancelAndCleanup = (session: ActiveSession) =>
+    session.cancel.pipe(Effect.ignoreCause({ log: false }), Effect.andThen(runCleanup(session)));
 
   const moveToTerminal = (sessionId: ProviderAuthSessionId, state: TerminalProviderAuthState) =>
     lock.withPermits(1)(
@@ -160,6 +179,19 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
       }),
     );
 
+  const forgetTerminalAfterRetention = (sessionId: ProviderAuthSessionId) =>
+    Effect.sleep(Duration.millis(terminalRetentionMs)).pipe(
+      Effect.andThen(
+        lock.withPermits(1)(
+          Effect.sync(() => {
+            terminalSessions.delete(sessionId);
+          }),
+        ),
+      ),
+      Effect.forkIn(serviceScope),
+      Effect.asVoid,
+    );
+
   const expire = (sessionId: ProviderAuthSessionId) =>
     moveToTerminal(sessionId, "expired").pipe(
       Effect.flatMap((active) => {
@@ -170,15 +202,8 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
             }),
           );
         }
-        return runCleanup(active).pipe(
-          Effect.andThen(Effect.sleep(Duration.millis(terminalRetentionMs))),
-          Effect.andThen(
-            lock.withPermits(1)(
-              Effect.sync(() => {
-                terminalSessions.delete(sessionId);
-              }),
-            ),
-          ),
+        return cancelAndCleanup(active).pipe(
+          Effect.andThen(forgetTerminalAfterRetention(sessionId)),
         );
       }),
     );
@@ -211,15 +236,15 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
             );
           }
           const rawSessionId = yield* randomId().pipe(
-            Effect.mapError(() => authError("failed", "Authentication could not start.")),
+            Effect.mapError(() => authError("provider-failed", "Authentication could not start.")),
           );
           const trimmedSessionId = rawSessionId.trim();
           if (!trimmedSessionId) {
-            return yield* authError("failed", "Authentication could not start.");
+            return yield* authError("provider-failed", "Authentication could not start.");
           }
           const sessionId = trimmedSessionId as ProviderAuthSessionId;
           if (activeSessions.has(sessionId) || terminalSessions.has(sessionId)) {
-            return yield* authError("failed", "Authentication could not start.");
+            return yield* authError("provider-failed", "Authentication could not start.");
           }
           const now = yield* Clock.currentTimeMillis;
           const publicSession: ProviderAuthSession = {
@@ -235,6 +260,7 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
             ownerConnectionId: connectionId,
             singleFlightKey,
             session: publicSession,
+            cancel: input.cancel ?? Effect.void,
             cleanup: input.cleanup ?? Effect.void,
           });
           singleFlights.set(singleFlightKey, sessionId);
@@ -280,7 +306,11 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
 
   const finish: ProviderAuthServiceShape["finish"] = (input) =>
     moveToTerminal(input.sessionId, input.state).pipe(
-      Effect.flatMap((active) => (active ? runCleanup(active) : Effect.void)),
+      Effect.flatMap((active) =>
+        active
+          ? runCleanup(active).pipe(Effect.andThen(forgetTerminalAfterRetention(input.sessionId)))
+          : Effect.void,
+      ),
     );
 
   const cancel: ProviderAuthServiceShape["cancel"] = (input) =>
@@ -300,7 +330,121 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
           return Effect.succeed(active);
         }),
       )
-      .pipe(Effect.flatMap(runCleanup));
+      .pipe(
+        Effect.flatMap((active) =>
+          cancelAndCleanup(active).pipe(
+            Effect.andThen(forgetTerminalAfterRetention(input.sessionId)),
+          ),
+        ),
+      );
+
+  const mapProviderError = (_cause: ProviderAdapterError) =>
+    authError("provider-failed", "Provider authentication could not complete.");
+
+  const attachAttempt = (
+    sessionId: ProviderAuthSessionId,
+    attempt: ProviderAuthAttempt<ProviderAdapterError>,
+  ) =>
+    lock.withPermits(1)(
+      Effect.suspend(() => {
+        const active = activeSessions.get(sessionId);
+        if (!active) return Effect.fail(notFound());
+        const session: ProviderAuthSession = {
+          ...active.session,
+          state: "awaiting-user",
+        };
+        activeSessions.set(sessionId, {
+          ...active,
+          session,
+          cancel: attempt.cancel.pipe(Effect.mapError(mapProviderError)),
+          cleanup: attempt.close,
+        });
+        return Effect.succeed(session);
+      }),
+    );
+
+  const startProvider: ProviderAuthServiceShape["startProvider"] = (input) =>
+    Effect.gen(function* () {
+      if (!input.adapter.methods.includes(input.method)) {
+        return yield* authError(
+          "unsupported",
+          "This provider does not support the requested authentication method.",
+        );
+      }
+      const reserved = yield* start({
+        provider: input.provider,
+        providerInstanceId: input.providerInstanceId,
+        credentialHome: input.adapter.credentialHome,
+        connectionId: input.connectionId,
+        method: input.method,
+        sanitizedPrompt: "Open the verification page and follow the provider instructions.",
+      });
+      const attempt = yield* input.adapter.start(input.method).pipe(
+        Effect.mapError(mapProviderError),
+        Effect.onError(() => finish({ sessionId: reserved.sessionId, state: "failed" })),
+      );
+      const session = yield* attachAttempt(reserved.sessionId, attempt).pipe(
+        Effect.onError(() =>
+          attempt.cancel.pipe(Effect.ignoreCause({ log: false }), Effect.andThen(attempt.close)),
+        ),
+      );
+      yield* attempt.completion.pipe(
+        Effect.match({
+          onFailure: () => "failed" as const,
+          onSuccess: (success) => (success ? ("succeeded" as const) : ("failed" as const)),
+        }),
+        Effect.flatMap((state) => finish({ sessionId: session.sessionId, state })),
+        Effect.andThen(input.refresh),
+        Effect.forkIn(serviceScope),
+      );
+      return {
+        session,
+        ...(attempt.verificationUri ? { verificationUri: attempt.verificationUri } : {}),
+        ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
+      };
+    });
+
+  const logoutProvider: ProviderAuthServiceShape["logoutProvider"] = (input) => {
+    const credentialHome = input.adapter.credentialHome.trim();
+    const singleFlightKey = `${input.provider}\0${credentialHome}`;
+    let reservation: ProviderAuthSessionId | undefined;
+    return Effect.gen(function* () {
+      if (!credentialHome) {
+        return yield* authError("invalid-request", "Invalid authentication request.");
+      }
+      const reservationId = yield* randomId();
+      const nextReservation =
+        `logout-${input.providerInstanceId}-${reservationId}` as ProviderAuthSessionId;
+      reservation = nextReservation;
+      yield* lock.withPermits(1)(
+        Effect.suspend(() => {
+          if (singleFlights.has(singleFlightKey)) {
+            return Effect.fail(
+              authError(
+                "already-active",
+                "Authentication is already active for this provider credential home.",
+              ),
+            );
+          }
+          singleFlights.set(singleFlightKey, nextReservation);
+          return Effect.void;
+        }),
+      );
+      yield* input.adapter
+        .logout()
+        .pipe(Effect.mapError(mapProviderError), Effect.andThen(input.refresh));
+    }).pipe(
+      Effect.ensuring(
+        lock.withPermits(1)(
+          Effect.sync(() => {
+            if (reservation && singleFlights.get(singleFlightKey) === reservation) {
+              singleFlights.delete(singleFlightKey);
+            }
+          }),
+        ),
+      ),
+    );
+  };
 
   const stopAll: ProviderAuthServiceShape["stopAll"] = () =>
     lock
@@ -315,13 +459,22 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
       )
       .pipe(
         Effect.flatMap((active) =>
-          Effect.forEach(active, runCleanup, { concurrency: "unbounded", discard: true }),
+          Effect.forEach(active, cancelAndCleanup, { concurrency: "unbounded", discard: true }),
         ),
       );
 
   yield* Effect.addFinalizer(() => stopAll());
 
-  return { start, get, update, finish, cancel, stopAll } satisfies ProviderAuthServiceShape;
+  return {
+    start,
+    startProvider,
+    get,
+    update,
+    finish,
+    cancel,
+    logoutProvider,
+    stopAll,
+  } satisfies ProviderAuthServiceShape;
 });
 
 export const ProviderAuthServiceLive = Layer.effect(ProviderAuthService, makeProviderAuthService());

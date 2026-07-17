@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -154,6 +155,195 @@ describe("ProviderAuthService", () => {
 
         const restarted = yield* auth.start(startInput);
         expect(restarted.sessionId).toBe("provider-auth-2");
+      }),
+    ),
+  );
+
+  it.effect("removes cancelled and completed tombstones after retention", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { auth } = yield* makeHarness({ terminalRetentionMs: 500 });
+        const cancelled = yield* auth.start(startInput);
+        yield* auth.cancel({ sessionId: cancelled.sessionId, connectionId: "owner-a" });
+        const completed = yield* auth.start(startInput);
+        yield* auth.finish({ sessionId: completed.sessionId, state: "succeeded" });
+
+        yield* TestClock.adjust(Duration.millis(501));
+        for (const sessionId of [cancelled.sessionId, completed.sessionId]) {
+          const result = yield* auth
+            .get({ sessionId, connectionId: "owner-a" })
+            .pipe(Effect.result);
+          if (result._tag !== "Failure") throw new Error("expected terminal session cleanup");
+          expect(result.failure.code).toBe("not-found");
+        }
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "keeps device-code details owner-response-only and trusts completion notifications",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const completion = yield* Deferred.make<boolean>();
+          const cancel = vi.fn();
+          const close = vi.fn();
+          const refresh = vi.fn();
+          const start = vi.fn(() =>
+            Effect.succeed({
+              verificationUri: "https://login.example.test/device?state=secret-state",
+              userCode: "ABCD-EFGH",
+              completion: Deferred.await(completion),
+              cancel: Effect.sync(cancel),
+              close: Effect.sync(close),
+            }),
+          );
+          const { auth } = yield* makeHarness();
+
+          const result = yield* auth.startProvider({
+            provider: startInput.provider,
+            providerInstanceId: startInput.providerInstanceId,
+            connectionId: startInput.connectionId,
+            method: "device-code",
+            adapter: {
+              credentialHome: startInput.credentialHome,
+              methods: ["device-code"],
+              start,
+              logout: () => Effect.void,
+            },
+            refresh: Effect.sync(refresh),
+          });
+
+          expect(result.verificationUri).toContain("login.example.test/device");
+          expect(result.userCode).toBe("ABCD-EFGH");
+          expect(result.session.state).toBe("awaiting-user");
+          expect(
+            yield* auth.get({
+              sessionId: result.session.sessionId,
+              connectionId: startInput.connectionId,
+            }),
+          ).not.toHaveProperty("verificationUri");
+          expect(
+            Object.values(
+              yield* auth.get({
+                sessionId: result.session.sessionId,
+                connectionId: startInput.connectionId,
+              }),
+            ),
+          ).not.toContain("ABCD-EFGH");
+
+          yield* Deferred.succeed(completion, true);
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          expect(
+            yield* auth.get({
+              sessionId: result.session.sessionId,
+              connectionId: startInput.connectionId,
+            }),
+          ).toMatchObject({ state: "succeeded" });
+          expect(cancel).not.toHaveBeenCalled();
+          expect(close).toHaveBeenCalledTimes(1);
+          expect(refresh).toHaveBeenCalledTimes(1);
+        }),
+      ),
+  );
+
+  it.effect("cancels and times out the provider-native login before closing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const completion = yield* Deferred.make<boolean>();
+        const cancel = vi.fn();
+        const close = vi.fn();
+        const { auth } = yield* makeHarness({ ttlMs: 1_000, terminalRetentionMs: 500 });
+        const adapter = {
+          credentialHome: startInput.credentialHome,
+          methods: ["device-code" as const],
+          start: () =>
+            Effect.succeed({
+              verificationUri: "https://login.example.test/device",
+              userCode: "ABCD-EFGH",
+              completion: Deferred.await(completion),
+              cancel: Effect.sync(cancel),
+              close: Effect.sync(close),
+            }),
+          logout: () => Effect.void,
+        };
+
+        const first = yield* auth.startProvider({
+          provider: startInput.provider,
+          providerInstanceId: startInput.providerInstanceId,
+          connectionId: startInput.connectionId,
+          method: "device-code",
+          adapter,
+          refresh: Effect.void,
+        });
+        yield* auth.cancel({
+          sessionId: first.session.sessionId,
+          connectionId: startInput.connectionId,
+        });
+        expect(cancel).toHaveBeenCalledTimes(1);
+        expect(close).toHaveBeenCalledTimes(1);
+
+        const second = yield* auth.startProvider({
+          provider: startInput.provider,
+          providerInstanceId: startInput.providerInstanceId,
+          connectionId: startInput.connectionId,
+          method: "device-code",
+          adapter,
+          refresh: Effect.void,
+        });
+        yield* TestClock.adjust(Duration.seconds(1));
+        expect(cancel).toHaveBeenCalledTimes(2);
+        expect(close).toHaveBeenCalledTimes(2);
+        expect(
+          yield* auth.get({
+            sessionId: second.session.sessionId,
+            connectionId: startInput.connectionId,
+          }),
+        ).toMatchObject({ state: "expired" });
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("rejects unsupported methods and refreshes after logout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const start = vi.fn();
+        const logout = vi.fn();
+        const refresh = vi.fn();
+        const { auth } = yield* makeHarness();
+        const adapter = {
+          credentialHome: startInput.credentialHome,
+          methods: ["device-code" as const],
+          start: () => {
+            start();
+            return Effect.never;
+          },
+          logout: () => Effect.sync(logout),
+        };
+
+        const unsupported = yield* auth
+          .startProvider({
+            provider: startInput.provider,
+            providerInstanceId: startInput.providerInstanceId,
+            connectionId: startInput.connectionId,
+            method: "api-key",
+            adapter,
+            refresh: Effect.void,
+          })
+          .pipe(Effect.result);
+        if (unsupported._tag !== "Failure") throw new Error("expected unsupported method");
+        expect(unsupported.failure.code).toBe("unsupported");
+        expect(start).not.toHaveBeenCalled();
+
+        yield* auth.logoutProvider({
+          provider: startInput.provider,
+          providerInstanceId: startInput.providerInstanceId,
+          adapter,
+          refresh: Effect.sync(refresh),
+        });
+        expect(logout).toHaveBeenCalledTimes(1);
+        expect(refresh).toHaveBeenCalledTimes(1);
       }),
     ),
   );

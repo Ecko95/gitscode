@@ -15,6 +15,11 @@ import * as Result from "effect/Result";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  type ProviderAuthLogoutInput,
+  type ProviderAuthSession,
+  type ProviderAuthSessionInput,
+  type ProviderAuthStartInput,
+  type ProviderAuthStartResult,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -423,7 +428,21 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly authActions?: ProviderAuthActions | undefined;
 }
+
+export interface ProviderAuthActions {
+  readonly start: (input: ProviderAuthStartInput) => Promise<ProviderAuthStartResult>;
+  readonly get: (input: ProviderAuthSessionInput) => Promise<ProviderAuthSession>;
+  readonly cancel: (input: ProviderAuthSessionInput) => Promise<void>;
+  readonly logout: (input: ProviderAuthLogoutInput) => Promise<void>;
+  readonly openExternal: (url: string) => Promise<void>;
+}
+
+const isActiveAuthSession = (session: ProviderAuthSession) =>
+  session.state === "starting" ||
+  session.state === "awaiting-user" ||
+  session.state === "waiting-provider";
 
 /**
  * A single configured provider-instance row in the Providers settings
@@ -467,6 +486,7 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  authActions,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -516,6 +536,89 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
+  const showCodexAuth = driverKind === "codex" && authActions !== undefined;
+  const [authResult, setAuthResult] = useState<ProviderAuthStartResult | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!authActions || !authResult || !isActiveAuthSession(authResult.session)) return;
+    let stopped = false;
+    const poll = () => {
+      void authActions
+        .get({ sessionId: authResult.session.sessionId })
+        .then((session) => {
+          if (stopped) return;
+          setAuthResult((current) => {
+            if (!current || current.session.sessionId !== session.sessionId) return current;
+            return isActiveAuthSession(session) ? { ...current, session } : { session };
+          });
+        })
+        .catch(() => {
+          if (!stopped) setAuthError("Could not refresh the Codex sign-in status.");
+        });
+    };
+    const timer = window.setInterval(poll, 1_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [authActions, authResult]);
+
+  const startProviderAuth = async () => {
+    if (!authActions || authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      setAuthResult(
+        await authActions.start({ providerInstanceId: instanceId, method: "device-code" }),
+      );
+    } catch {
+      setAuthError("Codex sign-in could not start.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const cancelProviderAuth = async () => {
+    if (!authActions || !authResult || authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      await authActions.cancel({ sessionId: authResult.session.sessionId });
+      setAuthResult(null);
+    } catch {
+      setAuthError("Codex sign-in could not be cancelled.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const logoutProvider = async () => {
+    if (!authActions || authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      await authActions.logout({ providerInstanceId: instanceId });
+      setAuthResult(null);
+    } catch {
+      setAuthError("Codex sign-out could not complete.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const openVerificationPage = async () => {
+    const verificationUri = authResult?.verificationUri;
+    if (!authActions || !verificationUri) return;
+    try {
+      const url = new URL(verificationUri);
+      if (url.protocol !== "https:" || url.username || url.password) throw new Error();
+      await authActions.openExternal(url.toString());
+    } catch {
+      setAuthError("The Codex verification page could not be opened safely.");
+    }
+  };
 
   const customModels = readConfigStringArray(instance.config, "customModels");
   // Server-returned models may lag behind settings writes. Treat probe
@@ -780,6 +883,44 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {showCodexAuth ? (
+              liveProvider?.auth.status === "authenticated" ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    disabled={authBusy}
+                    onClick={() => void startProviderAuth()}
+                  >
+                    Change login
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    disabled={authBusy}
+                    onClick={() => void logoutProvider()}
+                  >
+                    Sign out
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  disabled={authBusy}
+                  onClick={() => void startProviderAuth()}
+                >
+                  {authBusy ? <LoaderIcon className="size-3 animate-spin" /> : null}
+                  Sign in
+                </Button>
+              )
+            ) : null}
             <Button
               size="sm"
               variant="ghost"
@@ -798,6 +939,67 @@ export function ProviderInstanceCard({
             />
           </div>
         </div>
+        {showCodexAuth ? (
+          <div className="mt-3 grid gap-2 rounded-md border border-border/70 bg-muted/20 p-3 text-xs">
+            <p className="text-muted-foreground">
+              ChatGPT subscription sign-in uses a device code. API-key billing is separate; set
+              <code className="mx-1 text-foreground">OPENAI_API_KEY</code>
+              as a sensitive environment variable.
+            </p>
+            {authResult && isActiveAuthSession(authResult.session) ? (
+              <div className="grid gap-2 border-t border-border/60 pt-2">
+                {authResult.session.prompt ? (
+                  <p className="text-muted-foreground">{authResult.session.prompt}</p>
+                ) : null}
+                {authResult.userCode ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-muted-foreground">Device code</span>
+                    <code className="rounded bg-background px-2 py-1 font-mono text-sm font-semibold tracking-wider text-foreground">
+                      {authResult.userCode}
+                    </code>
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  {authResult.verificationUri ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="default"
+                      disabled={authBusy}
+                      onClick={() => void openVerificationPage()}
+                    >
+                      Open verification page
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={authBusy}
+                    onClick={() => void cancelProviderAuth()}
+                  >
+                    Cancel sign-in
+                  </Button>
+                </div>
+              </div>
+            ) : authResult ? (
+              <p className="border-t border-border/60 pt-2 text-muted-foreground">
+                {authResult.session.state === "succeeded"
+                  ? "Codex sign-in completed."
+                  : authResult.session.state === "cancelled"
+                    ? "Codex sign-in was cancelled."
+                    : authResult.session.state === "expired"
+                      ? "Codex sign-in expired."
+                      : "Codex sign-in did not complete."}
+              </p>
+            ) : null}
+            {authError ? (
+              <p role="alert" className="text-destructive">
+                {authError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>

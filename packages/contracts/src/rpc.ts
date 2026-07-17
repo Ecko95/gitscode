@@ -152,6 +152,14 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderAuthError,
+  ProviderAuthLogoutInput,
+  ProviderAuthSession,
+  ProviderAuthSessionInput,
+  ProviderAuthStartInput,
+  ProviderAuthStartResult,
+} from "./providerAuth.ts";
+import {
   FollowUpSuggestionsInput,
   FollowUpSuggestionsResult,
   ProviderOperationError,
@@ -336,6 +344,10 @@ export const WS_METHODS = {
   providerGenerateFollowUpSuggestions: "provider.generateFollowUpSuggestions",
   providerCodexAccountUsage: "provider.codexAccountUsage",
   providerConsumeCodexResetCredit: "provider.consumeCodexResetCredit",
+  providerAuthStart: "provider.auth.start",
+  providerAuthGet: "provider.auth.get",
+  providerAuthCancel: "provider.auth.cancel",
+  providerAuthLogout: "provider.auth.logout",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -420,6 +432,30 @@ export const WsProviderConsumeCodexResetCreditRpc = Rpc.make(
     error: ProviderOperationError,
   },
 );
+
+export const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
+  payload: ProviderAuthStartInput,
+  success: ProviderAuthStartResult,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthGetRpc = Rpc.make(WS_METHODS.providerAuthGet, {
+  payload: ProviderAuthSessionInput,
+  success: ProviderAuthSession,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
+  payload: ProviderAuthSessionInput,
+  success: Schema.Void,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthLogoutRpc = Rpc.make(WS_METHODS.providerAuthLogout, {
+  payload: ProviderAuthLogoutInput,
+  success: Schema.Void,
+  error: ProviderAuthError,
+});
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
@@ -1113,6 +1149,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderGenerateFollowUpSuggestionsRpc,
   WsProviderCodexAccountUsageRpc,
   WsProviderConsumeCodexResetCreditRpc,
+  WsProviderAuthStartRpc,
+  WsProviderAuthGetRpc,
+  WsProviderAuthCancelRpc,
+  WsProviderAuthLogoutRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,

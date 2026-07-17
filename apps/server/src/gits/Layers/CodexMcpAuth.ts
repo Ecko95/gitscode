@@ -16,16 +16,14 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import * as CodexClient from "effect-codex-app-server/client";
 
 import { ServerConfig } from "../../config.ts";
-import { buildCodexInitializeParams } from "../../provider/Layers/CodexProvider.ts";
+import { openCodexAppServer } from "../../provider/codexAppServerClient.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import {
   CodexMcpAuth,
@@ -448,14 +446,6 @@ export function canProveWildcardCallbackIsolation(
   return entries.length > 0 && entries.every((entry) => entry.internal);
 }
 
-function definedEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(environment).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  );
-}
-
 const makeCodexMcpAuthLive = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const registry = yield* ProviderInstanceRegistry;
@@ -481,53 +471,30 @@ const makeCodexMcpAuthLive = Effect.gen(function* () {
 
   const startHelper: CodexMcpAuthOptions["startHelper"] = (input) =>
     Effect.gen(function* () {
-      const helperScope = yield* Scope.make("sequential");
       const completion = yield* Deferred.make<CodexMcpAuthHelperCompletion>();
-      const clientContext = yield* Layer.build(
-        CodexClient.layerCommand({
-          command: input.launchConfig.binaryPath,
-          args: [
-            "-c",
-            `mcp_oauth_callback_port=${input.callbackPort}`,
-            "-c",
-            // @effect-diagnostics-next-line preferSchemaOverJson:off -- TOML string quoting.
-            `mcp_oauth_callback_url=${JSON.stringify(input.callbackBaseUrl)}`,
-            "app-server",
-          ],
-          cwd: config.cwd,
-          inheritProcessEnv: false,
-          env: {
-            ...definedEnvironment(input.launchConfig.environment),
-            CODEX_HOME: input.launchConfig.credentialHome,
-          },
-        }),
-      ).pipe(
-        Effect.provideService(Scope.Scope, helperScope),
+      const opened = yield* openCodexAppServer({
+        binaryPath: input.launchConfig.binaryPath,
+        appServerArgs: [
+          "-c",
+          `mcp_oauth_callback_port=${input.callbackPort}`,
+          "-c",
+          // @effect-diagnostics-next-line preferSchemaOverJson:off -- TOML string quoting.
+          `mcp_oauth_callback_url=${JSON.stringify(input.callbackBaseUrl)}`,
+        ],
+        cwd: config.cwd,
+        credentialHome: input.launchConfig.credentialHome,
+        environment: input.launchConfig.environment,
+      }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
         Effect.mapError(() =>
           authError("provider-failed", "Codex MCP authentication could not start."),
         ),
-        Effect.onError(() => Scope.close(helperScope, Exit.void)),
       );
-      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
-        Effect.provide(clientContext),
-      );
+      const client = opened.client;
       yield* client.handleServerNotification("mcpServer/oauthLogin/completed", (notification) =>
         notification.name === input.serverName
           ? Deferred.succeed(completion, { success: notification.success }).pipe(Effect.asVoid)
           : Effect.void,
-      );
-      yield* client.request("initialize", buildCodexInitializeParams()).pipe(
-        Effect.mapError(() =>
-          authError("provider-failed", "Codex MCP authentication could not start."),
-        ),
-        Effect.onError(() => Scope.close(helperScope, Exit.void)),
-      );
-      yield* client.notify("initialized", undefined).pipe(
-        Effect.mapError(() =>
-          authError("provider-failed", "Codex MCP authentication could not start."),
-        ),
-        Effect.onError(() => Scope.close(helperScope, Exit.void)),
       );
       const response = yield* client
         .request("mcpServer/oauth/login", {
@@ -538,7 +505,7 @@ const makeCodexMcpAuthLive = Effect.gen(function* () {
           Effect.mapError(() =>
             authError("provider-failed", "Codex MCP authentication could not start."),
           ),
-          Effect.onError(() => Scope.close(helperScope, Exit.void)),
+          Effect.onError(() => opened.close),
         );
       return {
         authorizationUrl: response.authorizationUrl,
@@ -547,7 +514,7 @@ const makeCodexMcpAuthLive = Effect.gen(function* () {
           Effect.asVoid,
           Effect.mapError(() => authError("provider-failed", "Codex MCP status refresh failed.")),
         ),
-        close: Scope.close(helperScope, Exit.void),
+        close: opened.close,
       } satisfies RunningCodexMcpAuthHelper;
     });
 

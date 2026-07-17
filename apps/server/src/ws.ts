@@ -43,6 +43,7 @@ import {
   GitsNotesError,
   HermesAdapterError,
   OpenGsdAdapterError,
+  ProviderAuthError,
   ProviderOperationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -74,6 +75,8 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderAuthService } from "./provider-auth/ProviderAuthService.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
@@ -320,6 +323,8 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      const providerInstanceRegistry = yield* ProviderInstanceRegistry;
+      const providerAuthService = yield* ProviderAuthService;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
@@ -883,6 +888,40 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
       const toCritError = (cause: unknown, message: string) =>
         isCritError(cause) ? cause : new CritError({ message, cause });
 
+      const requireProviderAuthOwner =
+        currentSession.role === "owner"
+          ? Effect.void
+          : Effect.fail(
+              new ProviderAuthError({
+                code: "access-denied",
+                message: "Only owner sessions can manage provider authentication.",
+              }),
+            );
+      const resolveProviderAuth = (
+        providerInstanceId: Parameters<typeof providerInstanceRegistry.getInstance>[0],
+      ) =>
+        providerInstanceRegistry.getInstance(providerInstanceId).pipe(
+          Effect.flatMap((instance) => {
+            if (!instance) {
+              return Effect.fail(
+                new ProviderAuthError({
+                  code: "not-found",
+                  message: "Provider instance was not found.",
+                }),
+              );
+            }
+            if (!instance.adapter.providerAuth) {
+              return Effect.fail(
+                new ProviderAuthError({
+                  code: "unsupported",
+                  message: "This provider does not support managed authentication.",
+                }),
+              );
+            }
+            return Effect.succeed({ instance, adapter: instance.adapter.providerAuth });
+          }),
+        );
+
       return WsRpcGroup.of({
         [WS_METHODS.providerSteerTurn]: (input) =>
           Option.match(providerService, {
@@ -948,6 +987,68 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                     new ProviderOperationError({ message: "Codex reset credits unavailable" }),
                   ),
           }),
+        [WS_METHODS.providerAuthStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthStart,
+            Effect.gen(function* () {
+              yield* requireProviderAuthOwner;
+              const resolved = yield* resolveProviderAuth(input.providerInstanceId);
+              return yield* providerAuthService.startProvider({
+                provider: resolved.instance.driverKind,
+                providerInstanceId: input.providerInstanceId,
+                connectionId: currentSessionId,
+                method: input.method,
+                adapter: resolved.adapter,
+                refresh: providerRegistry
+                  .refreshInstance(input.providerInstanceId)
+                  .pipe(Effect.asVoid),
+              });
+            }),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthGet]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthGet,
+            requireProviderAuthOwner.pipe(
+              Effect.andThen(
+                providerAuthService.get({
+                  sessionId: input.sessionId,
+                  connectionId: currentSessionId,
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthCancel,
+            requireProviderAuthOwner.pipe(
+              Effect.andThen(
+                providerAuthService.cancel({
+                  sessionId: input.sessionId,
+                  connectionId: currentSessionId,
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthLogout]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthLogout,
+            Effect.gen(function* () {
+              yield* requireProviderAuthOwner;
+              const resolved = yield* resolveProviderAuth(input.providerInstanceId);
+              yield* providerAuthService.logoutProvider({
+                provider: resolved.instance.driverKind,
+                providerInstanceId: input.providerInstanceId,
+                adapter: resolved.adapter,
+                refresh: providerRegistry
+                  .refreshInstance(input.providerInstanceId)
+                  .pipe(Effect.asVoid),
+              });
+            }),
+            { "rpc.aggregate": "provider-auth" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

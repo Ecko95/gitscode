@@ -50,3 +50,37 @@ export const ProviderAuthStartResult = Schema.Struct({
   userCode: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProviderAuthStartResult = typeof ProviderAuthStartResult.Type;
+
+export const ProviderAuthStartInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  method: ProviderAuthMethod,
+});
+export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
+
+export const ProviderAuthSessionInput = Schema.Struct({
+  sessionId: ProviderAuthSessionId,
+});
+export type ProviderAuthSessionInput = typeof ProviderAuthSessionInput.Type;
+
+export const ProviderAuthLogoutInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+});
+export type ProviderAuthLogoutInput = typeof ProviderAuthLogoutInput.Type;
+
+export const ProviderAuthErrorCode = Schema.Literals([
+  "access-denied",
+  "invalid-request",
+  "already-active",
+  "not-found",
+  "unsupported",
+  "provider-failed",
+]);
+export type ProviderAuthErrorCode = typeof ProviderAuthErrorCode.Type;
+
+export class ProviderAuthError extends Schema.TaggedErrorClass<ProviderAuthError>()(
+  "ProviderAuthError",
+  {
+    code: ProviderAuthErrorCode,
+    message: Schema.String,
+  },
+) {}

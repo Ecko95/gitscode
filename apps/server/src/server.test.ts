@@ -145,7 +145,13 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import {
+  ProviderInstanceRegistry,
+  type ProviderInstanceRegistryShape,
+} from "./provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderAuthServiceLive } from "./provider-auth/ProviderAuthService.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
+import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -792,6 +798,7 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<KeybindingsShape>;
     providerRegistry?: Partial<ProviderRegistryShape>;
+    providerInstanceRegistry?: Partial<ProviderInstanceRegistryShape>;
     serverSettings?: Partial<ServerSettingsShape>;
     voiceTranscription?: Partial<VoiceTranscriptionServiceShape>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncherShape>;
@@ -1195,6 +1202,14 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(undefined),
+            listInstances: Effect.succeed([]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            ...options?.layers?.providerInstanceRegistry,
+          }),
+          ProviderAuthServiceLive,
           Layer.mock(ServerSettingsService)({
             start: Effect.void,
             ready: Effect.void,
@@ -3372,6 +3387,136 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         failureMessage.includes("Unauthorized") ||
           failureMessage.includes("An error occurred during Open"),
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes owner-only provider authentication without retaining device secrets", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex-personal");
+      let cancelCount = 0;
+      let logoutCount = 0;
+      let refreshCount = 0;
+      const instance = {
+        instanceId,
+        driverKind: ProviderDriverKind.make("codex"),
+        adapter: {
+          providerAuth: {
+            credentialHome: "/tmp/codex-personal",
+            methods: ["device-code"],
+            start: () =>
+              Effect.succeed({
+                verificationUri: "https://auth.example.test/device",
+                userCode: "ABCD-EFGH",
+                completion: Effect.never,
+                cancel: Effect.sync(() => {
+                  cancelCount += 1;
+                }),
+                close: Effect.void,
+              }),
+            logout: () =>
+              Effect.sync(() => {
+                logoutCount += 1;
+              }),
+          },
+        },
+      } as unknown as ProviderInstance;
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+          },
+          providerRegistry: {
+            refreshInstance: () =>
+              Effect.sync(() => {
+                refreshCount += 1;
+                return [];
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const started = yield* client[WS_METHODS.providerAuthStart]({
+              providerInstanceId: instanceId,
+              method: "device-code",
+            });
+            assert.equal(started.verificationUri, "https://auth.example.test/device");
+            assert.equal(started.userCode, "ABCD-EFGH");
+            assert.equal(started.session.state, "awaiting-user");
+
+            const status = yield* client[WS_METHODS.providerAuthGet]({
+              sessionId: started.session.sessionId,
+            });
+            assert.equal(status.state, "awaiting-user");
+            assert.notInclude(Object.values(status).join(" "), "ABCD-EFGH");
+            assert.notInclude(Object.values(status).join(" "), "auth.example.test");
+
+            yield* client[WS_METHODS.providerAuthCancel]({
+              sessionId: started.session.sessionId,
+            });
+            yield* client[WS_METHODS.providerAuthLogout]({ providerInstanceId: instanceId });
+          }),
+        ),
+      );
+
+      assert.equal(cancelCount, 1);
+      assert.equal(logoutCount, 1);
+      assert.equal(refreshCount, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("denies provider authentication to paired client sessions", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex-personal");
+      let startCount = 0;
+      const instance = {
+        instanceId,
+        driverKind: ProviderDriverKind.make("codex"),
+        adapter: {
+          providerAuth: {
+            credentialHome: "/tmp/codex-personal",
+            methods: ["device-code"],
+            start: () => {
+              startCount += 1;
+              return Effect.never;
+            },
+            logout: () => Effect.void,
+          },
+        },
+      } as unknown as ProviderInstance;
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: {
+            getInstance: () => Effect.succeed(instance),
+          },
+        },
+      });
+
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+      });
+      const pairing = (yield* pairingResponse.json) as { readonly credential: string };
+      const pairedWsUrl = yield* getWsServerUrl("/ws", { credential: pairing.credential });
+      const result = yield* Effect.scoped(
+        withWsRpcClient(pairedWsUrl, (client) =>
+          client[WS_METHODS.providerAuthStart]({
+            providerInstanceId: instanceId,
+            method: "device-code",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      if (result.failure._tag !== "ProviderAuthError") {
+        throw new Error(`Expected ProviderAuthError, received ${result.failure._tag}`);
+      }
+      assert.equal(result.failure.code, "access-denied");
+      assert.equal(startCount, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

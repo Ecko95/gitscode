@@ -12,6 +12,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       generateFollowUpSuggestions: rpcClient.provider.generateFollowUpSuggestions,
       codexAccountUsage: rpcClient.provider.codexAccountUsage,
       consumeCodexResetCredit: rpcClient.provider.consumeCodexResetCredit,
+      auth: rpcClient.provider.auth,
     },
     terminal: {
       open: (input) => rpcClient.terminal.open(input as never),

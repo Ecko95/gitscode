@@ -12,6 +12,7 @@ import type {
   CodexAccountUsage,
   CodexResetCreditConsumeResult,
   ProviderApprovalDecision,
+  ProviderAuthMethod,
   ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
@@ -59,6 +60,23 @@ export interface CodexMcpAuthLaunchConfig {
   readonly credentialHome: string;
   readonly homePath?: string;
   readonly environment: NodeJS.ProcessEnv;
+}
+
+export interface ProviderAuthAttempt<TError> {
+  readonly verificationUri?: string;
+  readonly userCode?: string;
+  readonly completion: Effect.Effect<boolean, TError>;
+  readonly cancel: Effect.Effect<void, TError>;
+  readonly close: Effect.Effect<void>;
+}
+
+export interface ProviderAuthAdapter<TError> {
+  readonly credentialHome: string;
+  readonly methods: ReadonlyArray<ProviderAuthMethod>;
+  readonly start: (
+    method: ProviderAuthMethod,
+  ) => Effect.Effect<ProviderAuthAttempt<TError>, TError>;
+  readonly logout: () => Effect.Effect<void, TError>;
 }
 
 export interface ProviderAdapterShape<TError> {
@@ -146,6 +164,7 @@ export interface ProviderAdapterShape<TError> {
     TError
   >;
   readonly getCodexMcpAuthLaunchConfig?: () => CodexMcpAuthLaunchConfig;
+  readonly providerAuth?: ProviderAuthAdapter<TError>;
 
   /**
    * Stop all sessions owned by this adapter.
