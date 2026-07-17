@@ -39,6 +39,7 @@ import type {
   ProviderAuthSessionInput,
   ProviderAuthStartInput,
   ProviderAuthStartResult,
+  ProviderAuthSubmitCodeInput,
 } from "./providerAuth.ts";
 import type {
   FollowUpSuggestionsInput,
@@ -544,6 +545,7 @@ export interface EnvironmentApi {
       start: (input: ProviderAuthStartInput) => Promise<ProviderAuthStartResult>;
       get: (input: ProviderAuthSessionInput) => Promise<ProviderAuthSession>;
       cancel: (input: ProviderAuthSessionInput) => Promise<void>;
+      submitCode: (input: ProviderAuthSubmitCodeInput) => Promise<ProviderAuthSession>;
       logout: (input: ProviderAuthLogoutInput) => Promise<void>;
     };
   };

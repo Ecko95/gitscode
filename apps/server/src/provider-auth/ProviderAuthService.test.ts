@@ -305,6 +305,151 @@ describe("ProviderAuthService", () => {
     ).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect(
+    "submits one owner-only manual code and verifies guided login with the status probe",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const completion = yield* Deferred.make<boolean>();
+          const submitted: string[] = [];
+          const statusProbeOrder: string[] = [];
+          const verifyAuthenticated = vi.fn(() => {
+            statusProbeOrder.push("verify");
+            return true;
+          });
+          const prepareStatusProbe = vi.fn(() => {
+            statusProbeOrder.push("prepare");
+          });
+          const refresh = vi.fn();
+          const { auth } = yield* makeHarness();
+          const result = yield* auth.startProvider({
+            provider: ProviderDriverKind.make("claudeAgent"),
+            providerInstanceId: ProviderInstanceId.make("claude-work"),
+            connectionId: "owner-a",
+            method: "manual-code",
+            adapter: {
+              credentialHome: "/home/test/.claude-work",
+              methods: ["manual-code"],
+              start: () =>
+                Effect.succeed({
+                  readiness: Effect.succeed({
+                    verificationUri: "https://claude.ai/oauth/authorize?state=private-state",
+                    sanitizedPrompt:
+                      "Open the Claude authorization page, then paste the code shown in your browser.",
+                    acceptsCode: true as const,
+                  }),
+                  completion: Deferred.await(completion),
+                  submitCode: (code: string) =>
+                    Effect.sync(() => submitted.push(code)).pipe(Effect.asVoid),
+                  requiresStatusProbe: true,
+                  prepareStatusProbe: Effect.sync(prepareStatusProbe),
+                  cancel: Effect.void,
+                  close: Effect.void,
+                }),
+              logout: () => Effect.void,
+            },
+            refresh: Effect.sync(refresh),
+            verifyAuthenticated: Effect.sync(verifyAuthenticated),
+          });
+
+          expect(result.verificationUri).toContain("claude.ai/oauth/authorize");
+          expect(result.session).toMatchObject({
+            state: "awaiting-user",
+            acceptsCode: true,
+            method: "manual-code",
+          });
+
+          const hidden = yield* auth
+            .submitCode({
+              sessionId: result.session.sessionId,
+              connectionId: "owner-b",
+              code: "private-code",
+            })
+            .pipe(Effect.result);
+          if (hidden._tag !== "Failure") throw new Error("expected owner isolation to fail");
+          expect(hidden.failure.code).toBe("not-found");
+
+          const waiting = yield* auth.submitCode({
+            sessionId: result.session.sessionId,
+            connectionId: "owner-a",
+            code: "private-code",
+          });
+          expect(waiting).toMatchObject({ state: "waiting-provider", acceptsCode: false });
+          expect(submitted).toEqual(["private-code"]);
+          expect(Object.values(waiting).join(" ")).not.toContain("private-code");
+
+          const repeated = yield* auth
+            .submitCode({
+              sessionId: result.session.sessionId,
+              connectionId: "owner-a",
+              code: "second-code",
+            })
+            .pipe(Effect.result);
+          if (repeated._tag !== "Failure") throw new Error("expected repeat submission to fail");
+          expect(repeated.failure.code).toBe("invalid-request");
+
+          yield* Deferred.succeed(completion, true);
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          expect(
+            yield* auth.get({
+              sessionId: result.session.sessionId,
+              connectionId: "owner-a",
+            }),
+          ).toMatchObject({ state: "succeeded", acceptsCode: false });
+          expect(verifyAuthenticated).toHaveBeenCalledTimes(1);
+          expect(prepareStatusProbe).toHaveBeenCalledTimes(1);
+          expect(statusProbeOrder).toEqual(["prepare", "verify"]);
+          expect(refresh).not.toHaveBeenCalled();
+        }),
+      ),
+  );
+
+  it.effect(
+    "fails a zero-exit guided login when the provider status probe is unauthenticated",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { auth } = yield* makeHarness();
+          const result = yield* auth.startProvider({
+            provider: ProviderDriverKind.make("claudeAgent"),
+            providerInstanceId: ProviderInstanceId.make("claude-work"),
+            connectionId: "owner-a",
+            method: "manual-code",
+            adapter: {
+              credentialHome: "/home/test/.claude-work",
+              methods: ["manual-code"],
+              start: () =>
+                Effect.succeed({
+                  readiness: Effect.succeed({
+                    verificationUri: "https://claude.ai/oauth/authorize",
+                    sanitizedPrompt: "Continue in your browser.",
+                    acceptsCode: true as const,
+                  }),
+                  completion: Effect.succeed(true),
+                  submitCode: () => Effect.void,
+                  requiresStatusProbe: true,
+                  cancel: Effect.void,
+                  close: Effect.void,
+                }),
+              logout: () => Effect.void,
+            },
+            refresh: Effect.void,
+            verifyAuthenticated: Effect.succeed(false),
+          });
+
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          expect(
+            yield* auth.get({
+              sessionId: result.session.sessionId,
+              connectionId: "owner-a",
+            }),
+          ).toMatchObject({ state: "failed" });
+        }),
+      ),
+  );
+
   it.effect("rejects unsupported methods and refreshes after logout", () =>
     Effect.scoped(
       Effect.gen(function* () {

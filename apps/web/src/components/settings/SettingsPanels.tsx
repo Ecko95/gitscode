@@ -1132,6 +1132,7 @@ export function ProviderSettingsPanel() {
       start: (input) => requireApi().provider.auth.start(input),
       get: (input) => requireApi().provider.auth.get(input),
       cancel: (input) => requireApi().provider.auth.cancel(input),
+      submitCode: (input) => requireApi().provider.auth.submitCode(input),
       logout: (input) => requireApi().provider.auth.logout(input),
       openExternal: (url) => ensureLocalApi().shell.openExternal(url),
     };

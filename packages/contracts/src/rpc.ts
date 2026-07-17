@@ -158,6 +158,7 @@ import {
   ProviderAuthSessionInput,
   ProviderAuthStartInput,
   ProviderAuthStartResult,
+  ProviderAuthSubmitCodeInput,
 } from "./providerAuth.ts";
 import {
   FollowUpSuggestionsInput,
@@ -347,6 +348,7 @@ export const WS_METHODS = {
   providerAuthStart: "provider.auth.start",
   providerAuthGet: "provider.auth.get",
   providerAuthCancel: "provider.auth.cancel",
+  providerAuthSubmitCode: "provider.auth.submitCode",
   providerAuthLogout: "provider.auth.logout",
 
   // Source control methods
@@ -448,6 +450,12 @@ export const WsProviderAuthGetRpc = Rpc.make(WS_METHODS.providerAuthGet, {
 export const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
   payload: ProviderAuthSessionInput,
   success: Schema.Void,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthSubmitCodeRpc = Rpc.make(WS_METHODS.providerAuthSubmitCode, {
+  payload: ProviderAuthSubmitCodeInput,
+  success: ProviderAuthSession,
   error: ProviderAuthError,
 });
 
@@ -1152,6 +1160,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderAuthStartRpc,
   WsProviderAuthGetRpc,
   WsProviderAuthCancelRpc,
+  WsProviderAuthSubmitCodeRpc,
   WsProviderAuthLogoutRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,

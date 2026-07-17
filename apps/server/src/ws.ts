@@ -1002,6 +1002,17 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 refresh: providerRegistry
                   .refreshInstance(input.providerInstanceId)
                   .pipe(Effect.asVoid),
+                verifyAuthenticated: providerRegistry
+                  .refreshInstance(input.providerInstanceId)
+                  .pipe(
+                    Effect.map((providers) =>
+                      providers.some(
+                        (provider) =>
+                          provider.instanceId === input.providerInstanceId &&
+                          provider.auth.status === "authenticated",
+                      ),
+                    ),
+                  ),
               });
             }),
             { "rpc.aggregate": "provider-auth" },
@@ -1027,6 +1038,20 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 providerAuthService.cancel({
                   sessionId: input.sessionId,
                   connectionId: currentSessionId,
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "provider-auth" },
+          ),
+        [WS_METHODS.providerAuthSubmitCode]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthSubmitCode,
+            requireProviderAuthOwner.pipe(
+              Effect.andThen(
+                providerAuthService.submitCode({
+                  sessionId: input.sessionId,
+                  connectionId: currentSessionId,
+                  code: input.code,
                 }),
               ),
             ),

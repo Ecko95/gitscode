@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
-import { ProviderAuthSession } from "./providerAuth.ts";
+import { ProviderAuthSession, ProviderAuthSubmitCodeInput } from "./providerAuth.ts";
 
 const decodeSession = Schema.decodeUnknownSync(ProviderAuthSession);
 
@@ -47,5 +47,15 @@ describe("ProviderAuthSession", () => {
     expect(JSON.stringify(decoded)).not.toContain("ABCD-EFGH");
     expect(JSON.stringify(decoded)).not.toContain("secret-code");
     expect(JSON.stringify(decoded)).not.toContain("provider output");
+  });
+
+  it("accepts a bounded manual-code submission without adding it to session state", () => {
+    const decode = Schema.decodeUnknownSync(ProviderAuthSubmitCodeInput);
+    expect(decode({ sessionId: validSession.sessionId, code: "browser-code" })).toEqual({
+      sessionId: validSession.sessionId,
+      code: "browser-code",
+    });
+    expect(() => decode({ sessionId: validSession.sessionId, code: "" })).toThrow();
+    expect(() => decode({ sessionId: validSession.sessionId, code: "x".repeat(4_097) })).toThrow();
   });
 });

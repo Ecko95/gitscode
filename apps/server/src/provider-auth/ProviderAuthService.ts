@@ -57,6 +57,7 @@ export interface StartManagedProviderAuthInput {
   readonly method: ProviderAuthMethod;
   readonly adapter: ProviderAuthAdapter<ProviderAdapterError>;
   readonly refresh: Effect.Effect<void>;
+  readonly verifyAuthenticated?: Effect.Effect<boolean>;
 }
 
 export interface LogoutManagedProviderAuthInput {
@@ -69,6 +70,10 @@ export interface LogoutManagedProviderAuthInput {
 export interface OwnedProviderAuthSessionInput {
   readonly sessionId: ProviderAuthSessionId;
   readonly connectionId: string;
+}
+
+export interface OwnedProviderAuthCodeInput extends OwnedProviderAuthSessionInput {
+  readonly code: string;
 }
 
 export interface UpdateProviderAuthSessionInput {
@@ -98,6 +103,9 @@ export interface ProviderAuthServiceShape {
   ) => Effect.Effect<ProviderAuthSession, ProviderAuthError>;
   readonly finish: (input: FinishProviderAuthSessionInput) => Effect.Effect<void>;
   readonly cancel: (input: OwnedProviderAuthSessionInput) => Effect.Effect<void, ProviderAuthError>;
+  readonly submitCode: (
+    input: OwnedProviderAuthCodeInput,
+  ) => Effect.Effect<ProviderAuthSession, ProviderAuthError>;
   readonly logoutProvider: (
     input: LogoutManagedProviderAuthInput,
   ) => Effect.Effect<void, ProviderAuthError>;
@@ -121,6 +129,7 @@ interface ActiveSession {
   readonly session: ProviderAuthSession;
   readonly cancel: Effect.Effect<void, ProviderAuthError>;
   readonly cleanup: Effect.Effect<void, ProviderAuthError>;
+  readonly submitCode?: (code: string) => Effect.Effect<void, ProviderAuthError>;
 }
 
 interface TerminalSession {
@@ -344,24 +353,32 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
   const attachAttempt = (
     sessionId: ProviderAuthSessionId,
     attempt: ProviderAuthAttempt<ProviderAdapterError>,
-  ) =>
-    lock.withPermits(1)(
+  ) => {
+    const submitCode = attempt.submitCode;
+    return lock.withPermits(1)(
       Effect.suspend(() => {
         const active = activeSessions.get(sessionId);
         if (!active) return Effect.fail(notFound());
         const session: ProviderAuthSession = {
           ...active.session,
-          state: "awaiting-user",
+          state: attempt.readiness ? "starting" : "awaiting-user",
         };
         activeSessions.set(sessionId, {
           ...active,
           session,
           cancel: attempt.cancel.pipe(Effect.mapError(mapProviderError)),
           cleanup: attempt.close,
+          ...(submitCode
+            ? {
+                submitCode: (code: string) =>
+                  submitCode(code).pipe(Effect.mapError(mapProviderError)),
+              }
+            : {}),
         });
         return Effect.succeed(session);
       }),
     );
+  };
 
   const startProvider: ProviderAuthServiceShape["startProvider"] = (input) =>
     Effect.gen(function* () {
@@ -388,20 +405,94 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
           attempt.cancel.pipe(Effect.ignoreCause({ log: false }), Effect.andThen(attempt.close)),
         ),
       );
-      yield* attempt.completion.pipe(
-        Effect.match({
-          onFailure: () => "failed" as const,
-          onSuccess: (success) => (success ? ("succeeded" as const) : ("failed" as const)),
-        }),
-        Effect.flatMap((state) => finish({ sessionId: session.sessionId, state })),
-        Effect.andThen(input.refresh),
-        Effect.forkIn(serviceScope),
-      );
+      const readiness = attempt.readiness
+        ? yield* attempt.readiness.pipe(
+            Effect.mapError(mapProviderError),
+            Effect.onError(() =>
+              attempt.cancel.pipe(
+                Effect.ignoreCause({ log: false }),
+                Effect.andThen(finish({ sessionId: session.sessionId, state: "failed" })),
+              ),
+            ),
+          )
+        : undefined;
+      const readySession = readiness
+        ? yield* update({
+            sessionId: session.sessionId,
+            state: "awaiting-user",
+            ...(readiness.sanitizedPrompt ? { sanitizedPrompt: readiness.sanitizedPrompt } : {}),
+            acceptsCode: readiness.acceptsCode ?? false,
+          })
+        : session;
+      const verificationUri = readiness?.verificationUri ?? attempt.verificationUri;
+      const userCode = readiness?.userCode ?? attempt.userCode;
+      yield* Effect.gen(function* () {
+        const processSucceeded = yield* attempt.completion.pipe(Effect.orElseSucceed(() => false));
+        const usedStatusProbe = processSucceeded && attempt.requiresStatusProbe === true;
+        const statusProbePrepared = usedStatusProbe
+          ? yield* (attempt.prepareStatusProbe ?? Effect.void).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            )
+          : false;
+        const succeeded = usedStatusProbe
+          ? statusProbePrepared && (yield* input.verifyAuthenticated ?? Effect.succeed(false))
+          : processSucceeded;
+        yield* finish({
+          sessionId: readySession.sessionId,
+          state: succeeded ? "succeeded" : "failed",
+        });
+        if (!usedStatusProbe) yield* input.refresh;
+      }).pipe(Effect.forkIn(serviceScope));
       return {
-        session,
-        ...(attempt.verificationUri ? { verificationUri: attempt.verificationUri } : {}),
-        ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
+        session: readySession,
+        ...(verificationUri ? { verificationUri } : {}),
+        ...(userCode ? { userCode } : {}),
       };
+    });
+
+  const submitCode: ProviderAuthServiceShape["submitCode"] = (input) =>
+    Effect.gen(function* () {
+      const code = input.code.trim();
+      if (!code || code.length > 4_096) {
+        return yield* authError("invalid-request", "Invalid authentication request.");
+      }
+      const reserved = yield* lock.withPermits(1)(
+        Effect.suspend(() => {
+          const active = activeSessions.get(input.sessionId);
+          if (!active || active.ownerConnectionId !== input.connectionId) {
+            return Effect.fail(notFound());
+          }
+          if (!active.session.acceptsCode || !active.submitCode) {
+            return Effect.fail(
+              authError("invalid-request", "This authentication session is not accepting a code."),
+            );
+          }
+          const session: ProviderAuthSession = {
+            ...active.session,
+            state: "waiting-provider",
+            acceptsCode: false,
+          };
+          activeSessions.set(input.sessionId, { ...active, session });
+          return Effect.succeed({ session, submitCode: active.submitCode });
+        }),
+      );
+      yield* reserved
+        .submitCode(code)
+        .pipe(
+          Effect.onError(() =>
+            moveToTerminal(input.sessionId, "failed").pipe(
+              Effect.flatMap((active) =>
+                active
+                  ? cancelAndCleanup(active).pipe(
+                      Effect.andThen(forgetTerminalAfterRetention(input.sessionId)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          ),
+        );
+      return reserved.session;
     });
 
   const logoutProvider: ProviderAuthServiceShape["logoutProvider"] = (input) => {
@@ -472,6 +563,7 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
     update,
     finish,
     cancel,
+    submitCode,
     logoutProvider,
     stopAll,
   } satisfies ProviderAuthServiceShape;

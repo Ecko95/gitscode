@@ -355,6 +355,7 @@ const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.
   Layer.provideMerge(ProviderEventLoggersLive),
   Layer.provideMerge(Layer.merge(OpenCodeRuntimeLive, GitShimManagerLive)),
   Layer.provideMerge(ServerSettingsLive),
+  Layer.provide(PtyAdapterLive),
 );
 
 const GitsMcpInventoryResolverLayerLive = GitsMcpInventoryResolverLive.pipe(

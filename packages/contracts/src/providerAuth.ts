@@ -62,6 +62,12 @@ export const ProviderAuthSessionInput = Schema.Struct({
 });
 export type ProviderAuthSessionInput = typeof ProviderAuthSessionInput.Type;
 
+export const ProviderAuthSubmitCodeInput = Schema.Struct({
+  sessionId: ProviderAuthSessionId,
+  code: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+});
+export type ProviderAuthSubmitCodeInput = typeof ProviderAuthSubmitCodeInput.Type;
+
 export const ProviderAuthLogoutInput = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
 });

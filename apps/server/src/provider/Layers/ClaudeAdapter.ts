@@ -71,7 +71,11 @@ import {
   VISUAL_PLAN_MCP_PATH,
   type VisualPlanMcpServiceShape,
 } from "../../gits/mcp/VisualPlanMcpRegistry.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import {
+  logoutClaudeAccount,
+  startClaudeGuidedLogin,
+} from "../../provider-auth/ClaudeGuidedLogin.ts";
+import { makeClaudeEnvironment, resolveClaudeHomePath } from "../Drivers/ClaudeHome.ts";
 import {
   BROWSER_PREVIEW_AGENT_GUIDANCE,
   browser_preview_mcp_args,
@@ -101,6 +105,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 import { type GitShimManagerShape } from "../GitShimManager.ts";
 import { resolveSessionEnvWithDirenv } from "../direnvSessionEnv.ts";
 import { sessionPortEnv } from "../sessionPort.ts";
+import type { PtyAdapterShape } from "../../terminal/Services/PTY.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -217,6 +222,8 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly ptyAdapter?: PtyAdapterShape;
+  readonly prepareAuthStatusProbe?: Effect.Effect<void>;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -1060,6 +1067,51 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
+  const credentialHome = yield* resolveClaudeHomePath(claudeSettings).pipe(
+    Effect.provideService(Path.Path, path),
+  );
+  const ptyAdapter = options?.ptyAdapter;
+  const prepareAuthStatusProbe = options?.prepareAuthStatusProbe;
+  const providerAuth: ClaudeAdapterShape["providerAuth"] = ptyAdapter
+    ? {
+        credentialHome,
+        methods: ["manual-code"],
+        start: (method) => {
+          if (method !== "manual-code") {
+            return Effect.fail(
+              new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "providerAuth.start",
+                issue: `Unsupported Claude authentication method '${method}'.`,
+              }),
+            );
+          }
+          return startClaudeGuidedLogin({
+            pty: ptyAdapter,
+            binaryPath: claudeSettings.binaryPath,
+            credentialHome,
+            environment: claudeEnvironment,
+          }).pipe(
+            Effect.map((handle) => ({
+              readiness: handle.readiness,
+              completion: handle.completion,
+              submitCode: handle.submitCode,
+              requiresStatusProbe: true,
+              ...(prepareAuthStatusProbe ? { prepareStatusProbe: prepareAuthStatusProbe } : {}),
+              cancel: handle.cancel,
+              close: handle.close,
+            })),
+          );
+        },
+        logout: () =>
+          logoutClaudeAccount({
+            pty: ptyAdapter,
+            binaryPath: claudeSettings.binaryPath,
+            credentialHome,
+            environment: claudeEnvironment,
+          }).pipe(Effect.andThen(prepareAuthStatusProbe ?? Effect.void)),
+      }
+    : undefined;
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -3493,6 +3545,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     stopSession,
     listSessions,
     hasSession,
+    ...(providerAuth ? { providerAuth } : {}),
     stopAll,
     get streamEvents() {
       return Stream.fromQueue(runtimeEventQueue);

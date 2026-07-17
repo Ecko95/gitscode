@@ -89,6 +89,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         start: vi.fn(),
         get: vi.fn(),
         cancel: vi.fn(),
+        submitCode: vi.fn(),
         logout: vi.fn(),
       },
     },

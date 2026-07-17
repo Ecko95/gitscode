@@ -90,6 +90,7 @@ describe("ProviderInstanceCard Codex authentication", () => {
       start,
       get: vi.fn().mockResolvedValue(session),
       cancel,
+      submitCode: vi.fn(),
       logout: vi.fn().mockResolvedValue(undefined),
       openExternal,
     };
@@ -117,6 +118,7 @@ describe("ProviderInstanceCard Codex authentication", () => {
       start: vi.fn().mockResolvedValue({ session }),
       get: vi.fn().mockResolvedValue(session),
       cancel: vi.fn().mockResolvedValue(undefined),
+      submitCode: vi.fn(),
       logout,
       openExternal: vi.fn().mockResolvedValue(undefined),
     };
@@ -125,5 +127,71 @@ describe("ProviderInstanceCard Codex authentication", () => {
     await expect.element(page.getByRole("button", { name: "Change login" })).toBeInTheDocument();
     await page.getByRole("button", { name: "Sign out" }).click();
     expect(logout).toHaveBeenCalledWith({ providerInstanceId: instanceId });
+  });
+});
+
+describe("ProviderInstanceCard Claude authentication", () => {
+  it("submits one browser code and removes the form immediately", async () => {
+    const claudeInstanceId = ProviderInstanceId.make("claude-work");
+    const claudeInstance: ProviderInstanceConfig = {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      config: { homePath: "/srv/provider-homes/claude-work" },
+    };
+    const claudeSession = {
+      ...session,
+      providerInstanceId: claudeInstanceId,
+      method: "manual-code" as const,
+      acceptsCode: true,
+    };
+    const submitCode = vi.fn<ProviderAuthActions["submitCode"]>().mockResolvedValue({
+      ...claudeSession,
+      state: "waiting-provider",
+      acceptsCode: false,
+    });
+    const authActions: ProviderAuthActions = {
+      start: vi.fn().mockResolvedValue({
+        session: claudeSession,
+        verificationUri: "https://claude.ai/oauth/authorize",
+      }),
+      get: vi.fn().mockResolvedValue(claudeSession),
+      cancel: vi.fn().mockResolvedValue(undefined),
+      submitCode,
+      logout: vi.fn().mockResolvedValue(undefined),
+      openExternal: vi.fn().mockResolvedValue(undefined),
+    };
+    mounted = await render(
+      <ProviderInstanceCard
+        instanceId={claudeInstanceId}
+        instance={claudeInstance}
+        driverOption={getDriverOption(claudeInstance.driver)}
+        liveProvider={{
+          ...makeProvider(false),
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+        }}
+        isExpanded={false}
+        onExpandedChange={() => undefined}
+        onUpdate={() => undefined}
+        hiddenModels={[]}
+        favoriteModels={[]}
+        modelOrder={[]}
+        onHiddenModelsChange={() => undefined}
+        onFavoriteModelsChange={() => undefined}
+        onModelOrderChange={() => undefined}
+        authActions={authActions}
+      />,
+    );
+
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect.element(page.getByLabelText("Authorization code")).toBeInTheDocument();
+    await page.getByLabelText("Authorization code").fill("private-browser-code");
+    await page.getByRole("button", { name: "Submit code" }).click();
+
+    expect(submitCode).toHaveBeenCalledWith({
+      sessionId: claudeSession.sessionId,
+      code: "private-browser-code",
+    });
+    await expect.element(page.getByLabelText("Authorization code")).not.toBeInTheDocument();
   });
 });

@@ -65,6 +65,18 @@ export interface CodexMcpAuthLaunchConfig {
 export interface ProviderAuthAttempt<TError> {
   readonly verificationUri?: string;
   readonly userCode?: string;
+  readonly readiness?: Effect.Effect<
+    {
+      readonly verificationUri?: string;
+      readonly userCode?: string;
+      readonly sanitizedPrompt?: string;
+      readonly acceptsCode?: boolean;
+    },
+    TError
+  >;
+  readonly submitCode?: (code: string) => Effect.Effect<void, TError>;
+  readonly requiresStatusProbe?: boolean;
+  readonly prepareStatusProbe?: Effect.Effect<void, TError>;
   readonly completion: Effect.Effect<boolean, TError>;
   readonly cancel: Effect.Effect<void, TError>;
   readonly close: Effect.Effect<void>;

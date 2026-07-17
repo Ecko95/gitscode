@@ -3520,6 +3520,70 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes a Claude manual code only to its private auth session", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("claude-work");
+      const submittedCodes: string[] = [];
+      const instance = {
+        instanceId,
+        driverKind: ProviderDriverKind.make("claudeAgent"),
+        adapter: {
+          providerAuth: {
+            credentialHome: "/tmp/claude-work",
+            methods: ["manual-code"],
+            start: () =>
+              Effect.succeed({
+                readiness: Effect.succeed({
+                  verificationUri: "https://claude.ai/oauth/authorize?state=private-state",
+                  sanitizedPrompt: "Continue in your browser.",
+                  acceptsCode: true,
+                }),
+                submitCode: (code: string) =>
+                  Effect.sync(() => {
+                    submittedCodes.push(code);
+                  }),
+                completion: Effect.never,
+                requiresStatusProbe: true,
+                cancel: Effect.void,
+                close: Effect.void,
+              }),
+            logout: () => Effect.void,
+          },
+        },
+      } as unknown as ProviderInstance;
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: {
+            getInstance: () => Effect.succeed(instance),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const started = yield* client[WS_METHODS.providerAuthStart]({
+              providerInstanceId: instanceId,
+              method: "manual-code",
+            });
+            assert.equal(started.session.acceptsCode, true);
+            assert.include(started.verificationUri, "claude.ai/oauth/authorize");
+
+            const waiting = yield* client[WS_METHODS.providerAuthSubmitCode]({
+              sessionId: started.session.sessionId,
+              code: "private-browser-code",
+            });
+            assert.equal(waiting.acceptsCode, false);
+            assert.equal(waiting.state, "waiting-provider");
+            assert.notInclude(Object.values(waiting).join(" "), "private-browser-code");
+          }),
+        ),
+      );
+      assert.deepEqual(submittedCodes, ["private-browser-code"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc subscribeServerConfig streams snapshot then update", () =>
     Effect.gen(function* () {
       const providers = [

@@ -262,6 +262,7 @@ export interface WsRpcClient {
       readonly start: RpcUnaryMethod<typeof WS_METHODS.providerAuthStart>;
       readonly get: RpcUnaryMethod<typeof WS_METHODS.providerAuthGet>;
       readonly cancel: RpcUnaryMethod<typeof WS_METHODS.providerAuthCancel>;
+      readonly submitCode: RpcUnaryMethod<typeof WS_METHODS.providerAuthSubmitCode>;
       readonly logout: RpcUnaryMethod<typeof WS_METHODS.providerAuthLogout>;
     };
   };
@@ -593,6 +594,8 @@ export function createWsRpcClient(
         get: (input) => transport.request((client) => client[WS_METHODS.providerAuthGet](input)),
         cancel: (input) =>
           transport.request((client) => client[WS_METHODS.providerAuthCancel](input)),
+        submitCode: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthSubmitCode](input)),
         logout: (input) =>
           transport.request((client) => client[WS_METHODS.providerAuthLogout](input)),
       },
