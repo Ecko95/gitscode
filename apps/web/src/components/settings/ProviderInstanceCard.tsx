@@ -994,6 +994,9 @@ export function ProviderInstanceCard({
         </div>
         {showManagedAuth ? (
           <div className="mt-3 grid gap-2 rounded-md border border-border/70 bg-muted/20 p-3 text-xs">
+            <p className="text-muted-foreground">
+              Sign-in sessions are private to this connection and expire automatically.
+            </p>
             {driverKind === "claudeAgent" ? (
               <p className="text-muted-foreground">
                 Claude subscription sign-in uses its remote browser-code flow. API-key billing is

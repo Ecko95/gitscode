@@ -101,6 +101,9 @@ describe("ProviderInstanceCard Codex authentication", () => {
     await expect
       .element(page.getByText(/ChatGPT subscription sign-in uses a device code/))
       .toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      "Sign-in sessions are private to this connection and expire automatically.",
+    );
     await expect.element(page.getByText(/OPENAI_API_KEY/)).toBeInTheDocument();
 
     await page.getByRole("button", { name: "Sign in" }).click();

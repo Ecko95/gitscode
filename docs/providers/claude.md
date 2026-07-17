@@ -169,9 +169,12 @@ OpenRouter's setup can change over time. Use its upstream Claude Code guide for 
 
 ## I Want To Use Claude Code Router
 
-For a normal Claude subscription login on a remote host, follow `claude auth login`. If its localhost
-callback cannot be reached, paste the manual authorization code shown by Claude's browser flow back
-into the remote prompt.
+For a normal Claude subscription login on a remote host, use the **Sign in** action in GITS Settings.
+GITS launches `claude auth login` in that provider's configured home, shows Claude's HTTPS
+verification page, and accepts the manual authorization code when the localhost callback cannot
+reach the host. The guided sign-in session is private to the initiating connection, expires
+automatically, and does not expose the PTY transcript. You can still run `claude auth login` in a
+terminal as a fallback.
 
 Claude Code Router is useful when you want a local routing layer with more control than a direct
 OpenRouter setup.

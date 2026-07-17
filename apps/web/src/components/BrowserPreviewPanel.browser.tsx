@@ -134,6 +134,7 @@ describe("BrowserPreviewPanel ports inventory", () => {
   it("shows configured, terminal, detected, and manual rows", async () => {
     const screen = await renderPanel();
     try {
+      await expect.element(page.getByText("In GITS (VPS browser)")).toBeInTheDocument();
       await expect.element(page.getByText("Configured web")).toBeInTheDocument();
       await expect.element(page.getByText("4173")).toBeInTheDocument();
       await expect.element(page.getByText("node")).toBeInTheDocument();
@@ -180,6 +181,9 @@ describe("BrowserPreviewPanel ports inventory", () => {
     };
     const screen = await renderPanel();
     try {
+      await expect
+        .element(page.getByText("Local via SSH (this computer only)"))
+        .toBeInTheDocument();
       await page.getByRole("button", { name: "Open 5173 locally" }).click();
       expect(mocks.openDesktopSshUrl).toHaveBeenCalledWith({
         target: mocks.remoteRecord.desktopSsh,

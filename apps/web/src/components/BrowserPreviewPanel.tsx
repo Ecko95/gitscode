@@ -208,6 +208,19 @@ export function BrowserPreviewPanel({
         </Button>
       </header>
 
+      <div
+        className="flex shrink-0 flex-wrap gap-x-1.5 border-b border-border px-3 py-1 text-[10px] text-muted-foreground"
+        aria-label="Available port access"
+      >
+        <span>In GITS (VPS browser)</span>
+        {desktopSsh ? (
+          <>
+            <span aria-hidden>·</span>
+            <span>Local via SSH (this computer only)</span>
+          </>
+        ) : null}
+      </div>
+
       <form
         className="flex shrink-0 gap-1 border-b border-border p-2"
         onSubmit={(event) => {
