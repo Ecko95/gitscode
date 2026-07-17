@@ -8,8 +8,9 @@ import * as Effect from "effect/Effect";
 
 import { makeGitsNotes } from "./GitsNotes.ts";
 
-const seedId = "VPS localhost callback redirect for windows powershell.md";
-const seedContent = "ssh -N -o ExitOnForwardFailure=yes -L 1455:127.0.0.1:1455 user@your-vps";
+const seedId = "Remote provider authentication.md";
+const seedContent =
+  "Use Codex device-code login or Claude's browser-displayed manual code from remote hosts. Use an exact SSH local forward only when a provider requires a loopback callback.";
 
 const withVault = async (
   test: (notes: ReturnType<typeof makeGitsNotes>, dir: string) => Promise<void>,

@@ -93,6 +93,9 @@ Use display names and accent colors to make accounts easy to tell apart in the m
 
 ## I Need A Different API Key Or Endpoint
 
+API-key authentication is billed separately from a ChatGPT subscription. For subscription access on
+a remote host, use Codex's device-code login instead of forwarding a fixed localhost callback port.
+
 Use the provider's Environment variables section in Settings.
 
 This is useful when a Codex-compatible setup needs account-specific variables. Add the variables to

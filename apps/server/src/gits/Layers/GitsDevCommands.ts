@@ -137,7 +137,6 @@ function inferDiscoveryMetadata(input: {
   const resourceLabel =
     normalizedKey === "dev" ? "Workspace dev" : `${titleCaseSegment(packageStem)} dev`;
   const port = inferPortHint(`${normalizedKey} ${input.packageName ?? ""}`);
-  const publishOnTailnet = port !== null;
   return {
     id: sanitizeId(normalizedKey === "dev" ? "workspace-dev" : `${packageStem}-dev`),
     name: resourceLabel,
@@ -149,8 +148,8 @@ function inferDiscoveryMetadata(input: {
           : `Inferred from ${input.key} package script.`,
     port,
     host: port === null ? null : "127.0.0.1",
-    publishOnTailnet,
-    servePort: port,
+    publishOnTailnet: false,
+    servePort: null,
   };
 }
 

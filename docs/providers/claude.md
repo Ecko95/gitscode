@@ -169,6 +169,10 @@ OpenRouter's setup can change over time. Use its upstream Claude Code guide for 
 
 ## I Want To Use Claude Code Router
 
+For a normal Claude subscription login on a remote host, follow `claude auth login`. If its localhost
+callback cannot be reached, paste the manual authorization code shown by Claude's browser flow back
+into the remote prompt.
+
 Claude Code Router is useful when you want a local routing layer with more control than a direct
 OpenRouter setup.
 
