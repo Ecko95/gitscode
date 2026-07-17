@@ -154,6 +154,7 @@ import {
 import { ProviderAuthServiceLive } from "./provider-auth/ProviderAuthService.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
+import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -618,6 +619,7 @@ const testEnvironmentDescriptor = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
+    ports: true,
   },
 };
 const makeDefaultOrchestrationReadModel = () => {
@@ -3493,6 +3495,61 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(cancelCount, 1);
       assert.equal(logoutCount, 1);
       assert.equal(refreshCount, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("redacts provider authentication failures at the websocket boundary", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("github-personal");
+      const token = "ghp_0123456789ABCDEFGHIJ";
+      const oauthCode = "oauth-code-private-0123456789";
+      const instance = {
+        instanceId,
+        driverKind: ProviderDriverKind.make("codex"),
+        adapter: {
+          providerAuth: {
+            credentialHome: "/tmp/github-personal",
+            methods: ["device-code"],
+            start: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "github",
+                  method: "auth/login",
+                  detail: `token=${token} code=${oauthCode}`,
+                }),
+              ),
+            logout: () => Effect.void,
+          },
+        },
+      } as unknown as ProviderInstance;
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: {
+            getInstance: () => Effect.succeed(instance),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.providerAuthStart]({
+            providerInstanceId: instanceId,
+            method: "device-code",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      if (result.failure._tag !== "ProviderAuthError") {
+        throw new Error(`Expected ProviderAuthError, received ${result.failure._tag}`);
+      }
+      assert.equal(result.failure.code, "provider-failed");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off -- exercise serialized RPC errors.
+      const serializedFailure = JSON.stringify(result.failure);
+      assert.notInclude(serializedFailure, token);
+      assert.notInclude(serializedFailure, oauthCode);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

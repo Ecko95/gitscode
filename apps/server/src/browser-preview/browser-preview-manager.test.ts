@@ -63,11 +63,15 @@ describe("BrowserPreviewManager", () => {
         return {};
       },
     });
-    await manager.open(ThreadId.make("thread-one"));
-    await manager.open(ThreadId.make("thread-two"));
+    const first = await manager.open(ThreadId.make("thread-one"));
+    const second = await manager.open(ThreadId.make("thread-two"));
+    const tickets = [first, second].map(
+      (opened) => new URL(opened.previewPath!, "http://gits.test").searchParams.get("ticket")!,
+    );
 
     await manager.stopAll();
 
     expect(stopped).toHaveLength(2);
+    expect(tickets.map((ticket) => manager.resolve_ticket(ticket))).toEqual([null, null]);
   });
 });

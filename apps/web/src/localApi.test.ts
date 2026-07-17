@@ -56,6 +56,11 @@ const rpcClientMock = {
     status: vi.fn(),
     control: vi.fn(),
   },
+  gits: {
+    ports: {
+      list: vi.fn(),
+    },
+  },
   terminal: {
     open: vi.fn(),
     attach: vi.fn((_input: unknown, listener: (event: TerminalAttachStreamEvent) => void) =>
@@ -298,6 +303,7 @@ const baseEnvironment = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
+    ports: true,
   },
 };
 
@@ -358,6 +364,16 @@ afterEach(() => {
 });
 
 describe("wsApi", () => {
+  it("omits the optional ports capability for older RPC clients", async () => {
+    rpcClientMock.vcs.refreshStatus.mockResolvedValue(baseGitStatus);
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never, false);
+
+    expect(api.ports).toBeUndefined();
+    await expect(api.vcs.refreshStatus({ cwd: "/repo" })).resolves.toEqual(baseGitStatus);
+  });
+
   it("forwards server config fetches directly to the RPC client", async () => {
     rpcClientMock.server.getConfig.mockResolvedValue(baseServerConfig);
     const { createLocalApi } = await import("./localApi");

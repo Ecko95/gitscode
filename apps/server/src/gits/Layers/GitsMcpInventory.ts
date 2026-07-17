@@ -442,12 +442,16 @@ async function buildSnapshot(options: {
   readonly now: () => string;
   readonly maxToolsPerServer: number;
   readonly runtimeServers: ReadonlyArray<GitsCodexMcpRuntimeServer>;
+  readonly runtimeWarning?: string;
 }): Promise<GitsMcpInventorySnapshot> {
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? os.homedir();
   const targets = options.configTargets ?? defaultConfigTargets(env, homeDir);
   const scanResults = await Promise.all(targets.map((target) => scanTarget(target)));
-  const warnings = scanResults.flatMap((result) => result.warnings);
+  const warnings = [
+    ...scanResults.flatMap((result) => result.warnings),
+    ...(options.runtimeWarning ? [options.runtimeWarning] : []),
+  ];
   const seen = new Set<string>();
   const servers: GitsMcpServerItem[] = [];
   for (const raw of scanResults.flatMap((result) => result.servers)) {
@@ -484,7 +488,18 @@ export const makeGitsMcpInventoryResolver = (options?: GitsMcpInventoryResolverO
     getSnapshot: () =>
       Effect.gen(function* () {
         const scannedAt = options?.now ? options.now() : DateTime.formatIso(yield* DateTime.now);
-        const runtimeServers = options?.getRuntimeServers ? yield* options.getRuntimeServers() : [];
+        const [runtimeServers, runtimeWarning] = options?.getRuntimeServers
+          ? yield* options.getRuntimeServers().pipe(
+              Effect.matchCauseEffect({
+                onFailure: () =>
+                  Effect.succeed([
+                    [],
+                    "Codex MCP runtime status is unavailable; showing config-file inventory.",
+                  ] as const),
+                onSuccess: (servers) => Effect.succeed([servers, undefined] as const),
+              }),
+            )
+          : ([[], undefined] as const);
         return yield* Effect.tryPromise({
           try: () =>
             buildSnapshot({
@@ -494,6 +509,7 @@ export const makeGitsMcpInventoryResolver = (options?: GitsMcpInventoryResolverO
               now: () => scannedAt,
               maxToolsPerServer: options?.maxToolsPerServer ?? 200,
               runtimeServers,
+              ...(runtimeWarning ? { runtimeWarning } : {}),
             }),
           catch: (cause) =>
             new GitsMcpInventoryResolverError({

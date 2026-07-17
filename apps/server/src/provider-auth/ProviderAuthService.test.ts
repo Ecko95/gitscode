@@ -7,6 +7,8 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeProviderAuthService } from "./ProviderAuthService.ts";
@@ -36,6 +38,25 @@ const makeHarness = (options?: {
   });
 
 describe("ProviderAuthService", () => {
+  it.effect("cancels and cleans active provider sessions when the server scope shuts down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make("sequential");
+      const cancel = vi.fn();
+      const cleanup = vi.fn();
+      const { auth } = yield* makeHarness().pipe(Effect.provideService(Scope.Scope, scope));
+      yield* auth.start({
+        ...startInput,
+        cancel: Effect.sync(cancel),
+        cleanup: Effect.sync(cleanup),
+      });
+
+      yield* Scope.close(scope, Exit.void);
+
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("enforces single-flight per provider and resolved credential home", () =>
     Effect.scoped(
       Effect.gen(function* () {

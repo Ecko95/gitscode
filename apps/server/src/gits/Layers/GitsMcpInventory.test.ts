@@ -143,4 +143,41 @@ describe("GitsMcpInventoryResolverLive", () => {
       expect(Object.hasOwn(supabase ?? {}, "accessToken")).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("keeps config inventory when runtime discovery is unavailable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-gits-mcp-fallback-",
+      });
+      const codexConfig = path.join(tempDir, "config.toml");
+
+      yield* fileSystem.writeFileString(
+        codexConfig,
+        ["[mcp_servers.context7]", 'command = "npx"'].join("\n"),
+      );
+
+      const resolver = makeGitsMcpInventoryResolver({
+        now: () => "2026-06-02T10:00:00.000Z",
+        configTargets: [{ provider: "codex", filePath: codexConfig, format: "toml" }],
+        getRuntimeServers: () =>
+          Effect.sync(() => {
+            throw new Error("Codex app-server is unavailable");
+          }),
+      });
+      const snapshot = yield* resolver.getSnapshot();
+
+      expect(snapshot.servers).toHaveLength(1);
+      expect(snapshot.servers[0]).toMatchObject({
+        name: "context7",
+        source: "config-file",
+        status: "unknown",
+        authStatus: "unknown",
+      });
+      expect(snapshot.warnings).toContain(
+        "Codex MCP runtime status is unavailable; showing config-file inventory.",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

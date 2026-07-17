@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -154,6 +156,30 @@ describe("CodexMcpAuth", () => {
         expect(close).toHaveBeenCalledTimes(1);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("closes helpers and revokes callback leases when the server scope shuts down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make("sequential");
+      const harness = yield* makeHarness().pipe(Effect.provideService(Scope.Scope, scope));
+      yield* harness.auth.start({
+        providerInstanceId: "codex",
+        serverName: "supabase",
+        connectionId: "owner-a",
+      });
+
+      yield* Scope.close(scope, Exit.void);
+
+      expect(harness.close).toHaveBeenCalledTimes(1);
+      const callback = yield* harness.auth
+        .handleCallback({
+          callbackId: "callback_0123456789abcdef",
+          state,
+          rawQuery: `code=private-code&state=${state}`,
+        })
+        .pipe(Effect.result);
+      expect(callback._tag).toBe("Failure");
+    }),
   );
 
   it.effect("rejects incompatible HTTPS endpoints and unproven listener isolation", () =>
