@@ -7,10 +7,24 @@ export const ProviderAuthMethod = Schema.Literals([
   "device-code",
   "manual-code",
   "api-key",
+  "oauth",
   "browser-loopback",
   "guided-terminal",
 ]);
 export type ProviderAuthMethod = typeof ProviderAuthMethod.Type;
+
+export const ProviderAuthCapabilityId = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).pipe(
+  Schema.brand("ProviderAuthCapabilityId"),
+);
+export type ProviderAuthCapabilityId = typeof ProviderAuthCapabilityId.Type;
+
+/** A non-secret login choice reported by the provider runtime. */
+export const ProviderAuthCapability = Schema.Struct({
+  id: ProviderAuthCapabilityId,
+  method: ProviderAuthMethod,
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+});
+export type ProviderAuthCapability = typeof ProviderAuthCapability.Type;
 
 export const ProviderAuthSessionState = Schema.Literals([
   "starting",
@@ -54,6 +68,7 @@ export type ProviderAuthStartResult = typeof ProviderAuthStartResult.Type;
 export const ProviderAuthStartInput = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   method: ProviderAuthMethod,
+  capabilityId: Schema.optionalKey(ProviderAuthCapabilityId),
 });
 export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
 

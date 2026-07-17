@@ -1,6 +1,7 @@
 import "../../index.css";
 
 import {
+  ProviderAuthCapabilityId,
   ProviderAuthSessionId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -193,5 +194,76 @@ describe("ProviderInstanceCard Claude authentication", () => {
       code: "private-browser-code",
     });
     await expect.element(page.getByLabelText("Authorization code")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProviderInstanceCard OpenCode authentication", () => {
+  it("renders only methods reported by the connected OpenCode server", async () => {
+    const openCodeInstanceId = ProviderInstanceId.make("opencode-remote");
+    const openCodeInstance: ProviderInstanceConfig = {
+      driver: ProviderDriverKind.make("opencode"),
+      enabled: true,
+      config: { serverUrl: "http://127.0.0.1:4096" },
+    };
+    const start = vi.fn<ProviderAuthActions["start"]>().mockResolvedValue({ session });
+    const authActions: ProviderAuthActions = {
+      start,
+      get: vi.fn().mockResolvedValue(session),
+      cancel: vi.fn().mockResolvedValue(undefined),
+      submitCode: vi.fn(),
+      logout: vi.fn().mockResolvedValue(undefined),
+      openExternal: vi.fn().mockResolvedValue(undefined),
+    };
+
+    mounted = await render(
+      <ProviderInstanceCard
+        instanceId={openCodeInstanceId}
+        instance={openCodeInstance}
+        driverOption={getDriverOption(openCodeInstance.driver)}
+        liveProvider={{
+          ...makeProvider(false),
+          instanceId: openCodeInstanceId,
+          driver: ProviderDriverKind.make("opencode"),
+          auth: {
+            status: "unauthenticated",
+            methods: [
+              {
+                id: ProviderAuthCapabilityId.make("opencode:openai:0"),
+                method: "oauth",
+                label: "ChatGPT headless",
+              },
+              {
+                id: ProviderAuthCapabilityId.make("opencode:openai:1"),
+                method: "api-key",
+                label: "OpenAI API key",
+              },
+            ],
+          },
+        }}
+        isExpanded={false}
+        onExpandedChange={() => undefined}
+        onUpdate={() => undefined}
+        hiddenModels={[]}
+        favoriteModels={[]}
+        modelOrder={[]}
+        onHiddenModelsChange={() => undefined}
+        onFavoriteModelsChange={() => undefined}
+        onModelOrderChange={() => undefined}
+        authActions={authActions}
+      />,
+    );
+
+    await expect
+      .element(page.getByRole("button", { name: "ChatGPT headless" }))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "OpenAI API key" })).toBeInTheDocument();
+    await expect.element(page.getByText("Anthropic subscription")).not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "OpenAI API key" }).click();
+    expect(start).toHaveBeenCalledWith({
+      providerInstanceId: openCodeInstanceId,
+      method: "api-key",
+      capabilityId: "opencode:openai:1",
+    });
   });
 });

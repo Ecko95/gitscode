@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderAuthCapabilityId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -199,12 +203,14 @@ describe("ProviderAuthService", () => {
             }),
           );
           const { auth } = yield* makeHarness();
+          const capabilityId = ProviderAuthCapabilityId.make("reported-device-flow");
 
           const result = yield* auth.startProvider({
             provider: startInput.provider,
             providerInstanceId: startInput.providerInstanceId,
             connectionId: startInput.connectionId,
             method: "device-code",
+            capabilityId,
             adapter: {
               credentialHome: startInput.credentialHome,
               methods: ["device-code"],
@@ -213,6 +219,8 @@ describe("ProviderAuthService", () => {
             },
             refresh: Effect.sync(refresh),
           });
+
+          expect(start).toHaveBeenCalledWith("device-code", capabilityId);
 
           expect(result.verificationUri).toContain("login.example.test/device");
           expect(result.userCode).toBe("ABCD-EFGH");

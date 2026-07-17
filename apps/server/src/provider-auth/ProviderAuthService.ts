@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   ProviderAuthError,
   type ProviderAuthErrorCode,
+  type ProviderAuthCapabilityId,
   type ProviderAuthMethod,
   type ProviderAuthPrompt,
   type ProviderAuthSession,
@@ -55,6 +56,7 @@ export interface StartManagedProviderAuthInput {
   readonly providerInstanceId: ProviderInstanceId;
   readonly connectionId: string;
   readonly method: ProviderAuthMethod;
+  readonly capabilityId?: ProviderAuthCapabilityId;
   readonly adapter: ProviderAuthAdapter<ProviderAdapterError>;
   readonly refresh: Effect.Effect<void>;
   readonly verifyAuthenticated?: Effect.Effect<boolean>;
@@ -396,7 +398,7 @@ export const makeProviderAuthService = Effect.fn("makeProviderAuthService")(func
         method: input.method,
         sanitizedPrompt: "Open the verification page and follow the provider instructions.",
       });
-      const attempt = yield* input.adapter.start(input.method).pipe(
+      const attempt = yield* input.adapter.start(input.method, input.capabilityId).pipe(
         Effect.mapError(mapProviderError),
         Effect.onError(() => finish({ sessionId: reserved.sessionId, state: "failed" })),
       );

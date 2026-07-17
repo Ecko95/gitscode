@@ -1,9 +1,16 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
-import { ProviderAuthSession, ProviderAuthSubmitCodeInput } from "./providerAuth.ts";
+import {
+  ProviderAuthCapability,
+  ProviderAuthSession,
+  ProviderAuthStartInput,
+  ProviderAuthSubmitCodeInput,
+} from "./providerAuth.ts";
 
 const decodeSession = Schema.decodeUnknownSync(ProviderAuthSession);
+const decodeCapability = Schema.decodeUnknownSync(ProviderAuthCapability);
+const decodeStart = Schema.decodeUnknownSync(ProviderAuthStartInput);
 
 const validSession = {
   sessionId: "auth-session-1",
@@ -57,5 +64,25 @@ describe("ProviderAuthSession", () => {
     });
     expect(() => decode({ sessionId: validSession.sessionId, code: "" })).toThrow();
     expect(() => decode({ sessionId: validSession.sessionId, code: "x".repeat(4_097) })).toThrow();
+  });
+
+  it("accepts reported OAuth capabilities and an opaque start selection", () => {
+    const capability = decodeCapability({
+      id: "opencode:openai:0",
+      method: "oauth",
+      label: "ChatGPT headless",
+    });
+    expect(capability.method).toBe("oauth");
+    expect(
+      decodeStart({
+        providerInstanceId: validSession.providerInstanceId,
+        method: capability.method,
+        capabilityId: capability.id,
+      }),
+    ).toEqual({
+      providerInstanceId: validSession.providerInstanceId,
+      method: "oauth",
+      capabilityId: "opencode:openai:0",
+    });
   });
 });

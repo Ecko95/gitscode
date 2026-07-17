@@ -15,6 +15,7 @@ import * as Result from "effect/Result";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  type ProviderAuthCapability,
   type ProviderAuthLogoutInput,
   type ProviderAuthSession,
   type ProviderAuthSessionInput,
@@ -540,8 +541,15 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const authProviderName =
-    driverKind === "codex" ? "Codex" : driverKind === "claudeAgent" ? "Claude" : null;
+    driverKind === "codex"
+      ? "Codex"
+      : driverKind === "claudeAgent"
+        ? "Claude"
+        : driverKind === "opencode"
+          ? "OpenCode"
+          : null;
   const showManagedAuth = authProviderName !== null && authActions !== undefined;
+  const reportedAuthMethods = liveProvider?.auth.methods ?? [];
   const [authResult, setAuthResult] = useState<ProviderAuthStartResult | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -572,7 +580,7 @@ export function ProviderInstanceCard({
     };
   }, [authActions, authProviderName, authResult]);
 
-  const startProviderAuth = async () => {
+  const startProviderAuth = async (capability?: ProviderAuthCapability) => {
     if (!authActions || authBusy) return;
     setAuthBusy(true);
     setAuthError(null);
@@ -582,7 +590,9 @@ export function ProviderInstanceCard({
       setAuthResult(
         await authActions.start({
           providerInstanceId: instanceId,
-          method: driverKind === "claudeAgent" ? "manual-code" : "device-code",
+          method:
+            capability?.method ?? (driverKind === "claudeAgent" ? "manual-code" : "device-code"),
+          ...(capability ? { capabilityId: capability.id } : {}),
         }),
       );
     } catch {
@@ -922,7 +932,7 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {showManagedAuth ? (
+            {showManagedAuth && driverKind !== "opencode" ? (
               liveProvider?.auth.status === "authenticated" ? (
                 <>
                   <Button
@@ -987,6 +997,11 @@ export function ProviderInstanceCard({
                 <code className="mx-1 text-foreground">ANTHROPIC_API_KEY</code>
                 as a sensitive environment variable.
               </p>
+            ) : driverKind === "opencode" ? (
+              <p className="text-muted-foreground">
+                Authentication methods are reported by the connected OpenCode server. GITS does not
+                infer unreported browser callbacks or subscription methods.
+              </p>
             ) : (
               <p className="text-muted-foreground">
                 ChatGPT subscription sign-in uses a device code. API-key billing is separate; set
@@ -994,6 +1009,32 @@ export function ProviderInstanceCard({
                 as a sensitive environment variable.
               </p>
             )}
+            {!authResult && reportedAuthMethods.length > 0 ? (
+              <div
+                className="flex flex-wrap gap-2 border-t border-border/60 pt-2"
+                role="group"
+                aria-label={`${authProviderName} authentication methods`}
+              >
+                {reportedAuthMethods.map((capability) => (
+                  <Button
+                    key={capability.id}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={authBusy}
+                    onClick={() => void startProviderAuth(capability)}
+                  >
+                    {authBusy ? <LoaderIcon className="size-3 animate-spin" /> : null}
+                    {capability.label}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+            {driverKind === "opencode" && reportedAuthMethods.length === 0 ? (
+              <p className="border-t border-border/60 pt-2 text-muted-foreground">
+                The connected OpenCode server did not report a managed authentication method.
+              </p>
+            ) : null}
             {authResult && isActiveAuthSession(authResult.session) ? (
               <div className="grid gap-2 border-t border-border/60 pt-2">
                 {authResult.session.prompt ? (
@@ -1016,13 +1057,17 @@ export function ProviderInstanceCard({
                     }}
                   >
                     <label className="grid gap-1.5">
-                      <span className="text-muted-foreground">Authorization code</span>
+                      <span className="text-muted-foreground">
+                        {authResult.session.method === "api-key" ? "API key" : "Authorization code"}
+                      </span>
                       <Input
                         nativeInput
                         type="password"
                         autoComplete="off"
                         spellCheck={false}
-                        aria-label="Authorization code"
+                        aria-label={
+                          authResult.session.method === "api-key" ? "API key" : "Authorization code"
+                        }
                         value={authCode}
                         disabled={authBusy}
                         onChange={(event) => setAuthCode(event.currentTarget.value)}
@@ -1035,7 +1080,7 @@ export function ProviderInstanceCard({
                       className="w-fit"
                       disabled={authBusy || authCode.trim().length === 0}
                     >
-                      Submit code
+                      {authResult.session.method === "api-key" ? "Submit API key" : "Submit code"}
                     </Button>
                   </form>
                 ) : null}

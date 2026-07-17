@@ -1002,6 +1002,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 providerInstanceId: input.providerInstanceId,
                 connectionId: currentSessionId,
                 method: input.method,
+                ...(input.capabilityId ? { capabilityId: input.capabilityId } : {}),
                 adapter: resolved.adapter,
                 refresh: providerRegistry
                   .refreshInstance(input.providerInstanceId)

@@ -12,6 +12,7 @@ import type {
   CodexAccountUsage,
   CodexResetCreditConsumeResult,
   ProviderApprovalDecision,
+  ProviderAuthCapabilityId,
   ProviderAuthMethod,
   ProviderDriverKind,
   ProviderUserInputAnswers,
@@ -87,6 +88,7 @@ export interface ProviderAuthAdapter<TError> {
   readonly methods: ReadonlyArray<ProviderAuthMethod>;
   readonly start: (
     method: ProviderAuthMethod,
+    capabilityId?: ProviderAuthCapabilityId,
   ) => Effect.Effect<ProviderAuthAttempt<TError>, TError>;
   readonly logout: () => Effect.Effect<void, TError>;
 }
