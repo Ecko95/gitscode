@@ -65,6 +65,9 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       status: rpcClient.browserPreview.status,
       control: rpcClient.browserPreview.control,
     },
+    ports: {
+      list: rpcClient.gits.ports.list,
+    },
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,
       getTurnDiff: rpcClient.orchestration.getTurnDiff,

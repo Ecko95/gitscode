@@ -26,6 +26,7 @@ import type {
   CritSidecarStatusResponse,
 } from "./crit.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
+import type { PortsListInput, PortsListResult } from "./ports.ts";
 import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -678,6 +679,9 @@ export interface EnvironmentApi {
     open: (input: BrowserPreviewThreadInput) => Promise<BrowserPreviewStatus>;
     status: (input: BrowserPreviewThreadInput) => Promise<BrowserPreviewStatus>;
     control: (input: BrowserPreviewControlInput) => Promise<BrowserPreviewStatus>;
+  };
+  ports?: {
+    list: (input: PortsListInput) => Promise<PortsListResult>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
