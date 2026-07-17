@@ -124,6 +124,7 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
+import { delamainIngestRouteLayer } from "./delamain/ingestHttp.ts";
 import { critTurnRouteLayer, critTurnStatusRouteLayer } from "./crit/critHttp.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { layer as CritSidecarManagerLive } from "./crit/crit-sidecar-manager.ts";
@@ -576,6 +577,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   GitsRoutesLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
+  delamainIngestRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   PushRoutesLayer,
