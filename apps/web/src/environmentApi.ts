@@ -96,6 +96,12 @@ export function readEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi
   return connection ? createEnvironmentApi(connection.client) : undefined;
 }
 
+export function readEnvironmentBrowserPreviewApi(
+  environmentId: EnvironmentId,
+): EnvironmentApi["browserPreview"] | undefined {
+  return readEnvironmentApi(environmentId)?.browserPreview;
+}
+
 export function ensureEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi {
   const api = readEnvironmentApi(environmentId);
   if (!api) {

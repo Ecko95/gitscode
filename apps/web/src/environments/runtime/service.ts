@@ -1437,6 +1437,16 @@ async function ensureSavedEnvironmentConnection(
           environmentId: activeRecord.environmentId,
         },
         client,
+        ...(activeRecord.desktopSsh
+          ? {
+              beforeReconnect: async () => {
+                const currentRecord =
+                  getSavedEnvironmentRecord(activeRecord.environmentId) ?? activeRecord;
+                const prepared = await prepareSavedEnvironmentRecordForConnection(currentRecord);
+                activeRecord = prepared.record;
+              },
+            }
+          : {}),
         refreshMetadata: async () => {
           await refreshSavedEnvironmentMetadata(
             activeRecord.environmentId,
@@ -1687,9 +1697,6 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
 
   setRuntimeConnecting(environmentId);
   try {
-    if (record.desktopSsh) {
-      await prepareSavedEnvironmentRecordForConnection(record);
-    }
     await connection.reconnect();
   } catch (error) {
     if (record.desktopSsh) {

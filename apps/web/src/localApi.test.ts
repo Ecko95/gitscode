@@ -633,6 +633,31 @@ describe("wsApi", () => {
     expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp/workspace" });
   });
 
+  it("opens remote SSH URLs through the atomic desktop bridge action", async () => {
+    const result = {
+      opened: true as const,
+      kind: "direct-forward" as const,
+      remotePort: 5173,
+      localPort: 43_001,
+    };
+    const openRemoteUrl = vi.fn(async () => result);
+    getWindowForTest().desktopBridge = makeDesktopBridge({ ssh: { openRemoteUrl } });
+    const input = {
+      target: {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 22,
+      },
+      url: "http://localhost:5173/path?q=1#x",
+    } as const;
+
+    const { openDesktopSshUrl } = await import("./localApi");
+
+    await expect(openDesktopSshUrl(input)).resolves.toEqual(result);
+    expect(openRemoteUrl).toHaveBeenCalledWith(input);
+  });
+
   it("falls back to the browser context menu helper when the desktop bridge is missing", async () => {
     showContextMenuFallbackMock.mockResolvedValue("rename");
     const { createLocalApi } = await import("./localApi");
