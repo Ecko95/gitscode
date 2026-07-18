@@ -123,8 +123,12 @@ port the high-value ones soon.
 - **`c49d424e3`** normalize protocol-relative remote host as `https` — fork has the byte-identical
   pre-fix expr at `packages/shared/src/remote.ts:15`; **directly relevant to the current
   `feat/remote-localhost-access` branch**.
-- **`300f7fd11` + `a74dfd4f3`** drop `shell:true` for ssh/tunnel/tailscale spawns — injection-surface
-  hardening on a tailnet-reachable host (**overlaps T16**).
+- **`300f7fd11` + `a74dfd4f3`** drop `shell:true` for ssh/tunnel/tailscale spawns — **downgraded
+  (reconciled vs `origin/gits`)**: the fork already spawns shell-less on Linux
+  (`shell: process.platform === "win32"` in `packages/ssh/src/command.ts:183`,
+  `ProcessDiagnostics.ts:283`, `ServerEnvironmentLabel.ts:62`), so this is cosmetic cleanup here,
+  **not** injection-surface hardening. The only true `shell: true` is `process/externalLauncher.ts:244,251`
+  (+ desktop). Low value.
 - **`f5849f7d7`** redacted stdout on failed ssh commands — overlaps the fork's in-flight
   `redactSecrets.ts` work.
 - **`24f9c2a08`** cross-instance MCP OAuth locks for concurrent Codex shadow homes — the plan's whole
@@ -133,7 +137,9 @@ port the high-value ones soon.
   (`ProviderCommandReactor.ts:281`) → codex-variant errors leave phantom pending state / stuck approvals.
 - **`31ca9e553`** skip undecodable provider-runtime rows when listing sessions — one stale row from an
   older build currently disables every session-enumerating consumer (real availability bug for an
-  in-place-upgraded long-lived server).
+  in-place-upgraded long-lived server). Fork file is `persistence/Layers/ProviderSessionRuntime.ts`
+  (`list:168-183` fails the whole list on one `ParseError`); upstream path is `persistence/` — **port
+  needs path adaptation**.
 - **`eb733c10f` + `4e3f2f04d`** `CLAUDE_CONFIG_DIR` per-instance config isolation + cwd probe (**T16**);
   **`bcd640bf4`** ACP assistant-ID collisions after restart; **`4abf8b46c`** ignore stale shell-reducer
   events (2-line guard); **`57f6bf7ed`** turn-fold projection guard (port-adapted).
@@ -191,6 +197,30 @@ protocol/service-tiers — port-adapted; fork's `CodexDeveloperInstructions.ts` 
 ## 3. Tasks
 
 > Format per task: **Goal · Evidence · Files · Change · Agent (why) · Effort · Risk · Depends · Verify**
+
+> ✅ **Reconciled against `origin/gits` (the canonical fork), 2026-07-18 (Fable pass).** Every task's
+> cited file exists on `gits` and every defect pattern is present. T1–T5, T10, T12, `OrchestrationEngine`,
+> `patches/`, and `remote.ts` line numbers are **identical** on `gits` and HEAD — those hold exactly.
+> **But the `ws.ts` and `ClaudeAdapter.ts` citations below are HEAD (`feat/remote-localhost-access`)-relative**
+> — that branch adds +146/+55 lines, so on `gits` they shift down ~100–180 lines. If remediation
+> branches from `gits`, use these corrected `gits` numbers:
+>
+> - **T3** — `getSnapshot()` is `AutomodeDriver.ts:136` (not `:135`); `TICK_INTERVAL_MS` is **already
+>   env-overridable** via `GITS_AUTOMODE_DRIVER_TICK_MS` (default 5000) — a ready temporary mitigation knob.
+> - **T6** — publish site `SessionCredentialService.ts:204` (block ~195–211); ws release `ws.ts:2195`
+>   (`sessions.markDisconnected`).
+> - **T7** — subscribeThread filter `ws.ts:1158-1170`; subscribeShell default case `ws.ts:540-556`.
+> - **T8** — `PROVIDER_STATUS_DEBOUNCE_MS` `ws.ts:180`, use `:2054`.
+> - **T9** — `WS_PUSH_SUBSCRIBER_BUFFER=512` `ws.ts:192`; `bufferOrTerminate` `:220-243`, uses
+>   `:1103`(shell)/`:1171`(thread); `readThreadDetailSnapshot:244`; `readEvents` wired into the
+>   `replayEvents` RPC at `ws.ts:1055-1059`.
+> - **T10** — ws-side terminal frames start `ws.ts:1977`.
+> - **T11** — `ClaudeAdapter.ts:1756-1763` (`tryParseJsonRecord(tool.partialInputJson + delta)`).
+> - **§1b SDK subtypes** — fall through to `emitRuntimeWarning` at `ClaudeAdapter.ts:2344-2348`.
+>
+> **No §1b port target is already fixed on `gits`** (afterSequence absent, catalog stale, single-string
+> match, no OAuth locks, protocol-relative expr intact — all verified pre-fix). The 2nd doc's §5 `?key=`
+> redaction can't be closed on `gits` yet: `redactSecrets.ts` is untracked feature-branch work, not on `gits`.
 
 ### T1 — Truncate oversized activity payloads
 
