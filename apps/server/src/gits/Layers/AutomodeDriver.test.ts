@@ -21,6 +21,12 @@ import {
 } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
+import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
+import {
+  HermesTelegramNotifier,
+  HermesTelegramNotifierError,
+  type HermesTelegramNotifierShape,
+} from "../Services/HermesTelegramNotifier.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import {
   GitsSlotScheduler,
@@ -123,6 +129,9 @@ interface MakeLayerOptions {
   readonly recordGoalStartError?: GitsSlotSchedulerError;
   readonly onListPeers?: () => void;
   readonly onReadBudget?: () => void;
+  readonly onDigestTick?: () => void;
+  readonly onNotify?: (input: Parameters<HermesTelegramNotifierShape["notify"]>[0]) => void;
+  readonly notifyError?: HermesTelegramNotifierError;
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -225,6 +234,16 @@ function makeLayer(
       }),
     list_episodes: () => Effect.succeed([]),
   });
+  const digest = Layer.mock(AutomodeTelegramDigest)({
+    tick: () => Effect.sync(() => options?.onDigestTick?.()),
+  });
+  const notifier = Layer.mock(HermesTelegramNotifier)({
+    notify: (input) =>
+      Effect.suspend(() => {
+        options?.onNotify?.(input);
+        return options?.notifyError === undefined ? Effect.void : Effect.fail(options.notifyError);
+      }),
+  });
   const config = ServerConfig.layerTest(process.cwd(), {
     prefix: "gits-automode-driver-test-",
   }).pipe(Layer.provide(NodeServices.layer));
@@ -243,6 +262,8 @@ function makeLayer(
     Layer.provide(landing),
     Layer.provide(heldPr),
     Layer.provide(ledger),
+    Layer.provide(digest),
+    Layer.provide(notifier),
   );
 }
 
@@ -263,6 +284,16 @@ function armAutonomous(supervisor: AutomodeSupervisorShape) {
 }
 
 describe("AutomodeDriver", () => {
+  it.effect("ticks the Telegram digest with each driver step", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let ticks = 0;
+    return Effect.gen(function* () {
+      const driver = yield* AutomodeDriver;
+      yield* driver.tickOnce();
+      assert.equal(ticks, 1);
+    }).pipe(Effect.provide(makeLayer(peerStatus, { onDigestTick: () => ticks++ })));
+  });
+
   it.effect("dispatches the oldest queued goal when idle and autonomous", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
     return Effect.gen(function* () {
@@ -866,6 +897,40 @@ describe("AutomodeDriver", () => {
       ),
     );
   });
+
+  it.effect(
+    "keeps the scheduler-recording halt and queued goal when Telegram alert delivery fails",
+    () => {
+      const peerStatus = { current: "absent" as PeerStatus | "absent" };
+      const notifications: Parameters<HermesTelegramNotifierShape["notify"]>[0][] = [];
+      return Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        const driver = yield* AutomodeDriver;
+        yield* armAutonomous(supervisor);
+        yield* supervisor.enqueueGoal({
+          title: "Uncounted",
+          repo: "/tmp/source-repo",
+          prompt: "x",
+        });
+
+        yield* driver.tickOnce();
+
+        const snapshot = yield* supervisor.getSnapshot();
+        assert.equal(snapshot.driverHalted, true);
+        assert.include(snapshot.driverHaltedReason ?? "", "failed to record the start");
+        assert.equal(snapshot.goals.find((goal) => goal.title === "Uncounted")?.status, "queued");
+        assert.equal(notifications.length, 1);
+      }).pipe(
+        Effect.provide(
+          makeLayer(peerStatus, {
+            recordGoalStartError: new GitsSlotSchedulerError({ message: "scheduler disk full" }),
+            onNotify: (input) => notifications.push(input),
+            notifyError: new HermesTelegramNotifierError({ message: "Telegram unavailable" }),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("held PR body lists each landed slice with its episode id", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };

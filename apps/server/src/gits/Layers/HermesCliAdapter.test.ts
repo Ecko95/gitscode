@@ -24,6 +24,7 @@ import {
   hermesModelCommand,
   hermesProposalRequiresApproval,
   isLegacyProviderSetupProposalArtifact,
+  makeCodexChainAlert,
   makeChat,
   makeHermesCliAdapter,
   makeHermesEnv,
@@ -42,6 +43,7 @@ import {
 import { DelamainAdapter, type DelamainAdapterShape } from "../Services/DelamainAdapter.ts";
 import { GitsCapacityMonitor } from "../Services/GitsCapacityMonitor.ts";
 import type { GitsCapacityMonitorShape } from "../Services/GitsCapacityMonitor.ts";
+import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "../Services/OpenGsdAdapter.ts";
 
 afterEach(() => {
@@ -172,6 +174,7 @@ describe("HermesCliAdapter cockpit chat", () => {
         Effect.provideService(DelamainAdapter, unusedDelamainAdapter),
         Effect.provideService(OpenGsdAdapter, unusedOpenGsdAdapter),
         Effect.provideService(AutomodeSupervisor, unusedAutomodeSupervisor),
+        Effect.provideService(HermesTelegramNotifier, { notify: () => Effect.void }),
       ),
     );
 
@@ -597,6 +600,26 @@ describe("HermesCliAdapter codex chain preflight", () => {
 });
 
 describe("HermesCliAdapter chat preflight", () => {
+  it("alerts Telegram once per dead Codex chain reason", async () => {
+    const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-chat-"));
+    await Fs.writeFile(Path.join(tmp, "config.yaml"), CODEX_PROVIDER_CONFIG, "utf8");
+    await Fs.writeFile(Path.join(tmp, "auth.json"), DEAD_AUTH, "utf8");
+    vi.stubEnv("GITS_HERMES_HOME", tmp);
+    const alerts: string[] = [];
+    const chat = makeChat(
+      {
+        getSnapshot: () => Effect.die(new Error("capacity must not be consulted before preflight")),
+      },
+      makeCodexChainAlert({ notify: ({ text }) => Effect.sync(() => alerts.push(text)) }),
+    );
+
+    await Effect.runPromise(chat({ message: "inspect the project status" }));
+    await Effect.runPromise(chat({ message: "inspect the project status" }));
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain(codexReauthCommand(tmp));
+  });
+
   it("short-circuits chat before spawning hermes on a dead codex chain", async () => {
     const tmp = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-hermes-chat-"));
     await Fs.writeFile(Path.join(tmp, "config.yaml"), CODEX_PROVIDER_CONFIG, "utf8");

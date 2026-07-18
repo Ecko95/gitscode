@@ -48,6 +48,10 @@ import {
 
 import { HermesAdapter, type HermesAdapterShape } from "../Services/HermesAdapter.ts";
 import {
+  HermesTelegramNotifier,
+  type HermesTelegramNotifierShape,
+} from "../Services/HermesTelegramNotifier.ts";
+import {
   AutomodeSupervisor,
   type AutomodeSupervisorShape,
 } from "../Services/AutomodeSupervisor.ts";
@@ -725,6 +729,31 @@ export async function codexChainPreflight(
   }
   const reason = health.kind === "missing" ? "no Codex OAuth chain in HERMES_HOME" : health.reason;
   return { kind: "needs-reauth", reason, command: codexReauthCommand(config.hermesHome) };
+}
+
+type CodexChainAlert = (preflight: {
+  readonly kind: "needs-reauth" | "wrong-provider";
+  readonly reason: string;
+  readonly command: string;
+}) => Effect.Effect<void>;
+
+export function makeCodexChainAlert(notifier: HermesTelegramNotifierShape): CodexChainAlert {
+  const alertedReasons = new Set<string>();
+  return (preflight) => {
+    if (preflight.kind !== "needs-reauth" || alertedReasons.has(preflight.reason))
+      return Effect.void;
+    alertedReasons.add(preflight.reason);
+    return notifier
+      .notify({
+        subject: "GITS Codex re-login required",
+        text: [
+          `Hermes Codex OAuth chain requires re-login: ${preflight.reason}.`,
+          `Run \`${preflight.command}\` in a local terminal on this host (device-code OAuth flow).`,
+          "Hermes owns this chain and its token refresh. Do not copy credentials from another machine.",
+        ].join("\n"),
+      })
+      .pipe(Effect.catch(() => Effect.void));
+  };
 }
 
 async function readSoulStatus(config: HermesSafeConfig): Promise<HermesSoulStatus> {
@@ -1824,37 +1853,91 @@ const listProposals: HermesAdapterShape["listProposals"] = () =>
     } satisfies HermesProposalListResult;
   });
 
-const inspectGitsAndPropose: HermesAdapterShape["inspectGitsAndPropose"] = (input) =>
-  Effect.gen(function* () {
-    const config = yield* getConfig();
-    yield* Effect.tryPromise({
-      try: () => ensureSoul(config),
-      catch: (cause) => toHermesError("Failed to create GITS Hermes SOUL.md.", cause),
-    });
-    const preflight = yield* Effect.tryPromise({
-      try: () => codexChainPreflight(config),
-      catch: (cause) => toHermesError("Failed to preflight Hermes Codex OAuth chain.", cause),
-    });
-    if (preflight !== null) {
+const makeInspectGitsAndPropose =
+  (notifyAuthFailure: CodexChainAlert): HermesAdapterShape["inspectGitsAndPropose"] =>
+  (input) =>
+    Effect.gen(function* () {
+      const config = yield* getConfig();
+      yield* Effect.tryPromise({
+        try: () => ensureSoul(config),
+        catch: (cause) => toHermesError("Failed to create GITS Hermes SOUL.md.", cause),
+      });
+      const preflight = yield* Effect.tryPromise({
+        try: () => codexChainPreflight(config),
+        catch: (cause) => toHermesError("Failed to preflight Hermes Codex OAuth chain.", cause),
+      });
+      if (preflight !== null) {
+        yield* notifyAuthFailure(preflight);
+        const now = yield* nowIso();
+        const wrongProvider = preflight.kind === "wrong-provider";
+        const proposal = makeProposal({
+          title: wrongProvider
+            ? "Motoko blocked: Hermes model provider must be openai-codex"
+            : "Motoko blocked: Hermes Codex OAuth re-login required",
+          summary: `Hermes was not spawned: ${preflight.reason}.`,
+          detail: wrongProvider
+            ? `${preflight.reason}. Run \`${preflight.command}\` on this host to reconfigure, then retry.`
+            : `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable (${preflight.reason}). Run \`${preflight.command}\` on this host, then retry.`,
+          actionKind: "read-only",
+          status: "blocked",
+          blockedReason: wrongProvider
+            ? `Hermes is pinned to the codex provider for autonomy (decision 19). Run \`${preflight.command}\`.`
+            : `Hermes Codex OAuth chain requires re-login. Run \`${preflight.command}\`.`,
+          source: "hermes chat -q",
+          projectDir: input.projectDir,
+          now,
+          evidence: ["GITS preflight blocked the Hermes spawn before execution.", preflight.reason],
+        });
+        const proposals = yield* Effect.tryPromise({
+          try: () => readProposals(config),
+          catch: (cause) => toHermesError("Failed to read Hermes proposals.", cause),
+        });
+        yield* Effect.tryPromise({
+          try: () => writeProposals(config, [proposal, ...proposals]),
+          catch: (cause) => toHermesError("Failed to persist Hermes proposal.", cause),
+        });
+        return proposal;
+      }
+      const prompt =
+        input.prompt ??
+        [
+          "Inspect this GITS repository read-only and produce exactly one improvement proposal.",
+          "Do not edit files. Do not run merge, admin-merge, force-push, delete, or destructive shell commands.",
+          "Prefer a proposal that Delamain could execute later in an isolated worktree.",
+          "Return a short title, why it matters, scope, risk, and recommended approval path.",
+        ].join(" ");
+      const exec = yield* execHermes(buildHermesInspectGitsArgs(prompt), {
+        cwd: input.projectDir,
+        timeoutMs: input.timeoutMs ?? PROPOSAL_TIMEOUT_MS,
+      }).pipe(
+        Effect.catch((cause: HermesAdapterError) =>
+          Effect.succeed({
+            stdout: "",
+            stderr: cause.message,
+            exitCode: null,
+            signal: null,
+            timedOut: false,
+          } satisfies ExecResult),
+        ),
+      );
       const now = yield* nowIso();
-      const wrongProvider = preflight.kind === "wrong-provider";
+      const detail =
+        nonEmpty(exec.stdout) ?? nonEmpty(exec.stderr) ?? "Hermes returned no proposal.";
+      const summary = summarizeProposal(detail);
       const proposal = makeProposal({
-        title: wrongProvider
-          ? "Motoko blocked: Hermes model provider must be openai-codex"
-          : "Motoko blocked: Hermes Codex OAuth re-login required",
-        summary: `Hermes was not spawned: ${preflight.reason}.`,
-        detail: wrongProvider
-          ? `${preflight.reason}. Run \`${preflight.command}\` on this host to reconfigure, then retry.`
-          : `The Hermes Codex OAuth chain in ${config.hermesHome}/auth.json is not usable (${preflight.reason}). Run \`${preflight.command}\` on this host, then retry.`,
+        title: summary.title,
+        summary: summary.summary,
+        detail,
         actionKind: "read-only",
-        status: "blocked",
-        blockedReason: wrongProvider
-          ? `Hermes is pinned to the codex provider for autonomy (decision 19). Run \`${preflight.command}\`.`
-          : `Hermes Codex OAuth chain requires re-login. Run \`${preflight.command}\`.`,
+        status: exec.exitCode === 0 ? "proposed" : "blocked",
+        blockedReason: exec.exitCode === 0 ? null : "Hermes proposal command did not complete.",
         source: "hermes chat -q",
         projectDir: input.projectDir,
         now,
-        evidence: ["GITS preflight blocked the Hermes spawn before execution.", preflight.reason],
+        evidence: [
+          "Hermes was invoked in read-only inspection mode.",
+          `Hermes exit code: ${exec.exitCode === null ? "unknown" : String(exec.exitCode)}`,
+        ],
       });
       const proposals = yield* Effect.tryPromise({
         try: () => readProposals(config),
@@ -1865,60 +1948,13 @@ const inspectGitsAndPropose: HermesAdapterShape["inspectGitsAndPropose"] = (inpu
         catch: (cause) => toHermesError("Failed to persist Hermes proposal.", cause),
       });
       return proposal;
-    }
-    const prompt =
-      input.prompt ??
-      [
-        "Inspect this GITS repository read-only and produce exactly one improvement proposal.",
-        "Do not edit files. Do not run merge, admin-merge, force-push, delete, or destructive shell commands.",
-        "Prefer a proposal that Delamain could execute later in an isolated worktree.",
-        "Return a short title, why it matters, scope, risk, and recommended approval path.",
-      ].join(" ");
-    const exec = yield* execHermes(buildHermesInspectGitsArgs(prompt), {
-      cwd: input.projectDir,
-      timeoutMs: input.timeoutMs ?? PROPOSAL_TIMEOUT_MS,
-    }).pipe(
-      Effect.catch((cause: HermesAdapterError) =>
-        Effect.succeed({
-          stdout: "",
-          stderr: cause.message,
-          exitCode: null,
-          signal: null,
-          timedOut: false,
-        } satisfies ExecResult),
-      ),
-    );
-    const now = yield* nowIso();
-    const detail = nonEmpty(exec.stdout) ?? nonEmpty(exec.stderr) ?? "Hermes returned no proposal.";
-    const summary = summarizeProposal(detail);
-    const proposal = makeProposal({
-      title: summary.title,
-      summary: summary.summary,
-      detail,
-      actionKind: "read-only",
-      status: exec.exitCode === 0 ? "proposed" : "blocked",
-      blockedReason: exec.exitCode === 0 ? null : "Hermes proposal command did not complete.",
-      source: "hermes chat -q",
-      projectDir: input.projectDir,
-      now,
-      evidence: [
-        "Hermes was invoked in read-only inspection mode.",
-        `Hermes exit code: ${exec.exitCode === null ? "unknown" : String(exec.exitCode)}`,
-      ],
     });
-    const proposals = yield* Effect.tryPromise({
-      try: () => readProposals(config),
-      catch: (cause) => toHermesError("Failed to read Hermes proposals.", cause),
-    });
-    yield* Effect.tryPromise({
-      try: () => writeProposals(config, [proposal, ...proposals]),
-      catch: (cause) => toHermesError("Failed to persist Hermes proposal.", cause),
-    });
-    return proposal;
-  });
 
 export const makeChat =
-  (capacityMonitor: GitsCapacityMonitorShape): HermesAdapterShape["chat"] =>
+  (
+    capacityMonitor: GitsCapacityMonitorShape,
+    notifyAuthFailure?: CodexChainAlert,
+  ): HermesAdapterShape["chat"] =>
   (input) =>
     Effect.gen(function* () {
       const config = yield* getConfig();
@@ -1932,6 +1968,7 @@ export const makeChat =
         catch: (cause) => toHermesError("Failed to preflight Hermes Codex OAuth chain.", cause),
       });
       if (preflight !== null) {
+        yield* notifyAuthFailure?.(preflight) ?? Effect.void;
         const now = yield* nowIso();
         const wrongProvider = preflight.kind === "wrong-provider";
         return {
@@ -2258,49 +2295,56 @@ function schedulePrompt(kind: HermesScheduleKind, projectDir: string | null): st
   }
 }
 
-const runSchedule: HermesAdapterShape["runSchedule"] = (input) =>
-  Effect.gen(function* () {
-    const ranAt = yield* nowIso();
-    const blockedReason =
-      process.env.GITS_MOTOKO_SCHEDULES_DISABLED === "1"
-        ? "Motoko scheduled proposal runs are disabled by GITS_MOTOKO_SCHEDULES_DISABLED."
-        : null;
-    if (blockedReason !== null) {
+const makeRunSchedule =
+  (notifyAuthFailure: CodexChainAlert): HermesAdapterShape["runSchedule"] =>
+  (input) =>
+    Effect.gen(function* () {
+      const ranAt = yield* nowIso();
+      const blockedReason =
+        process.env.GITS_MOTOKO_SCHEDULES_DISABLED === "1"
+          ? "Motoko scheduled proposal runs are disabled by GITS_MOTOKO_SCHEDULES_DISABLED."
+          : null;
+      if (blockedReason !== null) {
+        return {
+          kind: input.kind,
+          ranAt,
+          proposals: [],
+          blockedReason,
+        } satisfies HermesScheduleRunResult;
+      }
+      const chatResult = yield* makeChat(
+        {
+          getSnapshot: () =>
+            Effect.fail(
+              new GitsCapacityError({
+                message: "Capacity snapshot unavailable for scheduled run.",
+              }),
+            ),
+        },
+        notifyAuthFailure,
+      )({
+        message: schedulePrompt(input.kind, input.projectDir ?? null),
+        ...(input.projectDir ? { projectDir: input.projectDir } : {}),
+      });
+      // makeChat yields a HermesChatResult; a scheduled run surfaces only the proposal
+      // card it produced (none when the turn was a question), keeping questions out of
+      // the proposals list, and propagates any block reason from the chat turn.
       return {
         kind: input.kind,
         ranAt,
-        proposals: [],
-        blockedReason,
+        proposals: chatResult.proposal === null ? [] : [chatResult.proposal],
+        blockedReason: chatResult.blockedReason,
       } satisfies HermesScheduleRunResult;
-    }
-    const chatResult = yield* makeChat({
-      getSnapshot: () =>
-        Effect.fail(
-          new GitsCapacityError({
-            message: "Capacity snapshot unavailable for scheduled run.",
-          }),
-        ),
-    })({
-      message: schedulePrompt(input.kind, input.projectDir ?? null),
-      ...(input.projectDir ? { projectDir: input.projectDir } : {}),
     });
-    // makeChat yields a HermesChatResult; a scheduled run surfaces only the proposal
-    // card it produced (none when the turn was a question), keeping questions out of
-    // the proposals list, and propagates any block reason from the chat turn.
-    return {
-      kind: input.kind,
-      ranAt,
-      proposals: chatResult.proposal === null ? [] : [chatResult.proposal],
-      blockedReason: chatResult.blockedReason,
-    } satisfies HermesScheduleRunResult;
-  });
 
 function makeHermesCliAdapterShape(
   capacityMonitor: GitsCapacityMonitorShape,
   delamainAdapter: DelamainAdapterShape,
   openGsdAdapter: OpenGsdAdapterShape,
   automodeSupervisor: AutomodeSupervisorShape,
+  notifier: HermesTelegramNotifierShape,
 ): HermesAdapterShape {
+  const notifyAuthFailure = makeCodexChainAlert(notifier);
   return {
     getStatus,
     getConfig,
@@ -2310,8 +2354,8 @@ function makeHermesCliAdapterShape(
     listSessions,
     tailLog,
     listProposals,
-    inspectGitsAndPropose,
-    chat: makeChat(capacityMonitor),
+    inspectGitsAndPropose: makeInspectGitsAndPropose(notifyAuthFailure),
+    chat: makeChat(capacityMonitor, notifyAuthFailure),
     decideProposal,
     writeProjectContext: makeWriteProjectContext(
       capacityMonitor,
@@ -2320,7 +2364,7 @@ function makeHermesCliAdapterShape(
       automodeSupervisor,
     ),
     draftFromProposal,
-    runSchedule,
+    runSchedule: makeRunSchedule(notifyAuthFailure),
   };
 }
 
@@ -2329,11 +2373,13 @@ export const makeHermesCliAdapter = Effect.gen(function* () {
   const delamainAdapter = yield* DelamainAdapter;
   const openGsdAdapter = yield* OpenGsdAdapter;
   const automodeSupervisor = yield* AutomodeSupervisor;
+  const notifier = yield* HermesTelegramNotifier;
   return makeHermesCliAdapterShape(
     capacityMonitor,
     delamainAdapter,
     openGsdAdapter,
     automodeSupervisor,
+    notifier,
   );
 });
 

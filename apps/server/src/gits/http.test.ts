@@ -14,6 +14,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpRouter,
+  HttpServerRequest,
   HttpServer,
 } from "effect/unstable/http";
 
@@ -26,20 +27,24 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
 
 import { GitsBuildInfoResolver } from "./Services/GitsBuildInfo.ts";
-import { GitsSkillInventoryResolver } from "./Services/GitsSkillInventory.ts";
+import { AutomodeSupervisor, type AutomodeSupervisorShape } from "./Services/AutomodeSupervisor.ts";
+import { DelamainAdapter, type DelamainAdapterShape } from "./Services/DelamainAdapter.ts";
 import { GitsMcpInventoryResolver } from "./Services/GitsMcpInventory.ts";
+import { GitsSkillInventoryResolver } from "./Services/GitsSkillInventory.ts";
+import { GitsSlotScheduler, type GitsSlotSchedulerShape } from "./Services/GitsSlotScheduler.ts";
 import {
   gitsBuildInfoRouteLayer,
   gitsMcpInventoryRouteLayer,
   gitsSkillInventoryRouteLayer,
   gitsUsageRouteLayer,
+  hermesTelegramRelayRouteLayer,
 } from "./http.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const make_test_server_config = (baseDir: string) =>
+const make_test_server_config = (baseDir: string, hermesTelegramRelayToken?: string) =>
   Effect.gen(function* () {
     const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
     return {
@@ -68,6 +73,7 @@ const make_test_server_config = (baseDir: string) =>
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      hermesTelegramRelayToken,
     } satisfies ServerConfigShape;
   });
 
@@ -115,7 +121,19 @@ const make_stub_mcp_resolver = () =>
       }),
   });
 
-const make_app_layer = (config: ServerConfigShape) => {
+const make_stub_telegram_services = (calls: string[]) =>
+  Layer.mergeAll(
+    Layer.succeed(AutomodeSupervisor, {} as AutomodeSupervisorShape),
+    Layer.succeed(DelamainAdapter, {} as DelamainAdapterShape),
+    Layer.succeed(GitsSlotScheduler, {
+      arm: () => {
+        calls.push("arm");
+        return Effect.succeed({});
+      },
+    } as unknown as GitsSlotSchedulerShape),
+  );
+
+const make_app_layer = (config: ServerConfigShape, calls: string[]) => {
   const authLayer = ServerAuthLive.pipe(
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStoreLive),
@@ -126,6 +144,7 @@ const make_app_layer = (config: ServerConfigShape) => {
     gitsSkillInventoryRouteLayer,
     gitsMcpInventoryRouteLayer,
     gitsUsageRouteLayer,
+    hermesTelegramRelayRouteLayer,
   );
 
   return HttpRouter.serve(routesLayer, {
@@ -136,6 +155,7 @@ const make_app_layer = (config: ServerConfigShape) => {
     Layer.provideMerge(make_stub_build_info_resolver()),
     Layer.provideMerge(make_stub_skill_resolver()),
     Layer.provideMerge(make_stub_mcp_resolver()),
+    Layer.provideMerge(make_stub_telegram_services(calls)),
     Layer.provideMerge(WorkspacePathsLive),
     Layer.provideMerge(NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 })),
     Layer.provideMerge(FetchHttpClient.layer),
@@ -149,11 +169,17 @@ const with_app = <A, E>(
     baseUrl: string,
     token: (subject: string, role?: SessionRole) => Effect.Effect<string, never, AuthControlPlane>,
   ) => Effect.Effect<A, E, AuthControlPlane | HttpClient.HttpClient>,
+  options: { readonly hermesTelegramRelayToken?: string | null; readonly calls?: string[] } = {},
 ) =>
   Effect.gen(function* () {
     const baseDir = mkdtempSync(join(tmpdir(), "t3-gits-http-test-"));
-    const config = yield* make_test_server_config(baseDir);
-    const appLayer = make_app_layer(config);
+    const config = yield* make_test_server_config(
+      baseDir,
+      options.hermesTelegramRelayToken === null
+        ? undefined
+        : (options.hermesTelegramRelayToken ?? "relay-token"),
+    );
+    const appLayer = make_app_layer(config, options.calls ?? []);
 
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -190,6 +216,60 @@ const get_route = (baseUrl: string, path: string, token: string | null) =>
     );
     return yield* client.execute(request);
   });
+
+const post_hermes_telegram_command = (
+  baseUrl: string,
+  options: {
+    readonly authorization?: string;
+    readonly body: string | { readonly command: string };
+  },
+) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const request = HttpClientRequest.post(`${baseUrl}/api/gits/hermes-telegram/command`).pipe(
+      HttpClientRequest.setHeaders({
+        "content-type": "application/json",
+        ...(options.authorization === undefined ? {} : { authorization: options.authorization }),
+      }),
+      typeof options.body === "string"
+        ? HttpClientRequest.bodyText(options.body)
+        : HttpClientRequest.bodyJsonUnsafe(options.body),
+    );
+    return yield* client.execute(request);
+  });
+
+const execute_hermes_telegram_route = (
+  config: ServerConfigShape,
+  source: { readonly socket?: { readonly remoteAddress?: string } },
+) => {
+  const baseRequest = HttpServerRequest.fromWeb(
+    new Request("http://localhost/api/gits/hermes-telegram/command", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer relay-token",
+        "content-type": "application/json",
+        host: "localhost",
+      },
+      body: JSON.stringify({ command: "ARM" }),
+    }),
+  );
+  const request = Object.assign(baseRequest, {
+    source: new Proxy(baseRequest.source, {
+      get(target, property) {
+        return property === "socket" ? source.socket : Reflect.get(target, property, target);
+      },
+    }),
+  });
+
+  return Effect.scoped(
+    HttpRouter.toHttpEffect(hermesTelegramRelayRouteLayer).pipe(
+      Effect.flatMap((handler) => handler),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      Effect.provide(make_stub_telegram_services([])),
+      Effect.provideService(ServerConfig, config),
+    ),
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -306,6 +386,87 @@ it.layer(NodeServices.layer)("gits http routes require authentication", (it) => 
           assert.equal(body.currency, "USD");
           assert.isArray(body.sources);
         }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+});
+
+it.layer(NodeServices.layer)("Hermes Telegram relay route", (it) => {
+  it.effect("POST rejects a non-loopback peer despite a spoofed loopback Host", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-gits-http-test-"));
+      const config = yield* make_test_server_config(baseDir, "relay-token");
+      const response = yield* execute_hermes_telegram_route(config, {
+        socket: { remoteAddress: "10.0.0.24" },
+      });
+      assert.equal(response.status, 403);
+    }),
+  );
+
+  it.effect("POST rejects missing and incorrect relay bearer tokens", () =>
+    Effect.gen(function* () {
+      yield* with_app((baseUrl) =>
+        Effect.gen(function* () {
+          const missing = yield* post_hermes_telegram_command(baseUrl, {
+            body: { command: "ARM" },
+          });
+          const incorrect = yield* post_hermes_telegram_command(baseUrl, {
+            authorization: "Bearer not-the-relay-token",
+            body: { command: "ARM" },
+          });
+          assert.equal(missing.status, 401);
+          assert.equal(incorrect.status, 401);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("POST rejects malformed JSON", () =>
+    Effect.gen(function* () {
+      yield* with_app((baseUrl) =>
+        Effect.gen(function* () {
+          const response = yield* post_hermes_telegram_command(baseUrl, {
+            authorization: "Bearer relay-token",
+            body: "{",
+          });
+          assert.equal(response.status, 400);
+        }),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("POST dispatches a valid command only through the expected service operation", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      yield* with_app(
+        (baseUrl) =>
+          Effect.gen(function* () {
+            const response = yield* post_hermes_telegram_command(baseUrl, {
+              authorization: "Bearer relay-token",
+              body: { command: "ARM" },
+            });
+            assert.equal(response.status, 200);
+            assert.deepEqual(yield* response.json, { text: "Scheduler armed." });
+            assert.deepEqual(calls, ["arm"]);
+          }),
+        { calls },
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  );
+
+  it.effect("POST returns 503 before parsing commands when the relay token is absent", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      yield* with_app(
+        (baseUrl) =>
+          Effect.gen(function* () {
+            const response = yield* post_hermes_telegram_command(baseUrl, {
+              body: "{",
+            });
+            assert.equal(response.status, 503);
+            assert.deepEqual(calls, []);
+          }),
+        { hermesTelegramRelayToken: null, calls },
       );
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   );

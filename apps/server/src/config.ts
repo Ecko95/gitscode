@@ -74,6 +74,7 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
   readonly mcpOauthCallbackUrl?: string | undefined;
+  readonly hermesTelegramRelayToken?: string | undefined;
   readonly vapidPublicKey?: string | undefined;
   readonly vapidPrivateKey?: string | undefined;
   readonly vapidSubject?: string | undefined;
@@ -172,6 +173,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           logWebSocketEvents: false,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          hermesTelegramRelayToken: undefined,
           vapidPublicKey: undefined,
           vapidPrivateKey: undefined,
           vapidSubject: undefined,

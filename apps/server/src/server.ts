@@ -80,7 +80,9 @@ import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
 import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
+import { AutomodeTelegramDigestLive } from "./gits/Layers/AutomodeTelegramDigest.ts";
 import { GitsSlotSchedulerLive } from "./gits/Layers/GitsSlotScheduler.ts";
+import { HermesTelegramNotifierLive } from "./gits/Layers/HermesTelegramNotifier.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { GraveyardOrphanAdopterLive } from "./vcs/GraveyardOrphanAdopter.ts";
 import { GraveyardReaperLive } from "./vcs/GraveyardReaper.ts";
@@ -139,6 +141,7 @@ import {
   gitsMcpInventoryRouteLayer,
   gitsSkillInventoryRouteLayer,
   gitsUsageRouteLayer,
+  hermesTelegramRelayRouteLayer,
 } from "./gits/http.ts";
 import { codexMcpOauthRoutesLayer } from "./gits/http/CodexMcpOauthRoutes.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
@@ -330,6 +333,13 @@ const AutomodeEpisodeLedgerLayerLive = AutomodeEpisodeLedgerLive.pipe(
   Layer.provide(PersistenceLayerLive),
 );
 
+const AutomodeTelegramDigestLayerLive = AutomodeTelegramDigestLive.pipe(
+  Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(GitsSlotSchedulerLayerLive),
+  Layer.provide(AutomodeEpisodeLedgerLayerLive),
+  Layer.provide(HermesTelegramNotifierLive),
+);
+
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(GitsSlotSchedulerLayerLive),
@@ -337,6 +347,8 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeLandingLayerLive),
   Layer.provide(AutomodeHeldPrLayerLive),
   Layer.provide(AutomodeEpisodeLedgerLayerLive),
+  Layer.provide(AutomodeTelegramDigestLayerLive),
+  Layer.provide(HermesTelegramNotifierLive),
   Layer.provide(
     GitsReviewPipelineLive.pipe(
       Layer.provide(GitsCodexVerifierAdapterLive),
@@ -351,6 +363,7 @@ const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
   Layer.provide(DelamainCliAdapterLive),
   Layer.provide(OpenGsdCliAdapterLive),
   Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(HermesTelegramNotifierLive),
 );
 
 const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
@@ -558,6 +571,7 @@ const GitsRoutesLayer = Layer.mergeAll(
   gitsMcpInventoryRouteLayer,
   gitsUsageRouteLayer,
   codexMcpOauthRoutesLayer,
+  hermesTelegramRelayRouteLayer,
   visualPlanMcpRouteLayer,
 );
 

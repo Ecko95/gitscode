@@ -1,10 +1,18 @@
+import * as Crypto from "node:crypto";
+
 import * as Effect from "effect/Effect";
 import * as Data from "effect/Data";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "../auth/http.ts";
+import { ServerConfig } from "../config.ts";
+import { isLoopbackHostname } from "../http.ts";
 import { browserApiCorsHeaders } from "../httpCors.ts";
+import {
+  dispatchHermesTelegramCommand,
+  parseHermesTelegramCommand,
+} from "./HermesTelegramCommand.ts";
 import { GitsBuildInfoResolver } from "./Services/GitsBuildInfo.ts";
 import { GitsMcpInventoryResolver } from "./Services/GitsMcpInventory.ts";
 import { GitsSkillInventoryResolver } from "./Services/GitsSkillInventory.ts";
@@ -26,6 +34,88 @@ export const authenticateGitsSession = Effect.gen(function* () {
 class GitsUsageRouteError extends Data.TaggedError("GitsUsageRouteError")<{
   readonly cause: unknown;
 }> {}
+
+class HermesTelegramRelayRouteError extends Data.TaggedError("HermesTelegramRelayRouteError")<{
+  readonly status: 400 | 401 | 403 | 503;
+  readonly message: string;
+}> {}
+
+const respondToHermesTelegramRelayRouteError = (error: HermesTelegramRelayRouteError) =>
+  Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: error.status }));
+
+const isExpectedRelayBearer = (authorization: string | undefined, token: string): boolean => {
+  if (typeof authorization !== "string") return false;
+  const expected = `Bearer ${token}`;
+  const providedBuffer = Buffer.from(authorization, "utf8");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  return (
+    providedBuffer.length === expectedBuffer.length &&
+    Crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+  );
+};
+
+export const hermesTelegramRelayRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/gits/hermes-telegram/command",
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    const relayToken = config.hermesTelegramRelayToken;
+    if (relayToken === undefined || relayToken.length === 0) {
+      return yield* new HermesTelegramRelayRouteError({
+        status: 503,
+        message: "Hermes Telegram relay is not configured.",
+      });
+    }
+
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const source = request.source as {
+      readonly remoteAddress?: string | null;
+      readonly socket?: { readonly remoteAddress?: string | null };
+    };
+    const remoteAddress = source.socket?.remoteAddress ?? source.remoteAddress;
+    const peerAddress =
+      typeof remoteAddress === "string" ? remoteAddress.trim().replace(/^::ffff:/, "") : undefined;
+    if (!peerAddress || !isLoopbackHostname(peerAddress)) {
+      return yield* new HermesTelegramRelayRouteError({
+        status: 403,
+        message: "Hermes Telegram relay accepts loopback requests only.",
+      });
+    }
+
+    if (!isExpectedRelayBearer(request.headers.authorization, relayToken)) {
+      return yield* new HermesTelegramRelayRouteError({
+        status: 401,
+        message: "Invalid Hermes Telegram relay token.",
+      });
+    }
+
+    const body = yield* request.json.pipe(
+      Effect.mapError(
+        () =>
+          new HermesTelegramRelayRouteError({
+            status: 400,
+            message: "Invalid Hermes Telegram relay payload.",
+          }),
+      ),
+    );
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      Array.isArray(body) ||
+      typeof (body as { readonly command?: unknown }).command !== "string"
+    ) {
+      return yield* new HermesTelegramRelayRouteError({
+        status: 400,
+        message: "Invalid Hermes Telegram relay payload.",
+      });
+    }
+
+    const text = yield* dispatchHermesTelegramCommand(
+      parseHermesTelegramCommand((body as { readonly command: string }).command),
+    );
+    return HttpServerResponse.jsonUnsafe({ text }, { status: 200 });
+  }).pipe(Effect.catchTag("HermesTelegramRelayRouteError", respondToHermesTelegramRelayRouteError)),
+);
 
 export const gitsBuildInfoRouteLayer = HttpRouter.add(
   "GET",
