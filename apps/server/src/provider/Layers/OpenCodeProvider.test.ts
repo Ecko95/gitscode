@@ -38,6 +38,7 @@ const runtimeMock = {
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      authMethods: {},
     } as unknown,
   },
   reset() {
@@ -48,6 +49,7 @@ const runtimeMock = {
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      authMethods: {},
     };
   },
 };
@@ -169,6 +171,12 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
           { name: "build", hidden: false, mode: "primary" },
           { name: "plan", hidden: false, mode: "primary" },
         ],
+        authMethods: {
+          openai: [
+            { type: "oauth", label: "ChatGPT headless" },
+            { type: "api", label: "OpenAI API key" },
+          ],
+        },
       };
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
@@ -191,6 +199,18 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+      assert.deepEqual(snapshot.auth.methods, [
+        {
+          id: "opencode:openai:0",
+          method: "oauth",
+          label: "ChatGPT headless",
+        },
+        {
+          id: "opencode:openai:1",
+          method: "api-key",
+          label: "OpenAI API key",
+        },
+      ]);
     }),
   );
 

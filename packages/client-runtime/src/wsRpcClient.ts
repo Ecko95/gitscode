@@ -186,6 +186,9 @@ export interface WsRpcClient {
       readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsList>;
       readonly init: RpcUnaryMethod<typeof WS_METHODS.gitsDevCommandsInit>;
     };
+    readonly ports: {
+      readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsPortsList>;
+    };
     readonly notes: {
       readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsNotesList>;
       readonly read: RpcUnaryMethod<typeof WS_METHODS.gitsNotesRead>;
@@ -298,6 +301,13 @@ export interface WsRpcClient {
     readonly consumeCodexResetCredit: RpcUnaryMethod<
       typeof WS_METHODS.providerConsumeCodexResetCredit
     >;
+    readonly auth: {
+      readonly start: RpcUnaryMethod<typeof WS_METHODS.providerAuthStart>;
+      readonly get: RpcUnaryMethod<typeof WS_METHODS.providerAuthGet>;
+      readonly cancel: RpcUnaryMethod<typeof WS_METHODS.providerAuthCancel>;
+      readonly submitCode: RpcUnaryMethod<typeof WS_METHODS.providerAuthSubmitCode>;
+      readonly logout: RpcUnaryMethod<typeof WS_METHODS.providerAuthLogout>;
+    };
   };
 }
 
@@ -445,6 +455,9 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsDevCommandsList](input)),
         init: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDevCommandsInit](input)),
+      },
+      ports: {
+        list: (input) => transport.request((client) => client[WS_METHODS.gitsPortsList](input)),
       },
       notes: {
         list: (input) => transport.request((client) => client[WS_METHODS.gitsNotesList](input)),
@@ -634,6 +647,17 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.usageModelBreakdown](input)),
       consumeCodexResetCredit: (input) =>
         transport.request((client) => client[WS_METHODS.providerConsumeCodexResetCredit](input)),
+      auth: {
+        start: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthStart](input)),
+        get: (input) => transport.request((client) => client[WS_METHODS.providerAuthGet](input)),
+        cancel: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthCancel](input)),
+        submitCode: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthSubmitCode](input)),
+        logout: (input) =>
+          transport.request((client) => client[WS_METHODS.providerAuthLogout](input)),
+      },
     },
   };
 }

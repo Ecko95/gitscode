@@ -18,6 +18,7 @@ import {
 } from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
+import { ProviderAuthCapability } from "./providerAuth.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -55,6 +56,7 @@ export const ServerProviderAuth = Schema.Struct({
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  methods: Schema.optionalKey(Schema.Array(ProviderAuthCapability)),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 

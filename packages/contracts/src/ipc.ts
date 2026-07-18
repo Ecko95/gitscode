@@ -26,6 +26,7 @@ import type {
   CritSidecarStatusResponse,
 } from "./crit.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
+import type { PortsListInput, PortsListResult } from "./ports.ts";
 import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -33,6 +34,14 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
+import type {
+  ProviderAuthLogoutInput,
+  ProviderAuthSession,
+  ProviderAuthSessionInput,
+  ProviderAuthStartInput,
+  ProviderAuthStartResult,
+  ProviderAuthSubmitCodeInput,
+} from "./providerAuth.ts";
 import type {
   FollowUpSuggestionsInput,
   FollowUpSuggestionsResult,
@@ -84,7 +93,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema } from "./baseSchemas.ts";
 import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
@@ -266,6 +275,58 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
+export const DesktopSshForwardPolicySchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("flexible") }),
+  Schema.Struct({ kind: Schema.Literal("exact"), localPort: PortSchema }),
+]);
+export type DesktopSshForwardPolicy = typeof DesktopSshForwardPolicySchema.Type;
+
+export const DesktopSshForwardRequestSchema = Schema.Struct({
+  remoteHost: Schema.Literal("127.0.0.1"),
+  remotePort: PortSchema,
+  policy: DesktopSshForwardPolicySchema,
+});
+export type DesktopSshForwardRequest = typeof DesktopSshForwardRequestSchema.Type;
+
+export const DesktopSshForwardReleaseInputSchema = Schema.Struct({
+  remotePort: PortSchema,
+  localPort: PortSchema,
+});
+export type DesktopSshForwardReleaseInput = typeof DesktopSshForwardReleaseInputSchema.Type;
+
+export const DesktopSshForwardResultSchema = Schema.Struct({ localPort: PortSchema });
+export type DesktopSshForwardResult = typeof DesktopSshForwardResultSchema.Type;
+
+export const DesktopSshOpenRemoteUrlInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  url: Schema.String,
+  oauthRedirectPort: Schema.optionalKey(PortSchema),
+});
+export type DesktopSshOpenRemoteUrlInput = typeof DesktopSshOpenRemoteUrlInputSchema.Type;
+
+export const DesktopSshOpenRemoteUrlErrorSchema = Schema.Literals([
+  "invalid-url",
+  "local-port-unavailable",
+  "authentication-cancelled",
+  "forward-failed",
+  "open-failed",
+]);
+export type DesktopSshOpenRemoteUrlError = typeof DesktopSshOpenRemoteUrlErrorSchema.Type;
+
+export const DesktopSshOpenRemoteUrlResultSchema = Schema.Union([
+  Schema.Struct({
+    opened: Schema.Literal(true),
+    kind: Schema.Literals(["external", "direct-forward", "oauth-forward"]),
+    remotePort: Schema.optionalKey(PortSchema),
+    localPort: Schema.optionalKey(PortSchema),
+  }),
+  Schema.Struct({
+    opened: Schema.Literal(false),
+    error: DesktopSshOpenRemoteUrlErrorSchema,
+  }),
+]);
+export type DesktopSshOpenRemoteUrlResult = typeof DesktopSshOpenRemoteUrlResultSchema.Type;
+
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
 export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
 
@@ -414,6 +475,9 @@ export interface DesktopBridge {
     target: DesktopSshEnvironmentTarget,
     options?: { issuePairingToken?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
+  ssh?: {
+    openRemoteUrl: (input: DesktopSshOpenRemoteUrlInput) => Promise<DesktopSshOpenRemoteUrlResult>;
+  };
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
   bootstrapSshBearerSession: (
@@ -536,6 +600,13 @@ export interface EnvironmentApi {
     consumeCodexResetCredit: (
       input: CodexResetCreditConsumeInput,
     ) => Promise<CodexResetCreditConsumeResult>;
+    auth: {
+      start: (input: ProviderAuthStartInput) => Promise<ProviderAuthStartResult>;
+      get: (input: ProviderAuthSessionInput) => Promise<ProviderAuthSession>;
+      cancel: (input: ProviderAuthSessionInput) => Promise<void>;
+      submitCode: (input: ProviderAuthSubmitCodeInput) => Promise<ProviderAuthSession>;
+      logout: (input: ProviderAuthLogoutInput) => Promise<void>;
+    };
   };
   terminal: {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
@@ -611,6 +682,9 @@ export interface EnvironmentApi {
     open: (input: BrowserPreviewThreadInput) => Promise<BrowserPreviewStatus>;
     status: (input: BrowserPreviewThreadInput) => Promise<BrowserPreviewStatus>;
     control: (input: BrowserPreviewControlInput) => Promise<BrowserPreviewStatus>;
+  };
+  ports?: {
+    list: (input: PortsListInput) => Promise<PortsListResult>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

@@ -149,3 +149,81 @@ redeploy of `gits-cockpit.service`, live assertions vs the captured T14 baseline
 - **Decision:** live `rebuild-projections` **skipped** — no projection schema changed; rebuild determinism proven on the copy; retroactive shrink is a non-goal. gate-T1-s3 live part closed as N/A.
 - Window: ~10 s downtime. Post-start: active, HTTP 200 in 8.6 ms, NRestarts=0, new code confirmed in dist (`subscribeAggregate`, `truncateData`), **RSS 238 MB** (pre-stop 1.82 GB; baseline 1.84 GB / HWM 2.75 GB), 0 publish crashes.
 - **Soak watch armed** (regressions + 45-min audit trigger); final audit vs the T14 baseline runs after operator load-test.
+
+## Post-deploy verification audit (2026-07-18, Fable)
+
+Audit window: deploy 14:54 BST → 16:43 BST. System was idle until 15:46; a synthetic-but-real load
+phase then ran 15:46–16:42 BST: **14 waves × 4 concurrent agent turns (56 turns total)** driven
+through the production WS-RPC path (`/ws`, bearer→ws-token auth, `dispatchCommand` +
+`subscribeThread`), each turn a real `claudeAgent`/claude-opus-4-8 provider session streaming a
+~1200-word reply. Driver: `driveload.mjs` (scratchpad; connection scaffold mirrors
+`apps/server/phase1-e2e-driver.ts`). No worktree bootstrap, threads deleted after each wave.
+Instrumentation: `/proc` RSS sampler (5-min cadence), 1 s HTTP latency probe (4,241 samples),
+journalctl, read-only SQL (`mode=ro`).
+
+### Acceptance matrix
+
+| #   | Assertion                                              | Result              | Evidence                                                                                                                                                                                                                                                                                                                                                              |
+| --- | ------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Integrity: node flags, dist markers, NRestarts, commit | **PASS**            | cmdline has `--max-old-space-size=4096 --max-semi-space-size=64`; `subscribeAggregate` ×3 + `truncateData` ×3 in `dist/bin.mjs`; NRestarts=0 (still 0 at 16:43); runtime HEAD `418d19763`                                                                                                                                                                             |
+| 2   | RSS <1 GB after ≥1 h, non-monotonic                    | **PASS**            | 16 samples 15:27–16:42: sawtooth 266→480 MB (drops to ~320 MB between waves), VmHWM pinned 716 MB the whole window, VmSwap 0. Baseline: 1.84 GiB RSS / 2.75 GiB HWM / 475 MiB swap                                                                                                                                                                                    |
+| 3   | `Failed to publish` == 0 since deploy                  | **PASS**            | 0 matches 14:54–16:43 incl. full load phase (baseline 34/h). Zero WARN/ERROR besides known `worktree.burial.remove-failed` (T16, 5-min reaper cadence)                                                                                                                                                                                                                |
+| 4   | Reconnect popups (see verdict below)                   | **PASS w/ 1 gap**   | (a) 0 WS drops across 56 concurrent subscriptions; (b) latency p50 1.6 ms / p99 5.6 ms / max 137 ms, 0 samples >1 s; (c) `bufferOrTerminate` has **zero call sites** — overflow-terminate unreachable on subscribeThread/subscribeShell; (d) **FAIL**: client never sends `afterSequence` (see gap)                                                                   |
+| 5   | `context-window.updated` −≥90%; payloads ≤~4 KB        | **PASS w/ caveat**  | 56 cw.updated events for 56 turns (exactly 1/turn, gated); busiest minute 4 vs 231/60 s baseline (−98%). `thread.activity-appended` max 1,134 B; `tool.completed` bloat absent. Caveat: 56 rows >4 KB are all `thread.message-sent` (max 8,924 B) — genuine assistant message text from the ~1200-word test prompts, scales with reply length; not the T1 bloat class |
+| 6   | No multi-second event-loop bursts                      | **PASS (by proxy)** | T14 metrics are dark in prod (see gap 2), so measured externally: 4,241 1 s-interval HTTP probes through the load window, max 137 ms, zero >1 s. Baseline symptom was 100–118% ELU bursts every 5–10 s                                                                                                                                                                |
+
+### Reconnect-popup verdict: **fixed** (mechanism-level), with one unfinished limb
+
+Causal chain (client, traced in `apps/web` + `packages/client-runtime` + effect RpcClient):
+popup ⇐ `uiState=="reconnecting"` ⇐ WS close/error **or heartbeat timeout** ⇐ client pings every
+5 s and tears down the socket after one missed pong (~5 s of server unresponsiveness). So the popup
+fires iff the server event loop stalls ≳5 s, the server kills the socket, or the network drops.
+
+Post-deploy, under 4-way concurrent provider streaming: worst server response 137 ms (36× under the
+5 s kill threshold), 0 socket terminations, 0 publish crashes, and the old forced-disconnect path
+(`bufferOrTerminate` 512-cap overflow → terminate) is dead code — `subscribeThread`/`subscribeShell`
+now use unbounded per-aggregate queues (T7/T9). Every load-bearing trigger of the popup is gone.
+
+**Gap (4d): resume-by-sequence is server-only.** `afterSequence` catch-up replay is implemented and
+contract-typed in `ws.ts` (subscribeThread :1278-1295, subscribeShell :1179-1194), but no web/client
+call site ever populates it — `subscribeThread({threadId})`, `subscribeShell({})` hardcoded
+(`environments/runtime/service.ts:407`, `threadDetailState.ts:314`, `wsRpcClient.ts:562`). Every
+reconnect still takes the full-snapshot path. This does not cause popups; it makes recovery after
+one heavier than designed. Client comments still describe the removed overflow-terminate behaviour
+(stale docs in `environmentConnection.ts:171`, `threadDetailState.ts:302`).
+
+### Observability gap (T14): RuntimeMetrics deployed but dark
+
+`RuntimeMetricsLive` samples ELD p99 / RSS / GC every 10 s into Effect gauges, but the only sink is
+OTLP and `otlpMetricsUrl` is unset in this deployment — no endpoint, no per-sample logs. Item 6
+above is therefore probe-based, not T14-based. The BEFORE baseline had the same blindness (noted in
+p0-obs-T14-s2), so nothing regressed — but the ELU-burst claim can never be re-verified from prod
+telemetry until a sink is configured.
+
+### Leak suspicion: none
+
+RSS is a clean load-correlated sawtooth (rises ~150 MB during a wave, falls back between waves);
+HWM never moved after startup; swap stayed 0. No monotonic component over 75 min. Global event
+`sequence` and per-aggregate `stream_version` advance continuously across the deploy boundary with
+no gaps (44,470 → 45,594).
+
+### Verdict: **KEEP**
+
+Deploy is sound; every headline symptom (freeze bursts, RSS churn, publish crashes, forced
+disconnects) is absent under sustained concurrent provider load. No restart, no rollback.
+
+### Proposed repair slices (not implemented — operator approval required)
+
+1. **client-afterSequence-resume** (MEDIUM): populate `afterSequence` in `subscribeThread`/
+   `subscribeShell` from the client's last-seen sequence so reconnects use the T9 delta-replay path.
+   Files: `apps/web/src/environments/runtime/service.ts`, `packages/client-runtime/src/
+threadDetailState.ts`, `packages/client-runtime/src/wsRpcClient.ts` (+ delete stale overflow
+   comments in `environmentConnection.ts`/`threadDetailState.ts`). Acceptance: reconnect after
+   induced drop replays only events > last sequence (no full snapshot in the WS frame log); UI state
+   coherent after resume.
+2. **t14-metrics-sink** (LOW): configure `otlpMetricsUrl` (or add a fallback per-sample log/pull
+   endpoint) so `t3_runtime_event_loop_delay_p99_seconds` is actually observable in prod.
+   Acceptance: ELD p99 retrievable for any 10 s window; alert path documented in this ledger.
+3. Known/unscheduled items unchanged: worktree reaper leak (T16 — the 5-min
+   `worktree.burial.remove-failed` WARN for thread `502fc036` is this), 2 LOW T16 items,
+   history-truncation slice.

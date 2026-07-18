@@ -122,6 +122,31 @@ describe("createWsRpcClient", () => {
     ]);
   });
 
+  it("routes environment port snapshots through the ports RPC method", () => {
+    const request = vi.fn();
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      isHeartbeatFresh: vi.fn(() => true),
+      request,
+      requestStream: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    } satisfies Pick<
+      WsTransport,
+      "dispose" | "isHeartbeatFresh" | "reconnect" | "request" | "requestStream" | "subscribe"
+    >;
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+    const input = { projectDir: "/repo", threadId: ThreadId.make("thread-1") };
+
+    client.gits.ports.list(input);
+
+    const transportClient = new Proxy({}, { get: (_target, method) => () => method }) as Record<
+      string,
+      () => string
+    >;
+    expect(request.mock.calls[0]?.[0]?.(transportClient)).toBe(WS_METHODS.gitsPortsList);
+  });
+
   it("reduces vcs status stream events into flat status snapshots", () => {
     const subscribe = vi.fn(<TValue>(_connect: unknown, listener: (value: TValue) => void) => {
       for (const event of [

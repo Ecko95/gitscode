@@ -31,6 +31,7 @@ import {
   resolveWrappedTerminalLinkRange,
   wrappedTerminalLinkRangeIntersectsBufferLine,
 } from "../terminal-links";
+import { openEnvironmentUrl } from "../openEnvironmentUrl";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -579,7 +580,12 @@ export function TerminalViewport({
               }
 
               if (match.kind === "url") {
-                void localApi.shell.openExternal(match.text).catch((error: unknown) => {
+                void openEnvironmentUrl({
+                  environmentId,
+                  threadId,
+                  url: match.text,
+                  source: "terminal",
+                }).catch((error: unknown) => {
                   writeSystemMessage(
                     latestTerminal,
                     error instanceof Error ? error.message : "Unable to open link",

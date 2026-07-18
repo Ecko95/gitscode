@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { redactSecrets } from "../redactSecrets.ts";
 
 export interface ProcessRow {
   readonly pid: number;
@@ -219,7 +220,7 @@ export function buildDescendantEntries(
       cpuPercent: item.row.cpuPercent,
       rssBytes: item.row.rssBytes,
       elapsed: item.row.elapsed || "n/a",
-      command: item.row.command,
+      command: redactSecrets(item.row.command),
       depth: item.depth,
       childPids: children.map((child) => child.pid),
     });
@@ -260,7 +261,7 @@ function makeResult(input: {
     totalRssBytes,
     totalCpuPercent,
     processes,
-    error: input.error ? Option.some({ message: input.error }) : Option.none(),
+    error: input.error ? Option.some({ message: redactSecrets(input.error) }) : Option.none(),
   };
 }
 

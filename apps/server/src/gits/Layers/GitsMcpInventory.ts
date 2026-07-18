@@ -11,6 +11,7 @@ import {
   type GitsMcpServerProvider,
   type GitsMcpServerSource,
   type GitsMcpServerStatus,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,8 +21,10 @@ import * as Schema from "effect/Schema";
 import {
   GitsMcpInventoryResolver,
   GitsMcpInventoryResolverError,
+  type GitsCodexMcpRuntimeServer,
   type GitsMcpInventoryResolverShape,
 } from "../Services/GitsMcpInventory.ts";
+import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 
 export interface GitsMcpConfigTarget {
   readonly provider: GitsMcpServerProvider;
@@ -35,6 +38,7 @@ export interface GitsMcpInventoryResolverOptions {
   readonly configTargets?: ReadonlyArray<GitsMcpConfigTarget>;
   readonly now?: () => string;
   readonly maxToolsPerServer?: number;
+  readonly getRuntimeServers?: () => Effect.Effect<ReadonlyArray<GitsCodexMcpRuntimeServer>>;
 }
 
 interface RawMcpServer {
@@ -311,6 +315,7 @@ function toServerItem(raw: RawMcpServer, maxTools: number): GitsMcpServerItem {
     source: raw.source,
     status,
     authStatus,
+    canAuthenticate: false,
     enabled: raw.enabled,
     command: raw.command,
     transport: raw.transport,
@@ -320,6 +325,77 @@ function toServerItem(raw: RawMcpServer, maxTools: number): GitsMcpServerItem {
     configPath: raw.configPath,
     error: null,
   };
+}
+
+function mapRuntimeAuthStatus(value: unknown): GitsMcpAuthStatus {
+  switch (value) {
+    case "unsupported":
+      return "unsupported";
+    case "notLoggedIn":
+      return "unauthenticated";
+    case "bearerToken":
+    case "oAuth":
+      return "authenticated";
+    default:
+      return "unknown";
+  }
+}
+
+function mergeRuntimeServers(
+  servers: GitsMcpServerItem[],
+  runtimeServers: ReadonlyArray<GitsCodexMcpRuntimeServer>,
+  maxTools: number,
+): void {
+  const claimedConfigRows = new Set<number>();
+  for (const runtime of runtimeServers) {
+    const name = cleanText(runtime.name);
+    const providerInstanceId = cleanText(runtime.providerInstanceId);
+    if (!name || !providerInstanceId) {
+      continue;
+    }
+    const configIndex = servers.findIndex(
+      (server, index) =>
+        !claimedConfigRows.has(index) && server.provider === "codex" && server.name === name,
+    );
+    if (configIndex >= 0) {
+      claimedConfigRows.add(configIndex);
+    }
+    const current = configIndex >= 0 ? servers[configIndex] : undefined;
+    const tools = runtime.tools
+      .filter((tool): tool is string => typeof tool === "string")
+      .map((tool) => truncate(tool, 200))
+      .filter(Boolean)
+      .slice(0, maxTools);
+    const authStatus = mapRuntimeAuthStatus(runtime.authStatus);
+    const resourceCount = Number.isSafeInteger(runtime.resourceCount)
+      ? Math.max(0, runtime.resourceCount)
+      : 0;
+    const merged: GitsMcpServerItem = {
+      id: current?.id ?? `codex:${providerInstanceId}:${name}`,
+      provider: "codex",
+      providerInstanceId: ProviderInstanceId.make(providerInstanceId),
+      name,
+      source: current?.source ?? "codex-app-server",
+      runtimeSource: "codex-app-server",
+      status: "running",
+      runtimeStatus: "running",
+      authStatus,
+      canAuthenticate: authStatus === "unauthenticated",
+      enabled: current?.enabled ?? true,
+      command: current?.command ?? null,
+      transport: current?.transport ?? null,
+      toolCount: runtime.tools.length,
+      resourceCount,
+      tools,
+      configPath: current?.configPath ?? null,
+      error: null,
+    };
+    if (configIndex >= 0) {
+      servers[configIndex] = merged;
+    } else {
+      servers.push(merged);
+    }
+  }
 }
 
 function providerSummaries(servers: ReadonlyArray<GitsMcpServerItem>) {
@@ -365,12 +441,17 @@ async function buildSnapshot(options: {
   readonly configTargets?: ReadonlyArray<GitsMcpConfigTarget> | undefined;
   readonly now: () => string;
   readonly maxToolsPerServer: number;
+  readonly runtimeServers: ReadonlyArray<GitsCodexMcpRuntimeServer>;
+  readonly runtimeWarning?: string;
 }): Promise<GitsMcpInventorySnapshot> {
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? os.homedir();
   const targets = options.configTargets ?? defaultConfigTargets(env, homeDir);
   const scanResults = await Promise.all(targets.map((target) => scanTarget(target)));
-  const warnings = scanResults.flatMap((result) => result.warnings);
+  const warnings = [
+    ...scanResults.flatMap((result) => result.warnings),
+    ...(options.runtimeWarning ? [options.runtimeWarning] : []),
+  ];
   const seen = new Set<string>();
   const servers: GitsMcpServerItem[] = [];
   for (const raw of scanResults.flatMap((result) => result.servers)) {
@@ -381,6 +462,7 @@ async function buildSnapshot(options: {
     seen.add(item.id);
     servers.push(item);
   }
+  mergeRuntimeServers(servers, options.runtimeServers, options.maxToolsPerServer);
   servers.sort((left, right) =>
     `${left.provider}:${left.name}`.localeCompare(`${right.provider}:${right.name}`),
   );
@@ -406,6 +488,18 @@ export const makeGitsMcpInventoryResolver = (options?: GitsMcpInventoryResolverO
     getSnapshot: () =>
       Effect.gen(function* () {
         const scannedAt = options?.now ? options.now() : DateTime.formatIso(yield* DateTime.now);
+        const [runtimeServers, runtimeWarning] = options?.getRuntimeServers
+          ? yield* options.getRuntimeServers().pipe(
+              Effect.matchCauseEffect({
+                onFailure: () =>
+                  Effect.succeed([
+                    [],
+                    "Codex MCP runtime status is unavailable; showing config-file inventory.",
+                  ] as const),
+                onSuccess: (servers) => Effect.succeed([servers, undefined] as const),
+              }),
+            )
+          : ([[], undefined] as const);
         return yield* Effect.tryPromise({
           try: () =>
             buildSnapshot({
@@ -414,6 +508,8 @@ export const makeGitsMcpInventoryResolver = (options?: GitsMcpInventoryResolverO
               configTargets: options?.configTargets,
               now: () => scannedAt,
               maxToolsPerServer: options?.maxToolsPerServer ?? 200,
+              runtimeServers,
+              ...(runtimeWarning ? { runtimeWarning } : {}),
             }),
           catch: (cause) =>
             new GitsMcpInventoryResolverError({
@@ -424,7 +520,35 @@ export const makeGitsMcpInventoryResolver = (options?: GitsMcpInventoryResolverO
       }),
   } satisfies GitsMcpInventoryResolverShape);
 
-export const GitsMcpInventoryResolverLive = Layer.succeed(
+export const GitsMcpInventoryResolverLive = Layer.effect(
   GitsMcpInventoryResolver,
-  makeGitsMcpInventoryResolver(),
+  Effect.gen(function* () {
+    const registry = yield* ProviderInstanceRegistry;
+    return makeGitsMcpInventoryResolver({
+      getRuntimeServers: () =>
+        registry.listInstances.pipe(
+          Effect.flatMap((instances) =>
+            Effect.forEach(
+              instances.filter(
+                (instance) =>
+                  instance.driverKind === "codex" &&
+                  instance.adapter.listCodexMcpServers !== undefined,
+              ),
+              (instance) =>
+                instance.adapter.listCodexMcpServers!().pipe(
+                  Effect.map((servers) =>
+                    servers.map((server) => ({
+                      ...server,
+                      providerInstanceId: instance.instanceId,
+                    })),
+                  ),
+                  Effect.catch(() => Effect.succeed([])),
+                ),
+              { concurrency: "unbounded" },
+            ),
+          ),
+          Effect.map((groups) => groups.flat()),
+        ),
+    });
+  }),
 );

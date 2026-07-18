@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { openCodeAuthCapabilities } from "../../provider-auth/OpenCodeAuth.ts";
 import {
   buildServerProvider,
   nonEmptyTrimmed,
@@ -454,6 +455,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       auth: {
         status: connectedCount > 0 ? "authenticated" : "unknown",
         type: "opencode",
+        methods: openCodeAuthCapabilities(inventoryExit.value.authMethods ?? {}),
       },
       message:
         connectedCount > 0
