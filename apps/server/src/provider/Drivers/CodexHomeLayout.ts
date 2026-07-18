@@ -26,10 +26,15 @@ const KNOWN_SHARED_DIRECTORIES = [
   "plugins",
   "cache",
   "logs",
+  "mcp-oauth-locks",
 ] as const;
 
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
+// Runtime dirs Codex may create locally in the shadow home before we link them;
+// replace them with the shared symlink so file-store OAuth locks are shared
+// across concurrent shadow homes (and a stale local lock cannot block auth).
+const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["mcp-oauth-locks"]);
 
 function resolveHomePath(path: Path.Path, value: string | undefined): string {
   const expanded =
@@ -157,9 +162,13 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   const state = yield* readLinkState(input.fileSystem, link);
 
   if (state._tag === "NotSymlink") {
-    return yield* new CodexShadowHomeError({
-      detail: `Cannot create Codex shadow home because '${link}' already exists and is not a symlink.`,
-    });
+    if (!REPLACEABLE_SHARED_RUNTIME_DIRECTORIES.has(input.entryName)) {
+      return yield* new CodexShadowHomeError({
+        detail: `Cannot create Codex shadow home because '${link}' already exists and is not a symlink.`,
+      });
+    }
+    yield* normalizeShadowHomeError(input.fileSystem.remove(link, { recursive: true }));
+    return yield* normalizeShadowHomeError(input.fileSystem.symlink(target, link));
   }
 
   if (state._tag === "Missing") {
