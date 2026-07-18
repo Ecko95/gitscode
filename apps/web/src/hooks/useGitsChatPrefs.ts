@@ -97,11 +97,8 @@ function write(next: GitsChatPrefs) {
 
 export function useGitsChatPrefs() {
   const prefs = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const setPref = useCallback(
-    <K extends keyof GitsChatPrefs>(key: K, value: GitsChatPrefs[K]) => {
-      write({ ...getSnapshot(), [key]: value });
-    },
-    [],
-  );
+  const setPref = useCallback(<K extends keyof GitsChatPrefs>(key: K, value: GitsChatPrefs[K]) => {
+    write({ ...getSnapshot(), [key]: value });
+  }, []);
   return { prefs, setPref } as const;
 }
