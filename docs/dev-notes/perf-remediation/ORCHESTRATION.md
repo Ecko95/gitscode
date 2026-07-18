@@ -141,3 +141,11 @@ subscribeShell per-thread authz defense-in-depth (T16 gap); event-store history 
 **Pending: live gate (operator consent required)** — T13 systemd apply + restart, one controlled
 redeploy of `gits-cockpit.service`, live assertions vs the captured T14 baseline, live
 `rebuild-projections` inside the stopped-server window (rollback: pre-rebuild DB retained).
+
+## Live gate — executed 2026-07-18 14:54 BST
+
+- PR #171 merged into `gits` (`418d19763`); runtime worktree `/srv/gits/runtime/gits-hosted` built at that SHA (18/18 tasks; patched effect applied).
+- **T13 applied:** `gc-tuning.conf` drop-in (pre-existing, loaded) took effect on restart — process runs `--max-semi-space-size=64`. DB backed up to `backup-pre-perf-remediation-20260718-1454/` (rollback path).
+- **Decision:** live `rebuild-projections` **skipped** — no projection schema changed; rebuild determinism proven on the copy; retroactive shrink is a non-goal. gate-T1-s3 live part closed as N/A.
+- Window: ~10 s downtime. Post-start: active, HTTP 200 in 8.6 ms, NRestarts=0, new code confirmed in dist (`subscribeAggregate`, `truncateData`), **RSS 238 MB** (pre-stop 1.82 GB; baseline 1.84 GB / HWM 2.75 GB), 0 publish crashes.
+- **Soak watch armed** (regressions + 45-min audit trigger); final audit vs the T14 baseline runs after operator load-test.
