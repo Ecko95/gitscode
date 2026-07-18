@@ -70,6 +70,7 @@ function makeEngineLayer(events: OrchestrationEvent[]): {
       readEvents: (_from: number) =>
         Stream.fromIterable(events) as Stream.Stream<OrchestrationEvent>,
       subscribeDomainEvents: Effect.die("unused"),
+      subscribeAggregate: () => Effect.die("unused"),
       streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
     }),
     dispatched,

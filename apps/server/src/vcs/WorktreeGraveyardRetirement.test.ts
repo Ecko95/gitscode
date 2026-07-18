@@ -45,6 +45,7 @@ function makeEngineLayer(): {
         }),
       readEvents: () => Stream.die("unused"),
       subscribeDomainEvents: Effect.die("unused"),
+      subscribeAggregate: () => Effect.die("unused"),
       streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
     }),
     dispatched,

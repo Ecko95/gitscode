@@ -22,6 +22,7 @@ const makeOrchestrationStub = () =>
         readEvents: () => Stream.empty,
         dispatch: () => Effect.succeed({ sequence: 0 }),
         subscribeDomainEvents: PubSub.subscribe(domainEvents),
+        subscribeAggregate: () => Effect.die("unused"),
         streamDomainEvents: Stream.fromPubSub(domainEvents),
       });
     }),

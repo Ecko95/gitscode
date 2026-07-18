@@ -122,6 +122,47 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
+  // T7: per-aggregateId live-event routing. One dispatcher fiber drains the
+  // global PubSub and routes each event only to queues registered under its
+  // aggregateId, replacing the O(subscribers × events) fan-out where every WS
+  // thread subscriber received every event and filtered post-delivery.
+  // ponytail: single JS thread + cooperative Effect scheduling means map reads
+  // (route) and mutations (register/finalizer) never interleave mid-op, so a
+  // plain Map/Set registry needs no lock. Per-subscriber queues are unbounded;
+  // the WS side wraps them in bufferOrTerminate for backpressure/termination.
+  const aggregateSubscribers = new Map<string, Set<Queue.Queue<OrchestrationEvent>>>();
+  const routeEvent = (event: OrchestrationEvent): Effect.Effect<void> => {
+    const queues = aggregateSubscribers.get(event.aggregateId);
+    if (queues === undefined || queues.size === 0) {
+      return Effect.void;
+    }
+    // Queue.offer to a shut-down queue returns false (no failure), so a
+    // subscribe/unsubscribe race just drops the offer — no event loss for live
+    // subscribers, and the departing one is gone by design.
+    return Effect.forEach(queues, (queue) => Queue.offer(queue, event), { discard: true });
+  };
+
+  const subscribeAggregate: OrchestrationEngineShape["subscribeAggregate"] = (aggregateId) =>
+    Effect.gen(function* () {
+      const queue = yield* Queue.unbounded<OrchestrationEvent>();
+      let set = aggregateSubscribers.get(aggregateId);
+      if (set === undefined) {
+        set = new Set();
+        aggregateSubscribers.set(aggregateId, set);
+      }
+      const subscribers = set;
+      subscribers.add(queue);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          subscribers.delete(queue);
+          if (subscribers.size === 0) {
+            aggregateSubscribers.delete(aggregateId);
+          }
+        }).pipe(Effect.flatMap(() => Queue.shutdown(queue)), Effect.asVoid),
+      );
+      return queue;
+    });
+
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,
     events: ReadonlyArray<OrchestrationEvent>,
@@ -384,6 +425,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
   yield* Effect.forkScoped(worker);
+
+  // T7 dispatcher: acquire the routing subscription in the engine scope (before
+  // announcing readiness) so no event is missed, then route every event forever.
+  const routingSubscription = yield* PubSub.subscribe(eventPubSub);
+  yield* Effect.forkScoped(
+    Stream.runForEach(Stream.fromSubscription(routingSubscription), routeEvent),
+  );
   yield* Effect.logDebug("orchestration engine started").pipe(
     Effect.annotateLogs({ sequence: commandReadModel.snapshotSequence }),
   );
@@ -410,6 +458,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     get subscribeDomainEvents(): OrchestrationEngineShape["subscribeDomainEvents"] {
       return PubSub.subscribe(eventPubSub);
     },
+    subscribeAggregate,
     // Each access creates a fresh lazy subscription for consumers that do not
     // require a readiness boundary. Startup and snapshot consumers use the
     // pre-acquired subscription above.

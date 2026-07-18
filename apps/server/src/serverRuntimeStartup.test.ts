@@ -180,6 +180,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
             Effect.as({ sequence: 1 }),
           ),
         subscribeDomainEvents: Effect.die("unused"),
+        subscribeAggregate: () => Effect.die("unused"),
         streamDomainEvents: Stream.empty,
       } satisfies OrchestrationEngineShape),
       Effect.provide(NodeServices.layer),
@@ -226,6 +227,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
             Effect.as({ sequence: 1 }),
           ),
         subscribeDomainEvents: Effect.die("unused"),
+        subscribeAggregate: () => Effect.die("unused"),
         streamDomainEvents: Stream.empty,
       } satisfies OrchestrationEngineShape),
       Effect.provide(NodeServices.layer),
@@ -278,6 +280,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
             Effect.as({ sequence: 1 }),
           ),
         subscribeDomainEvents: Effect.die("unused"),
+        subscribeAggregate: () => Effect.die("unused"),
         streamDomainEvents: Stream.empty,
       } satisfies OrchestrationEngineShape),
       Effect.provideService(Crypto.Crypto, {

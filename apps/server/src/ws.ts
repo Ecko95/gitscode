@@ -1142,7 +1142,11 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+              // T7: register a per-aggregateId queue (before the snapshot read so
+              // no post-cursor event is missed). The dispatcher routes only this
+              // thread's events here, so the aggregateKind/aggregateId filter is
+              // gone — only the sequence dedup and event-type filter remain.
+              const aggregateEvents = yield* orchestrationEngine.subscribeAggregate(input.threadId);
               const { threadDetail, snapshotSequence } = yield* readThreadDetailSnapshot(
                 input.threadId,
                 projectionSnapshotQuery,
@@ -1155,13 +1159,9 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 });
               }
 
-              const liveStream = Stream.fromSubscription(domainEvents).pipe(
-                Stream.filter((event) => event.sequence > snapshotSequence),
+              const liveStream = Stream.fromQueue(aggregateEvents).pipe(
                 Stream.filter(
-                  (event) =>
-                    event.aggregateKind === "thread" &&
-                    event.aggregateId === input.threadId &&
-                    isThreadDetailEvent(event),
+                  (event) => event.sequence > snapshotSequence && isThreadDetailEvent(event),
                 ),
                 Stream.map((event) => ({
                   kind: "event" as const,
