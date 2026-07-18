@@ -444,6 +444,8 @@ export const WsUsageModelBreakdownRpc = Rpc.make(WS_METHODS.usageModelBreakdown,
   payload: UsageModelBreakdownInput,
   success: UsageModelBreakdown,
   error: ProviderOperationError,
+});
+
 export const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
   payload: ProviderAuthStartInput,
   success: ProviderAuthStartResult,
