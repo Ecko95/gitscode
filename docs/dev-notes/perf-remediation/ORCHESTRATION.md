@@ -227,3 +227,15 @@ threadDetailState.ts`, `packages/client-runtime/src/wsRpcClient.ts` (+ delete st
 3. Known/unscheduled items unchanged: worktree reaper leak (T16 — the 5-min
    `worktree.burial.remove-failed` WARN for thread `502fc036` is this), 2 LOW T16 items,
    history-truncation slice.
+
+## Redeploy 2 — 2026-07-18 22:17 BST (fixes + GITS redesign)
+
+Deployed `0822fddd0` (gits): T14 metrics sink (#173), client afterSequence resume (#174), GITS
+chat redesign slices 1+2 (#175–#179: OLED/cyan theme, mascot typing indicator, settings toggles,
+subagent switcher fix, git-status tab, usage panel + `usage.modelBreakdown` RPC). #169 was
+admin-merged in error mid-cascade and reverted before deploy (`0822fddd0` is the revert; re-merge
+by reverting it). Combined state validated locally in lieu of CI (operator-approved): turbo 14/14,
+browser 182/182 (172/172 post-revert equivalent). DB backup: `backup-pre-redesign-20260718-2215/`.
+Post-start: HTTP 200 in 5.4 ms, NRestarts=0, RSS 352 MB, swap 0, `runtime.metrics.window` emitting
+(first window: ELD p99 max 36 ms, 0 ws reconnects), one live agent turn verified end-to-end.
+Pending operator drop-in: `apps/web/public/gits-mascot-loop.gif` (sprite fallback active).
