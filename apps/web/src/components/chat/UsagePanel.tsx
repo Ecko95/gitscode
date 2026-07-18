@@ -103,14 +103,15 @@ function ModelRow(props: { entry: UsageModelBreakdownEntry; colorIndex: number }
   );
 }
 
-export function UsagePanelControl(props: { environmentId: EnvironmentId }) {
-  const [open, setOpen] = useState(false);
+// The queries live in the popup body, which only mounts while the panel is
+// open — so hosts of the closed control (e.g. ChatHeader in isolation tests)
+// never need a QueryClientProvider and nothing polls in the background.
+function UsagePanelBody(props: { environmentId: EnvironmentId }) {
   const [windowKey, setWindowKey] = useState<UsageWindowKey>("fiveHour");
 
   const summaryQuery = useQuery({
     queryKey: ["gits", "usage"],
     queryFn: readUsageSummary,
-    enabled: open,
     refetchInterval: 60_000,
     retry: false,
   });
@@ -122,7 +123,6 @@ export function UsagePanelControl(props: { environmentId: EnvironmentId }) {
       if (!api) throw new Error("Environment unavailable");
       return api.provider.usageModelBreakdown({ window: windowKey });
     },
-    enabled: open,
     refetchInterval: 60_000,
     retry: false,
   });
@@ -142,6 +142,101 @@ export function UsagePanelControl(props: { environmentId: EnvironmentId }) {
   );
 
   return (
+    <div className="grid gap-4" data-testid="usage-panel">
+      <div className="flex items-center justify-between">
+        <SectionLabel>Usage</SectionLabel>
+        <div className="flex overflow-hidden rounded-md border border-border">
+          {(["fiveHour", "weekly"] as const).map((key) => (
+            <button
+              key={key}
+              aria-pressed={windowKey === key}
+              className={cn(
+                "px-2 py-0.5 font-mono text-[10px] font-semibold",
+                windowKey === key
+                  ? "bg-primary/15 text-foreground"
+                  : "text-muted-foreground hover:bg-muted",
+              )}
+              onClick={() => setWindowKey(key)}
+              type="button"
+            >
+              {WINDOW_LABELS[key]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-1.5">
+        <SectionLabel>Rate windows</SectionLabel>
+        {providerWindows.length === 0 ? (
+          <div className="text-[11px] text-muted-foreground">
+            {summaryQuery.isPending
+              ? "Loading rate windows…"
+              : "No provider rate windows available."}
+          </div>
+        ) : (
+          providerWindows.map(({ provider, label, windows }) => (
+            <div className="grid gap-1" key={provider}>
+              {windows.fiveHour ? (
+                <RateWindowRow providerLabel={label} windowLabel="5h" window={windows.fiveHour} />
+              ) : null}
+              {windows.weekly ? (
+                <RateWindowRow providerLabel={label} windowLabel="7d" window={windows.weekly} />
+              ) : null}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="grid gap-1.5">
+        <SectionLabel>Models · last {WINDOW_LABELS[windowKey]}</SectionLabel>
+        {breakdownQuery.isError ? (
+          <div className="text-[11px] text-muted-foreground">Usage breakdown unavailable.</div>
+        ) : entries.length === 0 ? (
+          <div className="text-[11px] text-muted-foreground">
+            {breakdownQuery.isPending
+              ? "Loading model usage…"
+              : "No recorded model usage in this window."}
+          </div>
+        ) : (
+          <>
+            {segments.length > 0 ? (
+              <div className="flex h-2 overflow-hidden rounded-full border border-border/60 bg-muted">
+                {segments.map((segment) => (
+                  <div
+                    className={cn("h-full", SEGMENT_CLASSES[segment.colorIndex])}
+                    key={`${segment.provider} ${segment.model}`}
+                    style={{ width: `${segment.widthPercent}%` }}
+                    title={segment.model}
+                  />
+                ))}
+              </div>
+            ) : null}
+            <div className="grid gap-1.5 pt-0.5">
+              {entries.map((entry) => (
+                <ModelRow
+                  colorIndex={colorIndexByModel.get(`${entry.provider} ${entry.model}`) ?? 4}
+                  entry={entry}
+                  key={`${entry.provider} ${entry.model}`}
+                />
+              ))}
+            </div>
+            <div className="mt-1 flex items-center justify-between border-t border-dashed border-border pt-2">
+              <SectionLabel>Est. window spend</SectionLabel>
+              <span className="font-mono text-sm font-bold text-foreground">
+                {formatUsd(totalCostUsd(entries))}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function UsagePanelControl(props: { environmentId: EnvironmentId }) {
+  const [open, setOpen] = useState(false);
+
+  return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
@@ -158,98 +253,7 @@ export function UsagePanelControl(props: { environmentId: EnvironmentId }) {
         }
       />
       <PopoverPopup align="end" className="w-[22rem]" side="bottom">
-        <div className="grid gap-4" data-testid="usage-panel">
-          <div className="flex items-center justify-between">
-            <SectionLabel>Usage</SectionLabel>
-            <div className="flex overflow-hidden rounded-md border border-border">
-              {(["fiveHour", "weekly"] as const).map((key) => (
-                <button
-                  key={key}
-                  aria-pressed={windowKey === key}
-                  className={cn(
-                    "px-2 py-0.5 font-mono text-[10px] font-semibold",
-                    windowKey === key
-                      ? "bg-primary/15 text-foreground"
-                      : "text-muted-foreground hover:bg-muted",
-                  )}
-                  onClick={() => setWindowKey(key)}
-                  type="button"
-                >
-                  {WINDOW_LABELS[key]}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid gap-1.5">
-            <SectionLabel>Rate windows</SectionLabel>
-            {providerWindows.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">
-                {summaryQuery.isPending && open
-                  ? "Loading rate windows…"
-                  : "No provider rate windows available."}
-              </div>
-            ) : (
-              providerWindows.map(({ provider, label, windows }) => (
-                <div className="grid gap-1" key={provider}>
-                  {windows.fiveHour ? (
-                    <RateWindowRow
-                      providerLabel={label}
-                      windowLabel="5h"
-                      window={windows.fiveHour}
-                    />
-                  ) : null}
-                  {windows.weekly ? (
-                    <RateWindowRow providerLabel={label} windowLabel="7d" window={windows.weekly} />
-                  ) : null}
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="grid gap-1.5">
-            <SectionLabel>Models · last {WINDOW_LABELS[windowKey]}</SectionLabel>
-            {breakdownQuery.isError ? (
-              <div className="text-[11px] text-muted-foreground">Usage breakdown unavailable.</div>
-            ) : entries.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">
-                {breakdownQuery.isPending && open
-                  ? "Loading model usage…"
-                  : "No recorded model usage in this window."}
-              </div>
-            ) : (
-              <>
-                {segments.length > 0 ? (
-                  <div className="flex h-2 overflow-hidden rounded-full border border-border/60 bg-muted">
-                    {segments.map((segment) => (
-                      <div
-                        className={cn("h-full", SEGMENT_CLASSES[segment.colorIndex])}
-                        key={`${segment.provider} ${segment.model}`}
-                        style={{ width: `${segment.widthPercent}%` }}
-                        title={segment.model}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-                <div className="grid gap-1.5 pt-0.5">
-                  {entries.map((entry) => (
-                    <ModelRow
-                      colorIndex={colorIndexByModel.get(`${entry.provider} ${entry.model}`) ?? 4}
-                      entry={entry}
-                      key={`${entry.provider} ${entry.model}`}
-                    />
-                  ))}
-                </div>
-                <div className="mt-1 flex items-center justify-between border-t border-dashed border-border pt-2">
-                  <SectionLabel>Est. window spend</SectionLabel>
-                  <span className="font-mono text-sm font-bold text-foreground">
-                    {formatUsd(totalCostUsd(entries))}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        {open && <UsagePanelBody environmentId={props.environmentId} />}
       </PopoverPopup>
     </Popover>
   );
