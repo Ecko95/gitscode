@@ -604,7 +604,8 @@ export interface AutomodeLandSliceInput {
 }
 
 export type AutomodeLandResult =
-  { readonly status: "landed" } | { readonly status: "rejected"; readonly reason: string };
+  | { readonly status: "landed" }
+  | { readonly status: "rejected"; readonly reason: string };
 
 export interface AutomodeLandingShape {
   readonly land_slice: (
