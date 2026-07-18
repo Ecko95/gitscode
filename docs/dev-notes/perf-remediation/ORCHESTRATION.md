@@ -60,35 +60,35 @@ Escalation: 2 failed acceptances on a slice → Fable re-scopes (smaller slice o
 
 Status: `pending → dispatched → implemented → guard-green → merged → verified` (or `failed` / `re-scoped`).
 
-| Slice             | Task | Lane    | Model/effort | Status  | Guard | Merged @ | Verify |
-| ----------------- | ---- | ------- | ------------ | ------- | ----- | -------- | ------ |
-| p0-ops-T13-s1     | T13  | ops     | sonnet/med   | pending | —     | —        | —      |
-| p0-obs-T14-s1     | T14  | obs     | opus/high    | pending | —     | —        | —      |
-| p0-obs-T14-s2     | T14  | live    | opus/high    | pending | —     | —        | —      |
-| p1-A-T1-s1        | T1   | A       | sonnet/med   | pending | —     | —        | —      |
-| p1-A-T1-s2        | T1   | A       | sonnet/med   | pending | —     | —        | —      |
-| p1-A-T2-s1        | T2   | A       | sonnet/med   | pending | —     | —        | —      |
-| p1-B-T4-s1        | T4   | B       | opus/high    | pending | —     | —        | —      |
-| p1-B-T4-s2        | T4   | B       | opus/high    | pending | —     | —        | —      |
-| p1-B-T5-s1        | T5   | B       | sonnet/med   | pending | —     | —        | —      |
-| p1-B-T5-s2        | T5   | B       | sonnet/med   | pending | —     | —        | —      |
-| p1-C1-T3-s1       | T3   | C1      | opus/high    | pending | —     | —        | —      |
-| p1-C1-T3-s2       | T3   | C1      | opus/high    | pending | —     | —        | —      |
-| p2-E-T6-s1        | T6   | E       | sonnet/med   | pending | —     | —        | —      |
-| p2-DH-T5-s3       | T5c  | D/H     | sonnet/med   | pending | —     | —        | —      |
-| p2-DH-T7-s1       | T7   | D/H     | opus/high    | pending | —     | —        | —      |
-| p2-DH-T7-s2       | T7   | D/H     | opus/high    | pending | —     | —        | —      |
-| p2-DH-T7-s3       | T7   | D/H     | opus/high    | pending | —     | —        | —      |
-| p2-DH-T9-s1       | T9   | D/H     | opus/high    | pending | —     | —        | —      |
-| p2-DH-T9-s2       | T9   | D/H     | opus/high    | pending | —     | —        | —      |
-| p2-DH-T8-s1       | T8   | D/H     | sonnet/med   | pending | —     | —        | —      |
-| p3-F-T10-s1       | T10  | F       | sonnet/med   | pending | —     | —        | —      |
-| p3-F-T10-s2       | T10  | F       | sonnet/med   | pending | —     | —        | —      |
-| p3-G-T11-s1       | T11  | G       | sonnet/med   | pending | —     | —        | —      |
-| p3-C2-T12-s1      | T12  | C2      | haiku/low    | pending | —     | —        | —      |
-| p4-audit-T16-s1   | T16  | audit   | opus/high    | pending | —     | —        | —      |
-| p4-staging-T15-s1 | T15  | staging | opus/high    | pending | —     | —        | —      |
-| gate-T1-s3        | T1c  | gate    | ops          | pending | —     | —        | —      |
+| Slice             | Task | Lane    | Model/effort | Status  | Guard       | Merged @                                 | Verify |
+| ----------------- | ---- | ------- | ------------ | ------- | ----------- | ---------------------------------------- | ------ |
+| p0-ops-T13-s1     | T13  | ops     | sonnet/med   | merged  | guard-green | 35ccb87c2                                | —      |
+| p0-obs-T14-s1     | T14  | obs     | opus/high    | merged  | guard-green | 0ed738ab8                                | —      |
+| p0-obs-T14-s2     | T14  | live    | opus/high    | merged  | report-done | f861bfa3893e5f919d08cbe627413897ac698afc | —      |
+| p1-A-T1-s1        | T1   | A       | sonnet/med   | pending | —           | —                                        | —      |
+| p1-A-T1-s2        | T1   | A       | sonnet/med   | pending | —           | —                                        | —      |
+| p1-A-T2-s1        | T2   | A       | sonnet/med   | pending | —           | —                                        | —      |
+| p1-B-T4-s1        | T4   | B       | opus/high    | pending | —           | —                                        | —      |
+| p1-B-T4-s2        | T4   | B       | opus/high    | pending | —           | —                                        | —      |
+| p1-B-T5-s1        | T5   | B       | sonnet/med   | pending | —           | —                                        | —      |
+| p1-B-T5-s2        | T5   | B       | sonnet/med   | pending | —           | —                                        | —      |
+| p1-C1-T3-s1       | T3   | C1      | opus/high    | pending | —           | —                                        | —      |
+| p1-C1-T3-s2       | T3   | C1      | opus/high    | pending | —           | —                                        | —      |
+| p2-E-T6-s1        | T6   | E       | sonnet/med   | pending | —           | —                                        | —      |
+| p2-DH-T5-s3       | T5c  | D/H     | sonnet/med   | pending | —           | —                                        | —      |
+| p2-DH-T7-s1       | T7   | D/H     | opus/high    | pending | —           | —                                        | —      |
+| p2-DH-T7-s2       | T7   | D/H     | opus/high    | pending | —           | —                                        | —      |
+| p2-DH-T7-s3       | T7   | D/H     | opus/high    | pending | —           | —                                        | —      |
+| p2-DH-T9-s1       | T9   | D/H     | opus/high    | pending | —           | —                                        | —      |
+| p2-DH-T9-s2       | T9   | D/H     | opus/high    | pending | —           | —                                        | —      |
+| p2-DH-T8-s1       | T8   | D/H     | sonnet/med   | pending | —           | —                                        | —      |
+| p3-F-T10-s1       | T10  | F       | sonnet/med   | pending | —           | —                                        | —      |
+| p3-F-T10-s2       | T10  | F       | sonnet/med   | pending | —           | —                                        | —      |
+| p3-G-T11-s1       | T11  | G       | sonnet/med   | pending | —           | —                                        | —      |
+| p3-C2-T12-s1      | T12  | C2      | haiku/low    | pending | —           | —                                        | —      |
+| p4-audit-T16-s1   | T16  | audit   | opus/high    | pending | —           | —                                        | —      |
+| p4-staging-T15-s1 | T15  | staging | opus/high    | pending | —           | —                                        | —      |
+| gate-T1-s3        | T1c  | gate    | ops          | pending | —           | —                                        | —      |
 
 ## Acceptance matrix (filled at end gate)
 
