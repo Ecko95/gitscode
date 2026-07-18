@@ -686,6 +686,19 @@ label:has(> select#reasoning-effort) select {
   --gits-glow: 0;
 }
 
+@keyframes splash-title-in {
+  from {
+    opacity: 0;
+    letter-spacing: 0.7em;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.42em;
+    transform: none;
+  }
+}
+
 @keyframes gits-bob {
   0%,
   100% {

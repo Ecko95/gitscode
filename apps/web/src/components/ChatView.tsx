@@ -4742,6 +4742,14 @@ export default function ChatView(props: ChatViewProps) {
           ) : null}
           {/* Messages Wrapper */}
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {interactionMode === "plan" && (
+              <img
+                alt=""
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 left-1/2 z-10 size-56 -translate-x-1/2 -translate-y-1/2 opacity-25 select-none"
+                src="/gits-plan-anim.gif"
+              />
+            )}
             {activeSubagentTask ? (
               <SubagentTaskTranscript task={activeSubagentTask} />
             ) : (
