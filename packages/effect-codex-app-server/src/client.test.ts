@@ -11,16 +11,6 @@ import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
 
-it("can start a command without inheriting the server environment", () => {
-  assert.deepEqual(
-    CodexClient.resolveCommandEnvironment({ CODEX_HOME: "/srv/codex", PATH: "/bin" }, false, {
-      PATH: "/usr/bin",
-      SECRET: "must-not-leak",
-    }),
-    { CODEX_HOME: "/srv/codex", PATH: "/bin" },
-  );
-});
-
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
 );

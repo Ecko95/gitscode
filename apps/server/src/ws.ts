@@ -41,10 +41,8 @@ import {
   GitsCockpitError,
   GitsDevCommandError,
   GitsNotesError,
-  GitsPortsError,
   HermesAdapterError,
   OpenGsdAdapterError,
-  ProviderAuthError,
   ProviderOperationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -76,8 +74,6 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
-import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
-import { ProviderAuthService } from "./provider-auth/ProviderAuthService.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
@@ -94,7 +90,6 @@ import { ReviewService } from "./review/ReviewService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { GitsDevCommands } from "./gits/Services/GitsDevCommands.ts";
-import { GitsPorts } from "./gits/Services/GitsPorts.ts";
 import { GitsNotes } from "./gits/Services/GitsNotes.ts";
 import { mutateVisualPlan } from "./gits/mcp/visualPlanWrite.ts";
 import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
@@ -150,7 +145,6 @@ const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError)
 const isGitsCockpitError = Schema.is(GitsCockpitError);
 const isGitsDevCommandError = Schema.is(GitsDevCommandError);
 const isGitsNotesError = Schema.is(GitsNotesError);
-const isGitsPortsError = Schema.is(GitsPortsError);
 const toGitsNotesError = (cause: unknown, message: string) =>
   isGitsNotesError(cause) ? cause : new GitsNotesError({ message, cause });
 const isDelamainAdapterError = Schema.is(DelamainAdapterError);
@@ -401,8 +395,6 @@ const makeWsRpcLayer = (
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
-      const providerInstanceRegistry = yield* ProviderInstanceRegistry;
-      const providerAuthService = yield* ProviderAuthService;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
@@ -414,7 +406,6 @@ const makeWsRpcLayer = (
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const gitsDevCommands = yield* GitsDevCommands;
-      const gitsPorts = yield* GitsPorts;
       const gitsNotes = yield* GitsNotes;
       const gitsPlanningScanner = yield* GitsPlanningScanner;
       const delamainAdapter = yield* DelamainAdapter;
@@ -967,40 +958,6 @@ const makeWsRpcLayer = (
       const toCritError = (cause: unknown, message: string) =>
         isCritError(cause) ? cause : new CritError({ message, cause });
 
-      const requireProviderAuthOwner =
-        currentSession.role === "owner"
-          ? Effect.void
-          : Effect.fail(
-              new ProviderAuthError({
-                code: "access-denied",
-                message: "Only owner sessions can manage provider authentication.",
-              }),
-            );
-      const resolveProviderAuth = (
-        providerInstanceId: Parameters<typeof providerInstanceRegistry.getInstance>[0],
-      ) =>
-        providerInstanceRegistry.getInstance(providerInstanceId).pipe(
-          Effect.flatMap((instance) => {
-            if (!instance) {
-              return Effect.fail(
-                new ProviderAuthError({
-                  code: "not-found",
-                  message: "Provider instance was not found.",
-                }),
-              );
-            }
-            if (!instance.adapter.providerAuth) {
-              return Effect.fail(
-                new ProviderAuthError({
-                  code: "unsupported",
-                  message: "This provider does not support managed authentication.",
-                }),
-              );
-            }
-            return Effect.succeed({ instance, adapter: instance.adapter.providerAuth });
-          }),
-        );
-
       return WsRpcGroup.of({
         [WS_METHODS.providerSteerTurn]: (input) =>
           Option.match(providerService, {
@@ -1077,94 +1034,6 @@ const makeWsRpcLayer = (
                 ),
               )
             : Effect.fail(new ProviderOperationError({ message: "Usage breakdown unavailable" })),
-        [WS_METHODS.providerAuthStart]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthStart,
-            Effect.gen(function* () {
-              yield* requireProviderAuthOwner;
-              const resolved = yield* resolveProviderAuth(input.providerInstanceId);
-              return yield* providerAuthService.startProvider({
-                provider: resolved.instance.driverKind,
-                providerInstanceId: input.providerInstanceId,
-                connectionId: currentSessionId,
-                method: input.method,
-                ...(input.capabilityId ? { capabilityId: input.capabilityId } : {}),
-                adapter: resolved.adapter,
-                refresh: providerRegistry
-                  .refreshInstance(input.providerInstanceId)
-                  .pipe(Effect.asVoid),
-                verifyAuthenticated: providerRegistry
-                  .refreshInstance(input.providerInstanceId)
-                  .pipe(
-                    Effect.map((providers) =>
-                      providers.some(
-                        (provider) =>
-                          provider.instanceId === input.providerInstanceId &&
-                          provider.auth.status === "authenticated",
-                      ),
-                    ),
-                  ),
-              });
-            }),
-            { "rpc.aggregate": "provider-auth" },
-          ),
-        [WS_METHODS.providerAuthGet]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthGet,
-            requireProviderAuthOwner.pipe(
-              Effect.andThen(
-                providerAuthService.get({
-                  sessionId: input.sessionId,
-                  connectionId: currentSessionId,
-                }),
-              ),
-            ),
-            { "rpc.aggregate": "provider-auth" },
-          ),
-        [WS_METHODS.providerAuthCancel]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthCancel,
-            requireProviderAuthOwner.pipe(
-              Effect.andThen(
-                providerAuthService.cancel({
-                  sessionId: input.sessionId,
-                  connectionId: currentSessionId,
-                }),
-              ),
-            ),
-            { "rpc.aggregate": "provider-auth" },
-          ),
-        [WS_METHODS.providerAuthSubmitCode]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthSubmitCode,
-            requireProviderAuthOwner.pipe(
-              Effect.andThen(
-                providerAuthService.submitCode({
-                  sessionId: input.sessionId,
-                  connectionId: currentSessionId,
-                  code: input.code,
-                }),
-              ),
-            ),
-            { "rpc.aggregate": "provider-auth" },
-          ),
-        [WS_METHODS.providerAuthLogout]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.providerAuthLogout,
-            Effect.gen(function* () {
-              yield* requireProviderAuthOwner;
-              const resolved = yield* resolveProviderAuth(input.providerInstanceId);
-              yield* providerAuthService.logoutProvider({
-                provider: resolved.instance.driverKind,
-                providerInstanceId: input.providerInstanceId,
-                adapter: resolved.adapter,
-                refresh: providerRegistry
-                  .refreshInstance(input.providerInstanceId)
-                  .pipe(Effect.asVoid),
-              });
-            }),
-            { "rpc.aggregate": "provider-auth" },
-          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -1993,21 +1862,6 @@ const makeWsRpcLayer = (
                   ? cause
                   : new GitsDevCommandError({
                       message: "Failed to initialize GITS dev commands.",
-                      cause,
-                    }),
-              ),
-            ),
-            { "rpc.aggregate": "gits" },
-          ),
-        [WS_METHODS.gitsPortsList]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.gitsPortsList,
-            gitsPorts.list(input).pipe(
-              Effect.mapError((cause) =>
-                isGitsPortsError(cause)
-                  ? cause
-                  : new GitsPortsError({
-                      message: "Failed to list environment ports.",
                       cause,
                     }),
               ),

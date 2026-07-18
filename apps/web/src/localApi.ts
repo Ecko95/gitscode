@@ -1,9 +1,4 @@
-import type {
-  ContextMenuItem,
-  DesktopSshOpenRemoteUrlInput,
-  DesktopSshOpenRemoteUrlResult,
-  LocalApi,
-} from "@t3tools/contracts";
+import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
 import type { WsRpcClient } from "@t3tools/client-runtime";
 
 import { __resetClientSettingsPersistenceForTests } from "./hooks/useSettings";
@@ -33,17 +28,6 @@ import {
 } from "./clientPersistenceStorage";
 
 let cachedApi: LocalApi | undefined;
-
-export async function openDesktopSshUrl(
-  input: DesktopSshOpenRemoteUrlInput,
-): Promise<DesktopSshOpenRemoteUrlResult> {
-  const openRemoteUrl =
-    typeof window === "undefined" ? undefined : window.desktopBridge?.ssh?.openRemoteUrl;
-  if (!openRemoteUrl) {
-    throw new Error("Managed SSH link opening is unavailable in this Desktop app.");
-  }
-  return await openRemoteUrl(input);
-}
 
 function unavailableLocalBackendError(): Error {
   return new Error("Local backend API is unavailable before a backend is paired.");

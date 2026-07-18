@@ -2,494 +2,286 @@ import type {
   BrowserPreviewAction,
   BrowserPreviewStatus,
   EnvironmentId,
-  PortProtocol,
-  PortRecord,
   ThreadId,
 } from "@t3tools/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useState } from "react";
 import {
   ExternalLinkIcon,
   HandIcon,
   PauseIcon,
   PlayIcon,
-  PlusIcon,
   RotateCcwIcon,
   StepForwardIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { readEnvironmentApi } from "../environmentApi";
-import { getEnvironmentHttpBaseUrl, getSavedEnvironmentRecord } from "../environments/runtime";
-import { openDesktopSshUrl } from "../localApi";
-import { resolveEnvironmentPreviewUrl } from "../openEnvironmentUrl";
-import { useKnownTerminalSessions } from "../terminalSessionState";
-import { buildPortUrl, createManualPort, mergePortInventory } from "./BrowserPreviewPanel.logic";
-import DevCommandsControl from "./DevCommandsControl";
 import { Button } from "./ui/button";
 
 interface BrowserPreviewPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly projectDir: string | null;
+  readonly cwd: string | null;
   readonly onClose: () => void;
-}
-
-function sourceLabel(port: PortRecord): string {
-  return port.sources
-    .map((source) => (source === "terminal" ? "terminal URL" : source))
-    .join(" · ");
 }
 
 export function BrowserPreviewPanel({
   environmentId,
   threadId,
-  projectDir,
+  cwd,
   onClose,
 }: BrowserPreviewPanelProps) {
-  const [previewStatus, setPreviewStatus] = useState<BrowserPreviewStatus | null>(null);
-  const [busyAction, setBusyAction] = useState<BrowserPreviewAction | "open" | "local" | null>(
-    null,
+  const [preview_status, set_preview_status] = useState<BrowserPreviewStatus | null>(null);
+  const [busy_action, set_busy_action] = useState<BrowserPreviewAction | "open" | "run-dev" | null>(
+    "open",
   );
-  const [browserUrl, setBrowserUrl] = useState("");
-  const [controlError, setControlError] = useState<string | null>(null);
-  const [consoleOpen, setConsoleOpen] = useState(false);
-  const [manualPort, setManualPort] = useState("");
-  const [manualProtocol, setManualProtocol] = useState<PortProtocol>("http");
-  const [manualPorts, setManualPorts] = useState<ReadonlyArray<PortRecord>>([]);
-  const terminalSessions = useKnownTerminalSessions({ environmentId, threadId: null });
-  const api = readEnvironmentApi(environmentId);
-  const remoteEnvironment = getSavedEnvironmentRecord(environmentId);
-  const desktopSsh = remoteEnvironment?.desktopSsh;
-  const portsAvailable = api?.ports !== undefined;
+  const [browser_url, set_browser_url] = useState("");
+  const [control_error, set_control_error] = useState<string | null>(null);
+  const [console_open, set_console_open] = useState(false);
 
-  const portsQuery = useQuery({
-    queryKey: ["environment-ports", environmentId, projectDir, threadId],
-    enabled: Boolean(projectDir && api?.ports),
-    queryFn: async () => {
-      if (!projectDir || !api?.ports)
-        throw new Error("Ports are unavailable for this environment.");
-      return api.ports.list({ projectDir, threadId });
-    },
-    refetchInterval: 5_000,
-  });
+  const open_preview = useCallback(async () => {
+    set_busy_action("open");
+    try {
+      const api = readEnvironmentApi(environmentId);
+      if (!api) throw new Error("The environment connection is unavailable.");
+      const status = await api.browserPreview.open({ threadId });
+      set_preview_status(status);
+      set_browser_url(status.terminalUrl ?? "");
+    } catch (cause) {
+      set_preview_status({
+        available: false,
+        status: "error",
+        previewPath: null,
+        terminalUrl: null,
+        consoleEntries: [],
+        expiresAt: null,
+        message: cause instanceof Error ? cause.message : "Browser preview failed to start.",
+      });
+    } finally {
+      set_busy_action(null);
+    }
+  }, [environmentId, threadId]);
 
-  const terminalLifecycleKey = terminalSessions
-    .map(
-      (session) =>
-        `${session.target.threadId}:${session.target.terminalId}:${session.state.status}:${session.state.hasRunningSubprocess}:${session.state.summary?.updatedAt ?? ""}`,
-    )
-    .join("|");
-  const previousTerminalLifecycleKey = useRef(terminalLifecycleKey);
   useEffect(() => {
-    if (previousTerminalLifecycleKey.current === terminalLifecycleKey) return;
-    previousTerminalLifecycleKey.current = terminalLifecycleKey;
-    if (projectDir && api?.ports) void portsQuery.refetch();
-  }, [api?.ports, portsQuery, projectDir, terminalLifecycleKey]);
-
-  const ports = useMemo(
-    () =>
-      mergePortInventory({
-        serverPorts: portsQuery.data?.ports ?? [],
-        terminalSessions,
-        manualPorts,
-      }),
-    [manualPorts, portsQuery.data?.ports, terminalSessions],
-  );
-
-  const previewPort = useCallback(
-    async (port: PortRecord) => {
-      const url = buildPortUrl(port);
-      if (!url) return;
-      const environmentApi = readEnvironmentApi(environmentId);
-      if (!environmentApi) throw new Error("The environment connection is unavailable.");
-      setBusyAction("open");
-      setControlError(null);
-      try {
-        await environmentApi.browserPreview.open({ threadId });
-        const status = await environmentApi.browserPreview.control({
-          threadId,
-          action: "navigate",
-          url,
-        });
-        setPreviewStatus(status);
-        setBrowserUrl(url);
-      } catch (cause) {
-        setControlError(
-          cause instanceof Error ? cause.message : "Browser preview failed to start.",
-        );
-      } finally {
-        setBusyAction(null);
-      }
-    },
-    [environmentId, threadId],
-  );
+    void open_preview();
+  }, [open_preview]);
 
   const control = useCallback(
     async (action: BrowserPreviewAction, url?: string) => {
-      const environmentApi = readEnvironmentApi(environmentId);
-      if (!environmentApi) return;
-      setControlError(null);
-      setBusyAction(action);
+      const api = readEnvironmentApi(environmentId);
+      if (!api) return;
+      set_control_error(null);
+      set_busy_action(action);
       try {
-        setPreviewStatus(
-          await environmentApi.browserPreview.control({
-            threadId,
-            action,
-            ...(url ? { url } : {}),
-          }),
+        set_preview_status(
+          await api.browserPreview.control({ threadId, action, ...(url ? { url } : {}) }),
         );
       } catch (cause) {
-        setControlError(cause instanceof Error ? cause.message : "Browser control failed.");
+        set_control_error(cause instanceof Error ? cause.message : "Browser control failed.");
       } finally {
-        setBusyAction(null);
+        set_busy_action(null);
       }
     },
     [environmentId, threadId],
   );
 
-  const openLocally = useCallback(
-    async (port: PortRecord) => {
-      const url = buildPortUrl(port);
-      if (!desktopSsh || !url) return;
-      setBusyAction("local");
-      setControlError(null);
-      try {
-        const result = await openDesktopSshUrl({ target: desktopSsh, url });
-        if (!result.opened) throw new Error("Unable to create the local SSH forward.");
-      } catch (cause) {
-        setControlError(cause instanceof Error ? cause.message : "Unable to open locally.");
-      } finally {
-        setBusyAction(null);
-      }
-    },
-    [desktopSsh],
-  );
+  const is_paused = preview_status?.status === "paused";
+  const is_takeover = preview_status?.status === "takeover";
 
-  const previewUrl = useMemo(() => {
-    const baseUrl = getEnvironmentHttpBaseUrl(environmentId);
-    return baseUrl && previewStatus?.previewPath
-      ? resolveEnvironmentPreviewUrl(baseUrl, previewStatus.previewPath)
-      : null;
-  }, [environmentId, previewStatus?.previewPath]);
-  const canEmbedPreview =
-    previewUrl !== null &&
-    typeof window !== "undefined" &&
-    new URL(previewUrl).origin === window.location.origin;
-  const isPaused = previewStatus?.status === "paused";
-  const isTakeover = previewStatus?.status === "takeover";
+  const run_dev = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !cwd) return;
+    set_busy_action("run-dev");
+    set_control_error(null);
+    try {
+      await api.terminal.close({ threadId, terminalId: "browser-dev" }).catch(() => undefined);
+      await api.terminal.open({ threadId, terminalId: "browser-dev", cwd });
+      await api.terminal.write({
+        threadId,
+        terminalId: "browser-dev",
+        data: 'npm run dev -- --port "$GITS_PORT"\r',
+      });
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        try {
+          set_preview_status(
+            await api.browserPreview.control({ threadId, action: "connect-localhost" }),
+          );
+          return;
+        } catch {
+          // The dev server may still be compiling.
+        }
+      }
+      throw new Error("npm run dev started, but no local listener appeared.");
+    } catch (cause) {
+      set_control_error(cause instanceof Error ? cause.message : "Failed to start npm run dev.");
+    } finally {
+      set_busy_action(null);
+    }
+  }, [cwd, environmentId, threadId]);
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-card" aria-label="Ports and browser">
+    <section className="flex h-full min-h-0 flex-col bg-card" aria-label="Live browser preview">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Ports &amp; Browser</p>
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <span
+              className={`size-2 rounded-full ${preview_status?.status === "live" ? "bg-emerald-500" : "bg-amber-500"}`}
+            />
+            <span>Browser supervision</span>
+          </div>
           <p className="truncate text-[11px] text-muted-foreground">
-            {projectDir ?? "No project selected"}
+            Isolated to this chat session
           </p>
         </div>
-        <DevCommandsControl environmentId={environmentId} projectDir={projectDir} />
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label="Refresh ports"
-          disabled={!projectDir || !portsAvailable || portsQuery.isFetching}
-          onClick={() => void portsQuery.refetch()}
+          aria-label="Open preview in new tab"
+          disabled={!preview_status?.previewPath}
+          onClick={() =>
+            window.open(preview_status?.previewPath ?? "", "_blank", "noopener,noreferrer")
+          }
         >
-          <RotateCcwIcon className="size-3.5" />
+          <ExternalLinkIcon className="size-3.5" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Close Ports and Browser"
-          onClick={onClose}
-        >
+        <Button variant="ghost" size="icon-xs" aria-label="Close browser preview" onClick={onClose}>
           <XIcon className="size-3.5" />
         </Button>
       </header>
-
-      <div
-        className="flex shrink-0 flex-wrap gap-x-1.5 border-b border-border px-3 py-1 text-[10px] text-muted-foreground"
-        aria-label="Available port access"
-      >
-        <span>In GITS (VPS browser)</span>
-        {desktopSsh ? (
-          <>
-            <span aria-hidden>·</span>
-            <span>Local via SSH (this computer only)</span>
-          </>
-        ) : null}
-      </div>
 
       <form
         className="flex shrink-0 gap-1 border-b border-border p-2"
         onSubmit={(event) => {
           event.preventDefault();
-          try {
-            const port = createManualPort(Number(manualPort), manualProtocol);
-            setManualPorts((current) => [...current.filter((entry) => entry.id !== port.id), port]);
-            setManualPort("");
-            setControlError(null);
-          } catch (cause) {
-            setControlError(cause instanceof Error ? cause.message : "Invalid port.");
-          }
+          void control("navigate", browser_url);
         }}
       >
         <input
-          inputMode="numeric"
-          value={manualPort}
-          onChange={(event) => setManualPort(event.target.value)}
-          placeholder="5173"
-          aria-label="Manual port"
+          type="url"
+          value={browser_url}
+          onChange={(event) => set_browser_url(event.target.value)}
+          placeholder="http://localhost:3000"
+          aria-label="Browser URL"
           className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          disabled={busy_action !== null}
           required
         />
-        <select
-          value={manualProtocol}
-          onChange={(event) => setManualProtocol(event.target.value as PortProtocol)}
-          aria-label="Protocol"
-          className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={busy_action !== null || !cwd}
+          onClick={() => void run_dev()}
         >
-          <option value="http">HTTP</option>
-          <option value="https">HTTPS</option>
-          <option value="tcp">TCP</option>
-        </select>
-        <Button type="submit" size="xs" variant="outline">
-          <PlusIcon className="size-3" />
-          Add port
+          <PlayIcon className="size-3" />
+          Run dev
+        </Button>
+        <Button
+          type="submit"
+          size="xs"
+          variant="outline"
+          disabled={busy_action !== null || browser_url.trim().length === 0}
+        >
+          Go
         </Button>
       </form>
-
-      {controlError ? (
+      {control_error ? (
         <p
           className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive"
           role="alert"
         >
-          {controlError}
+          {control_error}
         </p>
       ) : null}
-      {portsQuery.error ? (
-        <p
-          className="shrink-0 border-b border-border px-3 py-2 text-xs text-destructive"
-          role="alert"
-        >
-          {portsQuery.error instanceof Error ? portsQuery.error.message : "Failed to list ports."}
-        </p>
-      ) : null}
-      {portsQuery.data?.warnings.map((warning) => (
-        <p
-          key={warning}
-          className="shrink-0 border-b border-border px-3 py-1 text-xs text-amber-600"
-        >
-          {warning}
-        </p>
-      ))}
 
-      <div className="max-h-[42%] shrink-0 overflow-auto border-b border-border p-2">
-        {ports.length === 0 ? (
-          <p className="p-3 text-center text-xs text-muted-foreground">
-            {!portsAvailable
-              ? "Ports inventory is unavailable for this environment."
-              : !projectDir
-                ? "Select a project to discover ports."
-                : portsQuery.isPending
-                  ? "Loading environment ports…"
-                  : "No ports observed."}
-          </p>
-        ) : (
-          <div className="space-y-1.5">
-            {ports.map((port) => {
-              const url = buildPortUrl(port);
-              return (
-                <article
-                  key={port.id}
-                  data-port-id={port.id}
-                  className="rounded-md border border-border bg-background p-2"
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-mono text-sm font-semibold">{port.remotePort}</span>
-                        <span className="text-[10px] font-medium uppercase text-muted-foreground">
-                          {port.protocol}
-                        </span>
-                        <span className="truncate text-xs">
-                          {port.label ?? port.processName ?? "Port"}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        {sourceLabel(port)} · {port.listenerStatus} · {port.ownership}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                      {url ? (
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          aria-label={`Preview ${port.remotePort} in GITS`}
-                          disabled={busyAction !== null}
-                          onClick={() => void previewPort(port)}
-                        >
-                          Preview in GITS
-                        </Button>
-                      ) : null}
-                      {desktopSsh && url ? (
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          aria-label={`Open ${port.remotePort} locally`}
-                          disabled={busyAction !== null}
-                          onClick={() => void openLocally(port)}
-                        >
-                          Open locally
-                        </Button>
-                      ) : null}
-                      {port.ownership === "unmanaged" ? (
-                        <>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled
-                            title="Use a configured Dev command"
-                          >
-                            Start
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled
-                            title="Unmanaged listeners are view-only"
-                          >
-                            Stop
-                          </Button>
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border p-2">
+        <Button
+          size="xs"
+          variant={is_paused ? "default" : "outline"}
+          disabled={busy_action !== null}
+          onClick={() => void control(is_paused ? "resume" : "pause")}
+        >
+          {is_paused ? <PlayIcon className="size-3" /> : <PauseIcon className="size-3" />}
+          {is_paused ? "Resume" : "Pause"}
+        </Button>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={busy_action !== null}
+          onClick={() => void control("step")}
+        >
+          <StepForwardIcon className="size-3" />
+          Step
+        </Button>
+        <Button
+          size="xs"
+          variant={is_takeover ? "default" : "outline"}
+          disabled={busy_action !== null}
+          onClick={() => void control(is_takeover ? "release" : "takeover")}
+        >
+          <HandIcon className="size-3" />
+          {is_takeover ? "Release" : "Take over"}
+        </Button>
+        <Button
+          size="xs"
+          variant="destructive"
+          disabled={busy_action !== null}
+          onClick={() => void control("abort")}
+        >
+          <XIcon className="size-3" />
+          Abort
+        </Button>
+        <Button
+          size="xs"
+          variant={console_open ? "default" : "outline"}
+          disabled={busy_action !== null}
+          onClick={() => {
+            const next_open = !console_open;
+            set_console_open(next_open);
+            if (next_open) void control("console");
+          }}
+        >
+          Console
+        </Button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center gap-1 border-b border-border p-2">
-          <span className="mr-auto text-xs font-medium">Browser supervision</span>
-          <Button
-            size="xs"
-            variant={isPaused ? "default" : "outline"}
-            disabled={!previewStatus || busyAction !== null}
-            onClick={() => void control(isPaused ? "resume" : "pause")}
-          >
-            {isPaused ? <PlayIcon className="size-3" /> : <PauseIcon className="size-3" />}
-            {isPaused ? "Resume" : "Pause"}
-          </Button>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!previewStatus || busyAction !== null}
-            onClick={() => void control("step")}
-          >
-            <StepForwardIcon className="size-3" />
-            Step
-          </Button>
-          <Button
-            size="xs"
-            variant={isTakeover ? "default" : "outline"}
-            disabled={!previewStatus || busyAction !== null}
-            onClick={() => void control(isTakeover ? "release" : "takeover")}
-          >
-            <HandIcon className="size-3" />
-            {isTakeover ? "Release" : "Take over"}
-          </Button>
-          <Button
-            size="xs"
-            variant="destructive"
-            disabled={!previewStatus || busyAction !== null}
-            onClick={() => void control("abort")}
-          >
-            <XIcon className="size-3" />
-            Abort
-          </Button>
-        </div>
+      {console_open ? (
+        <pre className="max-h-40 shrink-0 overflow-auto border-b border-border bg-black p-2 text-[11px] text-zinc-100">
+          {preview_status?.consoleEntries.length
+            ? preview_status.consoleEntries.join("\n")
+            : "No console entries."}
+        </pre>
+      ) : null}
 
-        {previewStatus ? (
-          <form
-            className="flex shrink-0 gap-1 border-b border-border p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void control("navigate", browserUrl);
-            }}
-          >
-            <input
-              type="url"
-              value={browserUrl}
-              onChange={(event) => setBrowserUrl(event.target.value)}
-              aria-label="Browser URL"
-              className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs"
-              required
-            />
-            <Button type="submit" size="xs" variant="outline" disabled={busyAction !== null}>
-              Go
-            </Button>
+      <div className="relative min-h-0 flex-1 bg-muted/30">
+        {preview_status?.previewPath ? (
+          <iframe
+            key={preview_status.previewPath}
+            src={preview_status.previewPath}
+            title="Live automated browser"
+            className="h-full w-full border-0"
+            allow="clipboard-read; clipboard-write"
+            sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-downloads"
+          />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+            <p className="max-w-sm text-sm text-muted-foreground">
+              {busy_action === "open"
+                ? "Starting the isolated browser session…"
+                : (preview_status?.message ?? "Browser preview is not available.")}
+            </p>
             <Button
-              type="button"
-              size="xs"
-              variant={consoleOpen ? "default" : "outline"}
-              disabled={busyAction !== null}
-              onClick={() => {
-                const nextOpen = !consoleOpen;
-                setConsoleOpen(nextOpen);
-                if (nextOpen) void control("console");
-              }}
+              size="sm"
+              variant="outline"
+              disabled={busy_action !== null}
+              onClick={() => void open_preview()}
             >
-              Console
+              <RotateCcwIcon className="size-3.5" />
+              Retry
             </Button>
-          </form>
-        ) : null}
-
-        {consoleOpen ? (
-          <pre className="max-h-32 shrink-0 overflow-auto border-b border-border bg-black p-2 text-[11px] text-zinc-100">
-            {previewStatus?.consoleEntries.length
-              ? previewStatus.consoleEntries.join("\n")
-              : "No console entries."}
-          </pre>
-        ) : null}
-
-        <div className="relative min-h-0 flex-1 bg-muted/30">
-          {previewUrl && canEmbedPreview ? (
-            <iframe
-              key={previewUrl}
-              src={previewUrl}
-              title="Live automated browser"
-              className="h-full w-full border-0"
-              allow="clipboard-read; clipboard-write"
-              sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-downloads"
-            />
-          ) : previewUrl ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-              <p className="max-w-sm text-sm text-muted-foreground">
-                This saved environment preview opens in a separate authenticated tab.
-              </p>
-              <Button
-                size="sm"
-                variant="outline"
-                aria-label="Open supervised browser"
-                onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
-              >
-                <ExternalLinkIcon className="size-3.5" />
-                Open supervised browser
-              </Button>
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center p-6 text-center">
-              <p className="max-w-sm text-sm text-muted-foreground">
-                Select an HTTP port to preview it in the isolated VPS browser.
-              </p>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </section>
   );

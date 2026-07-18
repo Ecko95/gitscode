@@ -28,7 +28,6 @@ const BASE_ENVIRONMENT = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
-    ports: true,
   },
 };
 
@@ -73,7 +72,6 @@ describe("environmentBootstrap", () => {
       serverVersion: "0.0.0-test",
       capabilities: {
         repositoryIdentity: true,
-        ports: true,
       },
     });
 

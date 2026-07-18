@@ -368,7 +368,7 @@ const VoiceTranscriptionSettingsWire = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Groq API key",
-        description: "Stored in a server-side file protected by filesystem permissions.",
+        description: "Stored server-side in the secret store, never written to disk in plain text.",
         providerSettingsForm: {
           control: "password",
           placeholder: "Optional",
@@ -384,7 +384,7 @@ const VoiceTranscriptionSettingsWire = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "OpenAI API key",
-        description: "Stored in a server-side file protected by filesystem permissions.",
+        description: "Stored server-side in the secret store, never written to disk in plain text.",
         providerSettingsForm: {
           control: "password",
           placeholder: "Optional",

@@ -12,9 +12,8 @@ import * as Schema from "effect/Schema";
 
 import { GitsNotes, type GitsNotesShape } from "../Services/GitsNotes.ts";
 
-const seedId = "Remote provider authentication.md";
-const seedContent =
-  "Use Codex device-code login or Claude's browser-displayed manual code from remote hosts. Use an exact SSH local forward only when a provider requires a loopback callback.";
+const seedId = "VPS localhost callback redirect for windows powershell.md";
+const seedContent = "ssh -N -o ExitOnForwardFailure=yes -L 1455:127.0.0.1:1455 user@your-vps";
 const notionVersion = "2026-03-11";
 const conflictMarker = " (Notion conflict ";
 

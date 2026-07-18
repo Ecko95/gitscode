@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ChevronDownIcon,
   CopyIcon,
+  ExternalLinkIcon,
   PlayIcon,
   SquareTerminalIcon,
   StopCircleIcon,
@@ -217,6 +218,16 @@ export default function DevCommandsControl({ environmentId, projectDir }: DevCom
                 <StopCircleIcon className="size-4" />
                 Stop
               </MenuItem>
+              {command.previewUrl ? (
+                <MenuItem
+                  onClick={() => {
+                    window.open(command.previewUrl!, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  <ExternalLinkIcon className="size-4" />
+                  Open preview
+                </MenuItem>
+              ) : null}
               <MenuItem
                 onClick={() =>
                   void runAction(`Copy ${command.name} launch command`, async () => {

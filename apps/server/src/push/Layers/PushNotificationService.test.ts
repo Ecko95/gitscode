@@ -55,7 +55,7 @@ const testEnvironmentDescriptor = {
   label: "GITS",
   platform: { os: "linux", arch: "x64" },
   serverVersion: "0.0.0-test",
-  capabilities: { repositoryIdentity: true, ports: true },
+  capabilities: { repositoryIdentity: true },
 } satisfies ExecutionEnvironmentDescriptor;
 
 const environmentLayer = Layer.succeed(ServerEnvironment, {

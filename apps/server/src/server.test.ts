@@ -13,7 +13,6 @@ import {
   type GitsMcpInventorySnapshot,
   type GitsNote,
   type GitsNotesSyncResult,
-  type PortsListResult,
   type GitsSchedulerSnapshot,
   type GitsSkillInventorySnapshot,
   type HermesCommandResult,
@@ -111,7 +110,6 @@ import {
   GitsBuildInfoResolver,
   type GitsBuildInfoResolverShape,
 } from "./gits/Services/GitsBuildInfo.ts";
-import { CodexMcpAuth } from "./gits/Services/CodexMcpAuth.ts";
 import {
   GitsSkillInventoryResolver,
   type GitsSkillInventoryResolverShape,
@@ -121,7 +119,6 @@ import {
   type GitsMcpInventoryResolverShape,
 } from "./gits/Services/GitsMcpInventory.ts";
 import { GitsDevCommands, type GitsDevCommandsShape } from "./gits/Services/GitsDevCommands.ts";
-import { GitsPorts, type GitsPortsShape } from "./gits/Services/GitsPorts.ts";
 import { GitsNotes, type GitsNotesShape } from "./gits/Services/GitsNotes.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "./gits/Services/DelamainAdapter.ts";
 import { OpenGsdAdapter, type OpenGsdAdapterShape } from "./gits/Services/OpenGsdAdapter.ts";
@@ -147,14 +144,7 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
-import {
-  ProviderInstanceRegistry,
-  type ProviderInstanceRegistryShape,
-} from "./provider/Services/ProviderInstanceRegistry.ts";
-import { ProviderAuthServiceLive } from "./provider-auth/ProviderAuthService.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
-import type { ProviderInstance } from "./provider/ProviderDriver.ts";
-import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -335,25 +325,6 @@ const defaultGitsDevCommands: GitsDevCommandListResult = {
       previewUrl: "https://subject28.tail.ts.net:3000/",
       launchCommand:
         "GITS_DEV_NAME='Web dev' bash '/tmp/default-project/scripts/dev/run-dev-command.sh'",
-    },
-  ],
-  warnings: [],
-};
-const defaultGitsPorts: PortsListResult = {
-  projectDir: "/tmp/default-project",
-  scannedAt: "2026-01-01T00:00:00.000Z",
-  ports: [
-    {
-      id: "127.0.0.1:3000",
-      remoteHost: "127.0.0.1",
-      remotePort: 3000,
-      protocol: "http",
-      label: "Web dev",
-      sources: ["configured", "listener"],
-      listenerStatus: "ready",
-      ownership: "unmanaged",
-      supervisedStatus: "stopped",
-      exposureStatus: "none",
     },
   ],
   warnings: [],
@@ -619,7 +590,6 @@ const testEnvironmentDescriptor = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
-    ports: true,
   },
 };
 const makeDefaultOrchestrationReadModel = () => {
@@ -821,7 +791,6 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<KeybindingsShape>;
     providerRegistry?: Partial<ProviderRegistryShape>;
-    providerInstanceRegistry?: Partial<ProviderInstanceRegistryShape>;
     serverSettings?: Partial<ServerSettingsShape>;
     voiceTranscription?: Partial<VoiceTranscriptionServiceShape>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncherShape>;
@@ -841,7 +810,6 @@ const buildAppUnderTest = (options?: {
     gitsSkillInventoryResolver?: Partial<GitsSkillInventoryResolverShape>;
     gitsMcpInventoryResolver?: Partial<GitsMcpInventoryResolverShape>;
     gitsDevCommands?: Partial<GitsDevCommandsShape>;
-    gitsPorts?: Partial<GitsPortsShape>;
     gitsNotes?: Partial<GitsNotesShape>;
     delamainAdapter?: Partial<DelamainAdapterShape>;
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
@@ -1040,22 +1008,10 @@ const buildAppUnderTest = (options?: {
         getSnapshot: () => Effect.succeed(defaultGitsMcpInventory),
         ...options?.layers?.gitsMcpInventoryResolver,
       }),
-      Layer.mock(CodexMcpAuth)({
-        getAvailability: () => Effect.succeed({ available: false }),
-        start: () => Effect.die("MCP auth is not configured in the router test harness."),
-        getStatus: () => Effect.die("MCP auth is not configured in the router test harness."),
-        cancel: () => Effect.void,
-        handleCallback: () => Effect.die("MCP auth is not configured in the router test harness."),
-        stopAll: () => Effect.void,
-      }),
       Layer.mock(GitsDevCommands)({
         listCommands: () => Effect.succeed(defaultGitsDevCommands),
         initCommands: () => Effect.succeed(defaultGitsDevCommands),
         ...options?.layers?.gitsDevCommands,
-      }),
-      Layer.mock(GitsPorts)({
-        list: () => Effect.succeed(defaultGitsPorts),
-        ...options?.layers?.gitsPorts,
       }),
       Layer.mock(GitsNotes)({
         list: () => Effect.succeed([]),
@@ -1230,14 +1186,6 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
-          Layer.mock(ProviderInstanceRegistry)({
-            getInstance: () => Effect.succeed(undefined),
-            listInstances: Effect.succeed([]),
-            listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.empty,
-            ...options?.layers?.providerInstanceRegistry,
-          }),
-          ProviderAuthServiceLive,
           Layer.mock(ServerSettingsService)({
             start: Effect.void,
             ready: Effect.void,
@@ -1898,7 +1846,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             source: "config-file",
             status: "unknown",
             authStatus: "unknown",
-            canAuthenticate: false,
             enabled: true,
             command: "npx -y @upstash/context7-mcp",
             transport: "stdio",
@@ -3418,255 +3365,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes owner-only provider authentication without retaining device secrets", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("codex-personal");
-      let cancelCount = 0;
-      let logoutCount = 0;
-      let refreshCount = 0;
-      const instance = {
-        instanceId,
-        driverKind: ProviderDriverKind.make("codex"),
-        adapter: {
-          providerAuth: {
-            credentialHome: "/tmp/codex-personal",
-            methods: ["device-code"],
-            start: () =>
-              Effect.succeed({
-                verificationUri: "https://auth.example.test/device",
-                userCode: "ABCD-EFGH",
-                completion: Effect.never,
-                cancel: Effect.sync(() => {
-                  cancelCount += 1;
-                }),
-                close: Effect.void,
-              }),
-            logout: () =>
-              Effect.sync(() => {
-                logoutCount += 1;
-              }),
-          },
-        },
-      } as unknown as ProviderInstance;
-
-      yield* buildAppUnderTest({
-        layers: {
-          providerInstanceRegistry: {
-            getInstance: (requestedId) =>
-              Effect.succeed(requestedId === instanceId ? instance : undefined),
-          },
-          providerRegistry: {
-            refreshInstance: () =>
-              Effect.sync(() => {
-                refreshCount += 1;
-                return [];
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            const started = yield* client[WS_METHODS.providerAuthStart]({
-              providerInstanceId: instanceId,
-              method: "device-code",
-            });
-            assert.equal(started.verificationUri, "https://auth.example.test/device");
-            assert.equal(started.userCode, "ABCD-EFGH");
-            assert.equal(started.session.state, "awaiting-user");
-
-            const status = yield* client[WS_METHODS.providerAuthGet]({
-              sessionId: started.session.sessionId,
-            });
-            assert.equal(status.state, "awaiting-user");
-            assert.notInclude(Object.values(status).join(" "), "ABCD-EFGH");
-            assert.notInclude(Object.values(status).join(" "), "auth.example.test");
-
-            yield* client[WS_METHODS.providerAuthCancel]({
-              sessionId: started.session.sessionId,
-            });
-            yield* client[WS_METHODS.providerAuthLogout]({ providerInstanceId: instanceId });
-          }),
-        ),
-      );
-
-      assert.equal(cancelCount, 1);
-      assert.equal(logoutCount, 1);
-      assert.equal(refreshCount, 1);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("redacts provider authentication failures at the websocket boundary", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("github-personal");
-      const token = "ghp_0123456789ABCDEFGHIJ";
-      const oauthCode = "oauth-code-private-0123456789";
-      const instance = {
-        instanceId,
-        driverKind: ProviderDriverKind.make("codex"),
-        adapter: {
-          providerAuth: {
-            credentialHome: "/tmp/github-personal",
-            methods: ["device-code"],
-            start: () =>
-              Effect.fail(
-                new ProviderAdapterRequestError({
-                  provider: "github",
-                  method: "auth/login",
-                  detail: `token=${token} code=${oauthCode}`,
-                }),
-              ),
-            logout: () => Effect.void,
-          },
-        },
-      } as unknown as ProviderInstance;
-
-      yield* buildAppUnderTest({
-        layers: {
-          providerInstanceRegistry: {
-            getInstance: () => Effect.succeed(instance),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.providerAuthStart]({
-            providerInstanceId: instanceId,
-            method: "device-code",
-          }),
-        ).pipe(Effect.result),
-      );
-
-      assertTrue(result._tag === "Failure");
-      if (result.failure._tag !== "ProviderAuthError") {
-        throw new Error(`Expected ProviderAuthError, received ${result.failure._tag}`);
-      }
-      assert.equal(result.failure.code, "provider-failed");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off -- exercise serialized RPC errors.
-      const serializedFailure = JSON.stringify(result.failure);
-      assert.notInclude(serializedFailure, token);
-      assert.notInclude(serializedFailure, oauthCode);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("denies provider authentication to paired client sessions", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("codex-personal");
-      let startCount = 0;
-      const instance = {
-        instanceId,
-        driverKind: ProviderDriverKind.make("codex"),
-        adapter: {
-          providerAuth: {
-            credentialHome: "/tmp/codex-personal",
-            methods: ["device-code"],
-            start: () => {
-              startCount += 1;
-              return Effect.never;
-            },
-            logout: () => Effect.void,
-          },
-        },
-      } as unknown as ProviderInstance;
-      yield* buildAppUnderTest({
-        layers: {
-          providerInstanceRegistry: {
-            getInstance: () => Effect.succeed(instance),
-          },
-        },
-      });
-
-      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
-        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
-      });
-      const pairing = (yield* pairingResponse.json) as { readonly credential: string };
-      const pairedWsUrl = yield* getWsServerUrl("/ws", { credential: pairing.credential });
-      const result = yield* Effect.scoped(
-        withWsRpcClient(pairedWsUrl, (client) =>
-          client[WS_METHODS.providerAuthStart]({
-            providerInstanceId: instanceId,
-            method: "device-code",
-          }),
-        ).pipe(Effect.result),
-      );
-
-      assertTrue(result._tag === "Failure");
-      if (result.failure._tag !== "ProviderAuthError") {
-        throw new Error(`Expected ProviderAuthError, received ${result.failure._tag}`);
-      }
-      assert.equal(result.failure.code, "access-denied");
-      assert.equal(startCount, 0);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes a Claude manual code only to its private auth session", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("claude-work");
-      const submittedCodes: string[] = [];
-      const instance = {
-        instanceId,
-        driverKind: ProviderDriverKind.make("claudeAgent"),
-        adapter: {
-          providerAuth: {
-            credentialHome: "/tmp/claude-work",
-            methods: ["manual-code"],
-            start: () =>
-              Effect.succeed({
-                readiness: Effect.succeed({
-                  verificationUri: "https://claude.ai/oauth/authorize?state=private-state",
-                  sanitizedPrompt: "Continue in your browser.",
-                  acceptsCode: true,
-                }),
-                submitCode: (code: string) =>
-                  Effect.sync(() => {
-                    submittedCodes.push(code);
-                  }),
-                completion: Effect.never,
-                requiresStatusProbe: true,
-                cancel: Effect.void,
-                close: Effect.void,
-              }),
-            logout: () => Effect.void,
-          },
-        },
-      } as unknown as ProviderInstance;
-      yield* buildAppUnderTest({
-        layers: {
-          providerInstanceRegistry: {
-            getInstance: () => Effect.succeed(instance),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            const started = yield* client[WS_METHODS.providerAuthStart]({
-              providerInstanceId: instanceId,
-              method: "manual-code",
-            });
-            assert.equal(started.session.acceptsCode, true);
-            assert.include(started.verificationUri, "claude.ai/oauth/authorize");
-
-            const waiting = yield* client[WS_METHODS.providerAuthSubmitCode]({
-              sessionId: started.session.sessionId,
-              code: "private-browser-code",
-            });
-            assert.equal(waiting.acceptsCode, false);
-            assert.equal(waiting.state, "waiting-provider");
-            assert.notInclude(Object.values(waiting).join(" "), "private-browser-code");
-          }),
-        ),
-      );
-      assert.deepEqual(submittedCodes, ["private-browser-code"]);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("routes websocket rpc subscribeServerConfig streams snapshot then update", () =>
     Effect.gen(function* () {
       const providers = [
@@ -5084,42 +4782,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(snapshot.recommendation.reason, "Capacity routed through test monitor.");
       assert.equal(calls, 1);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc environment ports snapshot", () =>
-    Effect.gen(function* () {
-      const calls: string[] = [];
-      yield* buildAppUnderTest({
-        layers: {
-          gitsPorts: {
-            list: (input) =>
-              Effect.sync(() => {
-                calls.push(`${input.projectDir}:${input.threadId ?? ""}`);
-                return {
-                  ...defaultGitsPorts,
-                  projectDir: input.projectDir,
-                  ...(input.threadId ? { threadId: input.threadId } : {}),
-                };
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const threadId = ThreadId.make("thread-ports");
-      const snapshot = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.gitsPortsList]({
-            projectDir: "/tmp/ports-project",
-            threadId,
-          }),
-        ),
-      );
-
-      assert.equal(snapshot.projectDir, "/tmp/ports-project");
-      assert.equal(snapshot.threadId, threadId);
-      assert.deepEqual(calls, ["/tmp/ports-project:thread-ports"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

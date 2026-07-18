@@ -7,7 +7,6 @@ import {
   type FilePartInput,
   type OpencodeClient,
   type PermissionRuleset,
-  type ProviderAuthMethod as OpenCodeProviderAuthMethod,
   type ProviderListResponse,
   type QuestionAnswer,
   type QuestionRequest,
@@ -99,7 +98,6 @@ export interface OpenCodeCommandResult {
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
-  readonly authMethods: Readonly<Record<string, ReadonlyArray<OpenCodeProviderAuthMethod>>>;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -531,17 +529,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
-  const loadAuthMethods = (client: OpencodeClient) =>
-    runOpenCodeSdk("provider.auth", () => client.provider.auth()).pipe(
-      Effect.map((result) => result.data ?? {}),
-      Effect.orElseSucceed(() => ({})),
-    );
-
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client), loadAuthMethods(client)], {
-      concurrency: "unbounded",
-    }).pipe(
-      Effect.map(([providerList, agents, authMethods]) => ({ providerList, agents, authMethods })),
+    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
+      Effect.map(([providerList, agents]) => ({ providerList, agents })),
     );
 
   return {

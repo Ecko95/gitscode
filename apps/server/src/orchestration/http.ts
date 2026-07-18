@@ -49,7 +49,7 @@ const dispatchCommandWithStartup = (
     ),
   );
 
-export const respondToOrchestrationHttpError = (
+const respondToOrchestrationHttpError = (
   error: OrchestrationDispatchCommandError | OrchestrationGetSnapshotError,
 ) =>
   Effect.gen(function* () {
@@ -64,7 +64,7 @@ export const respondToOrchestrationHttpError = (
     return HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 });
   });
 
-export const authenticateOwnerSession: Effect.Effect<
+const authenticateOwnerSession: Effect.Effect<
   AuthenticatedSession,
   AuthError,
   HttpServerRequest.HttpServerRequest | ServerAuth

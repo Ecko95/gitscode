@@ -239,48 +239,6 @@ describe("createEnvironmentConnection", () => {
     await connection.dispose();
   });
 
-  it("runs saved-environment preparation before reconnecting the websocket", async () => {
-    const environmentId = EnvironmentId.make("env-1");
-    const { client, emitShellSnapshot } = createTestClient();
-    const events: string[] = [];
-    vi.mocked(client.reconnect).mockImplementation(async () => {
-      events.push("reconnect");
-    });
-    const refreshMetadata = vi.fn(async () => {
-      events.push("refresh");
-    });
-
-    const connection = createEnvironmentConnection({
-      kind: "saved",
-      knownEnvironment: {
-        id: "env-1",
-        label: "Remote env",
-        source: "manual",
-        target: {
-          httpBaseUrl: "http://example.test",
-          wsBaseUrl: "ws://example.test",
-        },
-        environmentId,
-      },
-      client,
-      beforeReconnect: async () => {
-        events.push("ensure-base");
-      },
-      refreshMetadata,
-      applyShellEvent: vi.fn(),
-      syncShellSnapshot: vi.fn(),
-    });
-
-    await connection.ensureBootstrapped();
-    const reconnectPromise = connection.reconnect();
-    await vi.waitFor(() => expect(refreshMetadata).toHaveBeenCalledOnce());
-    emitShellSnapshot(2);
-    await reconnectPromise;
-
-    expect(events).toEqual(["ensure-base", "reconnect", "refresh"]);
-    await connection.dispose();
-  });
-
   it("skips primary lifecycle/config subscriptions when no handlers are registered", async () => {
     const environmentId = EnvironmentId.make("env-1");
     const { client } = createTestClient();

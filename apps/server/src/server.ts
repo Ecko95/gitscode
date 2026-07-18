@@ -28,7 +28,6 @@ import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRe
 import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
-import { ProviderAuthServiceLive } from "./provider-auth/ProviderAuthService.ts";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
 import { GitShimManagerLive } from "./provider/GitShimManager.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
@@ -70,9 +69,7 @@ import { WebPushSubscriptionRepositoryLive } from "./persistence/Layers/WebPushS
 import { GitsSliceCriteriaStoreLive } from "./gits/Layers/GitsSliceCriteria.ts";
 import { GitsConfinedVerifyAdapterLive } from "./gits/Layers/GitsConfinedVerifyAdapter.ts";
 import { GitsDevCommandsLive } from "./gits/Layers/GitsDevCommands.ts";
-import { GitsPortsLive } from "./gits/Layers/GitsPorts.ts";
 import { GitsMcpInventoryResolverLive } from "./gits/Layers/GitsMcpInventory.ts";
-import { CodexMcpAuthLive } from "./gits/Layers/CodexMcpAuth.ts";
 import { GitsSkillInventoryResolverLive } from "./gits/Layers/GitsSkillInventory.ts";
 import { GitsPlanningScannerLive } from "./gits/Layers/GitsPlanningScanner.ts";
 import { HermesCliAdapterLive } from "./gits/Layers/HermesCliAdapter.ts";
@@ -124,7 +121,6 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
-import { delamainIngestRouteLayer } from "./delamain/ingestHttp.ts";
 import { critTurnRouteLayer, critTurnStatusRouteLayer } from "./crit/critHttp.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { layer as CritSidecarManagerLive } from "./crit/crit-sidecar-manager.ts";
@@ -132,7 +128,6 @@ import {
   browserPreviewSocketRouteLayer,
   browserPreviewViewRouteLayer,
 } from "./browser-preview/browser-preview-routes.ts";
-import { browser_preview_manager } from "./browser-preview/browser-preview-manager.ts";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import {
   gitsBuildInfoRouteLayer,
@@ -140,7 +135,6 @@ import {
   gitsSkillInventoryRouteLayer,
   gitsUsageRouteLayer,
 } from "./gits/http.ts";
-import { codexMcpOauthRoutesLayer } from "./gits/http/CodexMcpOauthRoutes.ts";
 import { visualPlanMcpRouteLayer } from "./gits/mcp/http.ts";
 import { VisualPlanMcpServiceLive } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { WebPushSenderLive } from "./push/Layers/WebPushSender.ts";
@@ -353,21 +347,6 @@ const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
 );
 
-const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
-  Layer.provideMerge(ProviderEventLoggersLive),
-  Layer.provideMerge(Layer.merge(OpenCodeRuntimeLive, GitShimManagerLive)),
-  Layer.provideMerge(ServerSettingsLive),
-  Layer.provide(PtyAdapterLive),
-);
-
-const GitsMcpInventoryResolverLayerLive = GitsMcpInventoryResolverLive.pipe(
-  Layer.provide(ProviderInstanceRegistryLayerLive),
-);
-
-const CodexMcpAuthLayerLive = CodexMcpAuthLive.pipe(
-  Layer.provide(ProviderInstanceRegistryLayerLive),
-);
-
 const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsBuildInfoResolverLive),
   Layer.provideMerge(GitsNotesLive),
@@ -376,10 +355,8 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsSliceCriteriaStoreLive),
   Layer.provideMerge(GitsConfinedVerifyAdapterLive),
   Layer.provideMerge(GitsDevCommandsLive),
-  Layer.provideMerge(GitsPortsLive.pipe(Layer.provide(GitsDevCommandsLive))),
   Layer.provideMerge(GitsSkillInventoryResolverLive),
-  Layer.provideMerge(GitsMcpInventoryResolverLayerLive),
-  Layer.provideMerge(CodexMcpAuthLayerLive),
+  Layer.provideMerge(GitsMcpInventoryResolverLive),
   Layer.provideMerge(DelamainCliAdapterLive),
   Layer.provideMerge(OpenGsdCliAdapterLive),
   Layer.provideMerge(GitsPlanningScannerLive),
@@ -464,8 +441,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryLayerLive),
-  Layer.provideMerge(ProviderAuthServiceLive),
+  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
@@ -557,7 +533,6 @@ const GitsRoutesLayer = Layer.mergeAll(
   gitsSkillInventoryRouteLayer,
   gitsMcpInventoryRouteLayer,
   gitsUsageRouteLayer,
-  codexMcpOauthRoutesLayer,
   visualPlanMcpRouteLayer,
 );
 
@@ -577,7 +552,6 @@ export const makeRoutesLayer = Layer.mergeAll(
   GitsRoutesLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
-  delamainIngestRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   PushRoutesLayer,
@@ -675,11 +649,6 @@ export const makeServerLayer = Layer.unwrap(
           ),
         )
       : Layer.empty;
-    const browserPreviewCleanupLayer = Layer.effectDiscard(
-      Effect.acquireRelease(Effect.void, () =>
-        Effect.promise(() => browser_preview_manager.stopAll()),
-      ),
-    );
 
     const serverApplicationLayer = Layer.mergeAll(
       HttpRouter.serve(makeRoutesLayer, {
@@ -688,7 +657,6 @@ export const makeServerLayer = Layer.unwrap(
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
-      browserPreviewCleanupLayer,
     );
 
     return serverApplicationLayer.pipe(

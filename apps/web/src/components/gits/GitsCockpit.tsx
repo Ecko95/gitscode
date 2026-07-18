@@ -6,9 +6,6 @@ import type {
   DelamainPeer,
   DelamainPeerListResult,
   GitsCapacitySnapshot,
-  GitsCodexMcpAuthAvailability,
-  GitsCodexMcpAuthStartResult,
-  GitsCodexMcpAuthStatus,
   GitsCockpitProject,
   GitsCockpitSnapshot,
   GitsDevCommand,
@@ -76,7 +73,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { readEnvironmentApi } from "../../environmentApi";
-import { readLocalApi } from "../../localApi";
 import {
   getPrimaryEnvironmentConnection,
   readEnvironmentConnection,
@@ -3854,32 +3850,20 @@ function SkillsPanel({
 
 const NO_MCP_SERVERS: GitsMcpInventorySnapshot["servers"] = [];
 
-export function McpServersPanel({
+function McpServersPanel({
   snapshot,
   loading,
   error,
   overrides,
-  authAvailability,
-  authPending,
-  authStatus,
-  authError,
   onRefresh,
   onToggleServer,
-  onAuthenticate,
-  onCancelAuthentication,
 }: {
   snapshot: GitsMcpInventorySnapshot | undefined;
   loading: boolean;
   error: unknown;
   overrides: McpOverrideState;
-  authAvailability: GitsCodexMcpAuthAvailability | undefined;
-  authPending: boolean;
-  authStatus: GitsCodexMcpAuthStatus | null;
-  authError: string | null;
   onRefresh: () => void;
   onToggleServer: (serverId: string, enabled: boolean) => void;
-  onAuthenticate: (server: GitsMcpServerItem) => void;
-  onCancelAuthentication: () => void;
 }) {
   const [providerFilter, setProviderFilter] = useState<GitsMcpServerProvider | "all">("all");
   const [search, setSearch] = useState("");
@@ -4094,44 +4078,7 @@ export function McpServersPanel({
                   overrides[selectedServer.id] !== selectedServer.enabled ? (
                     <StatusPill label="local override" tone="warning" />
                   ) : null}
-                  {selectedServer.canAuthenticate &&
-                  selectedServer.providerInstanceId &&
-                  authAvailability?.available ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={authPending || authStatus?.state === "waiting-provider"}
-                      onClick={() => onAuthenticate(selectedServer)}
-                    >
-                      <ExternalLinkIcon className="size-3.5" />
-                      Authenticate
-                    </Button>
-                  ) : null}
-                  {authStatus?.state === "waiting-provider" ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={authPending}
-                      onClick={onCancelAuthentication}
-                    >
-                      Cancel authentication
-                    </Button>
-                  ) : null}
                 </div>
-                {selectedServer.canAuthenticate && authAvailability?.available === false ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    Browser callback relay is unavailable. On Desktop, run the provider login with
-                    an exact SSH forward for its loopback callback port, or configure the provider
-                    PAT in Codex.
-                  </p>
-                ) : null}
-                {authStatus ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    Authentication: {authStatus.state}
-                    {authStatus.message ? ` — ${authStatus.message}` : ""}
-                  </p>
-                ) : null}
-                {authError ? <p className="text-[11px] text-destructive">{authError}</p> : null}
               </div>
 
               <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1.5">
@@ -4221,15 +4168,6 @@ function parseLines(value: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-}
-
-async function readMcpAuthResponseError(response: Response, fallback: string): Promise<Error> {
-  try {
-    const body = (await response.json()) as { error?: unknown };
-    return new Error(typeof body.error === "string" && body.error ? body.error : fallback);
-  } catch {
-    return new Error(fallback);
-  }
 }
 
 function automodeGoalTone(goal: AutomodeGoal): ReturnType<typeof statusTone> {
@@ -4864,11 +4802,6 @@ export function GitsCockpit() {
   const [spawnPrompt, setSpawnPrompt] = useState("");
   const [replyText, setReplyText] = useState("");
   const [selectedProjectRoot, setSelectedProjectRoot] = useState("");
-  const [mcpAuthSession, setMcpAuthSession] = useState<{
-    readonly serverId: string;
-    readonly sessionId: string;
-  } | null>(null);
-  const [mcpAuthError, setMcpAuthError] = useState<string | null>(null);
   const [motokoChatInput, setMotokoChatInput] = useState("");
   // One chat per Motoko route: keyed by trimmed project root ("" = root/gits).
   const [motokoTranscripts, setMotokoTranscripts] = useState<MotokoTranscriptState>(() =>
@@ -5129,134 +5062,6 @@ export function GitsCockpit() {
     refetchInterval: 60_000,
     retry: false,
   });
-  const mcpAuthCapabilityQuery = useQuery({
-    queryKey: ["gits", "mcp-auth-capability"],
-    queryFn: async (): Promise<GitsCodexMcpAuthAvailability> => {
-      const response = await fetch("/api/gits/mcp/oauth/capability", {
-        headers: { accept: "application/json" },
-      });
-      if (!response.ok) {
-        throw await readMcpAuthResponseError(
-          response,
-          `MCP authentication preflight failed with ${response.status}.`,
-        );
-      }
-      return (await response.json()) as GitsCodexMcpAuthAvailability;
-    },
-    enabled: activeTab === "mcp",
-    retry: false,
-  });
-  const mcpAuthStatusQuery = useQuery({
-    queryKey: ["gits", "mcp-auth-status", mcpAuthSession?.sessionId],
-    queryFn: async (): Promise<GitsCodexMcpAuthStatus> => {
-      const response = await fetch(
-        `/api/gits/mcp/oauth/status/${encodeURIComponent(mcpAuthSession!.sessionId)}`,
-        { headers: { accept: "application/json" } },
-      );
-      if (!response.ok) {
-        throw await readMcpAuthResponseError(
-          response,
-          `MCP authentication status failed with ${response.status}.`,
-        );
-      }
-      return (await response.json()) as GitsCodexMcpAuthStatus;
-    },
-    enabled: mcpAuthSession !== null,
-    refetchInterval: (query) =>
-      query.state.data === undefined || query.state.data.state === "waiting-provider"
-        ? 1_000
-        : false,
-    retry: false,
-  });
-  const mcpAuthStartMutation = useMutation({
-    mutationFn: async (server: GitsMcpServerItem) => {
-      if (!server.providerInstanceId) {
-        throw new Error("The selected Codex instance is unavailable.");
-      }
-      const response = await fetch("/api/gits/mcp/oauth/start", {
-        method: "POST",
-        headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({
-          providerInstanceId: server.providerInstanceId,
-          serverName: server.name,
-        }),
-      });
-      if (!response.ok) {
-        throw await readMcpAuthResponseError(
-          response,
-          `MCP authentication failed with ${response.status}.`,
-        );
-      }
-      const result = (await response.json()) as GitsCodexMcpAuthStartResult;
-      const cancelStartedSession = () =>
-        fetch("/api/gits/mcp/oauth/cancel", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: result.sessionId }),
-        }).catch(() => undefined);
-      try {
-        let authorizationUrl: URL;
-        try {
-          authorizationUrl = new URL(result.authorizationUrl);
-        } catch {
-          throw new Error("The provider returned an invalid authorization URL.");
-        }
-        if (authorizationUrl.protocol !== "https:") {
-          throw new Error("The provider returned an invalid authorization URL.");
-        }
-        const localApi = readLocalApi();
-        if (!localApi) {
-          throw new Error("Opening the authorization page is unavailable.");
-        }
-        await localApi.shell.openExternal(result.authorizationUrl);
-      } catch (cause) {
-        await cancelStartedSession();
-        if (
-          cause instanceof Error &&
-          (cause.message === "The provider returned an invalid authorization URL." ||
-            cause.message === "Opening the authorization page is unavailable.")
-        ) {
-          throw cause;
-        }
-        throw new Error("The authorization page could not be opened.", { cause });
-      }
-      return { serverId: server.id, sessionId: result.sessionId };
-    },
-    onMutate: () => setMcpAuthError(null),
-    onSuccess: setMcpAuthSession,
-    onError: (cause) =>
-      setMcpAuthError(cause instanceof Error ? cause.message : "MCP authentication failed."),
-  });
-  const mcpAuthCancelMutation = useMutation({
-    mutationFn: async () => {
-      if (!mcpAuthSession) return;
-      const response = await fetch("/api/gits/mcp/oauth/cancel", {
-        method: "POST",
-        headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: mcpAuthSession.sessionId }),
-      });
-      if (!response.ok) {
-        throw await readMcpAuthResponseError(
-          response,
-          `MCP authentication cancellation failed with ${response.status}.`,
-        );
-      }
-    },
-    onSuccess: async () => {
-      await mcpAuthStatusQuery.refetch();
-    },
-    onError: (cause) =>
-      setMcpAuthError(
-        cause instanceof Error ? cause.message : "MCP authentication cancellation failed.",
-      ),
-  });
-  const mcpAuthState = mcpAuthStatusQuery.data?.state;
-  const refetchMcpInventory = mcpQuery.refetch;
-  useEffect(() => {
-    if (mcpAuthState && mcpAuthState !== "waiting-provider") {
-      void refetchMcpInventory();
-    }
-  }, [mcpAuthState, refetchMcpInventory]);
   const usageQuery = useQuery({
     queryKey: ["gits", "usage"],
     queryFn: readUsageSummary,
@@ -6295,27 +6100,8 @@ export function GitsCockpit() {
                   loading={mcpQuery.isPending || mcpQuery.isFetching}
                   error={mcpQuery.error}
                   overrides={mcpOverrides}
-                  authAvailability={
-                    mcpAuthCapabilityQuery.data ??
-                    (mcpAuthCapabilityQuery.error
-                      ? {
-                          available: false,
-                          message: "Browser callback relay is unavailable on this host.",
-                        }
-                      : undefined)
-                  }
-                  authPending={mcpAuthStartMutation.isPending || mcpAuthCancelMutation.isPending}
-                  authStatus={mcpAuthStatusQuery.data ?? null}
-                  authError={
-                    mcpAuthError ??
-                    (mcpAuthStatusQuery.error instanceof Error
-                      ? mcpAuthStatusQuery.error.message
-                      : null)
-                  }
                   onRefresh={() => void mcpQuery.refetch()}
                   onToggleServer={toggleMcpServer}
-                  onAuthenticate={(server) => mcpAuthStartMutation.mutate(server)}
-                  onCancelAuthentication={() => mcpAuthCancelMutation.mutate()}
                 />
               ) : null}
               {activeTab === "projects" ? <CockpitContent snapshot={query.data} /> : null}

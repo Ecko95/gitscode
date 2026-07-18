@@ -10,7 +10,7 @@ import { GitsMcpInventoryResolver } from "./Services/GitsMcpInventory.ts";
 import { GitsSkillInventoryResolver } from "./Services/GitsSkillInventory.ts";
 import { readUsageSummary } from "./Layers/GitsUsageReader.ts";
 
-export const authenticateGitsSession = Effect.gen(function* () {
+const authenticateGitsSession = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const serverAuth = yield* ServerAuth;
   const session = yield* serverAuth.authenticateHttpRequest(request);

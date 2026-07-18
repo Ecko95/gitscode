@@ -45,7 +45,6 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { GitShimManager } from "../GitShimManager.ts";
-import { PtyAdapter } from "../../terminal/Services/PTY.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -88,7 +87,6 @@ export type ClaudeDriverEnv =
   | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers
-  | PtyAdapter
   | ServerConfig;
 
 const withInstanceIdentity =
@@ -122,7 +120,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
       const gitShimManager = yield* GitShimManager;
-      const ptyAdapter = yield* PtyAdapter;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -148,11 +145,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const adapterOptions = {
         instanceId,
         environment: processEnv,
-        ptyAdapter,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         ...(visualPlanMcpSvc ? { visualPlanMcpSvc } : {}),
         gitShimManager,
       };
+      const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
@@ -166,11 +163,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig);
-      const prepareAuthStatusProbe = Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey);
-      const adapter = yield* makeClaudeAdapter(effectiveConfig, {
-        ...adapterOptions,
-        prepareAuthStatusProbe,
-      });
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,

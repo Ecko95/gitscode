@@ -6,13 +6,9 @@ GITS keeps the existing web, desktop, server, mobile, pairing, Tailscale, SSH la
 
 `@t3tools/web` is the React UI on Vite with Tailwind through `@tailwindcss/vite`. It owns session UX, conversation and event rendering, client state, settings, command palette, saved remote environments, and the WebSocket runtime client.
 
-For a saved remote environment, web clients open loopback apps as **In GITS (VPS browser)** through supervised Chromium; they do not reinterpret remote `localhost` as the browser device.
-
 ## Desktop
 
 `@t3tools/desktop` is an Electron shell. It manages the backend, SSH launch, Tailscale endpoint handling, updates, menus, and native settings.
-
-An SSH-backed Desktop environment can additionally use **Local via SSH (this computer only)**. The shell owns and cleans up the loopback-bound auxiliary forward; the shared web client never receives SSH credentials.
 
 ## Mobile
 

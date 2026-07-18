@@ -56,9 +56,7 @@ import {
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerConfig } from "../../config.ts";
-import { logoutCodexAccount, startCodexDeviceAuth } from "../../provider-auth/CodexDeviceAuth.ts";
 import {
   VISUAL_PLAN_MCP_PATH,
   type VisualPlanMcpServiceShape,
@@ -1485,55 +1483,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     RUNTIME_EVENT_QUEUE_CAPACITY,
   );
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
-  const configuredCredentialHome =
-    codexConfig.homePath.trim() || options?.environment?.CODEX_HOME?.trim();
-  const credentialHome = expandHomePath(
-    configuredCredentialHome || `${options?.environment?.HOME ?? process.env.HOME ?? ""}/.codex`,
-  );
-  const authLaunchInput = {
-    binaryPath: codexConfig.binaryPath,
-    cwd: serverConfig.cwd,
-    credentialHome,
-    environment: { ...options?.environment },
-  };
-  const mapCodexAuthError = (method: string) => () =>
-    new ProviderAdapterRequestError({
-      provider: PROVIDER,
-      method,
-      detail: "Codex authentication could not complete.",
-    });
-  const providerAuth: NonNullable<CodexAdapterShape["providerAuth"]> = {
-    credentialHome,
-    methods: ["device-code"],
-    start: (method) => {
-      if (method !== "device-code") {
-        return Effect.fail(
-          new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "providerAuth.start",
-            issue: `Unsupported Codex authentication method '${method}'.`,
-          }),
-        );
-      }
-      const mapError = mapCodexAuthError("account/login/start");
-      return startCodexDeviceAuth(authLaunchInput).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-        Effect.map((handle) => ({
-          verificationUri: handle.verificationUri,
-          userCode: handle.userCode,
-          completion: handle.completion,
-          cancel: handle.cancel.pipe(Effect.mapError(mapError)),
-          close: handle.close,
-        })),
-        Effect.mapError(mapError),
-      );
-    },
-    logout: () =>
-      logoutCodexAccount(authLaunchInput).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-        Effect.mapError(mapCodexAuthError("account/logout")),
-      ),
-  };
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1902,26 +1851,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
-  const listCodexMcpServers: NonNullable<CodexAdapterShape["listCodexMcpServers"]> = () => {
-    const session = Array.from(sessions.values()).find((candidate) => !candidate.stopped);
-    if (!session) {
-      return Effect.succeed([]);
-    }
-    return session.runtime.listMcpServers.pipe(
-      Effect.map((servers) =>
-        servers.map((server) => ({
-          name: server.name,
-          authStatus: server.authStatus,
-          tools: Object.keys(server.tools),
-          resourceCount: server.resources.length + server.resourceTemplates.length,
-        })),
-      ),
-      Effect.mapError((cause) =>
-        mapCodexRuntimeError(session.threadId, "mcpServerStatus/list", cause),
-      ),
-    );
-  };
-
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
@@ -2013,14 +1942,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     rollbackThread,
     readCodexAccountUsage,
     consumeCodexResetCredit,
-    listCodexMcpServers,
-    getCodexMcpAuthLaunchConfig: () => ({
-      binaryPath: codexConfig.binaryPath,
-      credentialHome,
-      ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-      environment: { ...options?.environment },
-    }),
-    providerAuth,
     respondToRequest,
     respondToUserInput,
     stopSession,

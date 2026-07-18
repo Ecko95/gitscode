@@ -26,7 +26,6 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeOpenCodeAuthAdapter } from "../../provider-auth/OpenCodeAuth.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { type GitShimManagerShape } from "../GitShimManager.ts";
 import { resolveSessionEnvWithDirenv } from "../direnvSessionEnv.ts";
@@ -456,12 +455,6 @@ export function makeOpenCodeAdapter(
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
     const runtimeEvents = yield* Queue.bounded<ProviderRuntimeEvent>(RUNTIME_EVENT_QUEUE_CAPACITY);
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
-    const providerAuth = makeOpenCodeAuthAdapter({
-      settings: openCodeSettings,
-      environment: options?.environment ?? process.env,
-      cwd: serverConfig.cwd,
-      runtime: openCodeRuntime,
-    });
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -1488,7 +1481,6 @@ export function makeOpenCodeAdapter(
       hasSession,
       readThread,
       rollbackThread,
-      providerAuth,
       stopAll,
       get streamEvents() {
         return Stream.fromQueue(runtimeEvents);

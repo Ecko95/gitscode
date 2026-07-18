@@ -141,14 +141,10 @@ describe("GitsMcpInventorySnapshot", () => {
         {
           id: "codex:context7",
           provider: "codex",
-          providerInstanceId: "codex",
           name: "context7",
           source: "config-file",
-          runtimeSource: "codex-app-server",
           status: "unknown",
-          runtimeStatus: "running",
           authStatus: "unknown",
-          canAuthenticate: false,
           enabled: true,
           command: "npx -y @upstash/context7-mcp",
           transport: "stdio",
@@ -202,10 +198,6 @@ describe("GitsMcpInventorySnapshot", () => {
     });
 
     expect(parsed.servers[0]?.provider).toBe("codex");
-    expect(parsed.servers[0]?.providerInstanceId).toBe("codex");
-    expect(parsed.servers[0]?.runtimeSource).toBe("codex-app-server");
-    expect(parsed.servers[0]?.canAuthenticate).toBe(false);
-    expect(parsed.servers[1]?.canAuthenticate).toBe(false);
     expect(parsed.servers[1]?.enabled).toBe(false);
     expect(parsed.totals.serverCount).toBe(2);
     expect(parsed.warnings[0]).toContain("cursor");

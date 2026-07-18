@@ -57,8 +57,6 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { readEnvironmentApi } from "../../environmentApi";
-import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { useShallow } from "zustand/react/shallow";
 import { selectProjectsAcrossEnvironments, useStore } from "../../store";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -77,7 +75,7 @@ import {
   isProviderUpdateActive,
   type ProviderUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
-import { ProviderInstanceCard, type ProviderAuthActions } from "./ProviderInstanceCard";
+import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   buildProviderInstanceUpdatePatch,
@@ -1223,7 +1221,6 @@ export function ProviderSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const serverProviders = useServerProviders();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
@@ -1231,22 +1228,6 @@ export function ProviderSettingsPanel() {
   >(() => new Set());
   const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
   const refreshingRef = useRef(false);
-  const providerAuthActions = useMemo<ProviderAuthActions | undefined>(() => {
-    if (!primaryEnvironmentId) return undefined;
-    const requireApi = () => {
-      const api = readEnvironmentApi(primaryEnvironmentId);
-      if (!api) throw new Error("The provider environment is not connected.");
-      return api;
-    };
-    return {
-      start: (input) => requireApi().provider.auth.start(input),
-      get: (input) => requireApi().provider.auth.get(input),
-      cancel: (input) => requireApi().provider.auth.cancel(input),
-      submitCode: (input) => requireApi().provider.auth.submitCode(input),
-      logout: (input) => requireApi().provider.auth.logout(input),
-      openExternal: (url) => ensureLocalApi().shell.openExternal(url),
-    };
-  }, [primaryEnvironmentId]);
 
   const providerUpdateCandidates = useMemo(
     () => collectProviderUpdateCandidates(serverProviders),
@@ -1645,7 +1626,6 @@ export function ProviderSettingsPanel() {
                   : undefined
               }
               isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
-              authActions={providerAuthActions}
             />
           );
         })}

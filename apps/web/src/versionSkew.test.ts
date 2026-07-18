@@ -37,7 +37,6 @@ describe("versionSkew", () => {
           serverVersion: "9.9.9",
           capabilities: {
             repositoryIdentity: true,
-            ports: true,
           },
         },
       }),

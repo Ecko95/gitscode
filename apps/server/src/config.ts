@@ -73,7 +73,6 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly logWebSocketEvents: boolean;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
-  readonly mcpOauthCallbackUrl?: string | undefined;
   readonly vapidPublicKey?: string | undefined;
   readonly vapidPrivateKey?: string | undefined;
   readonly vapidSubject?: string | undefined;

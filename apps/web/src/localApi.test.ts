@@ -57,11 +57,6 @@ const rpcClientMock = {
     status: vi.fn(),
     control: vi.fn(),
   },
-  gits: {
-    ports: {
-      list: vi.fn(),
-    },
-  },
   terminal: {
     open: vi.fn(),
     attach: vi.fn((_input: unknown, listener: (event: TerminalAttachStreamEvent) => void) =>
@@ -304,7 +299,6 @@ const baseEnvironment = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
-    ports: true,
   },
 };
 
@@ -365,16 +359,6 @@ afterEach(() => {
 });
 
 describe("wsApi", () => {
-  it("omits the optional ports capability for older RPC clients", async () => {
-    rpcClientMock.vcs.refreshStatus.mockResolvedValue(baseGitStatus);
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never, false);
-
-    expect(api.ports).toBeUndefined();
-    await expect(api.vcs.refreshStatus({ cwd: "/repo" })).resolves.toEqual(baseGitStatus);
-  });
-
   it("forwards server config fetches directly to the RPC client", async () => {
     rpcClientMock.server.getConfig.mockResolvedValue(baseServerConfig);
     const { createLocalApi } = await import("./localApi");
@@ -648,31 +632,6 @@ describe("wsApi", () => {
       "/tmp/project",
     );
     expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp/workspace" });
-  });
-
-  it("opens remote SSH URLs through the atomic desktop bridge action", async () => {
-    const result = {
-      opened: true as const,
-      kind: "direct-forward" as const,
-      remotePort: 5173,
-      localPort: 43_001,
-    };
-    const openRemoteUrl = vi.fn(async () => result);
-    getWindowForTest().desktopBridge = makeDesktopBridge({ ssh: { openRemoteUrl } });
-    const input = {
-      target: {
-        alias: "devbox",
-        hostname: "devbox.example.com",
-        username: "julius",
-        port: 22,
-      },
-      url: "http://localhost:5173/path?q=1#x",
-    } as const;
-
-    const { openDesktopSshUrl } = await import("./localApi");
-
-    await expect(openDesktopSshUrl(input)).resolves.toEqual(result);
-    expect(openRemoteUrl).toHaveBeenCalledWith(input);
   });
 
   it("falls back to the browser context menu helper when the desktop bridge is missing", async () => {

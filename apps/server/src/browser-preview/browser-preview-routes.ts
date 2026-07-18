@@ -51,7 +51,6 @@ export const browserPreviewViewRouteLayer = HttpRouter.add(
       contentType: "text/html; charset=utf-8",
       headers: {
         "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
         "Content-Security-Policy":
           "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; frame-ancestors 'self'",
       },

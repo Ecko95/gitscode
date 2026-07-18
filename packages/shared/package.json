@@ -11,10 +11,6 @@
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
     },
-    "./environmentUrl": {
-      "types": "./src/environmentUrl.ts",
-      "import": "./src/environmentUrl.ts"
-    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

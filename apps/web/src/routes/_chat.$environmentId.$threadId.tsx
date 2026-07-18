@@ -299,10 +299,9 @@ function ChatThreadRouteView() {
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
   const rightPanelContent = browserOpen ? (
     <BrowserPreviewPanel
-      key={`${threadRef.environmentId}:${threadRef.threadId}`}
       environmentId={threadRef.environmentId}
       threadId={threadRef.threadId}
-      projectDir={activeWorkspaceRoot}
+      cwd={activeWorkspaceRoot}
       onClose={closeBrowser}
     />
   ) : shouldRenderDiffContent ? (

@@ -39,7 +39,6 @@ export interface EnvironmentConnectionInput extends OrchestrationHandlers {
   readonly kind: "primary" | "saved";
   readonly knownEnvironment: KnownEnvironment;
   readonly client: WsRpcClient;
-  readonly beforeReconnect?: () => Promise<void>;
   readonly refreshMetadata?: () => Promise<void>;
   readonly onConfigSnapshot?: (config: ServerConfig) => void;
   readonly onWelcome?: (payload: ServerLifecycleWelcomePayload) => void;
@@ -274,7 +273,6 @@ export function createEnvironmentConnection(
 
       bootstrapGate.reset();
       try {
-        await input.beforeReconnect?.();
         await input.client.reconnect();
         await input.refreshMetadata?.();
         await bootstrapGate.wait();

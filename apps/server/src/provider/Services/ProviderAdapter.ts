@@ -12,8 +12,6 @@ import type {
   CodexAccountUsage,
   CodexResetCreditConsumeResult,
   ProviderApprovalDecision,
-  ProviderAuthCapabilityId,
-  ProviderAuthMethod,
   ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
@@ -46,51 +44,6 @@ export interface ProviderThreadTurnSnapshot {
 export interface ProviderThreadSnapshot {
   readonly threadId: ThreadId;
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
-}
-
-/** Redacted subset of Codex MCP runtime state safe for the GITS inventory. */
-export interface CodexMcpRuntimeServerStatus {
-  readonly name: string;
-  readonly authStatus: "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
-  readonly tools: ReadonlyArray<string>;
-  readonly resourceCount: number;
-}
-
-export interface CodexMcpAuthLaunchConfig {
-  readonly binaryPath: string;
-  readonly credentialHome: string;
-  readonly homePath?: string;
-  readonly environment: NodeJS.ProcessEnv;
-}
-
-export interface ProviderAuthAttempt<TError> {
-  readonly verificationUri?: string;
-  readonly userCode?: string;
-  readonly readiness?: Effect.Effect<
-    {
-      readonly verificationUri?: string;
-      readonly userCode?: string;
-      readonly sanitizedPrompt?: string;
-      readonly acceptsCode?: boolean;
-    },
-    TError
-  >;
-  readonly submitCode?: (code: string) => Effect.Effect<void, TError>;
-  readonly requiresStatusProbe?: boolean;
-  readonly prepareStatusProbe?: Effect.Effect<void, TError>;
-  readonly completion: Effect.Effect<boolean, TError>;
-  readonly cancel: Effect.Effect<void, TError>;
-  readonly close: Effect.Effect<void>;
-}
-
-export interface ProviderAuthAdapter<TError> {
-  readonly credentialHome: string;
-  readonly methods: ReadonlyArray<ProviderAuthMethod>;
-  readonly start: (
-    method: ProviderAuthMethod,
-    capabilityId?: ProviderAuthCapabilityId,
-  ) => Effect.Effect<ProviderAuthAttempt<TError>, TError>;
-  readonly logout: () => Effect.Effect<void, TError>;
 }
 
 export interface ProviderAdapterShape<TError> {
@@ -172,13 +125,6 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     creditId: string,
   ) => Effect.Effect<CodexResetCreditConsumeResult, TError>;
-
-  readonly listCodexMcpServers?: () => Effect.Effect<
-    ReadonlyArray<CodexMcpRuntimeServerStatus>,
-    TError
-  >;
-  readonly getCodexMcpAuthLaunchConfig?: () => CodexMcpAuthLaunchConfig;
-  readonly providerAuth?: ProviderAuthAdapter<TError>;
 
   /**
    * Stop all sessions owned by this adapter.

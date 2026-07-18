@@ -136,10 +136,6 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  mcpOauthCallbackUrl: Config.string("T3CODE_MCP_OAUTH_CALLBACK_URL").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
   vapidPublicKey: Config.string("T3CODE_VAPID_PUBLIC_KEY").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -390,7 +386,6 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
-      ...(env.mcpOauthCallbackUrl ? { mcpOauthCallbackUrl: env.mcpOauthCallbackUrl } : {}),
       vapidPublicKey: env.vapidPublicKey,
       vapidPrivateKey: env.vapidPrivateKey,
       vapidSubject: env.vapidSubject,

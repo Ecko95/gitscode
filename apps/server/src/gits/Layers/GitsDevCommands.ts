@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import * as Fs from "node:fs/promises";
 import * as Path from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -14,9 +15,8 @@ import {
   type GitsDevCommandListInput,
   type GitsDevCommandListResult,
 } from "@t3tools/contracts";
+import { resolveTailscaleHttpsBaseUrl } from "@t3tools/tailscale";
 
-import { ServerConfig } from "../../config.ts";
-import { materializeDevCommandRunner, withStrictPortArgs } from "../dev-command-runner.ts";
 import { GitsDevCommands, type GitsDevCommandsShape } from "../Services/GitsDevCommands.ts";
 
 const ConfigCommandSchema = Schema.Struct({
@@ -34,8 +34,6 @@ const ConfigCommandSchema = Schema.Struct({
 const ConfigFileSchema = Schema.Struct({
   commands: Schema.Array(ConfigCommandSchema),
 });
-const decodeConfigFile = Schema.decodeUnknownEffect(ConfigFileSchema);
-const isGitsDevCommandError = Schema.is(GitsDevCommandError);
 
 type ConfigCommand = typeof ConfigCommandSchema.Type;
 
@@ -69,12 +67,12 @@ async function readFirstExistingConfig(projectDir: string) {
   return null;
 }
 
-function normalizePort(value: number | null | undefined): number | null {
+function normalizeInteger(value: number | null | undefined): number | null {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return null;
   }
   const normalized = Math.floor(value);
-  return normalized >= 1 && normalized <= 65_535 ? normalized : null;
+  return normalized > 0 ? normalized : null;
 }
 
 function normalizeText(value: string | null | undefined): string | null {
@@ -102,6 +100,25 @@ function titleCaseSegment(value: string): string {
     .join(" ");
 }
 
+function inferPortHint(value: string): number | null {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("marketing")) {
+    return 4321;
+  }
+  if (normalized.includes("storybook")) {
+    return 6006;
+  }
+  if (
+    normalized.includes("web") ||
+    normalized.includes("vite") ||
+    normalized.includes("ui") ||
+    normalized.includes("frontend")
+  ) {
+    return 3000;
+  }
+  return null;
+}
+
 function inferDiscoveryMetadata(input: {
   readonly key: string;
   readonly packageName: string | null;
@@ -119,6 +136,8 @@ function inferDiscoveryMetadata(input: {
     "workspace";
   const resourceLabel =
     normalizedKey === "dev" ? "Workspace dev" : `${titleCaseSegment(packageStem)} dev`;
+  const port = inferPortHint(`${normalizedKey} ${input.packageName ?? ""}`);
+  const publishOnTailnet = port !== null;
   return {
     id: sanitizeId(normalizedKey === "dev" ? "workspace-dev" : `${packageStem}-dev`),
     name: resourceLabel,
@@ -128,10 +147,10 @@ function inferDiscoveryMetadata(input: {
         : input.packageName
           ? `Inferred from ${input.packageName} dev script.`
           : `Inferred from ${input.key} package script.`,
-    port: null,
-    host: null,
-    publishOnTailnet: false,
-    servePort: null,
+    port,
+    host: port === null ? null : "127.0.0.1",
+    publishOnTailnet,
+    servePort: port,
   };
 }
 
@@ -250,7 +269,7 @@ function uniqueCommands(
 }
 
 export function buildDevCommandLaunchCommand(input: {
-  readonly runnerPath: string;
+  readonly wrapperPath: string;
   readonly command: GitsDevCommand;
 }): string {
   const env = [
@@ -263,49 +282,70 @@ export function buildDevCommandLaunchCommand(input: {
     ...(input.command.localHost === null
       ? []
       : [["GITS_DEV_LOCAL_HOST", input.command.localHost] as const]),
+    ["GITS_DEV_PUBLISH_TAILNET", input.command.publishOnTailnet ? "1" : "0"],
+    ...(input.command.servePort === null
+      ? []
+      : [["GITS_DEV_SERVE_PORT", String(input.command.servePort)] as const]),
+    ...(input.command.previewUrl === null
+      ? []
+      : [["GITS_DEV_PREVIEW_URL", input.command.previewUrl] as const]),
   ] as const;
 
-  return `${env.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} bash ${shellQuote(input.runnerPath)}`;
+  return `${env.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} bash ${shellQuote(input.wrapperPath)}`;
+}
+
+function buildPreviewUrl(input: {
+  readonly magicDnsName: string | null;
+  readonly servePort: number | null;
+}) {
+  if (!input.magicDnsName || input.servePort === null) {
+    return null;
+  }
+  const url = new URL(`https://${input.magicDnsName}`);
+  if (input.servePort !== 443) {
+    url.port = String(input.servePort);
+  }
+  url.pathname = "/";
+  return url.toString();
 }
 
 function toPublicCommand(input: {
   readonly configCommand: ConfigCommand;
   readonly projectDir: string;
-  readonly runnerPath: string;
-  readonly explicit: boolean;
+  readonly wrapperPath: string;
+  readonly magicDnsName: string | null;
 }): GitsDevCommand {
   const commandId = input.configCommand.id.trim();
   const cwd = normalizeText(input.configCommand.cwd)
     ? Path.resolve(input.projectDir, input.configCommand.cwd!.trim())
     : input.projectDir;
-  const localPort = normalizePort(input.configCommand.port ?? null);
+  const localPort = normalizeInteger(input.configCommand.port ?? null);
   const localHost =
     normalizeText(input.configCommand.host) ?? (localPort === null ? null : "127.0.0.1");
-  const commandText =
-    input.explicit && localPort !== null
-      ? withStrictPortArgs({
-          command: input.configCommand.command,
-          host: localHost ?? "127.0.0.1",
-          port: localPort,
-        })
-      : input.configCommand.command.trim();
+  const publishOnTailnet = input.configCommand.publishOnTailnet === true;
+  const servePort = publishOnTailnet
+    ? normalizeInteger(input.configCommand.servePort ?? localPort)
+    : null;
+  const previewUrl = publishOnTailnet
+    ? buildPreviewUrl({ magicDnsName: input.magicDnsName, servePort })
+    : null;
   const command: GitsDevCommand = {
     id: commandId,
     name: input.configCommand.name.trim(),
     description: normalizeText(input.configCommand.description ?? null),
     cwd,
-    command: commandText,
+    command: input.configCommand.command.trim(),
     localPort,
     localHost,
-    publishOnTailnet: false,
-    servePort: null,
-    previewUrl: null,
+    publishOnTailnet,
+    servePort,
+    previewUrl,
     launchCommand: "",
   };
   return {
     ...command,
     launchCommand: buildDevCommandLaunchCommand({
-      runnerPath: input.runnerPath,
+      wrapperPath: input.wrapperPath,
       command,
     }),
   };
@@ -333,31 +373,47 @@ function toConfigCommandForWrite(input: {
   };
 }
 
-async function buildListResult(
-  projectDir: string,
-  runnerPath: string,
-): Promise<GitsDevCommandListResult> {
+async function resolveRuntimeContext() {
+  const tailscaleBaseUrl = await resolveTailscaleHttpsBaseUrl().pipe(
+    Effect.map((url) => url),
+    Effect.catchTags({
+      TailscaleCommandError: () => Effect.succeed<string | null>(null),
+      TailscaleStatusParseError: () => Effect.succeed<string | null>(null),
+    }),
+    Effect.provide(NodeServices.layer),
+    Effect.runPromise,
+  );
+  const magicDnsName = tailscaleBaseUrl ? new URL(tailscaleBaseUrl).hostname : null;
+  return {
+    magicDnsName,
+    tailscaleAvailable: magicDnsName !== null,
+  };
+}
+
+async function buildListResult(projectDir: string): Promise<GitsDevCommandListResult> {
   const config = await readFirstExistingConfig(projectDir);
+  const runtime = await resolveRuntimeContext();
+  const wrapperPath = Path.join(projectDir, "scripts", "dev", "run-dev-command.sh");
 
   if (config !== null) {
     const parsedJson = JSON.parse(config.raw) as unknown;
-    const parsed = await decodeConfigFile(parsedJson).pipe(Effect.runPromise);
+    const parsed = await Schema.decodeUnknownEffect(ConfigFileSchema)(parsedJson).pipe(
+      Effect.runPromise,
+    );
     return {
       projectDir,
       configPath: config.configPath,
-      tailscaleAvailable: false,
-      magicDnsName: null,
+      tailscaleAvailable: runtime.tailscaleAvailable,
+      magicDnsName: runtime.magicDnsName,
       commands: parsed.commands.map((command) =>
         toPublicCommand({
           configCommand: command,
           projectDir,
-          runnerPath,
-          explicit: true,
+          wrapperPath,
+          magicDnsName: runtime.magicDnsName,
         }),
       ),
-      warnings: parsed.commands.some((command) => command.publishOnTailnet === true)
-        ? ["Tailnet publishing is unavailable until isolated preview endpoints are enabled."]
-        : [],
+      warnings: [],
     };
   }
 
@@ -365,14 +421,14 @@ async function buildListResult(
   return {
     projectDir,
     configPath: null,
-    tailscaleAvailable: false,
-    magicDnsName: null,
+    tailscaleAvailable: runtime.tailscaleAvailable,
+    magicDnsName: runtime.magicDnsName,
     commands: discovered.map((command) =>
       toPublicCommand({
         configCommand: command,
         projectDir,
-        runnerPath,
-        explicit: false,
+        wrapperPath,
+        magicDnsName: runtime.magicDnsName,
       }),
     ),
     warnings:
@@ -386,62 +442,54 @@ async function buildListResult(
   };
 }
 
-export function makeGitsDevCommandsService(options: {
-  readonly runnerPath: string;
-}): GitsDevCommandsShape {
-  const listCommands: GitsDevCommandsShape["listCommands"] = (input: GitsDevCommandListInput) =>
-    Effect.tryPromise({
-      try: () => buildListResult(input.projectDir, options.runnerPath),
-      catch: (cause) =>
-        toDevCommandError(
-          `Failed to inspect or parse dev command config in ${input.projectDir}.`,
-          cause,
+const makeListCommands: GitsDevCommandsShape["listCommands"] = (input: GitsDevCommandListInput) =>
+  Effect.tryPromise({
+    try: () => buildListResult(input.projectDir),
+    catch: (cause) =>
+      toDevCommandError(
+        `Failed to inspect or parse dev command config in ${input.projectDir}.`,
+        cause,
+      ),
+  });
+
+const makeInitCommands: GitsDevCommandsShape["initCommands"] = (input: GitsDevCommandInitInput) =>
+  Effect.tryPromise({
+    try: async () => {
+      const existing = await readFirstExistingConfig(input.projectDir);
+      if (existing !== null) {
+        return buildListResult(input.projectDir);
+      }
+      const discovered = uniqueCommands(await discoverCommands(input.projectDir));
+      if (discovered.length === 0) {
+        throw toDevCommandError(
+          `No dev scripts were discovered in ${input.projectDir}. Add package.json dev scripts or create ${CONFIG_CANDIDATES[0]} manually.`,
+        );
+      }
+      const configPath = Path.join(input.projectDir, CONFIG_CANDIDATES[0]);
+      await Fs.mkdir(Path.dirname(configPath), { recursive: true });
+      const file = {
+        commands: discovered.map((command) =>
+          toConfigCommandForWrite({
+            command,
+            projectDir: input.projectDir,
+          }),
         ),
-    });
-
-  const initCommands: GitsDevCommandsShape["initCommands"] = (input: GitsDevCommandInitInput) =>
-    Effect.tryPromise({
-      try: async () => {
-        const existing = await readFirstExistingConfig(input.projectDir);
-        if (existing !== null) {
-          return buildListResult(input.projectDir, options.runnerPath);
-        }
-        const discovered = uniqueCommands(await discoverCommands(input.projectDir));
-        if (discovered.length === 0) {
-          throw toDevCommandError(
-            `No dev scripts were discovered in ${input.projectDir}. Add package.json dev scripts or create ${CONFIG_CANDIDATES[0]} manually.`,
-          );
-        }
-        const configPath = Path.join(input.projectDir, CONFIG_CANDIDATES[0]);
-        await Fs.mkdir(Path.dirname(configPath), { recursive: true });
-        const file = {
-          commands: discovered.map((command) =>
-            toConfigCommandForWrite({
-              command,
-              projectDir: input.projectDir,
-            }),
+      } satisfies typeof ConfigFileSchema.Type;
+      await Fs.writeFile(configPath, `${toPrettyJson(file)}\n`, "utf8");
+      return buildListResult(input.projectDir);
+    },
+    catch: (cause) =>
+      Schema.is(GitsDevCommandError)(cause)
+        ? cause
+        : toDevCommandError(
+            `Failed to initialize or parse dev command config in ${input.projectDir}.`,
+            cause,
           ),
-        } satisfies typeof ConfigFileSchema.Type;
-        await Fs.writeFile(configPath, `${toPrettyJson(file)}\n`, "utf8");
-        return buildListResult(input.projectDir, options.runnerPath);
-      },
-      catch: (cause) =>
-        isGitsDevCommandError(cause)
-          ? cause
-          : toDevCommandError(
-              `Failed to initialize or parse dev command config in ${input.projectDir}.`,
-              cause,
-            ),
-    });
+  });
 
-  return { listCommands, initCommands };
-}
+export const makeGitsDevCommands = Effect.succeed({
+  listCommands: makeListCommands,
+  initCommands: makeInitCommands,
+} satisfies GitsDevCommandsShape);
 
-export const GitsDevCommandsLive = Layer.effect(
-  GitsDevCommands,
-  Effect.gen(function* () {
-    const config = yield* ServerConfig;
-    const runnerPath = yield* Effect.promise(() => materializeDevCommandRunner(config.stateDir));
-    return makeGitsDevCommandsService({ runnerPath });
-  }),
-);
+export const GitsDevCommandsLive = Layer.effect(GitsDevCommands, makeGitsDevCommands);

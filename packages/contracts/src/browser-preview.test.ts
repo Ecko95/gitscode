@@ -19,9 +19,12 @@ describe("browser preview contracts", () => {
   });
 
   it("rejects unsupported control actions", () => {
-    for (const action of ["restart", "connect-localhost"]) {
-      expect(() => decode_control_input({ threadId: "thread-1", action })).toThrow();
-    }
+    expect(() =>
+      decode_control_input({
+        threadId: "thread-1",
+        action: "restart",
+      }),
+    ).toThrow();
   });
 
   it("decodes browser navigation with a URL", () => {

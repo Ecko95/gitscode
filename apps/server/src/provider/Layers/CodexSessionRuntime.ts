@@ -196,10 +196,6 @@ export interface CodexSessionRuntimeShape {
     EffectCodexSchema.V2ConsumeAccountRateLimitResetCreditResponse,
     CodexSessionRuntimeError
   >;
-  readonly listMcpServers: Effect.Effect<
-    ReadonlyArray<EffectCodexSchema.V2ListMcpServerStatusResponse__McpServerStatus>,
-    CodexSessionRuntimeError
-  >;
   readonly respondToRequest: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -1696,19 +1692,6 @@ export const makeCodexSessionRuntime = (
             idempotencyKey: yield* randomUUIDv4,
           });
         }),
-      listMcpServers: Effect.gen(function* () {
-        const servers: EffectCodexSchema.V2ListMcpServerStatusResponse__McpServerStatus[] = [];
-        let cursor: string | null | undefined;
-        do {
-          const response = yield* client.request("mcpServerStatus/list", {
-            detail: "toolsAndAuthOnly",
-            ...(cursor ? { cursor } : {}),
-          });
-          servers.push(...response.data);
-          cursor = response.nextCursor;
-        } while (cursor);
-        return servers;
-      }),
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);

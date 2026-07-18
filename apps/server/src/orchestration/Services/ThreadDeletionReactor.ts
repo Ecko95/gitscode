@@ -1,8 +1,8 @@
 /**
  * ThreadDeletionReactor - Thread deletion cleanup reactor service interface.
  *
- * Owns background workers that react to thread archive/deletion domain events
- * and perform best-effort runtime cleanup for provider sessions and terminals.
+ * Owns background workers that react to thread deletion domain events and
+ * perform best-effort runtime cleanup for provider sessions and terminals.
  *
  * @module ThreadDeletionReactor
  */
@@ -15,7 +15,7 @@ import type * as Scope from "effect/Scope";
  */
 export interface ThreadDeletionReactorShape {
   /**
-   * Start reacting to thread.archived/thread.deleted orchestration domain events.
+   * Start reacting to thread.deleted orchestration domain events.
    *
    * The returned effect must be run in a scope so all worker fibers can be
    * finalized on shutdown.

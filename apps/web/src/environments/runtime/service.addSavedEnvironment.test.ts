@@ -619,39 +619,6 @@ describe("addSavedEnvironment", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  it("re-ensures only the base SSH bridge before reconnecting a saved environment", async () => {
-    mockWriteSavedEnvironmentBearerToken.mockResolvedValue(true);
-    const { connectDesktopSshEnvironment, resetEnvironmentServiceForTests } =
-      await import("./service");
-
-    await connectDesktopSshEnvironment({
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 22,
-    });
-    const connectionInput = mockCreateEnvironmentConnection.mock.calls.at(-1)?.[0] as
-      | { beforeReconnect?: () => Promise<void> }
-      | undefined;
-    mockEnsureSshEnvironment.mockClear();
-
-    await connectionInput?.beforeReconnect?.();
-
-    expect(connectionInput?.beforeReconnect).toEqual(expect.any(Function));
-    expect(mockEnsureSshEnvironment).toHaveBeenCalledOnce();
-    expect(mockEnsureSshEnvironment.mock.calls[0]).toEqual([
-      {
-        alias: "devbox",
-        hostname: "devbox.example.com",
-        username: "julius",
-        port: 22,
-      },
-      undefined,
-    ]);
-
-    await resetEnvironmentServiceForTests();
-  });
-
   it("disconnects the desktop ssh process before removing a saved ssh environment", async () => {
     mockSavedRecords = [
       {

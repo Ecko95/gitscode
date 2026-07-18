@@ -1,16 +1,11 @@
 import type { EnvironmentId, EnvironmentApi } from "@t3tools/contracts";
 
 import type { WsRpcClient } from "@t3tools/client-runtime";
-import { getSavedEnvironmentRuntimeState, readEnvironmentConnection } from "./environments/runtime";
-import { readPrimaryEnvironmentDescriptor } from "./environments/primary";
+import { readEnvironmentConnection } from "./environments/runtime";
 
 const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>();
 
-export function createEnvironmentApi(
-  rpcClient: WsRpcClient,
-  portsAvailable?: boolean,
-): EnvironmentApi {
-  const ports = portsAvailable === false ? undefined : rpcClient.gits?.ports;
+export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
     provider: {
       steerTurn: rpcClient.provider.steerTurn,
@@ -18,7 +13,6 @@ export function createEnvironmentApi(
       codexAccountUsage: rpcClient.provider.codexAccountUsage,
       usageModelBreakdown: rpcClient.provider.usageModelBreakdown,
       consumeCodexResetCredit: rpcClient.provider.consumeCodexResetCredit,
-      auth: rpcClient.provider.auth,
     },
     terminal: {
       open: (input) => rpcClient.terminal.open(input as never),
@@ -71,7 +65,6 @@ export function createEnvironmentApi(
       status: rpcClient.browserPreview.status,
       control: rpcClient.browserPreview.control,
     },
-    ...(ports ? { ports: { list: ports.list } } : {}),
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,
       getTurnDiff: rpcClient.orchestration.getTurnDiff,
@@ -100,20 +93,7 @@ export function readEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi
   }
 
   const connection = readEnvironmentConnection(environmentId);
-  if (!connection) {
-    return undefined;
-  }
-  const descriptor =
-    connection.kind === "primary"
-      ? readPrimaryEnvironmentDescriptor()
-      : getSavedEnvironmentRuntimeState(environmentId).descriptor;
-  return createEnvironmentApi(connection.client, descriptor?.capabilities.ports === true);
-}
-
-export function readEnvironmentBrowserPreviewApi(
-  environmentId: EnvironmentId,
-): EnvironmentApi["browserPreview"] | undefined {
-  return readEnvironmentApi(environmentId)?.browserPreview;
+  return connection ? createEnvironmentApi(connection.client) : undefined;
 }
 
 export function ensureEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi {

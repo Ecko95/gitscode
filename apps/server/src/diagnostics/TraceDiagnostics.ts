@@ -15,8 +15,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 
-import { redactSecrets } from "../redactSecrets.ts";
-
 interface TraceRecordLike {
   readonly name?: unknown;
   readonly traceId?: unknown;
@@ -106,7 +104,7 @@ function readExitTag(exit: unknown): string | null {
 
 function readExitCause(exit: unknown): string {
   if (!isRecordObject(exit) || !("cause" in exit)) return "Failure";
-  return redactSecrets(toStringValue(exit.cause)?.trim() ?? "Failure");
+  return toStringValue(exit.cause)?.trim() ?? "Failure";
 }
 
 function isTraceEvent(value: unknown): value is TraceEventLike {
@@ -312,7 +310,7 @@ export function aggregateTraceDiagnostics(
           }
 
           const seenAt = unixNanoToDateTime(rawEvent.timeUnixNano) ?? endedAt;
-          const message = redactSecrets(toStringValue(rawEvent.name)?.trim() ?? "Log event");
+          const message = toStringValue(rawEvent.name)?.trim() ?? "Log event";
           latestWarningAndErrorLogs.push({
             spanName: name,
             level,

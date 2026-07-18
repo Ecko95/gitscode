@@ -11,6 +11,7 @@ export const BrowserPreviewAction = Schema.Literals([
   "release",
   "navigate",
   "instruct",
+  "connect-localhost",
   "console",
 ]);
 export type BrowserPreviewAction = typeof BrowserPreviewAction.Type;

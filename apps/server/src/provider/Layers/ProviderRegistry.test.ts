@@ -50,7 +50,6 @@ import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.t
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import { GitShimManager } from "../GitShimManager.ts";
-import { PtyAdapter } from "../../terminal/Services/PTY.ts";
 // ponytail: no-op shim for tests — real shim requires FileSystem + ServerConfig,
 //   neither of which is relevant to provider registry integration tests.
 const NoOpGitShimManagerLive = Layer.succeed(GitShimManager, {
@@ -58,12 +57,6 @@ const NoOpGitShimManagerLive = Layer.succeed(GitShimManager, {
   release: (_sessionId: string) => Effect.void,
   sweepStale: () => Effect.void,
 });
-const NoOpPtyAdapterLive = Layer.succeed(PtyAdapter, {
-  spawn: () => Effect.die("PTY should not be spawned in provider registry tests"),
-});
-const TestProviderInstanceRegistryHydrationLive = ProviderInstanceRegistryHydrationLive.pipe(
-  Layer.provide(NoOpPtyAdapterLive),
-);
 
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -1035,7 +1028,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(TestProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -1111,7 +1104,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(TestProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -1222,7 +1215,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(TestProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -1274,7 +1267,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             const scope = yield* Scope.make();
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
-              Layer.provideMerge(TestProviderInstanceRegistryHydrationLive),
+              Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
               Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {

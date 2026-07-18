@@ -38,7 +38,6 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { sessionPortEnv } from "../sessionPort.ts";
-import type { PtyAdapterShape } from "../../terminal/Services/PTY.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 import type { ClaudeRtkRewriteRunner } from "./ClaudeRtkToolRewrite.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -161,7 +160,6 @@ function makeHarness(config?: {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
   readonly rtkRewriteRunner?: ClaudeRtkRewriteRunner;
-  readonly ptyAdapter?: PtyAdapterShape;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -174,7 +172,6 @@ function makeHarness(config?: {
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     ...(config?.environment ? { environment: config.environment } : {}),
-    ...(config?.ptyAdapter ? { ptyAdapter: config.ptyAdapter } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -281,18 +278,6 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
-  it.effect("exposes manual-code auth for the resolved Claude home", () => {
-    const harness = makeHarness({
-      claudeConfig: { homePath: "/tmp/claude-auth-home" },
-      ptyAdapter: { spawn: () => Effect.die("unused") },
-    });
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      assert.deepStrictEqual(adapter.providerAuth?.methods, ["manual-code"]);
-      assert.strictEqual(adapter.providerAuth?.credentialHome, "/tmp/claude-auth-home");
-    }).pipe(Effect.provide(harness.layer));
-  });
-
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
