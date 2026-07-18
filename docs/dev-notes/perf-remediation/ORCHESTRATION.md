@@ -82,10 +82,10 @@ Status: `pending → dispatched → implemented → guard-green → merged → v
 | p2-DH-T9-s1       | T9   | D/H     | opus/high    | merged  | guard-green | d53339c4e38078119386fe2912448d83acb6216f | —      |
 | p2-DH-T9-s2       | T9   | D/H     | opus/high    | merged  | guard-green | 741ccbaca7c4fa0c0f40735f92b22fb1b178d541 | —      |
 | p2-DH-T8-s1       | T8   | D/H     | sonnet/med   | merged  | guard-green | ae906a4bb                                | —      |
-| p3-F-T10-s1       | T10  | F       | sonnet/med   | pending | —           | —                                        | —      |
-| p3-F-T10-s2       | T10  | F       | sonnet/med   | pending | —           | —                                        | —      |
-| p3-G-T11-s1       | T11  | G       | sonnet/med   | pending | —           | —                                        | —      |
-| p3-C2-T12-s1      | T12  | C2      | haiku/low    | pending | —           | —                                        | —      |
+| p3-F-T10-s1       | T10  | F       | sonnet/med   | merged  | guard-green | 080113eb4                                | —      |
+| p3-F-T10-s2       | T10  | F       | sonnet/med   | merged  | guard-green | dd7c3462a                                | —      |
+| p3-G-T11-s1       | T11  | G       | sonnet/med   | merged  | guard-green | d062fd471                                | —      |
+| p3-C2-T12-s1      | T12  | C2      | haiku/low    | merged  | guard-green | 80203ade1                                | —      |
 | p4-audit-T16-s1   | T16  | audit   | opus/high    | pending | —           | —                                        | —      |
 | p4-staging-T15-s1 | T15  | staging | opus/high    | pending | —           | —                                        | —      |
 | gate-T1-s3        | T1c  | gate    | ops          | pending | —           | —                                        | —      |
