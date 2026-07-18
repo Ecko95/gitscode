@@ -1,4 +1,4 @@
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationThread } from "@t3tools/contracts";
 import { MessageId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -10,6 +10,7 @@ import { denyThreadAccess } from "./auth/Services/ServerAuth.ts";
 import {
   coalescePerTick,
   readThreadDetailSnapshot,
+  resumeThreadStream,
   TERMINAL_STREAM_BUFFER,
   terminalCallbackStream,
 } from "./ws.ts";
@@ -161,6 +162,40 @@ describe("coalescePerTick (T7-s3 WS frame batching)", () => {
       [0, 1, 2, 3, 4],
       [5, 6, 7],
     ]);
+  });
+});
+
+describe("resumeThreadStream (T9-s2 resume-by-sequence)", () => {
+  const threadA = ThreadId.make("thread-A");
+  const threadB = ThreadId.make("thread-B");
+
+  // resumeThreadStream reads only type/aggregateKind/aggregateId, so a minimal
+  // synthetic event is enough to exercise the filter + ordering seam.
+  const evt = (sequence: number, aggregateId: ThreadId, type: string): OrchestrationEvent =>
+    ({ sequence, aggregateKind: "thread", aggregateId, type } as unknown as OrchestrationEvent);
+
+  it("replays catch-up then live, keeping only this thread's detail events in order", async () => {
+    // Client disconnected at sequence k=10; readEvents(10) yields 11..14 (after
+    // cursor). Catch-up carries a non-detail event (dropped) and a thread-B event
+    // (dropped); live carries one more detail event for thread A.
+    const catchUp = Stream.fromIterable([
+      evt(11, threadA, "thread.message-sent"),
+      evt(12, threadA, "thread.created"), // not a thread-detail event → dropped
+      evt(13, threadB, "thread.message-sent"), // wrong thread → dropped
+    ]);
+    const live = Stream.fromIterable([evt(14, threadA, "thread.activity-appended")]);
+
+    const items = await Effect.runPromise(
+      resumeThreadStream(catchUp, live, threadA).pipe(
+        Stream.runCollect,
+        Effect.map((collected) => Array.from(collected)),
+      ),
+    );
+
+    // No snapshot frame; exactly the thread-A detail events, catch-up before live,
+    // strictly by sequence, no gap/duplicate.
+    expect(items.map((item) => item.kind)).toEqual(["event", "event"]);
+    expect(items.map((item) => item.event.sequence)).toEqual([11, 14]);
   });
 });
 
