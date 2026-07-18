@@ -16,6 +16,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
+import { GitStatusTab } from "./GitStatusTab";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { Button } from "../ui/button";
@@ -57,6 +58,7 @@ interface ChatHeaderProps {
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
   onToggleBrowser: () => void;
+  onReviewPullRequest?: (reference: string) => void;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -100,6 +102,7 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
   onToggleBrowser,
+  onReviewPullRequest,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -205,6 +208,13 @@ export const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+          />
+        )}
+        {activeProjectName && isGitRepo && (
+          <GitStatusTab
+            environmentId={activeThreadEnvironmentId}
+            gitCwd={gitCwd}
+            {...(onReviewPullRequest ? { onReviewPullRequest } : {})}
           />
         )}
         {activeProjectName && (
