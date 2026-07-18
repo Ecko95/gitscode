@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  aggregateUsageModelBreakdown,
-  type UsageCostActivityRow,
-} from "./UsageModelBreakdown.ts";
+import { aggregateUsageModelBreakdown, type UsageCostActivityRow } from "./UsageModelBreakdown.ts";
 
-function row(overrides: Partial<UsageCostActivityRow> & { payload: unknown }): UsageCostActivityRow {
+function row(
+  overrides: Partial<UsageCostActivityRow> & { payload: unknown },
+): UsageCostActivityRow {
   return {
     activityId: overrides.activityId ?? "activity-1",
     turnId: overrides.turnId !== undefined ? overrides.turnId : "turn-1",

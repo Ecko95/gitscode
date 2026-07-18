@@ -635,8 +635,8 @@ label:has(> select#reasoning-effort) select {
   --border: var(--gits-line);
   --input: var(--gits-line2);
   --ring: var(--gits-accent);
-  --font-mono: "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas, ui-monospace, Menlo,
-    monospace;
+  --font-mono:
+    "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas, ui-monospace, Menlo, monospace;
 }
 
 .gits-chat[data-gits-theme="navy"] {
@@ -696,7 +696,9 @@ label:has(> select#reasoning-effort) select {
   animation: gits-bob 1.5s ease-in-out infinite;
   animation-play-state: paused;
   filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 calc(12px * var(--gits-glow, 1)) color-mix(in srgb, var(--primary) 55%, transparent));
+    drop-shadow(
+      0 0 calc(12px * var(--gits-glow, 1)) color-mix(in srgb, var(--primary) 55%, transparent)
+    );
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -193,7 +193,11 @@ export function UsagePanelControl(props: { environmentId: EnvironmentId }) {
               providerWindows.map(({ provider, label, windows }) => (
                 <div className="grid gap-1" key={provider}>
                   {windows.fiveHour ? (
-                    <RateWindowRow providerLabel={label} windowLabel="5h" window={windows.fiveHour} />
+                    <RateWindowRow
+                      providerLabel={label}
+                      windowLabel="5h"
+                      window={windows.fiveHour}
+                    />
                   ) : null}
                   {windows.weekly ? (
                     <RateWindowRow providerLabel={label} windowLabel="7d" window={windows.weekly} />

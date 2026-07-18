@@ -41,9 +41,7 @@ export type UsageCostActivityRow = {
 };
 
 function toCount(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? Math.round(value)
-    : 0;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
 }
 
 function providerFromSession(providerName: string | null): UsageProvider {
