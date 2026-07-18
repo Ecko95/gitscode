@@ -1,5 +1,47 @@
 # TODO
 
+## Session log — 2026-07-19 (post-#182 runway cleared: queue, upstream ports, redeploy 7)
+
+Fable-orchestrated run (opus + fable execution agents, one worktree = one PR each). PR board
+emptied: #158, #163, #183–#188 all merged into `gits`.
+
+- [x] #158 merged as-is (docs, green)
+- [x] #163 rescued and merged — rebased 10 commits over #164–#182; kept the perf-remediation
+      cheap-gate in `AutomodeDriver` with the Telegram digest tick via `Effect.ensuring`
+      (removed a rebase-artifact double-tick); original CI failure was formatting only
+- [x] #187 base fix — `gits` tip failed the required Format check (5 unformatted files landed
+      via direct pushes); also landed the pending plan.md + dev-notes updates. ⚠ Format with the
+      repo-pinned oxfmt (0.40.0), not `bunx oxfmt` — versions disagree
+- [x] §1b upstream ports, each verified + squash-merged: #183 protocol-relative remote host →
+      https (c49d424e3), #184 Sonnet 5 + Fable 5 catalog (9d66b104f+de58ec8e2; Claude default is
+      now `claude-sonnet-5`), #185 Claude SDK 0.3.x system-message subtypes (e1ce9f850+75257d64e),
+      #186 MCP OAuth locks shared across Codex shadow homes (24f9c2a08), #188 skip undecodable
+      provider-runtime rows (31ca9e553 — real defect was the strict batch decode in
+      `SqlSchema.findAll`, not the per-row loop plan.md pointed at)
+- [x] Slice 1 re-measure (redeploy 6 window, 23:25–23:56 BST, 31 windows): ELD p99 max 133.8 ms /
+      mean 34.5 ms; RSS steady 615 MB (transient 1.45 GB peak under 6 concurrent CI+agent
+      workloads); WS reconnects 0; `Failed to publish` 0 (was 45/h). All plan gates PASS — KEEP
+- [x] Redeploy 7: deployed the merged tip via `deploy-gits-tailnet-hosted.sh` (see
+      ORCHESTRATION.md ledger)
+
+### Backlog (slices 5–6, deferred from this run)
+
+- [ ] Upstream give-back: PR the shared fixes (T1, T2, T4, T5-shared-half, T7, T8, T10) to
+      `pingdotgg/t3code` — verified still unfixed at upstream `5ca32661`
+- [ ] Report the `MutableList.take` defect to the Effect project (byte-identical in beta.73 and
+      beta.78; local patch stays pinned until fixed upstream)
+- [ ] delamain coordinator context (dev-notes §7.7): structured hand-back contract
+      `{status, files, diff-stat, summary, follow-ups}` at the pi→codex boundary; prune the
+      coordinator's own state; leaf-count telemetry; effort tiering instead of fleet-wide max
+- [ ] a04c09a19 (upstream HttpApi for Environment APIs + authn/authz): investigate/coordinate
+      against the fork's remote-access surface — do not port blind
+- [ ] #185 follow-up: add the `tool.denied` contract event so permission denials render as
+      error-tone activities (currently info-tone `runtime.warning`; `ponytail:` marker in
+      `ClaudeAdapter.ts` names the upgrade path)
+- [ ] CI gap: the required Format/build workflow triggers only on `pull_request` and push to
+      `main` — direct pushes to `gits` land unchecked (how the 5 unformatted files got in).
+      Either add `gits` to push triggers or stop direct-pushing docs
+
 ## VPS agent stack handoff — 2026-07-13
 
 - [x] Add `docs/gits/VPS_AGENT_STACK.md` with the Codex, Claude Code, Open GSD Core, plugin, and MCP setup path.
