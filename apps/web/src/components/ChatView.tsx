@@ -4721,6 +4721,9 @@ export default function ChatView(props: ChatViewProps) {
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
           onToggleBrowser={onToggleBrowser}
+          {...(canCheckoutPullRequestIntoThread
+            ? { onReviewPullRequest: openPullRequestDialog }
+            : {})}
         />
       </header>
 

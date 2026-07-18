@@ -16,6 +16,7 @@ export function createEnvironmentApi(
       steerTurn: rpcClient.provider.steerTurn,
       generateFollowUpSuggestions: rpcClient.provider.generateFollowUpSuggestions,
       codexAccountUsage: rpcClient.provider.codexAccountUsage,
+      usageModelBreakdown: rpcClient.provider.usageModelBreakdown,
       consumeCodexResetCredit: rpcClient.provider.consumeCodexResetCredit,
       auth: rpcClient.provider.auth,
     },

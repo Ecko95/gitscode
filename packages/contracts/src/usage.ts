@@ -71,6 +71,31 @@ export const UsageSummary = Schema.Struct({
 });
 export type UsageSummary = typeof UsageSummary.Type;
 
+export const UsageWindowKey = Schema.Literals(["fiveHour", "weekly"]);
+export type UsageWindowKey = typeof UsageWindowKey.Type;
+
+export const UsageModelBreakdownInput = Schema.Struct({ window: UsageWindowKey });
+export type UsageModelBreakdownInput = typeof UsageModelBreakdownInput.Type;
+
+export const UsageModelBreakdownEntry = Schema.Struct({
+  provider: UsageProvider,
+  model: TrimmedNonEmptyString,
+  turns: NonNegativeInt,
+  inputTokens: NonNegativeInt,
+  cachedInputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  estCostUsd: NonNegativeNumber,
+});
+export type UsageModelBreakdownEntry = typeof UsageModelBreakdownEntry.Type;
+
+export const UsageModelBreakdown = Schema.Struct({
+  window: UsageWindowKey,
+  since: IsoDateTime,
+  checkedAt: IsoDateTime,
+  entries: Schema.Array(UsageModelBreakdownEntry),
+});
+export type UsageModelBreakdown = typeof UsageModelBreakdown.Type;
+
 export const CodexAccountUsageInput = Schema.Struct({ threadId: ThreadId });
 export type CodexAccountUsageInput = typeof CodexAccountUsageInput.Type;
 

@@ -168,6 +168,86 @@ describe("deriveSubagentTasks", () => {
 
     expect(deriveSubagentTasks(activities).map((task) => task.id)).toEqual(["agent-a", "agent-b"]);
   });
+
+  it("derives Claude Code Task-tool subagents (taskType local_agent) with lifecycle status", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "local-agent-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        sequence: 1,
+        kind: "task.started",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          taskId: "a9f24c1ab07aca2c8",
+          taskType: "local_agent",
+          description: "Explore dashboard + event consumers",
+          detail: "Explore dashboard + event consumers",
+        },
+      }),
+      makeActivity({
+        id: "local-agent-progress",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        sequence: 2,
+        kind: "task.progress",
+        tone: "info",
+        payload: { taskId: "a9f24c1ab07aca2c8", summary: "Reading event consumers" },
+      }),
+    ];
+
+    const runningTasks = deriveSubagentTasks(activities);
+    expect(runningTasks).toEqual([
+      expect.objectContaining({
+        id: "a9f24c1ab07aca2c8",
+        title: "Explore dashboard + event consumers",
+        status: "running",
+        logs: expect.arrayContaining([expect.objectContaining({ id: "local-agent-progress" })]),
+      }),
+    ]);
+
+    const completedTasks = deriveSubagentTasks([
+      ...activities,
+      makeActivity({
+        id: "local-agent-completed",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        sequence: 3,
+        kind: "task.completed",
+        tone: "info",
+        payload: { taskId: "a9f24c1ab07aca2c8", status: "completed", summary: "Done" },
+      }),
+    ]);
+    expect(completedTasks).toEqual([
+      expect.objectContaining({ id: "a9f24c1ab07aca2c8", status: "completed" }),
+    ]);
+  });
+
+  it("excludes background shells and workflows from subagent tasks", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "bash-task",
+        sequence: 1,
+        kind: "task.started",
+        tone: "info",
+        payload: { taskId: "bcxxmznpb", taskType: "local_bash", detail: "Build and run vitest" },
+      }),
+      makeActivity({
+        id: "workflow-task",
+        sequence: 2,
+        kind: "task.started",
+        tone: "info",
+        payload: { taskId: "wxj1wk8tm", taskType: "local_workflow", detail: "Verify plan" },
+      }),
+      makeActivity({
+        id: "untyped-task",
+        sequence: 3,
+        kind: "task.started",
+        tone: "info",
+        payload: { taskId: "untyped", detail: "No task type" },
+      }),
+    ];
+
+    expect(deriveSubagentTasks(activities)).toEqual([]);
+  });
 });
 
 describe("deriveSubagentTaskNotifications", () => {

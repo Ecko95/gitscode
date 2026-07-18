@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { CodexAccountUsage, UsageSummary } from "./usage.ts";
+import { CodexAccountUsage, UsageModelBreakdown, UsageSummary } from "./usage.ts";
 
 const decodeUsageSummary = Schema.decodeUnknownSync(UsageSummary);
 const decodeCodexAccountUsage = Schema.decodeUnknownSync(CodexAccountUsage);
@@ -106,4 +106,28 @@ it("decodes Codex account usage and reset credits", () => {
 
   assert.equal(parsed.primary?.windowMinutes, 300);
   assert.equal(parsed.resetCredits[0]?.id, "credit-1");
+});
+
+it("decodes usage model breakdowns", () => {
+  const decode = Schema.decodeUnknownSync(UsageModelBreakdown);
+  const parsed = decode({
+    window: "fiveHour",
+    since: "2026-07-18T10:00:00.000Z",
+    checkedAt: "2026-07-18T15:00:00.000Z",
+    entries: [
+      {
+        provider: "claude",
+        model: "claude-opus-4-8",
+        turns: 3,
+        inputTokens: 12,
+        cachedInputTokens: 34584,
+        outputTokens: 2682,
+        estCostUsd: 0.084352,
+      },
+    ],
+  });
+
+  assert.equal(parsed.window, "fiveHour");
+  assert.equal(parsed.entries[0]?.model, "claude-opus-4-8");
+  assert.equal(parsed.entries[0]?.estCostUsd, 0.084352);
 });

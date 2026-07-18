@@ -52,6 +52,8 @@ import type {
   CodexAccountUsageInput,
   CodexResetCreditConsumeInput,
   CodexResetCreditConsumeResult,
+  UsageModelBreakdown,
+  UsageModelBreakdownInput,
 } from "./usage.ts";
 import type {
   ServerConfig,
@@ -594,6 +596,7 @@ export interface EnvironmentApi {
       input: FollowUpSuggestionsInput,
     ) => Promise<FollowUpSuggestionsResult>;
     codexAccountUsage: (input: CodexAccountUsageInput) => Promise<CodexAccountUsage>;
+    usageModelBreakdown: (input: UsageModelBreakdownInput) => Promise<UsageModelBreakdown>;
     consumeCodexResetCredit: (
       input: CodexResetCreditConsumeInput,
     ) => Promise<CodexResetCreditConsumeResult>;

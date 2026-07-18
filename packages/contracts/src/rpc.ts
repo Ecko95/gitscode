@@ -224,6 +224,8 @@ import {
   CodexAccountUsageInput,
   CodexResetCreditConsumeInput,
   CodexResetCreditConsumeResult,
+  UsageModelBreakdown,
+  UsageModelBreakdownInput,
 } from "./usage.ts";
 
 export const WS_METHODS = {
@@ -347,6 +349,7 @@ export const WS_METHODS = {
   providerGenerateFollowUpSuggestions: "provider.generateFollowUpSuggestions",
   providerCodexAccountUsage: "provider.codexAccountUsage",
   providerConsumeCodexResetCredit: "provider.consumeCodexResetCredit",
+  usageModelBreakdown: "usage.modelBreakdown",
   providerAuthStart: "provider.auth.start",
   providerAuthGet: "provider.auth.get",
   providerAuthCancel: "provider.auth.cancel",
@@ -436,6 +439,12 @@ export const WsProviderConsumeCodexResetCreditRpc = Rpc.make(
     error: ProviderOperationError,
   },
 );
+
+export const WsUsageModelBreakdownRpc = Rpc.make(WS_METHODS.usageModelBreakdown, {
+  payload: UsageModelBreakdownInput,
+  success: UsageModelBreakdown,
+  error: ProviderOperationError,
+});
 
 export const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
   payload: ProviderAuthStartInput,
@@ -1165,6 +1174,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderGenerateFollowUpSuggestionsRpc,
   WsProviderCodexAccountUsageRpc,
   WsProviderConsumeCodexResetCreditRpc,
+  WsUsageModelBreakdownRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthGetRpc,
   WsProviderAuthCancelRpc,
