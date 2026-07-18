@@ -261,6 +261,33 @@ export function coalescePerTick<A, E, R>(
   );
 }
 
+// T8: throttle thread domain events per-threadId within 200ms windows.
+// The first event per thread per window triggers getThreadShellById + one WS frame;
+// subsequent events within the cooldown are suppressed. Non-thread events pass through.
+// Since getThreadShellById reads current DB state, the first event in a burst already
+// reflects the latest projection by the time it's processed.
+// ponytail: throttle (first-wins) rather than debounce (last-wins) — no timer fibers,
+// no interaction with aggregateWithin + PubSub subscription interruption. Upgrade path:
+// per-key fiber-based debounce if last-state fidelity under back-pressure matters.
+export function debounceShellThreadEvents<E, R>(
+  events: Stream.Stream<OrchestrationEvent, E, R>,
+): Stream.Stream<OrchestrationEvent, E, R> {
+  const lastEmitted = new Map<string, number>();
+  return events.pipe(
+    Stream.filter((event) => {
+      if (event.aggregateKind !== "thread") return true;
+      const key = event.aggregateId;
+      const now = performance.now();
+      const last = lastEmitted.get(key) ?? 0;
+      if (now - last >= PROVIDER_STATUS_DEBOUNCE_MS) {
+        lastEmitted.set(key, now);
+        return true;
+      }
+      return false;
+    }),
+  );
+}
+
 // T9-s2 resume: assemble subscribeThread's output when the client already holds
 // the snapshot — replay (catch-up) events after its cursor, then live events, both
 // filtered to this thread's detail events and tagged as stream items. Catch-up
@@ -1159,7 +1186,8 @@ const makeWsRpcLayer = (
                 );
                 return Stream.concat(
                   toShellStream(catchUpStream),
-                  toShellStream(Stream.fromSubscription(domainEvents)),
+                  // T8: debounce live thread events by threadId before SQL query.
+                  toShellStream(debounceShellThreadEvents(Stream.fromSubscription(domainEvents))),
                 );
               }
 
@@ -1176,9 +1204,12 @@ const makeWsRpcLayer = (
                 ),
               );
 
+              // T8: debounce live thread events by threadId before SQL query.
               const liveStream = toShellStream(
-                Stream.fromSubscription(domainEvents).pipe(
-                  Stream.filter((event) => event.sequence > snapshot.snapshotSequence),
+                debounceShellThreadEvents(
+                  Stream.fromSubscription(domainEvents).pipe(
+                    Stream.filter((event) => event.sequence > snapshot.snapshotSequence),
+                  ),
                 ),
               );
 

@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { denyThreadAccess } from "./auth/Services/ServerAuth.ts";
 import {
   coalescePerTick,
+  debounceShellThreadEvents,
   readThreadDetailSnapshot,
   resumeThreadStream,
   TERMINAL_STREAM_BUFFER,
@@ -196,6 +197,78 @@ describe("resumeThreadStream (T9-s2 resume-by-sequence)", () => {
     // strictly by sequence, no gap/duplicate.
     expect(items.map((item) => item.kind)).toEqual(["event", "event"]);
     expect(items.map((item) => item.event.sequence)).toEqual([11, 14]);
+  });
+});
+
+describe("debounceShellThreadEvents (T8 thread-upserted coalescing)", () => {
+  const threadA = ThreadId.make("thread-A");
+  const threadB = ThreadId.make("thread-B");
+  const projectId2 = ProjectId.make("project-2");
+
+  // Minimal synthetic OrchestrationEvent — only the fields debounceShellThreadEvents reads.
+  const threadEvt = (sequence: number, id: ThreadId): OrchestrationEvent =>
+    ({
+      sequence,
+      aggregateKind: "thread",
+      aggregateId: id,
+      type: "thread.activity-appended",
+    }) as unknown as OrchestrationEvent;
+
+  const projectEvt = (sequence: number): OrchestrationEvent =>
+    ({
+      sequence,
+      aggregateKind: "project",
+      aggregateId: projectId2,
+      type: "project.created",
+    }) as unknown as OrchestrationEvent;
+
+  it("passes the first thread event per threadId per window and suppresses the rest, passes non-thread events through", async () => {
+    // Throttle (first-wins): 3 events for threadA (seqs 1,2,3) in rapid succession →
+    // only seq=1 passes; 2 for threadB (seqs 4,5) → only seq=4 passes; project event
+    // (seq=6) always passes. All emitted synchronously — well within the 200ms cooldown.
+    const events = Stream.fromIterable<OrchestrationEvent>([
+      threadEvt(1, threadA),
+      threadEvt(2, threadA),
+      threadEvt(3, threadA),
+      threadEvt(4, threadB),
+      threadEvt(5, threadB),
+      projectEvt(6),
+    ]);
+
+    const result = await Effect.runPromise(
+      debounceShellThreadEvents(events).pipe(
+        Stream.runCollect,
+        Effect.map((c) => Array.from(c).map((e) => e.sequence)),
+      ),
+    );
+
+    // Burst of 3 threadA events → 1 emission (seq=1); burst of 2 threadB → 1 (seq=4);
+    // project event → 1. Total: 3 events become 3 (1 per unique thread + project).
+    expect(result).toEqual([1, 4, 6]);
+  });
+
+  it("emits one event per cooldown window when a thread bursts across two windows", async () => {
+    // Window 1 (seqs 1+2 for threadA, < 1ms apart): only seq=1 passes.
+    // Window 2 (seq=3 for threadA, > 200ms later): cooldown elapsed → seq=3 passes.
+    const events = Stream.callback<OrchestrationEvent>((queue) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(queue, threadEvt(1, threadA));
+        yield* Queue.offer(queue, threadEvt(2, threadA));
+        yield* Effect.sleep("300 millis"); // cross the 200ms cooldown boundary
+        yield* Queue.offer(queue, threadEvt(3, threadA));
+        yield* Queue.end(queue);
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      debounceShellThreadEvents(events).pipe(
+        Stream.runCollect,
+        Effect.map((c) => Array.from(c).map((e) => e.sequence)),
+      ),
+    );
+
+    // Window 1: seq=1 passes, seq=2 suppressed. Window 2: seq=3 passes.
+    expect(result).toEqual([1, 3]);
   });
 });
 
