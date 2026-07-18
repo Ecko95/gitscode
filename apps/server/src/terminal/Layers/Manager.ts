@@ -114,6 +114,8 @@ interface TerminalSessionState {
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
+  /** Running count of '\n' in history — avoids full re-split on every chunk. */
+  historyLineCount: number;
   pendingHistoryControlSequence: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
@@ -147,7 +149,9 @@ type DrainProcessEventAction =
       threadId: string;
       terminalId: string;
       sequence: number;
-      history: string | null;
+      /** True when history was appended this chunk — caller persists session.history. */
+      historyUpdated: boolean;
+      history: null;
       data: string;
     }
   | {
@@ -686,6 +690,14 @@ function defaultSubprocessInspectorForPlatform(platform: NodeJS.Platform) {
     }
     return yield* posixInspectSubprocess(terminalPid, platform);
   });
+}
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) === 10) n++;
+  }
+  return n;
 }
 
 function capHistory(history: string, maxLines: number): string {
@@ -1434,11 +1446,16 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               nextEvent.data,
             );
             session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
+            let historyUpdated = false;
             if (sanitized.visibleText.length > 0) {
-              session.history = capHistory(
-                `${session.history}${sanitized.visibleText}`,
-                historyLineLimit,
-              );
+              // ponytail: append O(chunk), cap only when line count exceeds limit
+              session.historyLineCount += countNewlines(sanitized.visibleText);
+              session.history += sanitized.visibleText;
+              if (session.historyLineCount > historyLineLimit) {
+                session.history = capHistory(session.history, historyLineLimit);
+                session.historyLineCount = countNewlines(session.history);
+              }
+              historyUpdated = true;
             }
             const eventStamp = advanceEventSequence(session);
 
@@ -1447,7 +1464,8 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: session.threadId,
               terminalId: session.terminalId,
               sequence: eventStamp.sequence,
-              history: sanitized.visibleText.length > 0 ? session.history : null,
+              historyUpdated,
+              history: null, // clients use `data`; full history only on snapshot/reattach
               data: nextEvent.data,
             } as const;
           }
@@ -1487,8 +1505,8 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         }
 
         if (action.type === "output") {
-          if (action.history !== null) {
-            yield* queuePersist(action.threadId, action.terminalId, action.history);
+          if (action.historyUpdated) {
+            yield* queuePersist(action.threadId, action.terminalId, session.history);
           }
 
           yield* publishEvent({
@@ -1910,6 +1928,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           status: "starting",
           pid: null,
           history,
+          historyLineCount: countNewlines(history),
           pendingHistoryControlSequence: "",
           pendingProcessEvents: [],
           pendingProcessEventIndex: 0,
@@ -2272,6 +2291,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           const terminalId = input.terminalId;
           const session = yield* requireSession(input.threadId, terminalId);
           session.history = "";
+          session.historyLineCount = 0;
           session.pendingHistoryControlSequence = "";
           session.pendingProcessEvents = [];
           session.pendingProcessEventIndex = 0;
@@ -2309,6 +2329,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               status: "starting",
               pid: null,
               history: "",
+              historyLineCount: 0,
               pendingHistoryControlSequence: "",
               pendingProcessEvents: [],
               pendingProcessEventIndex: 0,
@@ -2345,6 +2366,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           const rows = input.rows ?? session.rows;
 
           session.history = "";
+          session.historyLineCount = 0;
           session.pendingHistoryControlSequence = "";
           session.pendingProcessEvents = [];
           session.pendingProcessEventIndex = 0;
