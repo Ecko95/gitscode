@@ -241,6 +241,26 @@ export function bufferOrTerminate<A, E, R>(
   );
 }
 
+// ponytail: coalesce a subscriber's live events into one WS frame per tick.
+// Effect RPC emits exactly one "Chunk" wire message per stream chunk
+// (RpcServer.streamEffect → Stream.runForEachArray), so collapsing a tick's
+// events into a single chunk == a single frame. groupedWithin skips empty
+// windows (aggregateWithin drops idle schedule steps → no empty frames), keeps
+// order, and MAX_SAFE_INTEGER size means only the timer closes a frame.
+// flattenIterable re-emits each group as one chunk (verified). ~33ms ≈ 30fps,
+// inside the 16–50ms target. Upgrade path: tune WS_FRAME_BATCH_WINDOW if UI lag
+// or per-frame size ever demands it.
+export const WS_FRAME_BATCH_WINDOW = Duration.millis(33);
+
+export function coalescePerTick<A, E, R>(
+  self: Stream.Stream<A, E, R>,
+): Stream.Stream<A, E, R> {
+  return self.pipe(
+    Stream.groupedWithin(Number.MAX_SAFE_INTEGER, WS_FRAME_BATCH_WINDOW),
+    Stream.flattenIterable,
+  );
+}
+
 export function readThreadDetailSnapshot(
   threadId: ThreadId,
   projectionSnapshotQuery: Pick<ProjectionSnapshotQueryShape, "getThreadDetailSnapshot">,
@@ -1201,7 +1221,10 @@ const makeWsRpcLayer = (
                     thread: threadDetail.value,
                   },
                 }),
-                bufferedLiveStream,
+                // T7-s3: batch this per-thread subscriber's events into one WS
+                // frame per tick (after bufferOrTerminate so overflow still
+                // terminates first). The N-open-tabs multiplier is the target.
+                coalescePerTick(bufferedLiveStream),
               );
             }),
             { "rpc.aggregate": "orchestration" },

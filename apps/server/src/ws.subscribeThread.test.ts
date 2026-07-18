@@ -7,7 +7,12 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vitest";
 
 import { denyThreadAccess } from "./auth/Services/ServerAuth.ts";
-import { readThreadDetailSnapshot, TERMINAL_STREAM_BUFFER, terminalCallbackStream } from "./ws.ts";
+import {
+  coalescePerTick,
+  readThreadDetailSnapshot,
+  TERMINAL_STREAM_BUFFER,
+  terminalCallbackStream,
+} from "./ws.ts";
 
 const threadId = ThreadId.make("thread-1");
 const projectId = ProjectId.make("project-1");
@@ -120,6 +125,42 @@ describe("subscribeThread authorization (T7 isolation half)", () => {
   it("keeps full thread visibility for owner and client sessions", () => {
     expect(denyThreadAccess({ role: "owner", subject: "owner-bootstrap" }, threadB)).toBeNull();
     expect(denyThreadAccess({ role: "client", subject: "client-x" }, threadB)).toBeNull();
+  });
+});
+
+describe("coalescePerTick (T7-s3 WS frame batching)", () => {
+  // Effect RPC sends one wire frame per stream chunk, so chunk count == frame
+  // count. A burst inside one window must collapse to a single chunk; a gap
+  // opens a new one; idle windows emit nothing.
+  it("collapses a same-tick burst into one frame and splits across a gap", async () => {
+    const chunks = await Effect.runPromise(
+      coalescePerTick(
+        Stream.callback<number>((queue) =>
+          Effect.gen(function* () {
+            for (let value = 0; value < 5; value += 1) {
+              yield* Queue.offer(queue, value);
+            }
+            yield* Effect.sleep("120 millis");
+            for (let value = 5; value < 8; value += 1) {
+              yield* Queue.offer(queue, value);
+            }
+            yield* Effect.sleep("120 millis");
+            yield* Queue.end(queue);
+          }),
+        ),
+      ).pipe(
+        Stream.chunks,
+        Stream.map((chunk) => Array.from(chunk)),
+        Stream.runCollect,
+        Effect.map((collected) => Array.from(collected)),
+      ),
+    );
+
+    // Two frames (one per burst window), order preserved, no empty frame.
+    expect(chunks).toEqual([
+      [0, 1, 2, 3, 4],
+      [5, 6, 7],
+    ]);
   });
 });
 
