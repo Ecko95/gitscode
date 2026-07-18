@@ -225,3 +225,91 @@ describe("createWsRpcClient", () => {
     ]);
   });
 });
+
+describe("resumable orchestration subscriptions", () => {
+  // Every RPC method echoes its input, so invoking the captured `connect` with
+  // this client returns exactly the input the subscription would send.
+  const echoClient = new Proxy(
+    {},
+    { get: () => (input: unknown) => input },
+  ) as unknown as Parameters<Parameters<WsTransport["subscribe"]>[0]>[0];
+
+  function createCapturingTransport() {
+    const captured: {
+      connect?: (client: typeof echoClient) => unknown;
+      listener?: (item: unknown) => void;
+    } = {};
+    const subscribe = vi.fn(<TValue>(connect: unknown, listener: (value: TValue) => void) => {
+      captured.connect = connect as (client: typeof echoClient) => unknown;
+      captured.listener = listener as (item: unknown) => void;
+      return () => undefined;
+    });
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      isHeartbeatFresh: vi.fn(() => true),
+      request: vi.fn(),
+      requestStream: vi.fn(),
+      subscribe,
+    } satisfies Pick<
+      WsTransport,
+      "dispose" | "isHeartbeatFresh" | "reconnect" | "request" | "requestStream" | "subscribe"
+    >;
+    return { transport, captured };
+  }
+
+  it("subscribeThread omits afterSequence on first subscribe and sends the max seen sequence on resubscribe", () => {
+    const { transport, captured } = createCapturingTransport();
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+    const listener = vi.fn();
+
+    client.orchestration.subscribeThread({ threadId: ThreadId.make("thread-1") }, listener);
+
+    // (a) first subscribe: no afterSequence -> server sends a full snapshot.
+    expect(captured.connect!(echoClient)).toEqual({ threadId: "thread-1" });
+
+    captured.listener!({ kind: "snapshot", snapshot: { snapshotSequence: 5, thread: {} } });
+    captured.listener!({ kind: "event", event: { sequence: 6 } });
+    captured.listener!({ kind: "event", event: { sequence: 7 } });
+    expect(listener).toHaveBeenCalledTimes(3);
+
+    // (b) resubscribe with retained state: afterSequence == highest sequence seen.
+    expect(captured.connect!(echoClient)).toEqual({ threadId: "thread-1", afterSequence: 7 });
+  });
+
+  it("subscribeThread drops resume-replay events at or below the high-water mark", () => {
+    const { transport, captured } = createCapturingTransport();
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+    const listener = vi.fn();
+
+    client.orchestration.subscribeThread({ threadId: ThreadId.make("thread-1") }, listener);
+    captured.listener!({ kind: "snapshot", snapshot: { snapshotSequence: 5, thread: {} } });
+    captured.listener!({ kind: "event", event: { sequence: 6 } });
+    captured.listener!({ kind: "event", event: { sequence: 7 } });
+    listener.mockClear();
+
+    // (c) the catch-up/live seam can redeliver already-applied events; only the
+    // genuinely-new event is forwarded.
+    captured.listener!({ kind: "event", event: { sequence: 7 } });
+    captured.listener!({ kind: "event", event: { sequence: 6 } });
+    captured.listener!({ kind: "event", event: { sequence: 8 } });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ kind: "event", event: { sequence: 8 } });
+  });
+
+  it("subscribeShell omits afterSequence on first subscribe and resumes from the max seen sequence", () => {
+    const { transport, captured } = createCapturingTransport();
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+    const listener = vi.fn();
+
+    client.orchestration.subscribeShell(listener);
+
+    expect(captured.connect!(echoClient)).toEqual({});
+
+    captured.listener!({ kind: "snapshot", snapshot: { snapshotSequence: 10 } });
+    captured.listener!({ kind: "thread-removed", sequence: 11, threadId: "thread-1" });
+
+    expect(captured.connect!(echoClient)).toEqual({ afterSequence: 11 });
+  });
+});

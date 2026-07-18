@@ -36,6 +36,45 @@ function subscriptionOptions(
   };
 }
 
+/**
+ * Wrap a resumable snapshot+event subscription. Tracks the highest sequence
+ * already delivered to `listener` and, on transport-level resubscribe (the
+ * transport re-invokes `connect` after a drop while the in-memory state built
+ * from earlier items is retained), passes it as `afterSequence` so the server
+ * replays only the delta instead of re-sending the full snapshot. A fresh
+ * subscribe — a new call, nothing seen yet — omits `afterSequence` and gets the
+ * full snapshot. The high-water mark lives for the lifetime of this one
+ * transport.subscribe call, exactly as long as the caller's retained state does.
+ *
+ * The server's resume replay overlaps the live stream at the seam (an event can
+ * appear in both the catch-up replay and the live queue), so items at or below
+ * the high-water mark are dropped here — the caller never applies a delta twice.
+ */
+function subscribeResumableStream<TItem>(
+  transport: WsTransport,
+  connect: (
+    client: WsRpcProtocolClient,
+    afterSequence: number | undefined,
+  ) => Stream.Stream<TItem, Error, never>,
+  sequenceOf: (item: TItem) => number,
+  listener: (item: TItem) => void,
+  options: StreamSubscriptionOptions & { readonly tag: string },
+): () => void {
+  let maxSequence = -1;
+  return transport.subscribe(
+    (client) => connect(client, maxSequence >= 0 ? maxSequence : undefined),
+    (item) => {
+      const sequence = sequenceOf(item);
+      if (sequence <= maxSequence) {
+        return;
+      }
+      maxSequence = sequence;
+      listener(item);
+    },
+    options,
+  );
+}
+
 type RpcUnaryMethod<TTag extends RpcTag> =
   RpcMethod<TTag> extends (input: any, options?: any) => Effect.Effect<infer TSuccess, any, any>
     ? (input: RpcInput<TTag>) => Promise<TSuccess>
@@ -558,14 +597,25 @@ export function createWsRpcClient(
           client[ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]({}),
         ),
       subscribeShell: (listener, options) =>
-        transport.subscribe(
-          (client) => client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
+        subscribeResumableStream(
+          transport,
+          (client, afterSequence) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeShell](
+              afterSequence === undefined ? {} : { afterSequence },
+            ),
+          (item) => (item.kind === "snapshot" ? item.snapshot.snapshotSequence : item.sequence),
           listener,
           subscriptionOptions(options, ORCHESTRATION_WS_METHODS.subscribeShell),
         ),
       subscribeThread: (input, listener, options) =>
-        transport.subscribe(
-          (client) => client[ORCHESTRATION_WS_METHODS.subscribeThread](input),
+        subscribeResumableStream(
+          transport,
+          (client, afterSequence) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeThread](
+              afterSequence === undefined ? input : { ...input, afterSequence },
+            ),
+          (item) =>
+            item.kind === "snapshot" ? item.snapshot.snapshotSequence : item.event.sequence,
           listener,
           subscriptionOptions(options, ORCHESTRATION_WS_METHODS.subscribeThread),
         ),
