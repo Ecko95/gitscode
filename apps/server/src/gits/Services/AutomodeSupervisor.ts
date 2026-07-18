@@ -8,6 +8,7 @@ import type {
   AutomodeGoal,
   AutomodeGoalInput,
   AutomodeGoalOutcomeInput,
+  AutomodePolicy,
   AutomodePolicyUpdateInput,
   AutomodeRecordHeldPrInput,
   AutomodeRejectGoalInput,
@@ -19,6 +20,12 @@ import type {
 
 export interface AutomodeSupervisorShape {
   readonly getSnapshot: () => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
+  /**
+   * Read the current policy from in-memory state only — no peer-list/budget IO.
+   * The driver gates on mode/kill-switch every tick; a full getSnapshot there
+   * would run the expensive DB/subprocess reads even while automode is off.
+   */
+  readonly getPolicy: () => Effect.Effect<AutomodePolicy, AutomodeSupervisorError>;
   readonly updatePolicy: (
     input: AutomodePolicyUpdateInput,
   ) => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;

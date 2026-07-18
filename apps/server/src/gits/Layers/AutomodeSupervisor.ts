@@ -437,6 +437,10 @@ export const AutomodeSupervisorLive = Layer.effect(
 
     const getSnapshot = () => Ref.get(stateRef).pipe(Effect.flatMap(snapshotFromState));
 
+    // Cheap policy read (stateRef only) so the driver can gate on mode/kill-switch
+    // without paying for the peer-list + budget IO that getSnapshot performs.
+    const getPolicy = () => Ref.get(stateRef).pipe(Effect.map((state) => state.policy));
+
     const commitState = (updater: (state: AutomodeState) => AutomodeState) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
@@ -535,6 +539,7 @@ export const AutomodeSupervisorLive = Layer.effect(
 
     const supervisor: AutomodeSupervisorShape = {
       getSnapshot,
+      getPolicy,
       updatePolicy: (input) =>
         Effect.gen(function* () {
           const updatedAt = yield* nowIso;
