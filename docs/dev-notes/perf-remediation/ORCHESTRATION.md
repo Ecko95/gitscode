@@ -60,35 +60,34 @@ Escalation: 2 failed acceptances on a slice → Fable re-scopes (smaller slice o
 
 Status: `pending → dispatched → implemented → guard-green → merged → verified` (or `failed` / `re-scoped`).
 
-| Slice             | Task | Lane    | Model/effort | Status  | Guard       | Merged @                                 | Verify |
-| ----------------- | ---- | ------- | ------------ | ------- | ----------- | ---------------------------------------- | ------ |
-| p0-ops-T13-s1     | T13  | ops     | sonnet/med   | merged  | guard-green | 35ccb87c2                                | —      |
-| p0-obs-T14-s1     | T14  | obs     | opus/high    | merged  | guard-green | 0ed738ab8                                | —      |
-| p0-obs-T14-s2     | T14  | live    | opus/high    | merged  | report-done | f861bfa3893e5f919d08cbe627413897ac698afc | —      |
-| p1-A-T1-s1        | T1   | A       | sonnet/med   | merged  | guard-green | d0f9653ab                                | —      |
-| p1-A-T1-s2        | T1   | A       | sonnet/med   | merged  | guard-green | f6f939777                                | —      |
-| p1-A-T2-s1        | T2   | A       | sonnet/med   | merged  | guard-green | b502d929e                                | —      |
-| p1-B-T4-s1        | T4   | B       | opus/high    | merged  | guard-green | 046424fb6a79c2aab6b6533b5c32e812e543adb5 | —      |
-| p1-B-T4-s2        | T4   | B       | opus/high    | merged  | guard-green | 79677c2b160f6daab84fc853e4ada09da601d2bc | —      |
-| p1-B-T5-s1        | T5   | B       | sonnet/med   | merged  | guard-green | b59f2a7e7                                | —      |
-| p1-B-T5-s2        | T5   | B       | sonnet/med   | merged  | guard-green | 5dbcc3f3b                                | —      |
-| p1-C1-T3-s1       | T3   | C1      | opus/high    | merged  | guard-green | 0867fc1                                  | —      |
-| p1-C1-T3-s2       | T3   | C1      | opus/high    | merged  | guard-green | e8189c6e2ae662e43f44e89a61da31dbcc16b01f | —      |
-| p2-E-T6-s1        | T6   | E       | sonnet/med   | merged  | guard-green | b52b7aa0c                                | —      |
-| p2-DH-T5-s3       | T5c  | D/H     | sonnet/med   | merged  | guard-green | ab77a872e                                | —      |
-| p2-DH-T7-s1       | T7   | D/H     | opus/high    | merged  | guard-green | b07b74d84                                | —      |
-| p2-DH-T7-s2       | T7   | D/H     | opus/high    | merged  | guard-green | de07b4c9ad8e23ec7eff3e9e19ed9f4638b6fc7a | —      |
-| p2-DH-T7-s3       | T7   | D/H     | opus/high    | merged  | guard-green | 57b94b297e0cdd53c659005db7c54cfacbc0c38c | —      |
-| p2-DH-T9-s1       | T9   | D/H     | opus/high    | merged  | guard-green | d53339c4e38078119386fe2912448d83acb6216f | —      |
-| p2-DH-T9-s2       | T9   | D/H     | opus/high    | merged  | guard-green | 741ccbaca7c4fa0c0f40735f92b22fb1b178d541 | —      |
-| p2-DH-T8-s1       | T8   | D/H     | sonnet/med   | merged  | guard-green | ae906a4bb                                | —      |
-| p3-F-T10-s1       | T10  | F       | sonnet/med   | merged  | guard-green | 080113eb4                                | —      |
-| p3-F-T10-s2       | T10  | F       | sonnet/med   | merged  | guard-green | dd7c3462a                                | —      |
-| p3-G-T11-s1       | T11  | G       | sonnet/med   | merged  | guard-green | d062fd471                                | —      |
-| p3-C2-T12-s1      | T12  | C2      | haiku/low    | merged  | guard-green | 80203ade1                                | —      |
-| p4-audit-T16-s1   | T16  | audit   | opus/high    | pending | —           | —                                        | —      |
-| p4-staging-T15-s1 | T15  | staging | opus/high    | pending | —           | —                                        | —      |
-| gate-T1-s3        | T1c  | gate    | ops          | pending | —           | —                                        | —      |
+| Slice             | Task | Lane    | Model/effort | Status | Guard       | Merged @                                 | Verify |
+| ----------------- | ---- | ------- | ------------ | ------ | ----------- | ---------------------------------------- | ------ |
+| p0-ops-T13-s1     | T13  | ops     | sonnet/med   | merged | guard-green | 35ccb87c2                                | —      |
+| p0-obs-T14-s1     | T14  | obs     | opus/high    | merged | guard-green | 0ed738ab8                                | —      |
+| p0-obs-T14-s2     | T14  | live    | opus/high    | merged | report-done | f861bfa3893e5f919d08cbe627413897ac698afc | —      |
+| p1-A-T1-s1        | T1   | A       | sonnet/med   | merged | guard-green | d0f9653ab                                | —      |
+| p1-C1-T3-s1       | T3   | C1      | opus/high    | merged | guard-green | 0867fc1                                  | —      |
+| p1-A-T1-s2        | T1   | A       | sonnet/med   | merged | guard-green | f6f939777                                | —      |
+| p1-C1-T3-s2       | T3   | C1      | opus/high    | merged | guard-green | e8189c6e2ae662e43f44e89a61da31dbcc16b01f | —      |
+| p1-B-T4-s1        | T4   | B       | opus/high    | merged | guard-green | 046424fb6a79c2aab6b6533b5c32e812e543adb5 | —      |
+| p1-A-T2-s1        | T2   | A       | sonnet/med   | merged | guard-green | b502d929e                                | —      |
+| p1-B-T4-s2        | T4   | B       | opus/high    | merged | guard-green | 79677c2b160f6daab84fc853e4ada09da601d2bc | —      |
+| p1-B-T5-s1        | T5   | B       | sonnet/med   | merged | guard-green | b59f2a7e7                                | —      |
+| p1-B-T5-s2        | T5   | B       | sonnet/med   | merged | guard-green | 5dbcc3f3b                                | —      |
+| p2-E-T6-s1        | T6   | E       | sonnet/med   | merged | guard-green | b52b7aa0c                                | —      |
+| p2-DH-T5-s3       | T5c  | D/H     | sonnet/med   | merged | guard-green | ab77a872e                                | —      |
+| p2-DH-T7-s1       | T7   | D/H     | opus/high    | merged | guard-green | b07b74d84                                | —      |
+| p2-DH-T7-s2       | T7   | D/H     | opus/high    | merged | guard-green | de07b4c9ad8e23ec7eff3e9e19ed9f4638b6fc7a | —      |
+| p2-DH-T7-s3       | T7   | D/H     | opus/high    | merged | guard-green | 57b94b297e0cdd53c659005db7c54cfacbc0c38c | —      |
+| p2-DH-T9-s1       | T9   | D/H     | opus/high    | merged | guard-green | d53339c4e38078119386fe2912448d83acb6216f | —      |
+| p2-DH-T9-s2       | T9   | D/H     | opus/high    | merged | guard-green | 741ccbaca7c4fa0c0f40735f92b22fb1b178d541 | —      |
+| p2-DH-T8-s1       | T8   | D/H     | sonnet/med   | merged | guard-green | ae906a4bb                                | —      |
+| p3-C2-T12-s1      | T12  | C2      | haiku/low    | merged | guard-green | 80203ade1                                | —      |
+| p3-G-T11-s1       | T11  | G       | sonnet/med   | merged | guard-green | d062fd471                                | —      |
+| p3-F-T10-s1       | T10  | F       | sonnet/med   | merged | guard-green | 080113eb4                                | —      |
+| p3-F-T10-s2       | T10  | F       | sonnet/med   | merged | guard-green | dd7c3462a                                | —      |
+| p4-staging-T15-s1 | T15  | staging | opus/high    | merged | report-done | a52ccea19329b0abd63c8bb6d7478853b0cb05f1 | —      |
+| p4-audit-T16-s1   | T16  | audit   | opus/high    | merged | guard-green | 36388527483eb3de60387944ae412c487ce7971c | —      |
 
 ## Acceptance matrix (filled at end gate)
 
