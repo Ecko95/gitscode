@@ -63,6 +63,12 @@ export interface WorkLogEntry {
 
 export type SubagentTaskStatus = "running" | "completed" | "failed" | "stopped";
 
+// "subagent" is emitted by the Codex adapter for collab spawnAgent tasks;
+// "local_agent" is Claude Code's task_type for Task-tool subagents (passed
+// through raw by ClaudeAdapter). Background shells ("local_bash") and
+// workflows ("local_workflow") are deliberately excluded.
+const SUBAGENT_TASK_TYPES: ReadonlySet<string> = new Set(["subagent", "local_agent"]);
+
 export interface SubagentTaskLogEntry {
   id: string;
   createdAt: string;
@@ -532,7 +538,8 @@ export function deriveSubagentTasks(
   for (const activity of ordered) {
     if (activity.kind !== "task.started") continue;
     const payload = asRecord(activity.payload);
-    if (asTrimmedString(payload?.taskType) !== "subagent") continue;
+    const taskType = asTrimmedString(payload?.taskType);
+    if (!taskType || !SUBAGENT_TASK_TYPES.has(taskType)) continue;
     const taskId = asTrimmedString(payload?.taskId);
     if (!taskId) continue;
 
