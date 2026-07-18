@@ -65,8 +65,8 @@ describe("BrowserPreviewManager", () => {
     });
     const first = await manager.open(ThreadId.make("thread-one"));
     const second = await manager.open(ThreadId.make("thread-two"));
-    const tickets = [first, second].map(
-      (opened) => new URL(opened.previewPath!, "http://gits.test").searchParams.get("ticket")!,
+    const tickets = [first, second].map((opened) =>
+      new URL(opened.previewPath!, "http://gits.test").searchParams.get("ticket")!,
     );
 
     await manager.stopAll();
