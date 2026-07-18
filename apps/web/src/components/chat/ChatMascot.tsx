@@ -1,14 +1,27 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { isMascotTyping } from "./chatMascot.logic";
 
-// Pixel-ghost typing indicator that perches above the composer. It plays while the
-// user types and pauses ~900ms after they stop. If an app-served animated GIF
-// (public/gits-mascot-loop.gif) is present it plays that; otherwise it renders the
-// baked-in 36x36 pixel sprite. The bob + glow come from CSS (.gits-mascot), gated on
-// the typing state and on prefers-reduced-motion / the --gits-glow token.
+// Mode-aware pixel-ghost mascot that perches above the composer. Three states:
+//   idle          -> /gits-idle.gif        (loops whenever the user is not typing)
+//   typing, build -> /gits-mascot-loop.gif (the keyboard ghost)
+//   typing, plan  -> /gits-plan-anim.gif   (the planning animation)
+// Sources decode lazily on mount; any that fail fall back to the baked-in 36x36
+// pixel sprite. Frames draw contain-fitted (sources have mixed aspect ratios).
+// The bob + glow come from CSS (.gits-mascot), running only while typing.
 
-const GHOST_ASSET_URL = "/gits-mascot-loop.gif";
+export type MascotMode = "build" | "plan";
 
+const SOURCES = {
+  idle: "/gits-idle.gif",
+  build: "/gits-mascot-loop.gif",
+  plan: "/gits-plan-anim.gif",
+} as const;
+type SourceKey = keyof typeof SOURCES;
+
+// Decode box: 2x the 84x96 canvas. Full-res frames (484x552 x97 for the build
+// ghost) would hold ~100MB of bitmaps for an 84px-wide indicator.
+const DECODE_W = 168;
+const DECODE_H = 192;
 // 36-row sprite sampled from the reference art. E=outline, W=body, g=shade.
 const GMAP = [
   "..............EEEEEEEE..............",
@@ -51,7 +64,8 @@ const GMAP = [
 const GCOL: Record<string, string> = { W: "#eef1f8", g: "#aeb6d8", E: "#0e1120" };
 const CELL = 2;
 
-type GifFrame = { bitmap: CanvasImageSource; durationMs: number };
+type GifFrame = { bitmap: ImageBitmap; durationMs: number };
+type FrameSets = Partial<Record<SourceKey, GifFrame[]>>;
 
 function drawSprite(canvas: HTMLCanvasElement): void {
   const ctx = canvas.getContext("2d");
@@ -73,9 +87,9 @@ function drawSprite(canvas: HTMLCanvasElement): void {
   }
 }
 
-async function loadGifFrames(): Promise<GifFrame[] | null> {
+async function loadGifFrames(url: string): Promise<GifFrame[] | null> {
   try {
-    const response = await fetch(GHOST_ASSET_URL);
+    const response = await fetch(url);
     if (!response.ok) return null;
     const data = await response.arrayBuffer();
     const decoderCtor = (
@@ -89,10 +103,13 @@ async function loadGifFrames(): Promise<GifFrame[] | null> {
     const frames: GifFrame[] = [];
     for (let i = 0; i < count; i++) {
       const { image } = await decoder.decode({ frameIndex: i });
+      // Contain-fit into the decode box, preserving each source's aspect ratio.
+      const scale = Math.min(DECODE_W / image.displayWidth, DECODE_H / image.displayHeight);
       frames.push({
-        // Decode at 2x render size (84x96 canvas) — the full-res 484x552 x97
-        // frames would hold ~100MB of bitmaps for an 84px-wide indicator.
-        bitmap: await createImageBitmap(image, { resizeWidth: 168, resizeHeight: 192 }),
+        bitmap: await createImageBitmap(image, {
+          resizeWidth: Math.max(1, Math.round(image.displayWidth * scale)),
+          resizeHeight: Math.max(1, Math.round(image.displayHeight * scale)),
+        }),
         durationMs: Math.max(20, (image.duration ?? 40_000) / 1000),
       });
       image.close();
@@ -103,9 +120,17 @@ async function loadGifFrames(): Promise<GifFrame[] | null> {
   }
 }
 
-export function ChatMascot({ typingRef }: { typingRef: RefObject<number> }) {
+export function ChatMascot({
+  typingRef,
+  mode,
+}: {
+  typingRef: RefObject<number>;
+  mode: MascotMode;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const modeRef = useRef<MascotMode>(mode);
+  modeRef.current = mode;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -115,41 +140,48 @@ export function ChatMascot({ typingRef }: { typingRef: RefObject<number> }) {
     drawSprite(canvas);
 
     let stopped = false;
-    let frames: GifFrame[] | null = null;
+    const frameSets: FrameSets = {};
+    let activeSource: SourceKey | null = null;
     let frameIndex = 0;
     let accumMs = 0;
     let prevTs = 0;
     let raf = 0;
 
-    void loadGifFrames().then((loaded) => {
-      if (!stopped && loaded) frames = loaded;
-    });
+    for (const key of Object.keys(SOURCES) as SourceKey[]) {
+      void loadGifFrames(SOURCES[key]).then((loaded) => {
+        if (!stopped && loaded) frameSets[key] = loaded;
+      });
+    }
 
-    const drawGifFrame = () => {
+    const drawFrame = (frame: GifFrame) => {
       const ctx = canvas.getContext("2d");
-      const frame = frames?.[frameIndex];
-      if (!ctx || !frame) return;
+      if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(frame.bitmap, 0, 0, canvas.width, canvas.height);
+      // Contain-centered: sources have mixed aspect ratios (square idle/plan,
+      // tall keyboard ghost), all anchored to the bottom of the canvas.
+      const scale = Math.min(
+        canvas.width / frame.bitmap.width,
+        canvas.height / frame.bitmap.height,
+      );
+      const w = frame.bitmap.width * scale;
+      const h = frame.bitmap.height * scale;
+      ctx.drawImage(frame.bitmap, (canvas.width - w) / 2, canvas.height - h, w, h);
     };
-
-    // The rAF loop only runs while the user is typing; when the typing window
-    // lapses it stops entirely and a cheap 4Hz watcher waits for the next
-    // keystroke. Idle cost is one timer tick, not a 60fps loop — this also keeps
-    // browser-mode tests from burning frame budget while the mascot is idle.
-    let rafActive = false;
 
     const tick = (ts: number) => {
       if (stopped) return;
       const typing = isMascotTyping(typingRef.current ?? 0, Date.now());
-      if (!typing) {
-        rafActive = false;
-        accumMs = 0;
-        prevTs = 0;
-        container.style.animationPlayState = "paused";
-        return;
-      }
+      container.style.animationPlayState = typing ? "running" : "paused";
+      const wanted: SourceKey = typing ? modeRef.current : "idle";
+      const frames = frameSets[wanted];
       if (frames) {
+        if (activeSource !== wanted) {
+          activeSource = wanted;
+          frameIndex = 0;
+          accumMs = 0;
+          prevTs = ts;
+          drawFrame(frames[0]!);
+        }
         if (!prevTs) prevTs = ts;
         accumMs += ts - prevTs;
         let moved = false;
@@ -160,25 +192,38 @@ export function ChatMascot({ typingRef }: { typingRef: RefObject<number> }) {
           current = frames[frameIndex];
           moved = true;
         }
-        if (moved) drawGifFrame();
+        if (moved && current) drawFrame(current);
       }
       prevTs = ts;
       raf = requestAnimationFrame(tick);
     };
 
-    const watcher = setInterval(() => {
-      if (stopped || rafActive) return;
-      if (isMascotTyping(typingRef.current ?? 0, Date.now())) {
-        rafActive = true;
-        container.style.animationPlayState = "running";
-        raf = requestAnimationFrame(tick);
+    // The loop only runs while the tab is visible; the visibility listener
+    // restarts it. Idle now animates too (the idle GIF), so unlike the earlier
+    // typing-only loop this runs whenever the mascot is on screen.
+    const start = () => {
+      if (stopped || document.hidden) return;
+      cancelAnimationFrame(raf);
+      prevTs = 0;
+      raf = requestAnimationFrame(tick);
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(raf);
+      } else {
+        start();
       }
-    }, 250);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    start();
 
     return () => {
       stopped = true;
-      clearInterval(watcher);
+      document.removeEventListener("visibilitychange", onVisibility);
       cancelAnimationFrame(raf);
+      for (const frames of Object.values(frameSets)) {
+        for (const frame of frames ?? []) frame.bitmap.close();
+      }
     };
   }, [typingRef]);
 
