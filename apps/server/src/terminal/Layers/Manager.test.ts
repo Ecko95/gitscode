@@ -822,6 +822,33 @@ it.layer(
     }),
   );
 
+  it.effect("appends chunks O(chunk) under limit and caps only when exceeded", () =>
+    Effect.gen(function* () {
+      // historyLineLimit=3: chunks under limit accumulate without cap;
+      // fourth chunk pushes line count over limit → cap fires once on reattach
+      const { manager, ptyAdapter, getEvents } = yield* createManager(3);
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("a\n");
+      process.emitData("b\n");
+      process.emitData("c\n");
+      process.emitData("d\n");
+      yield* waitFor(
+        Effect.map(getEvents, (evs) => evs.filter((e) => e.type === "output").length >= 4),
+        "1200 millis",
+      );
+
+      // reattach: history is correctly capped to last 3 lines
+      yield* manager.close({ threadId: "thread-1" });
+      const reopened = yield* manager.open(openInput());
+      const nonEmpty = reopened.history.split("\n").filter((l) => l.length > 0);
+      expect(nonEmpty).toEqual(["b", "c", "d"]);
+    }),
+  );
+
   it.effect("strips replay-unsafe terminal query and reply sequences from persisted history", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1056,6 +1083,44 @@ it.layer(
       assert.equal(reopenedFirst.history, "first-history\n");
       assert.equal(reopenedSecond.history, "");
     }),
+  );
+
+  it.effect(
+    "clears in-memory history on exit and restores it from disk on reattach via attachStream",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, getEvents, logsDir } = yield* createManager();
+        yield* manager.open(openInput());
+        const proc = ptyAdapter.processes[0];
+        expect(proc).toBeDefined();
+        if (!proc) return;
+
+        proc.emitData("line-a\n");
+        const path = yield* Path.Path;
+        const histPath = yield* historyLogPath(logsDir).pipe(
+          Effect.provideService(Path.Path, path),
+        );
+        // wait until history is flushed to disk
+        yield* waitFor(pathExists(histPath));
+
+        proc.emitExit({ exitCode: 0, signal: 0 });
+        yield* waitFor(
+          Effect.map(getEvents, (events) => events.some((e) => e.type === "exited")),
+          "1200 millis",
+        );
+
+        // reattach without restart — snapshot should reload history from disk
+        const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+        const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+          Ref.update(attachEvents, (events) => [...events, event]),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        const snap = (yield* Ref.get(attachEvents)).find((e) => e.type === "snapshot");
+        expect(snap).toBeDefined();
+        if (!snap || snap.type !== "snapshot") return;
+        assert.equal(snap.snapshot.history, "line-a\n");
+      }),
   );
 
   it.effect("migrates legacy transcript filenames to terminal-scoped history path on open", () =>

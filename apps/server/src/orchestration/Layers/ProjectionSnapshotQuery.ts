@@ -64,6 +64,11 @@ import {
 } from "../Services/ProjectionSnapshotQuery.ts";
 import { MAX_THREAD_MESSAGES } from "../projector.ts";
 
+// Newest-N ceiling for the per-thread activities read, mirroring the projector's
+// in-memory `.slice(-500)` trim so getThreadDetailById returns the same tail the
+// live read model holds. Kept local (not imported) to keep the diff in this file.
+const MAX_THREAD_ACTIVITIES = 500;
+
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
@@ -128,6 +133,10 @@ const ProjectIdLookupInput = Schema.Struct({
 });
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
+});
+const ThreadTurnLookupInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: Schema.NullOr(TurnId),
 });
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
@@ -410,6 +419,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
+        WHERE deleted_at IS NULL
         ORDER BY created_at ASC, thread_id ASC
       `,
   });
@@ -888,6 +898,30 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listThreadMessageRowsByTurn = SqlSchema.findAll({
+    Request: ThreadTurnLookupInput,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT
+          message_id AS "messageId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          role,
+          text,
+          attachments_json AS "attachments",
+          provider_message_id AS "providerMessageId",
+          is_streaming AS "isStreaming",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
+        FROM projection_thread_messages
+        -- turn_id IS <turnId> matches a turn's rows, or the turn-less partition
+        -- when turnId is null (SQLite IS binds NULL as NULL equality).
+        WHERE thread_id = ${threadId} AND turn_id IS ${turnId}
+        ORDER BY created_at ASC, rowid ASC
+      `,
+  });
+
   const listThreadProposedPlanRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadProposedPlanDbRowSchema,
@@ -944,6 +978,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at AS "createdAt"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
+          -- Bound the read to the newest MAX_THREAD_ACTIVITIES rows (worst thread
+          -- was 8,596 activities). Pick the tail by ORDER BY DESC LIMIT, then the
+          -- outer ASC restores first-seen order. NULL sequence sorts last here
+          -- (oldest), matching the ASC ordering's NULL-first placement.
+          AND activity_id IN (
+            SELECT activity_id
+            FROM projection_thread_activities
+            WHERE thread_id = ${threadId}
+            ORDER BY
+              sequence DESC,
+              created_at DESC,
+              activity_id DESC
+            LIMIT ${MAX_THREAD_ACTIVITIES}
+          )
         ORDER BY
           sequence ASC,
           created_at ASC,
@@ -1619,7 +1667,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   messages: (messagesByThread.get(row.threadId) ?? []).slice(-MAX_THREAD_MESSAGES),
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   visualPlans: visualPlansByThread.get(row.threadId) ?? [],
-                  activities: activitiesByThread.get(row.threadId) ?? [],
+                  activities: (activitiesByThread.get(row.threadId) ?? []).slice(
+                    -MAX_THREAD_ACTIVITIES,
+                  ),
                   checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                   session: sessionByThread.get(row.threadId) ?? null,
                 });
@@ -2372,6 +2422,35 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       );
 
+  // Narrow reads for provider-runtime ingestion: fetch only the current turn's
+  // messages / the thread's proposed plans instead of materializing the whole
+  // thread (activities, checkpoints, visual plans, full decode) on every event.
+  const listThreadMessagesByTurn: NonNullable<
+    ProjectionSnapshotQueryShape["listThreadMessagesByTurn"]
+  > = (threadId, turnId) =>
+    listThreadMessageRowsByTurn({ threadId, turnId }).pipe(
+      Effect.map((rows) => rows.map(mapMessageRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listThreadMessagesByTurn:query",
+          "ProjectionSnapshotQuery.listThreadMessagesByTurn:decodeRows",
+        ),
+      ),
+    );
+
+  const listThreadProposedPlans: NonNullable<
+    ProjectionSnapshotQueryShape["listThreadProposedPlans"]
+  > = (threadId) =>
+    listThreadProposedPlanRowsByThread({ threadId }).pipe(
+      Effect.map((rows) => rows.map(mapProposedPlanRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listThreadProposedPlans:query",
+          "ProjectionSnapshotQuery.listThreadProposedPlans:decodeRows",
+        ),
+      ),
+    );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2389,6 +2468,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadDetailSnapshot,
     getThreadWorktreeInfo,
     hasLiveThreadForWorktreePath,
+    listThreadMessagesByTurn,
+    listThreadProposedPlans,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

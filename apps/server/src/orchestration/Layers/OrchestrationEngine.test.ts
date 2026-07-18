@@ -574,6 +574,73 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("routes live events only to the matching aggregateId queue (T7)", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const threadA = ThreadId.make("thread-route-a");
+    const threadB = ThreadId.make("thread-route-b");
+
+    await system.run(
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-route"),
+          projectId: asProjectId("project-route"),
+          title: "Route Project",
+          workspaceRoot: "/tmp/project-route",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        },
+        "server",
+      ),
+    );
+
+    const result = await system.run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const queueA = yield* engine.subscribeAggregate(threadA);
+          const queueB = yield* engine.subscribeAggregate(threadB);
+
+          yield* engine.dispatch(
+            {
+              type: "thread.create",
+              commandId: CommandId.make("cmd-route-thread-a"),
+              threadId: threadA,
+              projectId: asProjectId("project-route"),
+              title: "route-a",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              runtimeMode: "approval-required",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+            },
+            "server",
+          );
+
+          // queueA delivery confirms the dispatcher processed the event; since it
+          // routes one event fully (only threadA's set), queueB is then provably
+          // empty for it.
+          const eventA = yield* Queue.take(queueA).pipe(Effect.timeout("1 second"));
+          const pendingB = yield* Queue.poll(queueB);
+          return { eventA, pendingB };
+        }),
+      ),
+    );
+
+    expect(result.eventA.type).toBe("thread.created");
+    expect(result.eventA.aggregateId).toBe(threadA);
+    expect(Option.isNone(result.pendingB)).toBe(true);
+    await system.dispose();
+  });
+
   it("records command ack duration using the first committed event type", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

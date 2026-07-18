@@ -45,6 +45,7 @@ function makeEngineLayer(): {
         }),
       readEvents: () => Stream.die("unused"),
       subscribeDomainEvents: Effect.die("unused"),
+      subscribeAggregate: () => Effect.die("unused"),
       streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
     }),
     dispatched,
@@ -93,9 +94,14 @@ const makeGitLayer = (fail: boolean) =>
     }),
   );
 
-const makeProjectionLayer = (sharedWithLiveThread: boolean) =>
+const makeProjectionLayer = (sharedWithLiveThread: boolean, failCheck = false) =>
   Layer.succeed(ProjectionSnapshotQuery, {
-    hasLiveThreadForWorktreePath: () => Effect.succeed(sharedWithLiveThread),
+    hasLiveThreadForWorktreePath: () =>
+      failCheck
+        ? Effect.fail(
+            Object.assign(new Error("live-check-fail"), { _tag: "ProjectionSnapshotQueryError" }),
+          )
+        : Effect.succeed(sharedWithLiveThread),
   } as never);
 
 // helper that runs retirement and returns dispatched/published counts
@@ -103,7 +109,13 @@ async function runRetirement({
   failCp = false,
   failGit = false,
   sharedWorktree = false,
-}: { failCp?: boolean; failGit?: boolean; sharedWorktree?: boolean } = {}) {
+  failLiveCheck = false,
+}: {
+  failCp?: boolean;
+  failGit?: boolean;
+  sharedWorktree?: boolean;
+  failLiveCheck?: boolean;
+} = {}) {
   const { layer: engineLayer, dispatched } = makeEngineLayer();
   const { layer: receiptLayer, published } = makeReceiptLayer();
   const layer = Layer.mergeAll(
@@ -111,7 +123,7 @@ async function runRetirement({
     receiptLayer,
     makeCheckpointLayer(failCp),
     makeGitLayer(failGit),
-    makeProjectionLayer(sharedWorktree),
+    makeProjectionLayer(sharedWorktree, failLiveCheck),
     NodeServices.layer,
   );
 
@@ -175,6 +187,16 @@ describe("retireWorktree", () => {
   it("skips retirement entirely when another live thread shares the worktree", async () => {
     const { dispatched, published } = await runRetirement({ sharedWorktree: true });
     // fork shares the source worktree — removing it would destroy the survivor's cwd
+    expect(dispatched).toEqual([]);
+    expect(published).toEqual([]);
+  });
+
+  // T16 isolation row: cross-task worktree protection must hold even when the
+  // liveness check itself errors. The Step-0 catch fails safe (assume shared,
+  // skip) so a projection-query fault can never let one task's git worktree
+  // remove be run while another live thread may still reference the same path.
+  it("skips retirement when the live-thread check errors (fail-safe: never remove on doubt)", async () => {
+    const { dispatched, published } = await runRetirement({ failLiveCheck: true });
     expect(dispatched).toEqual([]);
     expect(published).toEqual([]);
   });

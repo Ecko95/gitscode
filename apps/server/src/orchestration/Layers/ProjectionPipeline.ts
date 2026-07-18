@@ -123,7 +123,13 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
-function derivePendingUserInputCountFromActivities(
+/**
+ * Reference implementation for the pending-user-input shell-summary aggregate.
+ *
+ * Retained as the equivalence-test oracle for the SQL aggregate in
+ * ProjectionThreadRepository.refreshShellSummary; not used on the hot path.
+ */
+export function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
   const openRequestIds = new Set<string>();
@@ -167,7 +173,14 @@ function derivePendingUserInputCountFromActivities(
   return openRequestIds.size;
 }
 
-function deriveHasActionableProposedPlan(input: {
+/**
+ * Reference implementation for the has-actionable-proposed-plan shell-summary
+ * aggregate.
+ *
+ * Retained as the equivalence-test oracle for the SQL aggregate in
+ * ProjectionThreadRepository.refreshShellSummary; not used on the hot path.
+ */
+export function deriveHasActionableProposedPlan(input: {
   readonly latestTurnId: string | null;
   readonly proposedPlans: ReadonlyArray<ProjectionThreadProposedPlan>;
 }): boolean {
@@ -538,49 +551,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    // Recompute the shell-summary columns via SQL aggregates rather than
+    // materializing every message/activity/plan/approval row per event. The
+    // aggregate SQL mirrors derivePendingUserInputCountFromActivities and
+    // deriveHasActionableProposedPlan exactly (retained below as the
+    // equivalence-test oracle in ProjectionPipeline.test.ts).
     const refreshThreadShellSummary = Effect.fn("refreshThreadShellSummary")(function* (
       threadId: ThreadId,
     ) {
-      const existingRow = yield* projectionThreadRepository.getById({
-        threadId,
-      });
-      if (Option.isNone(existingRow)) {
-        return;
-      }
-
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
-        projectionThreadMessageRepository.listByThreadId({ threadId }),
-        projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listByThreadId({ threadId }),
-        projectionPendingApprovalRepository.listByThreadId({ threadId }),
-      ]);
-
-      let latestUserMessageAt: string | null = null;
-      for (const message of messages) {
-        if (
-          message.role === "user" &&
-          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
-        ) {
-          latestUserMessageAt = message.createdAt;
-        }
-      }
-
-      const pendingApprovalCount = pendingApprovals.filter(
-        (approval) => approval.status === "pending",
-      ).length;
-      const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
-      const hasActionableProposedPlan = deriveHasActionableProposedPlan({
-        latestTurnId: existingRow.value.latestTurnId,
-        proposedPlans,
-      });
-
-      yield* projectionThreadRepository.upsert({
-        ...existingRow.value,
-        latestUserMessageAt,
-        pendingApprovalCount,
-        pendingUserInputCount,
-        hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
-      });
+      yield* projectionThreadRepository.refreshShellSummary({ threadId });
     });
 
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(

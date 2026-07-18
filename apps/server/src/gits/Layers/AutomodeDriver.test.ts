@@ -121,6 +121,8 @@ interface MakeLayerOptions {
   readonly onRecordGoalStart?: (input: GitsSchedulerGoalStartInput) => void;
   readonly onSpawnPeer?: () => void;
   readonly recordGoalStartError?: GitsSlotSchedulerError;
+  readonly onListPeers?: () => void;
+  readonly onReadBudget?: () => void;
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -131,19 +133,22 @@ function makeLayer(
   const spawnedPeerId = basePeer.id;
   const delamain = Layer.mock(DelamainAdapter)({
     listPeers: () =>
-      Effect.succeed({
-        ...emptyList,
-        peers:
-          peerStatus.current === "absent"
-            ? []
-            : [
-                {
-                  ...basePeer,
-                  status: peerStatus.current,
-                  rawStatus: peerStatus.current,
-                  integrationStatus: peerStatus.integrationStatus ?? null,
-                },
-              ],
+      Effect.sync(() => {
+        options?.onListPeers?.();
+        return {
+          ...emptyList,
+          peers:
+            peerStatus.current === "absent"
+              ? []
+              : [
+                  {
+                    ...basePeer,
+                    status: peerStatus.current,
+                    rawStatus: peerStatus.current,
+                    integrationStatus: peerStatus.integrationStatus ?? null,
+                  },
+                ],
+        };
       }),
     spawnPeer: (input) =>
       Effect.sync(() => {
@@ -164,12 +169,15 @@ function makeLayer(
   const usage = Layer.mock(AutomodeUsageMeter)({
     // Telemetry available and under budget, so an armed autonomous policy can dispatch.
     readBudgetUsage: () =>
-      Effect.succeed({
-        source: "provider-runtime",
-        totalCostUsd: 0,
-        totalProcessedTokens: 0,
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        note: null,
+      Effect.sync(() => {
+        options?.onReadBudget?.();
+        return {
+          source: "provider-runtime",
+          totalCostUsd: 0,
+          totalProcessedTokens: 0,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          note: null,
+        };
       }),
   });
   const reviewPipeline = Layer.mock(GitsReviewPipeline)({
@@ -381,6 +389,33 @@ describe("AutomodeDriver", () => {
       const snapshot = yield* supervisor.getSnapshot();
       assert.equal(snapshot.goals.find((g) => g.title === "Idle")?.status, "queued");
     }).pipe(Effect.provide(makeLayer(peerStatus)));
+  });
+
+  it.effect("mode off: tick gates on policy alone — no getSnapshot IO (peer-list/budget)", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let listPeersCalls = 0;
+    let budgetCalls = 0;
+    return Effect.gen(function* () {
+      const driver = yield* AutomodeDriver;
+      // policy left at default (mode "manual", kill switch on) — automode is off.
+      yield* driver.tickOnce();
+
+      // getSnapshot performs the peer-list subprocess + budget read; gating on the
+      // cheap policy read first means neither runs on an idle tick.
+      assert.equal(listPeersCalls, 0);
+      assert.equal(budgetCalls, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          onListPeers: () => {
+            listPeersCalls += 1;
+          },
+          onReadBudget: () => {
+            budgetCalls += 1;
+          },
+        }),
+      ),
+    );
   });
 
   it.effect("on done: verifier passes and slice lands → goal completed", () => {

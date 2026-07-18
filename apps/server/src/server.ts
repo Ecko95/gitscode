@@ -295,7 +295,7 @@ const ReviewLayerLive = ReviewService.layer.pipe(
 );
 
 const AutomodeUsageMeterLayerLive = AutomodeUsageMeterLive.pipe(
-  Layer.provide(OrchestrationLayerLive.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provide(PersistenceLayerLive),
 );
 
 const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(Layer.provide(GitVcsDriver.layer));

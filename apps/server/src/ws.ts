@@ -101,7 +101,11 @@ import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
-import { ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAuth.ts";
+import {
+  denyThreadAccess,
+  ServerAuth,
+  type AuthenticatedSession,
+} from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -241,6 +245,75 @@ export function bufferOrTerminate<A, E, R>(
   );
 }
 
+// ponytail: coalesce a subscriber's live events into one WS frame per tick.
+// Effect RPC emits exactly one "Chunk" wire message per stream chunk
+// (RpcServer.streamEffect → Stream.runForEachArray), so collapsing a tick's
+// events into a single chunk == a single frame. groupedWithin skips empty
+// windows (aggregateWithin drops idle schedule steps → no empty frames), keeps
+// order, and MAX_SAFE_INTEGER size means only the timer closes a frame.
+// flattenIterable re-emits each group as one chunk (verified). ~33ms ≈ 30fps,
+// inside the 16–50ms target. Upgrade path: tune WS_FRAME_BATCH_WINDOW if UI lag
+// or per-frame size ever demands it.
+export const WS_FRAME_BATCH_WINDOW = Duration.millis(33);
+
+export function coalescePerTick<A, E, R>(self: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> {
+  return self.pipe(
+    Stream.groupedWithin(Number.MAX_SAFE_INTEGER, WS_FRAME_BATCH_WINDOW),
+    Stream.flattenIterable,
+  );
+}
+
+// T8: throttle thread domain events per-threadId within 200ms windows.
+// The first event per thread per window triggers getThreadShellById + one WS frame;
+// subsequent events within the cooldown are suppressed. Non-thread events pass through.
+// Since getThreadShellById reads current DB state, the first event in a burst already
+// reflects the latest projection by the time it's processed.
+// ponytail: throttle (first-wins) rather than debounce (last-wins) — no timer fibers,
+// no interaction with aggregateWithin + PubSub subscription interruption. Upgrade path:
+// per-key fiber-based debounce if last-state fidelity under back-pressure matters.
+export function debounceShellThreadEvents<E, R>(
+  events: Stream.Stream<OrchestrationEvent, E, R>,
+): Stream.Stream<OrchestrationEvent, E, R> {
+  const lastEmitted = new Map<string, number>();
+  return events.pipe(
+    Stream.filter((event) => {
+      if (event.aggregateKind !== "thread") return true;
+      const key = event.aggregateId;
+      const now = performance.now();
+      const last = lastEmitted.get(key) ?? 0;
+      if (now - last >= PROVIDER_STATUS_DEBOUNCE_MS) {
+        lastEmitted.set(key, now);
+        return true;
+      }
+      return false;
+    }),
+  );
+}
+
+// T9-s2 resume: assemble subscribeThread's output when the client already holds
+// the snapshot — replay (catch-up) events after its cursor, then live events, both
+// filtered to this thread's detail events and tagged as stream items. Catch-up
+// comes from the global event store (needs the aggregate filter); live comes from
+// the already-routed per-aggregate queue (the aggregate filter is a harmless no-op
+// there). NO snapshot frame — the client already has it; overlap between catch-up
+// and live is deduped by sequence on the client. Exported so the ordering + filter
+// seam is unit-testable without the full RPC layer.
+export function resumeThreadStream<E1, E2, R>(
+  catchUpEvents: Stream.Stream<OrchestrationEvent, E1, R>,
+  liveEvents: Stream.Stream<OrchestrationEvent, E2, R>,
+  threadId: ThreadId,
+): Stream.Stream<{ readonly kind: "event"; readonly event: OrchestrationEvent }, E1 | E2, R> {
+  const keep = (event: OrchestrationEvent) =>
+    event.aggregateKind === "thread" &&
+    event.aggregateId === threadId &&
+    isThreadDetailEvent(event);
+  const toItem = (event: OrchestrationEvent) => ({ kind: "event" as const, event });
+  return Stream.concat(
+    catchUpEvents.pipe(Stream.filter(keep), Stream.map(toItem)),
+    liveEvents.pipe(Stream.filter(keep), Stream.map(toItem)),
+  );
+}
+
 export function readThreadDetailSnapshot(
   threadId: ThreadId,
   projectionSnapshotQuery: Pick<ProjectionSnapshotQueryShape, "getThreadDetailSnapshot">,
@@ -302,7 +375,9 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" | "role">) =>
+const makeWsRpcLayer = (
+  currentSession: Pick<AuthenticatedSession, "sessionId" | "role" | "subject">,
+) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
@@ -1075,11 +1150,49 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
             ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (_input) =>
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
+              // T9-s2: acquire the live subscription BEFORE reading the snapshot or
+              // draining the resume replay, so an event published during either read
+              // is buffered in the subscription and never lost (no-gap seam).
               const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+              const toShellStream = <E, R>(events: Stream.Stream<OrchestrationEvent, E, R>) =>
+                events.pipe(
+                  Stream.mapEffect(toShellStreamEvent),
+                  Stream.flatMap((event) =>
+                    Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                  ),
+                );
+
+              // T9-s2 resume: the client already holds a shell snapshot (its sequence
+              // in afterSequence) → skip the full projects/threads frame and replay
+              // only shell events after the cursor, then stream live. Overlap between
+              // the replay tail and the buffered live subscription is deduped by
+              // sequence on the client.
+              // ponytail: the live subscription is unbounded (was bufferOrTerminate
+              // 512-cap), so overflow no longer terminates the stream. Unlike the
+              // thread path this is not per-thread routed — a stalled shell client can
+              // still grow the PubSub; upstream accepts this, upgrade path = re-cap +
+              // resume.
+              if (input.afterSequence !== undefined) {
+                const catchUpStream = orchestrationEngine.readEvents(input.afterSequence).pipe(
+                  Stream.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to replay orchestration shell events",
+                        cause,
+                      }),
+                  ),
+                );
+                return Stream.concat(
+                  toShellStream(catchUpStream),
+                  // T8: debounce live thread events by threadId before SQL query.
+                  toShellStream(debounceShellThreadEvents(Stream.fromSubscription(domainEvents))),
+                );
+              }
+
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
@@ -1093,22 +1206,13 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 ),
               );
 
-              const liveStream = Stream.fromSubscription(domainEvents).pipe(
-                Stream.filter((event) => event.sequence > snapshot.snapshotSequence),
-                Stream.mapEffect(toShellStreamEvent),
-                Stream.flatMap((event) =>
-                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+              // T8: debounce live thread events by threadId before SQL query.
+              const liveStream = toShellStream(
+                debounceShellThreadEvents(
+                  Stream.fromSubscription(domainEvents).pipe(
+                    Stream.filter((event) => event.sequence > snapshot.snapshotSequence),
+                  ),
                 ),
-              );
-              const bufferedLiveStream = bufferOrTerminate(
-                liveStream,
-                WS_PUSH_SUBSCRIBER_BUFFER,
-                () =>
-                  new OrchestrationGetSnapshotError({
-                    message:
-                      "subscribeShell: subscriber buffer overflow — resubscribe for fresh snapshot",
-                    cause: "overflow",
-                  }),
               );
 
               return Stream.concat(
@@ -1116,7 +1220,7 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                   kind: "snapshot" as const,
                   snapshot,
                 }),
-                bufferedLiveStream,
+                liveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1142,7 +1246,54 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+              // T7 isolation half: authorize the thread↔client binding BEFORE
+              // registering the per-aggregate queue, so a session never gets a
+              // queue (and thus events) for a thread it may not see. Reuses the
+              // session's existing thread-visibility rule (subject === threadId
+              // for thread-scoped sessions). Refuse with the stream's existing
+              // error shape — a typed failure, never a silent empty stream.
+              const denied = denyThreadAccess(currentSession, input.threadId);
+              if (denied) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: `Thread ${input.threadId} is not accessible for this session`,
+                  cause: denied,
+                });
+              }
+              // T7: register a per-aggregateId queue BEFORE reading the snapshot or
+              // draining the resume replay, so no post-cursor event is missed (the
+              // no-gap seam). The queue is unbounded and routed to this thread only.
+              const aggregateEvents = yield* orchestrationEngine.subscribeAggregate(input.threadId);
+
+              // T9-s2 resume: the client already loaded the snapshot over HTTP (its
+              // sequence in afterSequence) → skip the (multi-KB) snapshot frame and
+              // replay only events after the cursor, then stream live. The live queue
+              // was registered above so an event published during the replay is held
+              // there; overlap between the replay tail and live is deduped by sequence
+              // on the client → no gap, no loss.
+              // ponytail: the per-aggregate queue is unbounded (was bufferOrTerminate
+              // 512-cap). T7 routing bounds it to one thread's events, and resume makes
+              // reconnect cheap, so overflow no longer terminates the stream. A
+              // hyperactive thread + a stalled client can still grow it — upgrade path
+              // = re-cap + resume-on-overflow.
+              if (input.afterSequence !== undefined) {
+                const catchUpStream = orchestrationEngine.readEvents(input.afterSequence).pipe(
+                  Stream.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: `Failed to replay thread ${input.threadId} events`,
+                        cause,
+                      }),
+                  ),
+                );
+                return coalescePerTick(
+                  resumeThreadStream(
+                    catchUpStream,
+                    Stream.fromQueue(aggregateEvents),
+                    input.threadId,
+                  ),
+                );
+              }
+
               const { threadDetail, snapshotSequence } = yield* readThreadDetailSnapshot(
                 input.threadId,
                 projectionSnapshotQuery,
@@ -1155,27 +1306,16 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                 });
               }
 
-              const liveStream = Stream.fromSubscription(domainEvents).pipe(
-                Stream.filter((event) => event.sequence > snapshotSequence),
+              // First-subscribe live stream: routing guarantees the aggregate, so
+              // only the snapshot-cursor dedup + event-type filter remain.
+              const liveStream = Stream.fromQueue(aggregateEvents).pipe(
                 Stream.filter(
-                  (event) =>
-                    event.aggregateKind === "thread" &&
-                    event.aggregateId === input.threadId &&
-                    isThreadDetailEvent(event),
+                  (event) => event.sequence > snapshotSequence && isThreadDetailEvent(event),
                 ),
                 Stream.map((event) => ({
                   kind: "event" as const,
                   event,
                 })),
-              );
-              const bufferedLiveStream = bufferOrTerminate(
-                liveStream,
-                WS_PUSH_SUBSCRIBER_BUFFER,
-                () =>
-                  new OrchestrationGetSnapshotError({
-                    message: `subscribeThread:${input.threadId}: subscriber buffer overflow — resubscribe for fresh snapshot`,
-                    cause: "overflow",
-                  }),
               );
 
               return Stream.concat(
@@ -1186,7 +1326,9 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
                     thread: threadDetail.value,
                   },
                 }),
-                bufferedLiveStream,
+                // T7-s3: batch this per-thread subscriber's events into one WS frame
+                // per tick. The N-open-tabs multiplier is the target.
+                coalescePerTick(liveStream),
               );
             }),
             { "rpc.aggregate": "orchestration" },

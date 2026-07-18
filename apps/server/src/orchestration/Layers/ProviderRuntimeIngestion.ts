@@ -13,12 +13,12 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
-  type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -55,6 +55,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+// ponytail: leading-throttle; upgrade to trailing-throttle if "value = last in window" matters
+const CONTEXT_WINDOW_COALESCE_MS = 5_000;
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -164,6 +166,13 @@ function maxCheckpointTurnCount(
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+const DATA_CAP = 4096;
+function truncateData(value: unknown): unknown {
+  const serialized = JSON.stringify(value);
+  if (serialized.length <= DATA_CAP) return value;
+  return `[truncated: ${serialized.length} bytes exceeded ${DATA_CAP} B cap]`;
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -605,7 +614,7 @@ function runtimeEventToActivities(
             ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.data !== undefined ? { data: truncateData(event.payload.data) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -653,7 +662,7 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.data !== undefined ? { data: truncateData(event.payload.data) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -728,6 +737,30 @@ const make = Effect.gen(function* () {
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
+
+  // ponytail: plain Map leading-throttle; upgrade to trailing-throttle if "last value" matters
+  const contextWindowLastEmitMs = new Map<string, number>();
+
+  const gateContextWindowActivity = (threadId: ThreadId, activity: OrchestrationThreadActivity) =>
+    Effect.gen(function* () {
+      const lastEmitMs = contextWindowLastEmitMs.get(threadId) ?? 0;
+      const now = yield* Clock.currentTimeMillis;
+      if (now - lastEmitMs < CONTEXT_WINDOW_COALESCE_MS) {
+        return; // suppressed: within coalesce window
+      }
+      contextWindowLastEmitMs.set(threadId, now);
+      const uuid = yield* crypto.randomUUIDv4;
+      yield* orchestrationEngine.dispatch(
+        {
+          type: "thread.activity.append",
+          commandId: CommandId.make(`provider:${activity.id}:thread-activity-append:${uuid}`),
+          threadId,
+          activity,
+          createdAt: activity.createdAt,
+        },
+        "provider",
+      );
+    });
 
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
@@ -1290,19 +1323,38 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
-      let loadedThreadDetail: OrchestrationThread | null | undefined;
-      const getLoadedThreadDetail = () =>
-        Effect.gen(function* () {
-          if (loadedThreadDetail !== undefined) {
-            return loadedThreadDetail;
-          }
-          loadedThreadDetail = (yield* resolveThreadDetail(thread.id)) ?? null;
-          return loadedThreadDetail;
-        });
-
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+
+      // ingestion only reads the current turn's messages and the thread's
+      // proposed plans — fetch just those (memoized per event) instead of
+      // materializing the whole thread on every provider event.
+      let turnMessages: ReadonlyArray<OrchestrationMessage> | undefined;
+      const getTurnMessages = () =>
+        Effect.gen(function* () {
+          if (turnMessages !== undefined) return turnMessages;
+          const load = projectionSnapshotQuery.listThreadMessagesByTurn;
+          turnMessages = load
+            ? yield* load(thread.id, eventTurnId ?? null)
+            : // ponytail: fallback only for ProjectionSnapshotQuery test doubles
+              // that omit the narrow read; the live layer always provides it.
+              ((yield* resolveThreadDetail(thread.id))?.messages ?? []).filter(
+                (message) => (message.turnId ?? null) === (eventTurnId ?? null),
+              );
+          return turnMessages;
+        });
+
+      let threadProposedPlans: ReadonlyArray<OrchestrationProposedPlan> | undefined;
+      const getThreadProposedPlans = () =>
+        Effect.gen(function* () {
+          if (threadProposedPlans !== undefined) return threadProposedPlans;
+          const load = projectionSnapshotQuery.listThreadProposedPlans;
+          threadProposedPlans = load
+            ? yield* load(thread.id)
+            : ((yield* resolveThreadDetail(thread.id))?.proposedPlans ?? []);
+          return threadProposedPlans;
+        });
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1488,7 +1540,7 @@ const make = Effect.gen(function* () {
           ? toTurnId(event.turnId)
           : undefined;
       if (pauseForUserTurnId) {
-        const detailedThread = yield* getLoadedThreadDetail();
+        const pauseTurnMessages = yield* getTurnMessages();
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
           serverSettingsService.getSettings,
           (settings) => (settings.enableAssistantStreaming ? "streaming" : "buffered"),
@@ -1519,11 +1571,9 @@ const make = Effect.gen(function* () {
             event.type === "request.opened"
               ? "assistant-delta-finalize-on-request-opened"
               : "assistant-delta-finalize-on-user-input-requested",
-          hasProjectedMessage:
-            detailedThread !== null &&
-            hasAssistantMessageForTurn(detailedThread.messages, pauseForUserTurnId, {
-              streamingOnly: true,
-            }),
+          hasProjectedMessage: hasAssistantMessageForTurn(pauseTurnMessages, pauseForUserTurnId, {
+            streamingOnly: true,
+          }),
           flushedMessageIds,
         });
       }
@@ -1555,8 +1605,7 @@ const make = Effect.gen(function* () {
           : undefined;
 
       if (assistantCompletion) {
-        const detailedThread = yield* getLoadedThreadDetail();
-        const messages = detailedThread?.messages ?? [];
+        const messages = yield* getTurnMessages();
         const turnId = toTurnId(event.turnId);
         const activeAssistantMessageId = turnId
           ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
@@ -1611,11 +1660,11 @@ const make = Effect.gen(function* () {
       }
 
       if (proposedPlanCompletion) {
-        const detailedThread = yield* getLoadedThreadDetail();
+        const proposedPlans = yield* getThreadProposedPlans();
         yield* finalizeBufferedProposedPlan({
           event,
           threadId: thread.id,
-          threadProposedPlans: detailedThread?.proposedPlans ?? [],
+          threadProposedPlans: proposedPlans,
           planId: proposedPlanCompletion.planId,
           ...(proposedPlanCompletion.turnId ? { turnId: proposedPlanCompletion.turnId } : {}),
           fallbackMarkdown: proposedPlanCompletion.planMarkdown,
@@ -1624,11 +1673,10 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "turn.completed") {
-        const detailedThread = yield* getLoadedThreadDetail();
-        const messages = detailedThread?.messages ?? [];
-        const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
+          const messages = yield* getTurnMessages();
+          const proposedPlans = yield* getThreadProposedPlans();
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
@@ -1749,20 +1797,22 @@ const make = Effect.gen(function* () {
 
       const activities = runtimeEventToActivities(event);
       yield* Effect.forEach(activities, (activity) =>
-        providerCommandId(event, "thread-activity-append").pipe(
-          Effect.flatMap((commandId) =>
-            orchestrationEngine.dispatch(
-              {
-                type: "thread.activity.append",
-                commandId,
-                threadId: thread.id,
-                activity,
-                createdAt: activity.createdAt,
-              },
-              "provider",
+        activity.kind === "context-window.updated"
+          ? gateContextWindowActivity(thread.id, activity)
+          : providerCommandId(event, "thread-activity-append").pipe(
+              Effect.flatMap((commandId) =>
+                orchestrationEngine.dispatch(
+                  {
+                    type: "thread.activity.append",
+                    commandId,
+                    threadId: thread.id,
+                    activity,
+                    createdAt: activity.createdAt,
+                  },
+                  "provider",
+                ),
+              ),
             ),
-          ),
-        ),
       ).pipe(Effect.asVoid);
     });
 

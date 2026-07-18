@@ -9,14 +9,17 @@
 import type {
   CheckpointRef,
   OrchestrationCheckpointSummary,
+  OrchestrationMessage,
   OrchestrationProject,
   OrchestrationProjectShell,
+  OrchestrationProposedPlan,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -198,6 +201,29 @@ export interface ProjectionSnapshotQueryShape {
     worktreePath: string,
     excludeThreadId?: string,
   ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /**
+   * Read the projected messages for a single turn — `turn_id` match, or the
+   * turn-less partition when `turnId` is null. Provider-runtime ingestion uses
+   * this to avoid materializing every thread message on each event.
+   *
+   * Optional so existing test doubles need not implement it; the live layer
+   * always provides it.
+   */
+  readonly listThreadMessagesByTurn?: (
+    threadId: ThreadId,
+    turnId: TurnId | null,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationMessage>, ProjectionRepositoryError>;
+
+  /**
+   * Read a thread's proposed plans without materializing the rest of the thread.
+   *
+   * Optional so existing test doubles need not implement it; the live layer
+   * always provides it.
+   */
+  readonly listThreadProposedPlans?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationProposedPlan>, ProjectionRepositoryError>;
 }
 
 /**

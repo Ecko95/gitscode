@@ -18,6 +18,7 @@ import type {
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as PubSub from "effect/PubSub";
+import type * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
@@ -69,6 +70,22 @@ export interface OrchestrationEngineShape {
     never,
     Scope.Scope
   >;
+
+  /**
+   * Acquire a live event queue scoped to a single `aggregateId` (T7).
+   *
+   * A single internal dispatcher fiber drains the global event PubSub and
+   * routes each event only to the queues registered for its `aggregateId`, so
+   * the returned queue receives that aggregate's events and nothing else — no
+   * per-subscriber post-delivery aggregate filter, no O(subscribers × events)
+   * fan-out. Register (in the caller's scope) before reading a snapshot so no
+   * event published after the snapshot cursor is missed; the scope finalizer
+   * deregisters and shuts the queue down. Broadcast consumers (reactors, shell)
+   * keep using `subscribeDomainEvents`.
+   */
+  readonly subscribeAggregate: (
+    aggregateId: string,
+  ) => Effect.Effect<Queue.Dequeue<OrchestrationEvent>, never, Scope.Scope>;
 
   /**
    * Stream persisted domain events in dispatch order.

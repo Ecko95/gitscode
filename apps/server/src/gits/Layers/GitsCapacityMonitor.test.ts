@@ -6,11 +6,16 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+import { GitsCapacityMonitor } from "../Services/GitsCapacityMonitor.ts";
 import {
   readCodexUsageFromHome,
   readCursorDashboardTelemetry,
   recommendDelamainEngine,
   usageLevelFromRemaining,
+  GitsCapacityMonitorLive,
 } from "./GitsCapacityMonitor.ts";
 
 const tempDirs: string[] = [];
@@ -178,5 +183,45 @@ describe("GitsCapacityMonitor", () => {
     expect(telemetry?.budgetUsd).toBe(500);
     expect(telemetry?.resetAt).toBe("2026-06-01T00:00:00.000Z");
     expect(JSON.stringify(telemetry)).not.toContain("secret-cookie-value");
+  });
+
+  it("memoizes getSnapshot to prevent duplicate reads within TTL", async () => {
+    const home = makeTempDir();
+    const sessionDir = join(home, "sessions", "2026", "05", "31");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "rollout.jsonl"),
+      `${JSON.stringify({
+        payload: {
+          rate_limits: {
+            primary: {
+              used_percent: 50,
+              window_minutes: 300,
+              reset_at: 1_800_000_000,
+            },
+            plan_type: "pro",
+          },
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    vi.stubEnv("HOME", home);
+
+    const program = Effect.gen(function* () {
+      const monitor = yield* Effect.service(GitsCapacityMonitor);
+      // Multiple concurrent calls should share the same memoized snapshot
+      const [snapshot1, snapshot2, snapshot3] = yield* Effect.all([
+        monitor.getSnapshot(),
+        monitor.getSnapshot(),
+        monitor.getSnapshot(),
+      ]);
+
+      // All snapshots should have the same checkedAt timestamp (memoized)
+      expect(snapshot1.checkedAt).toBe(snapshot2.checkedAt);
+      expect(snapshot2.checkedAt).toBe(snapshot3.checkedAt);
+    });
+
+    await Effect.runPromise(program.pipe(Effect.provide(GitsCapacityMonitorLive)));
   });
 });

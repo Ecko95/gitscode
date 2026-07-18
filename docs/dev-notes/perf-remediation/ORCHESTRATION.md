@@ -1,0 +1,143 @@
+# Perf-remediation orchestration — handoff ledger
+
+**Run:** T1–T16 from `docs/dev-notes/2026-07-18-gitscode-perf-remediation-and-upstream-attribution.md`
+**Integration branch:** `feat/perf-remediation` (off `origin/gits` @ `d01e1840f`)
+**Orchestrator:** Fable 5 @ high (frontier-orchestration pattern). Execution: Opus 4.8 @ high (complex), Sonnet 4.6 @ medium (default), Haiku 4.5 @ low (mechanical).
+**State protocol:** this file is the single ledger; one file per slice under `slices/`. Updated at wave boundaries, not continuously. After any compaction/resume, re-ground from this file.
+
+## Scope / definition of done
+
+Remove the freezes, RSS churn (~2.1 GB → <1 GB), reconnect crashes (45/h → 0), and cross-task
+isolation gaps on `gits-cockpit.service`, per T1–T16. Done = end acceptance gate green: full CI
+suite + projection/integration tests + `t3 db rebuild-projections` on a DB copy, then one
+controlled live redeploy with every task's live Verify assertion passing (acceptance matrix below).
+
+**Non-goals:** Rust rewrite; Bun migration as a "fix" (T15 is a measured A/B only); upstream
+ports from §1b (separate effort); any change to `cloud/ mcp/ relay/` subsystems.
+
+## Operator decisions (recorded 2026-07-18)
+
+1. **Verify:** behavioral verification only at the end; per-slice guard is `turbo run typecheck build --filter=t3` only.
+2. **Scope:** full autonomous run across Phases 0–4 (no mid-run approval gate).
+3. **Live host:** workflow may drive `gits-cockpit.service` for live assertions. Consent checkpoint retained for the T13 systemd edit + first production restart.
+
+## Model-effort policy
+
+| Tier                   | Model/effort      | Assignment                                                                    |
+| ---------------------- | ----------------- | ----------------------------------------------------------------------------- |
+| Orchestrator/validator | fable-5/high      | briefs, keep-change-drop review, merges, acceptance matrix. Never implements. |
+| Complex/architectural  | opus-4-8/high     | T3 T4 T7 T9 T14 T15 T16; lane lead for B and D/H                              |
+| Default implementer    | sonnet-4-6/medium | T1 T2 T5 T6 T8 T10 T11 T13                                                    |
+| Mechanical             | haiku-4-5/low     | T12                                                                           |
+
+Escalation: 2 failed acceptances on a slice → Fable re-scopes (smaller slice or model↑). Agents never improvise around the brief.
+
+## Blast radius (assumptions to verify during run)
+
+- **Highest risk:** T7 rewires core event delivery (`OrchestrationEngine.eventPubSub` → per-`aggregateId` routing). Every WS consumer (thread, shell, provider status) is downstream. Single-writer Opus lead; T5c→T7→T9→T8 sequence.
+- **Data contracts:** T9a adds `afterSequence` to `packages/contracts` — client-runtime consumers must tolerate the optional field (assumption: additive = safe; verify in typecheck of dependent packages).
+- **T1 changes at-rest event payloads** — `t3 db rebuild-projections` required afterward; UI must render from `summary`/`detail` only (assumption from plan; validator re-checks web usages of `data`).
+- **T3/T12** touch fork-only `gits/` — no upstream coupling.
+- **T6** patches a vendored dependency — verify patch applies at install (bun patch mechanism) in the guard.
+
+## Ponytail review (pre-dispatch critique — decided)
+
+- Keep: lane file-locks; per-slice files as durable hand-backs; end-verify + compile guard; Opus single-writer D/H.
+- Change: T11 Haiku→Sonnet (correctness-sensitive); no middle coordinator tier (≤4 lanes); T15/T16 are report-only.
+- Drop: no slice-schema DSL, no status DB — Markdown + this ledger.
+- Flagged risk: end-only behavioral verify concentrates risk at the final redeploy (operator's explicit tradeoff).
+
+## Decisions log
+
+| When       | Decision                                                                      | Why                                                                |
+| ---------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 2026-07-18 | PR #170 squash-merged into `gits` (`d01e1840f`)                               | plan docs canonical before implementation                          |
+| 2026-07-18 | Integration worktree `.worktrees/perf-remediation` on `feat/perf-remediation` | isolate from live server working tree                              |
+| 2026-07-18 | T9c (Queue.unbounded + rate-limit) folded into slice p2-DH-T9-s2              | same hunk as the resume rewrite; separate slice = artificial churn |
+| 2026-07-18 | All 26 slice briefs authored under `slices/`                                  | Fable-authored, paths-not-bodies, machine-checkable acceptance     |
+
+## Slice table
+
+Status: `pending → dispatched → implemented → guard-green → merged → verified` (or `failed` / `re-scoped`).
+
+| Slice             | Task | Lane    | Model/effort | Status | Guard       | Merged @                                 | Verify |
+| ----------------- | ---- | ------- | ------------ | ------ | ----------- | ---------------------------------------- | ------ |
+| p0-ops-T13-s1     | T13  | ops     | sonnet/med   | merged | guard-green | 35ccb87c2                                | —      |
+| p0-obs-T14-s1     | T14  | obs     | opus/high    | merged | guard-green | 0ed738ab8                                | —      |
+| p0-obs-T14-s2     | T14  | live    | opus/high    | merged | report-done | f861bfa3893e5f919d08cbe627413897ac698afc | —      |
+| p1-A-T1-s1        | T1   | A       | sonnet/med   | merged | guard-green | d0f9653ab                                | —      |
+| p1-C1-T3-s1       | T3   | C1      | opus/high    | merged | guard-green | 0867fc1                                  | —      |
+| p1-A-T1-s2        | T1   | A       | sonnet/med   | merged | guard-green | f6f939777                                | —      |
+| p1-C1-T3-s2       | T3   | C1      | opus/high    | merged | guard-green | e8189c6e2ae662e43f44e89a61da31dbcc16b01f | —      |
+| p1-B-T4-s1        | T4   | B       | opus/high    | merged | guard-green | 046424fb6a79c2aab6b6533b5c32e812e543adb5 | —      |
+| p1-A-T2-s1        | T2   | A       | sonnet/med   | merged | guard-green | b502d929e                                | —      |
+| p1-B-T4-s2        | T4   | B       | opus/high    | merged | guard-green | 79677c2b160f6daab84fc853e4ada09da601d2bc | —      |
+| p1-B-T5-s1        | T5   | B       | sonnet/med   | merged | guard-green | b59f2a7e7                                | —      |
+| p1-B-T5-s2        | T5   | B       | sonnet/med   | merged | guard-green | 5dbcc3f3b                                | —      |
+| p2-E-T6-s1        | T6   | E       | sonnet/med   | merged | guard-green | b52b7aa0c                                | —      |
+| p2-DH-T5-s3       | T5c  | D/H     | sonnet/med   | merged | guard-green | ab77a872e                                | —      |
+| p2-DH-T7-s1       | T7   | D/H     | opus/high    | merged | guard-green | b07b74d84                                | —      |
+| p2-DH-T7-s2       | T7   | D/H     | opus/high    | merged | guard-green | de07b4c9ad8e23ec7eff3e9e19ed9f4638b6fc7a | —      |
+| p2-DH-T7-s3       | T7   | D/H     | opus/high    | merged | guard-green | 57b94b297e0cdd53c659005db7c54cfacbc0c38c | —      |
+| p2-DH-T9-s1       | T9   | D/H     | opus/high    | merged | guard-green | d53339c4e38078119386fe2912448d83acb6216f | —      |
+| p2-DH-T9-s2       | T9   | D/H     | opus/high    | merged | guard-green | 741ccbaca7c4fa0c0f40735f92b22fb1b178d541 | —      |
+| p2-DH-T8-s1       | T8   | D/H     | sonnet/med   | merged | guard-green | ae906a4bb                                | —      |
+| p3-C2-T12-s1      | T12  | C2      | haiku/low    | merged | guard-green | 80203ade1                                | —      |
+| p3-G-T11-s1       | T11  | G       | sonnet/med   | merged | guard-green | d062fd471                                | —      |
+| p3-F-T10-s1       | T10  | F       | sonnet/med   | merged | guard-green | 080113eb4                                | —      |
+| p3-F-T10-s2       | T10  | F       | sonnet/med   | merged | guard-green | dd7c3462a                                | —      |
+| p4-staging-T15-s1 | T15  | staging | opus/high    | merged | report-done | a52ccea19329b0abd63c8bb6d7478853b0cb05f1 | —      |
+| p4-audit-T16-s1   | T16  | audit   | opus/high    | merged | guard-green | 36388527483eb3de60387944ae412c487ce7971c | —      |
+
+## Acceptance matrix (filled at end gate)
+
+| Task | Verify assertion                                                     | Result |
+| ---- | -------------------------------------------------------------------- | ------ |
+| T1   | new `tool.completed` payloads < few KB (SQL max LENGTH)              | —      |
+| T2   | `context-window.updated` count −≥90%; UI updates ≤5 s                | —      |
+| T3   | no 5 s snapshot cadence; sawtooth flattens; budget numbers unchanged | —      |
+| T4   | reload path sub-ms; no turn-boundary freezes                         | —      |
+| T5   | read-model bytes drop; faster boot                                   | —      |
+| T6   | `Failed to publish` = 0 over 10 min under reconnects                 | —      |
+| T7   | subscriber only ever sees its own `aggregateId` (test)               | —      |
+| T8   | frame+query count under burst drops; UI coherent                     | —      |
+| T9   | burst recovery without snapshot stampede                             | —      |
+| T10  | no CPU/GC spike on fast build output                                 | —      |
+| T11  | large tool-call args no longer quadratic                             | —      |
+| T12  | `getSnapshot` no loop-blocking spike                                 | —      |
+| T13  | scavenge rate down; swap cleared post-restart                        | —      |
+| T14  | baseline captured pre-change; deltas reported                        | —      |
+| T15  | side-by-side T14 metrics report                                      | —      |
+| T16  | isolation matrix with a test per row                                 | —      |
+
+## Open risks
+
+- T7 blast radius (see above) — may need finer slicing mid-run.
+- End-only behavioral verify → late surfacing of logic regressions (operator tradeoff).
+- One live redeploy at the end gate; T13 consent checkpoint pending.
+
+## Isolated gate results + validator verdict (2026-07-18, Fable)
+
+**Gate (isolated):** fmt ✅ (after `0fb3d1ab5` — slice-touched sources oxfmt'd) · lint ✅ 0 errors · typecheck ✅ 14/14 · vitest ✅ 1,594 passed/4 skipped · build ✅ 18/18 · rebuild-projections on 297.6 MB live-DB copy ✅ (44,451 events replayed, all 9 tables MATCH count+content; live host never opened for write).
+
+**Validator keep/change/drop:** all 26 hand-backs **KEEP**. Zero failed slices, zero escalations.
+Notable: T5-s2 correctly deduped against T4-s2 instead of double-implementing; T7-s2 authz is
+defense-in-depth (thread-scoped already denied at `/ws` upgrade) — accepted as the T7 invariant seam.
+
+**Corrections to plan assumptions (from gate evidence):**
+
+1. **T1 retroactive cap: the plan's premise was wrong.** `rebuild-projections` replays events
+   verbatim — the cap is a write-time ingestion guard, so historical rows keep their ~1.21 MB
+   payloads. **Decision: accept forward-only capping.** The freeze/RSS win comes from not
+   _materializing_ history (T4/T5) and not writing new bloat (T1/T2), not from shrinking rows at
+   rest. Optional follow-up slice (not scheduled): event-store migration truncating historical
+   `payload_json`.
+2. **T15 premise wrong:** the dist is not Bun-runnable (`node:sqlite` static import) — the A/B is
+   not "near-free". Report: keep Node; revisit only if post-Phase-1 metrics still disappoint.
+
+**Follow-up slices proposed (LOW, unscheduled):** worktree remove-failed reaper (T16 gap);
+subscribeShell per-thread authz defense-in-depth (T16 gap); event-store history truncation (above).
+
+**Pending: live gate (operator consent required)** — T13 systemd apply + restart, one controlled
+redeploy of `gits-cockpit.service`, live assertions vs the captured T14 baseline, live
+`rebuild-projections` inside the stopped-server window (rollback: pre-rebuild DB retained).

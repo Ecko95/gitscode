@@ -1760,7 +1760,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         const partialInputJson = tool.partialInputJson + event.delta.partial_json;
-        const parsedInput = tryParseJsonRecord(partialInputJson);
+        // ponytail: only attempt parse when buffer plausibly closes — avoids O(n²) JSON.parse per chunk
+        const parsedInput = partialInputJson.trimEnd().endsWith("}")
+          ? tryParseJsonRecord(partialInputJson)
+          : undefined;
         const detail = parsedInput ? summarizeToolRequest(tool.toolName, parsedInput) : tool.detail;
         let nextTool: ToolInFlight = {
           ...tool,

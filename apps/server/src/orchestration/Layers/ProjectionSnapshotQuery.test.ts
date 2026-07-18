@@ -1588,6 +1588,103 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("caps command read model activity hydration to the newest 500", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-04-07T00:00:00.000Z";
+      const projectId = asProjectId("project-command-activity-cap");
+      const threadId = ThreadId.make("thread-command-activity-cap");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+      const total = 505;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Command Activity Cap Project",
+        workspaceRoot: "/tmp/command-activity-cap-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId,
+        projectId,
+        title: "Command Activity Cap Thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      // sequences 1..total; newest 500 are sequences 6..505
+      yield* Effect.forEach(
+        Array.from({ length: total }, (_, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id,
+              thread_id,
+              turn_id,
+              tone,
+              kind,
+              summary,
+              payload_json,
+              sequence,
+              created_at
+            )
+            VALUES (
+              ${`act-cap-${String(sequence).padStart(4, "0")}`},
+              ${threadId},
+              'turn-cap-1',
+              'info',
+              'runtime.note',
+              ${`activity ${sequence}`},
+              '{}',
+              ${sequence},
+              ${now}
+            )
+          `,
+        { concurrency: 1 },
+      );
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const thread = commandReadModel.threads.find((entry) => entry.id === threadId);
+
+      assert.equal(thread?.activities.length, 500);
+      assert.equal(thread?.activities[0]?.sequence, 6);
+      assert.equal(thread?.activities.at(-1)?.sequence, 505);
+    }),
+  );
+
   it.effect("hydrates pre-restart user messages used by revert-user-message mapping", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
@@ -2013,7 +2110,187 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
-  it.effect("keeps deleted project and thread tombstones in the command read model", () =>
+  it.effect("bounds getThreadDetailById activities to the newest MAX_THREAD_ACTIVITIES", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-05-01T00:00:00.000Z";
+      const projectId = asProjectId("project-activity-bound");
+      const threadId = ThreadId.make("thread-activity-bound");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+      const total = 620;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Activity Bound Project",
+        workspaceRoot: "/tmp/activity-bound-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId,
+        projectId,
+        title: "Activity Bound Thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: now,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      // sequence 1..total, so the newest MAX (500) are sequences 121..620.
+      yield* Effect.forEach(
+        Array.from({ length: total }, (_, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id,
+              thread_id,
+              turn_id,
+              tone,
+              kind,
+              summary,
+              payload_json,
+              sequence,
+              created_at
+            )
+            VALUES (
+              ${`activity-${String(sequence).padStart(4, "0")}`},
+              ${threadId},
+              'turn-1',
+              'info',
+              'runtime.note',
+              ${`activity ${sequence}`},
+              '{}',
+              ${sequence},
+              ${now}
+            )
+          `,
+        { concurrency: 1 },
+      );
+
+      const detail = yield* snapshotQuery.getThreadDetailById(threadId);
+      assert.equal(detail._tag, "Some");
+      const activities = detail._tag === "Some" ? detail.value.activities : [];
+      assert.equal(activities.length, 500);
+      assert.equal(activities[0]?.sequence, 121);
+      assert.equal(activities[activities.length - 1]?.sequence, 620);
+    }),
+  );
+
+  it.effect("listThreadMessagesByTurn returns turn rows and the turn-less partition", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-05-02T00:00:00.000Z";
+      const projectId = asProjectId("project-messages-by-turn");
+      const threadId = ThreadId.make("thread-messages-by-turn");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Messages By Turn Project",
+        workspaceRoot: "/tmp/messages-by-turn-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId,
+        projectId,
+        title: "Messages By Turn Thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: now,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text,
+          attachments_json, provider_message_id, is_streaming, created_at, updated_at
+        )
+        VALUES
+          ('msg-turn-a-1', ${threadId}, 'turn-a', 'assistant', 'a1', NULL, NULL, 0, ${now}, ${now}),
+          ('msg-turn-a-2', ${threadId}, 'turn-a', 'user', 'a2', NULL, NULL, 0, ${now}, ${now}),
+          ('msg-turn-b-1', ${threadId}, 'turn-b', 'assistant', 'b1', NULL, NULL, 0, ${now}, ${now}),
+          ('msg-turnless', ${threadId}, NULL, 'user', 'nul', NULL, NULL, 0, ${now}, ${now})
+      `;
+
+      const listByTurn = snapshotQuery.listThreadMessagesByTurn;
+      assert.ok(listByTurn);
+      const turnA = yield* listByTurn(threadId, asTurnId("turn-a"));
+      assert.deepEqual(
+        turnA.map((message) => String(message.id)),
+        ["msg-turn-a-1", "msg-turn-a-2"],
+      );
+      const turnless = yield* listByTurn(threadId, null);
+      assert.deepEqual(
+        turnless.map((message) => String(message.id)),
+        ["msg-turnless"],
+      );
+    }),
+  );
+
+  it.effect("excludes deleted thread tombstones from command read model and snapshot", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -2125,15 +2402,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
       assert.equal(commandReadModel.projects[0]?.id, asProjectId("project-deleted"));
       assert.equal(commandReadModel.projects[0]?.deletedAt, "2026-04-05T00:00:02.000Z");
-      assert.equal(commandReadModel.threads[0]?.id, ThreadId.make("thread-deleted"));
-      assert.equal(commandReadModel.threads[0]?.deletedAt, "2026-04-05T00:00:05.000Z");
-      assert.equal(commandReadModel.threads[0]?.latestTurn?.turnId, asTurnId("turn-deleted"));
-      assert.equal(commandReadModel.threads[0]?.latestTurn?.state, "completed");
+      // deleted thread is excluded from the command read model (T5c fix)
+      assert.equal(commandReadModel.threads.length, 0);
 
       const fullSnapshot = yield* snapshotQuery.getSnapshot();
-      assert.equal(fullSnapshot.threads[0]?.id, ThreadId.make("thread-deleted"));
-      assert.equal(fullSnapshot.threads[0]?.latestTurn?.turnId, asTurnId("turn-deleted"));
-      assert.equal(fullSnapshot.threads[0]?.latestTurn?.state, "completed");
+      // deleted thread is excluded from the full snapshot too (listThreadRows now filters deleted_at IS NULL)
+      assert.equal(fullSnapshot.threads.length, 0);
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.projects.length, 0);

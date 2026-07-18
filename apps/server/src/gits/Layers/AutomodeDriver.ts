@@ -133,12 +133,15 @@ export const AutomodeDriverLive = Layer.effect(
 
     const tickOnce: AutomodeDriverShape["tickOnce"] = () =>
       Effect.gen(function* () {
-        const snapshot = yield* supervisor.getSnapshot();
-
-        // Only act in autonomous mode with the kill switch off.
-        if (snapshot.policy.mode !== "autonomous" || snapshot.policy.killSwitchEnabled) {
+        // Gate first on the cheap policy read (stateRef only). When automode is off
+        // — the steady state — this skips the full getSnapshot (peer-list subprocess +
+        // budget read) that used to run on every 5 s tick.
+        const policy = yield* supervisor.getPolicy();
+        if (policy.mode !== "autonomous" || policy.killSwitchEnabled) {
           return;
         }
+
+        const snapshot = yield* supervisor.getSnapshot();
 
         // 1) Reconcile the in-flight goal (sequential: at most one running).
         const running = snapshot.goals.find(
