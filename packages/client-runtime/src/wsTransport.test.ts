@@ -96,6 +96,27 @@ async function waitFor(assertion: () => void, timeoutMs = 1_000): Promise<void> 
   }
 }
 
+function withDefaultPortsCapability<
+  T extends {
+    readonly payload: {
+      readonly environment: {
+        readonly capabilities: { readonly repositoryIdentity: boolean };
+      };
+    };
+  },
+>(event: T) {
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      environment: {
+        ...event.payload.environment,
+        capabilities: { ...event.payload.environment.capabilities, ports: false },
+      },
+    },
+  };
+}
+
 function createTransport(...args: ConstructorParameters<typeof WsTransport>): WsTransport {
   const transport = new WsTransport(...args);
   transports.push(transport);
@@ -469,7 +490,7 @@ describe("WsTransport", () => {
     );
 
     await waitFor(() => {
-      expect(listener).toHaveBeenCalledWith(welcomeEvent);
+      expect(listener).toHaveBeenCalledWith(withDefaultPortsCapability(welcomeEvent));
     });
 
     unsubscribe();
@@ -578,7 +599,7 @@ describe("WsTransport", () => {
     );
 
     await waitFor(() => {
-      expect(listener).toHaveBeenLastCalledWith(secondEvent);
+      expect(listener).toHaveBeenLastCalledWith(withDefaultPortsCapability(secondEvent));
     });
 
     unsubscribe();
@@ -634,7 +655,7 @@ describe("WsTransport", () => {
     );
 
     await waitFor(() => {
-      expect(listener).toHaveBeenLastCalledWith(firstEvent);
+      expect(listener).toHaveBeenLastCalledWith(withDefaultPortsCapability(firstEvent));
     });
 
     await transport.reconnect();
@@ -687,7 +708,7 @@ describe("WsTransport", () => {
     );
 
     await waitFor(() => {
-      expect(listener).toHaveBeenLastCalledWith(secondEvent);
+      expect(listener).toHaveBeenLastCalledWith(withDefaultPortsCapability(secondEvent));
     });
 
     unsubscribe();

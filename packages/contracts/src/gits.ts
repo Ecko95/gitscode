@@ -9,6 +9,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 const PathString = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
 const SummaryString = TrimmedNonEmptyString.check(Schema.isMaxLength(10_000));
@@ -432,10 +433,14 @@ export type GitsMcpServerStatus = typeof GitsMcpServerStatus.Type;
 export const GitsMcpServerItem = Schema.Struct({
   id: TrimmedNonEmptyString,
   provider: GitsMcpServerProvider,
+  providerInstanceId: Schema.optionalKey(ProviderInstanceId),
   name: TrimmedNonEmptyString,
   source: GitsMcpServerSource,
+  runtimeSource: Schema.optionalKey(GitsMcpServerSource),
   status: GitsMcpServerStatus,
+  runtimeStatus: Schema.optionalKey(GitsMcpServerStatus),
   authStatus: GitsMcpAuthStatus,
+  canAuthenticate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enabled: Schema.Boolean,
   command: Schema.NullOr(TrimmedNonEmptyString),
   transport: Schema.NullOr(TrimmedNonEmptyString),
@@ -473,6 +478,47 @@ export const GitsMcpInventorySnapshot = Schema.Struct({
   warnings: Schema.Array(TrimmedNonEmptyString),
 });
 export type GitsMcpInventorySnapshot = typeof GitsMcpInventorySnapshot.Type;
+
+export const GitsCodexMcpAuthSessionState = Schema.Literals([
+  "waiting-provider",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+]);
+export type GitsCodexMcpAuthSessionState = typeof GitsCodexMcpAuthSessionState.Type;
+
+export const GitsCodexMcpAuthStartInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  serverName: TrimmedNonEmptyString,
+});
+export type GitsCodexMcpAuthStartInput = typeof GitsCodexMcpAuthStartInput.Type;
+
+export const GitsCodexMcpAuthStartResult = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  authorizationUrl: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+});
+export type GitsCodexMcpAuthStartResult = typeof GitsCodexMcpAuthStartResult.Type;
+
+export const GitsCodexMcpAuthSessionInput = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+});
+export type GitsCodexMcpAuthSessionInput = typeof GitsCodexMcpAuthSessionInput.Type;
+
+export const GitsCodexMcpAuthStatus = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  state: GitsCodexMcpAuthSessionState,
+  expiresAt: IsoDateTime,
+  message: Schema.optionalKey(SummaryString),
+});
+export type GitsCodexMcpAuthStatus = typeof GitsCodexMcpAuthStatus.Type;
+
+export const GitsCodexMcpAuthAvailability = Schema.Struct({
+  available: Schema.Boolean,
+  message: Schema.optionalKey(SummaryString),
+});
+export type GitsCodexMcpAuthAvailability = typeof GitsCodexMcpAuthAvailability.Type;
 
 export const DelamainEngine = Schema.Literals(["codex", "cursor", "unknown"]);
 export type DelamainEngine = typeof DelamainEngine.Type;

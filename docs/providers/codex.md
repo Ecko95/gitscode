@@ -93,11 +93,31 @@ Use display names and accent colors to make accounts easy to tell apart in the m
 
 ## I Need A Different API Key Or Endpoint
 
+API-key authentication is billed separately from a ChatGPT subscription. For subscription access on
+a remote host, use the **Sign in** action in GITS Settings. GITS starts Codex's device-code flow for
+that provider home; open the verification page on a trusted device and enter the one-time code.
+The sign-in session is private to the initiating GITS connection and expires automatically. GITS
+does not persist the device code or resulting token.
+
 Use the provider's Environment variables section in Settings.
 
 This is useful when a Codex-compatible setup needs account-specific variables. Add the variables to
 the provider instance that should receive them, and mark API keys or tokens as sensitive. Sensitive
 values are stored as server secrets and are not sent back to the app after saving.
+
+## Authenticate A Codex MCP Server Remotely
+
+An MCP server login is separate from Codex account login. A remote browser cannot receive an MCP
+server's loopback callback directly, so GITS can relay one callback through its authenticated HTTPS
+origin.
+
+The host must advertise that origin with `T3CODE_MCP_OAUTH_CALLBACK_URL`. GITS offers the MCP
+**Authenticate** action only when the URL is HTTPS and the temporary callback listener can be proven
+private. Each attempt has one short-lived callback lease. GITS validates the callback state, forwards
+it once to the helper, and does not persist the authorization code or token.
+
+Unset `T3CODE_MCP_OAUTH_CALLBACK_URL` to disable only this helper. MCP inventory and ordinary Codex
+sessions continue to work.
 
 ## Can I Switch Accounts In An Existing Thread?
 

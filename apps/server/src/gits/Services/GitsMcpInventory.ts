@@ -3,6 +3,14 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+export interface GitsCodexMcpRuntimeServer {
+  readonly providerInstanceId: string;
+  readonly name: string;
+  readonly authStatus: unknown;
+  readonly tools: ReadonlyArray<string>;
+  readonly resourceCount: number;
+}
+
 export class GitsMcpInventoryResolverError extends Schema.TaggedErrorClass<GitsMcpInventoryResolverError>()(
   "GitsMcpInventoryResolverError",
   {

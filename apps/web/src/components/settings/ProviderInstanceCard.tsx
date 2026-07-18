@@ -15,6 +15,13 @@ import * as Result from "effect/Result";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  type ProviderAuthCapability,
+  type ProviderAuthLogoutInput,
+  type ProviderAuthSession,
+  type ProviderAuthSessionInput,
+  type ProviderAuthStartInput,
+  type ProviderAuthStartResult,
+  type ProviderAuthSubmitCodeInput,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -30,6 +37,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
+import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
@@ -423,7 +431,22 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly authActions?: ProviderAuthActions | undefined;
 }
+
+export interface ProviderAuthActions {
+  readonly start: (input: ProviderAuthStartInput) => Promise<ProviderAuthStartResult>;
+  readonly get: (input: ProviderAuthSessionInput) => Promise<ProviderAuthSession>;
+  readonly cancel: (input: ProviderAuthSessionInput) => Promise<void>;
+  readonly submitCode: (input: ProviderAuthSubmitCodeInput) => Promise<ProviderAuthSession>;
+  readonly logout: (input: ProviderAuthLogoutInput) => Promise<void>;
+  readonly openExternal: (url: string) => Promise<void>;
+}
+
+const isActiveAuthSession = (session: ProviderAuthSession) =>
+  session.state === "starting" ||
+  session.state === "awaiting-user" ||
+  session.state === "waiting-provider";
 
 /**
  * A single configured provider-instance row in the Providers settings
@@ -467,6 +490,7 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  authActions,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -516,6 +540,136 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
+  const reportedAuthMethods = liveProvider?.auth.methods ?? [];
+  const authProviderName =
+    driverKind === "codex"
+      ? "Codex"
+      : driverKind === "claudeAgent"
+        ? "Claude"
+        : driverKind === "opencode"
+          ? "OpenCode"
+          : reportedAuthMethods.length > 0
+            ? displayName
+            : null;
+  const showManagedAuth = authProviderName !== null && authActions !== undefined;
+  const [authResult, setAuthResult] = useState<ProviderAuthStartResult | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authCode, setAuthCode] = useState("");
+  const [authCodeSubmitted, setAuthCodeSubmitted] = useState(false);
+
+  useEffect(() => {
+    if (!authActions || !authResult || !isActiveAuthSession(authResult.session)) return;
+    let stopped = false;
+    const poll = () => {
+      void authActions
+        .get({ sessionId: authResult.session.sessionId })
+        .then((session) => {
+          if (stopped) return;
+          setAuthResult((current) => {
+            if (!current || current.session.sessionId !== session.sessionId) return current;
+            return isActiveAuthSession(session) ? { ...current, session } : { session };
+          });
+        })
+        .catch(() => {
+          if (!stopped) setAuthError(`Could not refresh the ${authProviderName} sign-in status.`);
+        });
+    };
+    const timer = window.setInterval(poll, 1_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [authActions, authProviderName, authResult]);
+
+  const startProviderAuth = async (capability?: ProviderAuthCapability) => {
+    if (!authActions || authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    setAuthCode("");
+    setAuthCodeSubmitted(false);
+    try {
+      setAuthResult(
+        await authActions.start({
+          providerInstanceId: instanceId,
+          method:
+            capability?.method ?? (driverKind === "claudeAgent" ? "manual-code" : "device-code"),
+          ...(capability ? { capabilityId: capability.id } : {}),
+        }),
+      );
+    } catch {
+      setAuthError(`${authProviderName} sign-in could not start.`);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const cancelProviderAuth = async () => {
+    if (!authActions || !authResult || authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      await authActions.cancel({ sessionId: authResult.session.sessionId });
+      setAuthResult(null);
+      setAuthCode("");
+      setAuthCodeSubmitted(true);
+    } catch {
+      setAuthError(`${authProviderName} sign-in could not be cancelled.`);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const logoutProvider = async () => {
+    if (!authActions || authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      await authActions.logout({ providerInstanceId: instanceId });
+      setAuthResult(null);
+      setAuthCode("");
+      setAuthCodeSubmitted(false);
+    } catch {
+      setAuthError(`${authProviderName} sign-out could not complete.`);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const openVerificationPage = async () => {
+    const verificationUri = authResult?.verificationUri;
+    if (!authActions || !verificationUri) return;
+    try {
+      const url = new URL(verificationUri);
+      if (url.protocol !== "https:" || url.username || url.password) throw new Error();
+      await authActions.openExternal(url.toString());
+    } catch {
+      setAuthError(`The ${authProviderName} verification page could not be opened safely.`);
+    }
+  };
+
+  const submitProviderAuthCode = async () => {
+    if (!authActions || !authResult?.session.acceptsCode || authBusy || authCodeSubmitted) {
+      return;
+    }
+    const code = authCode.trim();
+    if (!code) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    setAuthCode("");
+    setAuthCodeSubmitted(true);
+    try {
+      const session = await authActions.submitCode({
+        sessionId: authResult.session.sessionId,
+        code,
+      });
+      setAuthResult({ session });
+    } catch {
+      setAuthError(`${authProviderName} authorization code could not be submitted.`);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
 
   const customModels = readConfigStringArray(instance.config, "customModels");
   // Server-returned models may lag behind settings writes. Treat probe
@@ -780,6 +934,46 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {showManagedAuth &&
+            driverKind !== "opencode" &&
+            (liveProvider?.auth.status === "authenticated" || reportedAuthMethods.length === 0) ? (
+              liveProvider?.auth.status === "authenticated" ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    disabled={authBusy}
+                    onClick={() => void startProviderAuth()}
+                  >
+                    Change login
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    disabled={authBusy}
+                    onClick={() => void logoutProvider()}
+                  >
+                    Sign out
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  disabled={authBusy}
+                  onClick={() => void startProviderAuth()}
+                >
+                  {authBusy ? <LoaderIcon className="size-3 animate-spin" /> : null}
+                  Sign in
+                </Button>
+              )
+            ) : null}
             <Button
               size="sm"
               variant="ghost"
@@ -798,6 +992,151 @@ export function ProviderInstanceCard({
             />
           </div>
         </div>
+        {showManagedAuth ? (
+          <div className="mt-3 grid gap-2 rounded-md border border-border/70 bg-muted/20 p-3 text-xs">
+            <p className="text-muted-foreground">
+              Sign-in sessions are private to this connection and expire automatically.
+            </p>
+            {driverKind === "claudeAgent" ? (
+              <p className="text-muted-foreground">
+                Claude subscription sign-in uses its remote browser-code flow. API-key billing is
+                separate; set
+                <code className="mx-1 text-foreground">ANTHROPIC_API_KEY</code>
+                as a sensitive environment variable.
+              </p>
+            ) : driverKind === "opencode" ? (
+              <p className="text-muted-foreground">
+                Authentication methods are reported by the connected OpenCode server. GITS does not
+                infer unreported browser callbacks or subscription methods.
+              </p>
+            ) : reportedAuthMethods.length > 0 ? (
+              <p className="text-muted-foreground">
+                Authentication methods are reported by this provider runtime. GITS does not infer
+                unreported browser callbacks or token methods.
+              </p>
+            ) : (
+              <p className="text-muted-foreground">
+                ChatGPT subscription sign-in uses a device code. API-key billing is separate; set
+                <code className="mx-1 text-foreground">OPENAI_API_KEY</code>
+                as a sensitive environment variable.
+              </p>
+            )}
+            {!authResult && reportedAuthMethods.length > 0 ? (
+              <div
+                className="flex flex-wrap gap-2 border-t border-border/60 pt-2"
+                role="group"
+                aria-label={`${authProviderName} authentication methods`}
+              >
+                {reportedAuthMethods.map((capability) => (
+                  <Button
+                    key={capability.id}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={authBusy}
+                    onClick={() => void startProviderAuth(capability)}
+                  >
+                    {authBusy ? <LoaderIcon className="size-3 animate-spin" /> : null}
+                    {capability.label}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+            {driverKind === "opencode" && reportedAuthMethods.length === 0 ? (
+              <p className="border-t border-border/60 pt-2 text-muted-foreground">
+                The connected OpenCode server did not report a managed authentication method.
+              </p>
+            ) : null}
+            {authResult && isActiveAuthSession(authResult.session) ? (
+              <div className="grid gap-2 border-t border-border/60 pt-2">
+                {authResult.session.prompt ? (
+                  <p className="text-muted-foreground">{authResult.session.prompt}</p>
+                ) : null}
+                {authResult.userCode ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-muted-foreground">Device code</span>
+                    <code className="rounded bg-background px-2 py-1 font-mono text-sm font-semibold tracking-wider text-foreground">
+                      {authResult.userCode}
+                    </code>
+                  </div>
+                ) : null}
+                {authResult.session.acceptsCode && !authCodeSubmitted ? (
+                  <form
+                    className="grid gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void submitProviderAuthCode();
+                    }}
+                  >
+                    <label className="grid gap-1.5">
+                      <span className="text-muted-foreground">
+                        {authResult.session.method === "api-key" ? "API key" : "Authorization code"}
+                      </span>
+                      <Input
+                        nativeInput
+                        type="password"
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-label={
+                          authResult.session.method === "api-key" ? "API key" : "Authorization code"
+                        }
+                        value={authCode}
+                        disabled={authBusy}
+                        onChange={(event) => setAuthCode(event.currentTarget.value)}
+                      />
+                    </label>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      variant="default"
+                      className="w-fit"
+                      disabled={authBusy || authCode.trim().length === 0}
+                    >
+                      {authResult.session.method === "api-key" ? "Submit API key" : "Submit code"}
+                    </Button>
+                  </form>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  {authResult.verificationUri ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="default"
+                      disabled={authBusy}
+                      onClick={() => void openVerificationPage()}
+                    >
+                      Open verification page
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={authBusy}
+                    onClick={() => void cancelProviderAuth()}
+                  >
+                    Cancel sign-in
+                  </Button>
+                </div>
+              </div>
+            ) : authResult ? (
+              <p className="border-t border-border/60 pt-2 text-muted-foreground">
+                {authResult.session.state === "succeeded"
+                  ? `${authProviderName} sign-in completed.`
+                  : authResult.session.state === "cancelled"
+                    ? `${authProviderName} sign-in was cancelled.`
+                    : authResult.session.state === "expired"
+                      ? `${authProviderName} sign-in expired.`
+                      : `${authProviderName} sign-in did not complete.`}
+              </p>
+            ) : null}
+            {authError ? (
+              <p role="alert" className="text-destructive">
+                {authError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>

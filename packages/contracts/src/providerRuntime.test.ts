@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
+import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { ProviderRuntimeEvent } from "./providerRuntime.ts";
 
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
+const decodeEnvironmentDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
+
+describe("ExecutionEnvironmentDescriptor compatibility", () => {
+  it("defaults an absent ports capability to unavailable", () => {
+    const parsed = decodeEnvironmentDescriptor({
+      environmentId: "environment-legacy",
+      label: "Legacy server",
+      platform: { os: "linux", arch: "x64" },
+      serverVersion: "0.1.0",
+      capabilities: { repositoryIdentity: true },
+    });
+
+    expect(parsed.capabilities.ports).toBe(false);
+  });
+});
 
 describe("ProviderRuntimeEvent", () => {
   it("accepts fork-provided driver kinds as branded slugs", () => {

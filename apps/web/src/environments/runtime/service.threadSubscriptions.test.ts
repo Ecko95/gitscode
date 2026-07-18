@@ -86,6 +86,13 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       codexAccountUsage: vi.fn(),
       usageModelBreakdown: vi.fn(),
       consumeCodexResetCredit: vi.fn(),
+      auth: {
+        start: vi.fn(),
+        get: vi.fn(),
+        cancel: vi.fn(),
+        submitCode: vi.fn(),
+        logout: vi.fn(),
+      },
     },
     orchestration: {
       dispatchCommand: vi.fn(),
@@ -159,6 +166,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       devCommands: {
         list: vi.fn(),
         init: vi.fn(),
+      },
+      ports: {
+        list: vi.fn(),
       },
       notes: {
         list: vi.fn(),

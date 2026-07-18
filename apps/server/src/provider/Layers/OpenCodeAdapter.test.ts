@@ -232,6 +232,15 @@ const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("exposes connected-server authentication methods", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+
+      assert.deepEqual(adapter.providerAuth?.methods, ["oauth", "api-key"]);
+      assert.equal(adapter.providerAuth?.credentialHome, "opencode-server:http://127.0.0.1:9999/");
+    }),
+  );
+
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

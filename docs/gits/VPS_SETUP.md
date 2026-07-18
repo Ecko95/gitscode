@@ -27,6 +27,8 @@ RAM/disk rationale (from the sizing pass): peak ≈ 7 GB (GITS + MCP children ~1
 4. **GITS cockpit** — `tailscale serve` (tailnet-only HTTPS; never `funnel`) via `scripts/gits-hosting/deploy-gits-tailnet-hosted.sh` — the native-Linux path, no Windows portproxy.
 5. **Break-glass** — netcup SCP remote console (hypervisor-level, works with all firewalls down). SCP + root passwords live in the password manager.
 
+Project app listeners stay on loopback. Use **In GITS (VPS browser)**, or **Local via SSH (this computer only)** from a Desktop SSH environment. Do not add same-host Serve mappings for app ports: native preview endpoints remain unavailable pending origin-isolation approval. **Tailnet/private endpoint** and **Public** are exposure boundaries, not automatic actions for discovered listeners.
+
 Nothing else. No public ports, no RDP/VNC service, no mosh, no code-server. Telegram (long-polling) and GitHub are pure-outbound.
 
 ## 1. Create the server

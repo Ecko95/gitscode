@@ -46,6 +46,8 @@ import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { GitShimManager } from "../GitShimManager.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import { PtyAdapter } from "../../terminal/Services/PTY.ts";
+import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -59,6 +61,10 @@ const NoOpGitShimManagerLive = Layer.succeed(GitShimManager, {
   allocate: (_sessionId: string, _allowedRoot: string) => Effect.succeed({ vars: {} }),
   release: (_sessionId: string) => Effect.void,
   sweepStale: () => Effect.void,
+});
+
+const NoOpPtyAdapterLive = Layer.succeed(PtyAdapter, {
+  spawn: () => Effect.die("PTY should not be spawned in provider registry tests"),
 });
 
 const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
@@ -109,6 +115,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(NoOpGitShimManagerLive),
+    Layer.provideMerge(NoOpPtyAdapterLive),
   );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
@@ -247,6 +254,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(NoOpGitShimManagerLive),
+    Layer.provideMerge(NoOpPtyAdapterLive),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
@@ -291,7 +299,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
         drivers: [CodexDriver, ClaudeDriver, CursorDriver, OpenCodeDriver],
         configMap,
       });
