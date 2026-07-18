@@ -166,6 +166,13 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+const DATA_CAP = 4096;
+function truncateData(value: unknown): unknown {
+  const serialized = JSON.stringify(value);
+  if (serialized.length <= DATA_CAP) return value;
+  return `[truncated: ${serialized.length} bytes exceeded ${DATA_CAP} B cap]`;
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -605,7 +612,7 @@ function runtimeEventToActivities(
             ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.data !== undefined ? { data: truncateData(event.payload.data) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
