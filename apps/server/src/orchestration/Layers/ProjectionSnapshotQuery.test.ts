@@ -2290,7 +2290,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
-  it.effect("keeps deleted project and thread tombstones in the command read model", () =>
+  it.effect("excludes deleted thread tombstones from command read model and snapshot", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -2402,15 +2402,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
       assert.equal(commandReadModel.projects[0]?.id, asProjectId("project-deleted"));
       assert.equal(commandReadModel.projects[0]?.deletedAt, "2026-04-05T00:00:02.000Z");
-      assert.equal(commandReadModel.threads[0]?.id, ThreadId.make("thread-deleted"));
-      assert.equal(commandReadModel.threads[0]?.deletedAt, "2026-04-05T00:00:05.000Z");
-      assert.equal(commandReadModel.threads[0]?.latestTurn?.turnId, asTurnId("turn-deleted"));
-      assert.equal(commandReadModel.threads[0]?.latestTurn?.state, "completed");
+      // deleted thread is excluded from the command read model (T5c fix)
+      assert.equal(commandReadModel.threads.length, 0);
 
       const fullSnapshot = yield* snapshotQuery.getSnapshot();
-      assert.equal(fullSnapshot.threads[0]?.id, ThreadId.make("thread-deleted"));
-      assert.equal(fullSnapshot.threads[0]?.latestTurn?.turnId, asTurnId("turn-deleted"));
-      assert.equal(fullSnapshot.threads[0]?.latestTurn?.state, "completed");
+      // deleted thread is excluded from the full snapshot too (listThreadRows now filters deleted_at IS NULL)
+      assert.equal(fullSnapshot.threads.length, 0);
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.projects.length, 0);

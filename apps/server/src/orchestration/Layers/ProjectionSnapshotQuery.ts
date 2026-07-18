@@ -419,6 +419,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
+        WHERE deleted_at IS NULL
         ORDER BY created_at ASC, thread_id ASC
       `,
   });
