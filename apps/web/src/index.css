@@ -596,6 +596,115 @@ label:has(> select#reasoning-effort) select {
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* ── GITS Chat reskin ──────────────────────────────────────────────────────
+   Scoped design-token layer for the chat pane. Re-points the existing semantic
+   tokens (--background, --card, --secondary, --border, --primary, --ring, …) at
+   the GITS palette so the chat components restyle without JSX churn. Theme,
+   accent and glow are driven by data-attributes on the .gits-chat wrapper.
+   Default look: OLED theme + cyan accent. */
+.gits-chat {
+  /* Intermediate palette (oled + cyan defaults; overridden by data-attrs). */
+  --gits-bg: #000000;
+  --gits-panel: #0a0a0c;
+  --gits-elev: #101014;
+  --gits-elev2: #16161c;
+  --gits-line: rgba(255, 255, 255, 0.09);
+  --gits-line2: rgba(255, 255, 255, 0.16);
+  --gits-fg: #f2f3f8;
+  --gits-fg2: #bcbeca;
+  --gits-muted: #9294a2; /* bumped from the mock's #7c7e8e for >5:1 on OLED black */
+  --gits-accent: #3fd2ff;
+  --gits-glow: 1;
+
+  /* Map GITS palette onto the app's semantic tokens. */
+  color-scheme: dark;
+  --background: var(--gits-bg);
+  --foreground: var(--gits-fg);
+  --card: var(--gits-panel);
+  --card-foreground: var(--gits-fg);
+  --popover: var(--gits-elev2);
+  --popover-foreground: var(--gits-fg);
+  --primary: var(--gits-accent);
+  --primary-foreground: #04121a;
+  --secondary: var(--gits-elev);
+  --secondary-foreground: var(--gits-fg);
+  --muted: var(--gits-elev);
+  --muted-foreground: var(--gits-muted);
+  --accent: var(--gits-elev2);
+  --accent-foreground: var(--gits-fg);
+  --border: var(--gits-line);
+  --input: var(--gits-line2);
+  --ring: var(--gits-accent);
+  --font-mono: "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas, ui-monospace, Menlo,
+    monospace;
+}
+
+.gits-chat[data-gits-theme="navy"] {
+  --gits-bg: #06070b;
+  --gits-panel: #0d0e15;
+  --gits-elev: #13141d;
+  --gits-elev2: #191b26;
+  --gits-line: rgba(255, 255, 255, 0.07);
+  --gits-line2: rgba(255, 255, 255, 0.13);
+  --gits-fg: #edeff5;
+  --gits-fg2: #b8bac8;
+  --gits-muted: #9092a2;
+}
+
+.gits-chat[data-gits-theme="graphite"] {
+  --gits-bg: #101113;
+  --gits-panel: #191a1e;
+  --gits-elev: #1f2025;
+  --gits-elev2: #26272d;
+  --gits-line: rgba(255, 255, 255, 0.08);
+  --gits-line2: rgba(255, 255, 255, 0.14);
+  --gits-fg: #eef0f4;
+  --gits-fg2: #bdbfc8;
+  --gits-muted: #969893;
+}
+
+.gits-chat[data-gits-accent="magenta"] {
+  --gits-accent: #ff4fd8;
+}
+.gits-chat[data-gits-accent="emerald"] {
+  --gits-accent: #3ecf8e;
+}
+.gits-chat[data-gits-accent="amber"] {
+  --gits-accent: #f5b642;
+}
+
+.gits-chat[data-gits-reduce-glow="true"] {
+  --gits-glow: 0;
+}
+
+@keyframes gits-bob {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  30% {
+    transform: translateY(-5px) scaleY(1.04);
+  }
+  60% {
+    transform: translateY(-1px) scaleY(0.98);
+  }
+}
+
+/* Pixel-ghost mascot: bob + accent glow. The rAF loop toggles animation-play-state
+   so it only bobs while typing; the glow follows the accent token and --gits-glow. */
+.gits-mascot {
+  animation: gits-bob 1.5s ease-in-out infinite;
+  animation-play-state: paused;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 calc(12px * var(--gits-glow, 1)) color-mix(in srgb, var(--primary) 55%, transparent));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gits-mascot {
+    animation: none !important;
+  }
+}
+
 /* Visual plan wireframe tokens — alias the semantic theme so wireframe HTML
    (Phase 3) themes for free in light/dark. */
 .visual-plan-surface {
