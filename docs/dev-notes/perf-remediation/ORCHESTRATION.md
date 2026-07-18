@@ -115,3 +115,29 @@ Status: `pending → dispatched → implemented → guard-green → merged → v
 - T7 blast radius (see above) — may need finer slicing mid-run.
 - End-only behavioral verify → late surfacing of logic regressions (operator tradeoff).
 - One live redeploy at the end gate; T13 consent checkpoint pending.
+
+## Isolated gate results + validator verdict (2026-07-18, Fable)
+
+**Gate (isolated):** fmt ✅ (after `0fb3d1ab5` — slice-touched sources oxfmt'd) · lint ✅ 0 errors · typecheck ✅ 14/14 · vitest ✅ 1,594 passed/4 skipped · build ✅ 18/18 · rebuild-projections on 297.6 MB live-DB copy ✅ (44,451 events replayed, all 9 tables MATCH count+content; live host never opened for write).
+
+**Validator keep/change/drop:** all 26 hand-backs **KEEP**. Zero failed slices, zero escalations.
+Notable: T5-s2 correctly deduped against T4-s2 instead of double-implementing; T7-s2 authz is
+defense-in-depth (thread-scoped already denied at `/ws` upgrade) — accepted as the T7 invariant seam.
+
+**Corrections to plan assumptions (from gate evidence):**
+
+1. **T1 retroactive cap: the plan's premise was wrong.** `rebuild-projections` replays events
+   verbatim — the cap is a write-time ingestion guard, so historical rows keep their ~1.21 MB
+   payloads. **Decision: accept forward-only capping.** The freeze/RSS win comes from not
+   _materializing_ history (T4/T5) and not writing new bloat (T1/T2), not from shrinking rows at
+   rest. Optional follow-up slice (not scheduled): event-store migration truncating historical
+   `payload_json`.
+2. **T15 premise wrong:** the dist is not Bun-runnable (`node:sqlite` static import) — the A/B is
+   not "near-free". Report: keep Node; revisit only if post-Phase-1 metrics still disappoint.
+
+**Follow-up slices proposed (LOW, unscheduled):** worktree remove-failed reaper (T16 gap);
+subscribeShell per-thread authz defense-in-depth (T16 gap); event-store history truncation (above).
+
+**Pending: live gate (operator consent required)** — T13 systemd apply + restart, one controlled
+redeploy of `gits-cockpit.service`, live assertions vs the captured T14 baseline, live
+`rebuild-projections` inside the stopped-server window (rollback: pre-rebuild DB retained).
