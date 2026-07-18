@@ -597,11 +597,13 @@ label:has(> select#reasoning-effort) select {
 }
 
 /* ── GITS Chat reskin ──────────────────────────────────────────────────────
-   Scoped design-token layer for the chat pane. Re-points the existing semantic
-   tokens (--background, --card, --secondary, --border, --primary, --ring, …) at
-   the GITS palette so the chat components restyle without JSX churn. Theme,
-   accent and glow are driven by data-attributes on the .gits-chat wrapper.
-   Default look: OLED theme + cyan accent. */
+   App-wide GITS design-token layer. Re-points the existing semantic tokens
+   (--background, --card, --secondary, --border, --primary, --ring, …) at the
+   GITS palette so the whole app restyles without JSX churn. Theme, accent and
+   glow are driven by data-attributes on the document root (applied by
+   useGitsChatPrefs); the .gits-chat selector keeps chat-pane hosts working in
+   isolation (tests, storybook-style mounts). Default: OLED + cyan. */
+:root[data-gits-theme],
 .gits-chat {
   /* Intermediate palette (oled + cyan defaults; overridden by data-attrs). */
   --gits-bg: #000000;
@@ -636,9 +638,11 @@ label:has(> select#reasoning-effort) select {
   --input: var(--gits-line2);
   --ring: var(--gits-accent);
   --font-mono:
-    "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas, ui-monospace, Menlo, monospace;
+    "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas,
+    ui-monospace, Menlo, monospace;
 }
 
+:root[data-gits-theme="navy"],
 .gits-chat[data-gits-theme="navy"] {
   --gits-bg: #06070b;
   --gits-panel: #0d0e15;
@@ -651,6 +655,7 @@ label:has(> select#reasoning-effort) select {
   --gits-muted: #9092a2;
 }
 
+:root[data-gits-theme="graphite"],
 .gits-chat[data-gits-theme="graphite"] {
   --gits-bg: #101113;
   --gits-panel: #191a1e;
@@ -663,16 +668,20 @@ label:has(> select#reasoning-effort) select {
   --gits-muted: #969893;
 }
 
+:root[data-gits-accent="magenta"],
 .gits-chat[data-gits-accent="magenta"] {
   --gits-accent: #ff4fd8;
 }
+:root[data-gits-accent="emerald"],
 .gits-chat[data-gits-accent="emerald"] {
   --gits-accent: #3ecf8e;
 }
+:root[data-gits-accent="amber"],
 .gits-chat[data-gits-accent="amber"] {
   --gits-accent: #f5b642;
 }
 
+:root[data-gits-reduce-glow="true"],
 .gits-chat[data-gits-reduce-glow="true"] {
   --gits-glow: 0;
 }

@@ -4664,12 +4664,7 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   return (
-    <div
-      className="gits-chat flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background"
-      data-gits-theme={gitsChatPrefs.theme}
-      data-gits-accent={gitsChatPrefs.accent}
-      data-gits-reduce-glow={gitsChatPrefs.reduceGlow ? "true" : "false"}
-    >
+    <div className="gits-chat flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
       {/* Top bar */}
       <header
         className={cn(

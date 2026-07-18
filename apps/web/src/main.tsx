@@ -7,6 +7,7 @@ import { createHashHistory, createBrowserHistory } from "@tanstack/react-router"
 // there are no render-blocking round-trips to Google Fonts on first load.
 import "@fontsource-variable/dm-sans/opsz.css";
 import "@fontsource-variable/dm-sans/opsz-italic.css";
+import "@fontsource-variable/jetbrains-mono/wght.css";
 import "./index.css";
 
 import { isElectron } from "./env";

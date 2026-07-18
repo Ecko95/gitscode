@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 // GITS Chat appearance prefs. Kept in localStorage (mirroring useTheme) rather than
 // the server settings contract, so the reskin ships without a server migration.
@@ -101,4 +101,24 @@ export function useGitsChatPrefs() {
     write({ ...getSnapshot(), [key]: value });
   }, []);
   return { prefs, setPref } as const;
+}
+
+/**
+ * Applies the GITS theme data-attributes to the document root so the token
+ * layer in index.css restyles the whole app (portalled menus included), not
+ * just the chat pane. Mount once near the app root.
+ */
+export function useApplyGitsThemeToRoot() {
+  const { prefs } = useGitsChatPrefs();
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute("data-gits-theme", prefs.theme);
+    root.setAttribute("data-gits-accent", prefs.accent);
+    root.setAttribute("data-gits-reduce-glow", prefs.reduceGlow ? "true" : "false");
+    return () => {
+      root.removeAttribute("data-gits-theme");
+      root.removeAttribute("data-gits-accent");
+      root.removeAttribute("data-gits-reduce-glow");
+    };
+  }, [prefs.theme, prefs.accent, prefs.reduceGlow]);
 }
