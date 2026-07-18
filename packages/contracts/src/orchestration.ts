@@ -474,6 +474,14 @@ export type OrchestrationShellStreamItem = typeof OrchestrationShellStreamItem.T
 
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
+  /**
+   * When provided, the server skips the initial snapshot frame and instead
+   * replays events after this sequence before streaming live events. Clients
+   * that load the snapshot over HTTP pass the snapshot's sequence here so the
+   * live subscription resumes without a gap (overlapping events are deduped by
+   * sequence on the client). Absent = today's full-snapshot behavior.
+   */
+  afterSequence: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
@@ -1663,7 +1671,18 @@ export const OrchestrationRpcSchemas = {
     output: OrchestrationThreadStreamItem,
   },
   subscribeShell: {
-    input: Schema.Struct({}),
+    input: Schema.Struct({
+      /**
+       * When provided, the server skips the initial full shell snapshot and
+       * instead replays shell events after this sequence before streaming live
+       * events. Clients that already hold a cached (or HTTP-loaded) shell
+       * snapshot pass its sequence here so the subscription resumes without
+       * re-sending the entire projects/threads list (overlapping events are
+       * deduped by sequence on the client). Absent = today's full-snapshot
+       * behavior.
+       */
+      afterSequence: Schema.optionalKey(NonNegativeInt),
+    }),
     output: OrchestrationShellStreamItem,
   },
 } as const;
