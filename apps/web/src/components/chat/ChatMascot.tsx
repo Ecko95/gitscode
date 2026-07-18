@@ -90,7 +90,9 @@ async function loadGifFrames(): Promise<GifFrame[] | null> {
     for (let i = 0; i < count; i++) {
       const { image } = await decoder.decode({ frameIndex: i });
       frames.push({
-        bitmap: await createImageBitmap(image),
+        // Decode at 2x render size (84x96 canvas) — the full-res 484x552 x97
+        // frames would hold ~100MB of bitmaps for an 84px-wide indicator.
+        bitmap: await createImageBitmap(image, { resizeWidth: 168, resizeHeight: 192 }),
         durationMs: Math.max(20, (image.duration ?? 40_000) / 1000),
       });
       image.close();
