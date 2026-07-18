@@ -54,6 +54,31 @@ export function denyThreadScopedRealtime(session: {
   return null;
 }
 
+/**
+ * Thread-visibility rule for per-thread realtime bindings: a `thread-scoped`
+ * session may only bind to its own thread (`subject === threadId`); owner and
+ * client sessions have full thread visibility. This is the same
+ * `session.subject === threadId` capability the crit HTTP endpoints enforce
+ * (`critHttp.ts` `authorize`), centralized here so `subscribeThread` authorizes
+ * the thread↔client binding from one place (T7 isolation half). Returns an
+ * `AuthError({ status: 403 })` to refuse, or `null` to allow.
+ */
+export function denyThreadAccess(
+  session: {
+    readonly role: SessionRole;
+    readonly subject: string;
+  },
+  threadId: string,
+): AuthError | null {
+  if (session.role === "thread-scoped" && session.subject !== threadId) {
+    return new AuthError({
+      message: "Session is not authorized for this thread.",
+      status: 403,
+    });
+  }
+  return null;
+}
+
 export interface ServerAuthShape {
   readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
   readonly getSessionState: (

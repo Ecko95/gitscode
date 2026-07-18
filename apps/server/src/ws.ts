@@ -101,7 +101,7 @@ import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
-import { ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAuth.ts";
+import { denyThreadAccess, ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -302,7 +302,9 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" | "role">) =>
+const makeWsRpcLayer = (
+  currentSession: Pick<AuthenticatedSession, "sessionId" | "role" | "subject">,
+) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
@@ -1142,6 +1144,19 @@ const makeWsRpcLayer = (currentSession: Pick<AuthenticatedSession, "sessionId" |
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
+              // T7 isolation half: authorize the thread↔client binding BEFORE
+              // registering the per-aggregate queue, so a session never gets a
+              // queue (and thus events) for a thread it may not see. Reuses the
+              // session's existing thread-visibility rule (subject === threadId
+              // for thread-scoped sessions). Refuse with the stream's existing
+              // error shape — a typed failure, never a silent empty stream.
+              const denied = denyThreadAccess(currentSession, input.threadId);
+              if (denied) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: `Thread ${input.threadId} is not accessible for this session`,
+                  cause: denied,
+                });
+              }
               // T7: register a per-aggregateId queue (before the snapshot read so
               // no post-cursor event is missed). The dispatcher routes only this
               // thread's events here, so the aggregateKind/aggregateId filter is

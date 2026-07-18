@@ -6,6 +6,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vitest";
 
+import { denyThreadAccess } from "./auth/Services/ServerAuth.ts";
 import { readThreadDetailSnapshot, TERMINAL_STREAM_BUFFER, terminalCallbackStream } from "./ws.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -96,6 +97,29 @@ describe("subscribeThread initial snapshot", () => {
           : eventSequence > result.snapshotSequence,
       ).toBe(true);
     }
+  });
+});
+
+describe("subscribeThread authorization (T7 isolation half)", () => {
+  const threadA = ThreadId.make("thread-A");
+  const threadB = ThreadId.make("thread-B");
+
+  it("lets a thread-scoped session bind to its own thread but refuses any other", () => {
+    // Session S is scoped to thread A (subject === A): it may subscribe to A,
+    // and is refused for B — so no per-aggregate queue is ever registered for B
+    // and B events can never reach S, independent of the client-side filter.
+    const sessionScopedToA = { role: "thread-scoped" as const, subject: threadA };
+
+    expect(denyThreadAccess(sessionScopedToA, threadA)).toBeNull();
+
+    const refused = denyThreadAccess(sessionScopedToA, threadB);
+    expect(refused).not.toBeNull();
+    expect(refused?.status).toBe(403);
+  });
+
+  it("keeps full thread visibility for owner and client sessions", () => {
+    expect(denyThreadAccess({ role: "owner", subject: "owner-bootstrap" }, threadB)).toBeNull();
+    expect(denyThreadAccess({ role: "client", subject: "client-x" }, threadB)).toBeNull();
   });
 });
 
