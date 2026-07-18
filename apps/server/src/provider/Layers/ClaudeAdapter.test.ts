@@ -4144,4 +4144,135 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "skips tryParseJsonRecord on input_json_delta chunks that don't end with } (O(1) parse guard)",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        // 10 events: session.started, session.configured, session.state.changed,
+        // turn.started, thread.started, content.delta, item.started,
+        // item.updated (×1 — only the closing chunk), item.completed, turn.completed
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-parse-guard",
+          uuid: "stream-thinking-guard",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "thinking_delta", thinking: "Thinking" },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-parse-guard",
+          uuid: "stream-tool-start-guard",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 1,
+            content_block: { type: "tool_use", id: "tool-write-1", name: "Write", input: {} },
+          },
+        } as unknown as SDKMessage);
+
+        // Chunks 1-4: open brace, mid-value, mid-value, mid-value — none end with }
+        // These should be skipped by the guard (no item.updated fired).
+        for (const chunk of [
+          '{"file_path": "/srv/foo',
+          '/bar.ts", "content": "ex',
+          "port const x = 1;\\n",
+          'export const y = 2;',
+        ]) {
+          harness.query.emit({
+            type: "stream_event",
+            session_id: "sdk-session-parse-guard",
+            uuid: `stream-tool-input-guard-${chunk.length}`,
+            parent_tool_use_id: null,
+            event: {
+              type: "content_block_delta",
+              index: 1,
+              delta: { type: "input_json_delta", partial_json: chunk },
+            },
+          } as unknown as SDKMessage);
+        }
+
+        // Final chunk closes the JSON — guard passes, parse fires, item.updated emitted.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-parse-guard",
+          uuid: "stream-tool-input-guard-close",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 1,
+            delta: { type: "input_json_delta", partial_json: '"}'  },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-parse-guard",
+          uuid: "stream-tool-stop-guard",
+          parent_tool_use_id: null,
+          event: { type: "content_block_stop", index: 1 },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-parse-guard",
+          uuid: "result-parse-guard",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+        // Exactly one item.updated (from the closing chunk), not five (one per chunk).
+        const toolInputUpdates = runtimeEvents.filter(
+          (event) =>
+            event.type === "item.updated" &&
+            (event.payload.data as { toolName?: string } | undefined)?.toolName === "Write",
+        );
+        assert.equal(toolInputUpdates.length, 1, "parse guard: expected exactly 1 item.updated for tool input");
+
+        // Final parsed value must be correct.
+        const update = toolInputUpdates[0];
+        assert.equal(update?.type, "item.updated");
+        if (update?.type === "item.updated") {
+          assert.deepEqual(update.payload.data, {
+            toolName: "Write",
+            input: {
+              file_path: "/srv/foo/bar.ts",
+              content: "export const x = 1;\nexport const y = 2;",
+            },
+          });
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 });
