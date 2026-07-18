@@ -1085,6 +1085,45 @@ it.layer(
     }),
   );
 
+  it.effect(
+    "clears in-memory history on exit and restores it from disk on reattach via attachStream",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, getEvents, logsDir } = yield* createManager();
+        yield* manager.open(openInput());
+        const proc = ptyAdapter.processes[0];
+        expect(proc).toBeDefined();
+        if (!proc) return;
+
+        proc.emitData("line-a\n");
+        const path = yield* Path.Path;
+        const histPath = yield* historyLogPath(logsDir).pipe(
+          Effect.provideService(Path.Path, path),
+        );
+        // wait until history is flushed to disk
+        yield* waitFor(pathExists(histPath));
+
+        proc.emitExit({ exitCode: 0, signal: 0 });
+        yield* waitFor(
+          Effect.map(getEvents, (events) => events.some((e) => e.type === "exited")),
+          "1200 millis",
+        );
+
+        // reattach without restart — snapshot should reload history from disk
+        const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+        const unsubscribe = yield* manager.attachStream(
+          openInput(),
+          (event) => Ref.update(attachEvents, (events) => [...events, event]),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        const snap = (yield* Ref.get(attachEvents)).find((e) => e.type === "snapshot");
+        expect(snap).toBeDefined();
+        if (!snap || snap.type !== "snapshot") return;
+        assert.equal(snap.snapshot.history, "line-a\n");
+      }),
+  );
+
   it.effect("migrates legacy transcript filenames to terminal-scoped history path on open", () =>
     Effect.gen(function* () {
       const { manager, logsDir } = yield* createManager();

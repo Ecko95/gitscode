@@ -54,7 +54,7 @@ const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
-const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
+const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 16;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
@@ -1481,6 +1481,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           session.pendingProcessEvents = [];
           session.pendingProcessEventIndex = 0;
           session.processEventDrainRunning = false;
+          // free in-memory history; reloaded from disk on reattach
+          session.history = "";
+          session.historyLineCount = 0;
           session.exitCode = Number.isInteger(nextEvent.event.exitCode)
             ? nextEvent.event.exitCode
             : null;
@@ -1551,6 +1554,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
+        // free in-memory history; reloaded from disk on reattach
+        session.history = "";
+        session.historyLineCount = 0;
         session.updatedAt = updatedAt;
         return [undefined, state] as const;
       });
@@ -1758,8 +1764,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       const closedEventSequence = Option.isSome(session) ? session.value.eventSequence + 1 : 0;
 
       if (Option.isSome(session)) {
+        const historySnapshot = session.value.history;
         yield* stopProcess(session.value);
-        yield* persistHistory(threadId, terminalId, session.value.history);
+        yield* persistHistory(threadId, terminalId, historySnapshot);
       }
 
       yield* flushPersist(threadId, terminalId);
@@ -2079,6 +2086,14 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             session.rows = targetRows;
             session.updatedAt = yield* nowIso;
             yield* Effect.sync(() => session.process?.resize(targetCols, targetRows));
+          }
+
+          // reload history from disk for exited/error session (cleared on exit to free memory)
+          if (session.status !== "running" && session.history === "") {
+            session.history = yield* readHistory(session.threadId, session.terminalId).pipe(
+              Effect.catch(() => Effect.succeed("")),
+            );
+            session.historyLineCount = countNewlines(session.history);
           }
 
           return snapshot(session);
