@@ -179,9 +179,6 @@ export const AutomodeDriverLive = Layer.effect(
 
     const tickOnce: AutomodeDriverShape["tickOnce"] = () =>
       Effect.gen(function* () {
-        // Telegram digest runs every tick regardless of automode state.
-        yield* telegramDigest.tick();
-
         // Gate first on the cheap policy read (stateRef only). When automode is off
         // — the steady state — this skips the full getSnapshot (peer-list subprocess +
         // budget read) that used to run on every 5 s tick.
