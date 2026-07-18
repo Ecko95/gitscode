@@ -168,9 +168,10 @@ export function createEnvironmentConnection(
       })
     : () => undefined;
 
-  // The server terminates slow-subscriber shell streams (buffer overflow) and
-  // expects a fresh subscribe; without onEnd handling the shell state freezes
-  // permanently. Resubscribe with capped exponential backoff.
+  // The shell stream is unbounded server-side (it no longer terminates on
+  // buffer overflow), so onEnd fires only on a genuine non-transport stream
+  // error. When it does, resubscribe for a fresh snapshot with capped
+  // exponential backoff; without it the shell state would freeze permanently.
   let shellUnsub: () => void = () => undefined;
   let shellRetryFiber: Fiber.Fiber<void> | null = null;
   let shellRetryDelayMs = 1_000;
