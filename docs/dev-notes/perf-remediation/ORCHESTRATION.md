@@ -262,3 +262,11 @@ NRestarts=0, 0 errors.
 size), white animated splash + GITS wordmark, plan-mode overlay animation. Validated 182/182
 browser. Post-start: app 200 in 1.8 ms, all three GIFs served byte-exact, NRestarts=0, 0 errors.
 Spare originals parked in /home/ops/design-assets/.
+
+## Redeploy 6 — 2026-07-18 23:4x BST (mode-aware mascot)
+
+`e01aed60e` (#182): mascot is a three-state machine — idle loop (gits-idle.gif, Taildrop) when not
+typing, keyboard ghost typing in build mode, plan animation typing in plan mode; contain-fit
+drawing, tab-hidden pause; plan-mode transcript overlay removed per operator spec. Validated 6/6
+turbo + 182/182 browser. Post-start: app 200 in 1.6 ms, idle GIF served byte-exact, NRestarts=0,
+0 errors. All PRs #172–#182 merged; open remainders are operator PRs #163/#158.
