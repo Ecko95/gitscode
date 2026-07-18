@@ -131,11 +131,23 @@ export function ChatMascot({ typingRef }: { typingRef: RefObject<number> }) {
       ctx.drawImage(frame.bitmap, 0, 0, canvas.width, canvas.height);
     };
 
+    // The rAF loop only runs while the user is typing; when the typing window
+    // lapses it stops entirely and a cheap 4Hz watcher waits for the next
+    // keystroke. Idle cost is one timer tick, not a 60fps loop — this also keeps
+    // browser-mode tests from burning frame budget while the mascot is idle.
+    let rafActive = false;
+
     const tick = (ts: number) => {
       if (stopped) return;
       const typing = isMascotTyping(typingRef.current ?? 0, Date.now());
-      container.style.animationPlayState = typing ? "running" : "paused";
-      if (typing && frames) {
+      if (!typing) {
+        rafActive = false;
+        accumMs = 0;
+        prevTs = 0;
+        container.style.animationPlayState = "paused";
+        return;
+      }
+      if (frames) {
         if (!prevTs) prevTs = ts;
         accumMs += ts - prevTs;
         let moved = false;
@@ -147,16 +159,23 @@ export function ChatMascot({ typingRef }: { typingRef: RefObject<number> }) {
           moved = true;
         }
         if (moved) drawGifFrame();
-      } else {
-        accumMs = 0;
       }
       prevTs = ts;
       raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
+
+    const watcher = setInterval(() => {
+      if (stopped || rafActive) return;
+      if (isMascotTyping(typingRef.current ?? 0, Date.now())) {
+        rafActive = true;
+        container.style.animationPlayState = "running";
+        raf = requestAnimationFrame(tick);
+      }
+    }, 250);
 
     return () => {
       stopped = true;
+      clearInterval(watcher);
       cancelAnimationFrame(raf);
     };
   }, [typingRef]);
