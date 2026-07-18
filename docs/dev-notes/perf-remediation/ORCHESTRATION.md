@@ -239,3 +239,11 @@ browser 182/182 (172/172 post-revert equivalent). DB backup: `backup-pre-redesig
 Post-start: HTTP 200 in 5.4 ms, NRestarts=0, RSS 352 MB, swap 0, `runtime.metrics.window` emitting
 (first window: ELD p99 max 36 ms, 0 ws reconnects), one live agent turn verified end-to-end.
 Pending operator drop-in: `apps/web/public/gits-mascot-loop.gif` (sprite fallback active).
+
+## Redeploy 3 — 2026-07-18 22:22 BST (#169 re-landed)
+
+Operator requested #169 (remote localhost access) back in: `d9209e464` = revert-of-revert of
+`0822fddd0`; tree verified identical to the fully validated `86d7df1f5` state (+docs). Deployed with
+DB backup `backup-pre-169-20260718-2222/`. Post-start: HTTP 200 in 5 ms, NRestarts=0, RSS settled
+376 MB after a 735 MB boot spike, first `runtime.metrics.window`: ELD p99 max 53 ms, 0 ws
+reconnects. Both `provider.auth.*` and `usage.modelBreakdown` RPC markers live in dist.
