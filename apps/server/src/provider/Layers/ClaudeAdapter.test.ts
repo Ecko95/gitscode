@@ -936,6 +936,84 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("handles SDK 0.3.x system-message subtypes without a runtime-warning flood", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-5",
+        },
+        runtimeMode: "full-access",
+      });
+
+      // Silent: emits no runtime event. If it leaked a warning, the collected
+      // event sequence below would shift and the assertion would fail.
+      harness.query.emit({
+        type: "system",
+        subtype: "thinking_tokens",
+        estimated_tokens: 128,
+        estimated_tokens_delta: 16,
+        session_id: "sdk-session-1",
+        uuid: "thinking-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "permission_denied",
+        tool_name: "Bash",
+        tool_use_id: "tool-1",
+        decision_reason: "deny rule",
+        message: "Permission denied",
+        session_id: "sdk-session-1",
+        uuid: "denied-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "mirror_error",
+        error: "append timed out",
+        key: { projectKey: "p", sessionId: "sdk-session-1" },
+        session_id: "sdk-session-1",
+        uuid: "mirror-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "thread.started",
+          "runtime.warning",
+          "runtime.error",
+        ],
+      );
+
+      const warning = runtimeEvents[4];
+      if (warning?.type === "runtime.warning") {
+        assert.equal(warning.payload.message, "Tool denied: Bash — deny rule");
+      }
+      const error = runtimeEvents[5];
+      if (error?.type === "runtime.error") {
+        assert.equal(error.payload.message, "Claude workspace mirror error: append timed out");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("maps Claude reasoning deltas, streamed tool inputs, and tool results", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
