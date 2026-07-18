@@ -12,14 +12,14 @@ Gits reuses the installed Hermes gateway. Outbound delivery invokes the existing
 
 Phase 2 delivers these commands:
 
-| Telegram command | Gits operation | Required argument | Result |
-| --- | --- | --- | --- |
-| `APPROVE <goal-id>` | `AutomodeSupervisor.approveGoal` | goal ID | Queued goal becomes approved. |
-| `REJECT <goal-id>` | `AutomodeSupervisor.rejectGoal` | goal ID | Goal is rejected. |
-| `DEFER <goal-id>` | `AutomodeSupervisor.rejectGoal` | goal ID | Goal is rejected with the fixed reason `Deferred by operator.`; resurfacing is a later ideation feature. |
-| `ARM` | `GitsSlotScheduler.arm` | none | Arms the already-configured scheduler. |
-| `SKIP <goal-id>` | `AutomodeSupervisor.rejectGoal` | goal ID | Goal is rejected with the fixed reason `Skipped by operator.` |
-| `STOP` | `AutomodeSupervisor.updatePolicy` plus `DelamainAdapter.killPeer` | none | Enables the kill switch before terminating every running automode peer, then reports the result. |
+| Telegram command    | Gits operation                                                    | Required argument | Result                                                                                                   |
+| ------------------- | ----------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `APPROVE <goal-id>` | `AutomodeSupervisor.approveGoal`                                  | goal ID           | Queued goal becomes approved.                                                                            |
+| `REJECT <goal-id>`  | `AutomodeSupervisor.rejectGoal`                                   | goal ID           | Goal is rejected.                                                                                        |
+| `DEFER <goal-id>`   | `AutomodeSupervisor.rejectGoal`                                   | goal ID           | Goal is rejected with the fixed reason `Deferred by operator.`; resurfacing is a later ideation feature. |
+| `ARM`               | `GitsSlotScheduler.arm`                                           | none              | Arms the already-configured scheduler.                                                                   |
+| `SKIP <goal-id>`    | `AutomodeSupervisor.rejectGoal`                                   | goal ID           | Goal is rejected with the fixed reason `Skipped by operator.`                                            |
+| `STOP`              | `AutomodeSupervisor.updatePolicy` plus `DelamainAdapter.killPeer` | none              | Enables the kill switch before terminating every running automode peer, then reports the result.         |
 
 Telegram cannot alter the scheduler configuration, policy, budget, repo allowlist, model allowlist, verification commands, or integration branch. `ARM` respects the existing scheduler-enabled check. A command is idempotent where the underlying operation already is; repeated `STOP` remains safe and returns the current halted state.
 

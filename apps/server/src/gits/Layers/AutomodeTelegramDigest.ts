@@ -53,7 +53,9 @@ function loadState(statePath: string) {
         Effect.logWarning("gits.telegram.state-invalid", { cause: Cause.pretty(cause) }).pipe(
           Effect.andThen(
             Effect.fail(
-              new AutomodeTelegramDigestStateError({ message: "Telegram digest state is invalid." }),
+              new AutomodeTelegramDigestStateError({
+                message: "Telegram digest state is invalid.",
+              }),
             ),
           ),
         ),

@@ -125,15 +125,12 @@ const make_stub_telegram_services = (calls: string[]) =>
   Layer.mergeAll(
     Layer.succeed(AutomodeSupervisor, {} as AutomodeSupervisorShape),
     Layer.succeed(DelamainAdapter, {} as DelamainAdapterShape),
-    Layer.succeed(
-      GitsSlotScheduler,
-      {
-        arm: () => {
-          calls.push("arm");
-          return Effect.succeed({});
-        },
-      } as unknown as GitsSlotSchedulerShape,
-    ),
+    Layer.succeed(GitsSlotScheduler, {
+      arm: () => {
+        calls.push("arm");
+        return Effect.succeed({});
+      },
+    } as unknown as GitsSlotSchedulerShape),
   );
 
 const make_app_layer = (config: ServerConfigShape, calls: string[]) => {

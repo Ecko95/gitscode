@@ -21,24 +21,24 @@
 
 ## File Structure
 
-| File | Responsibility |
-| --- | --- |
-| `apps/server/src/gits/Services/HermesTelegramNotifier.ts` | Small outbound notification service contract. |
-| `apps/server/src/gits/Layers/HermesTelegramNotifier.ts` | Fixed-argv `hermes send` implementation. |
-| `apps/server/src/gits/Layers/HermesTelegramNotifier.test.ts` | No-network argv and error handling tests. |
-| `apps/server/src/gits/HermesTelegramCommand.ts` | Pure strict command parser and dispatch function. |
-| `apps/server/src/gits/HermesTelegramCommand.test.ts` | Every allowed and malformed command test. |
-| `apps/server/src/gits/http.ts` | Guarded relay route. |
-| `apps/server/src/gits/http.test.ts` | Route token, loopback, and service-wiring tests. |
-| `apps/server/src/config.ts` | Relay-token runtime configuration. |
-| `apps/server/src/server.ts` | Provide notifier and route dependencies. |
-| `apps/server/src/gits/Services/AutomodeTelegramDigest.ts` | Persisted once-per-London-day digest/report scheduling service. |
-| `apps/server/src/gits/Layers/AutomodeTelegramDigest.ts` | Render and send the 22:00 digest and 10:00 morning report. |
-| `apps/server/src/gits/Layers/AutomodeTelegramDigest.test.ts` | Clock-driven digest/report and restart-deduplication tests. |
-| `apps/server/src/gits/Layers/AutomodeDriver.ts` | Emit halt and held-PR notifications without changing outcomes. |
-| `apps/server/src/gits/Layers/HermesCliAdapter.ts` | Emit the Codex auth-chain-death alert. |
-| `profiles/motoko-gits/SOUL.md` | Hermes relay instruction for the six exact commands. |
-| `docs/gits/HERMES.md` | Deployment instructions for the relay token and behaviour. |
+| File                                                         | Responsibility                                                  |
+| ------------------------------------------------------------ | --------------------------------------------------------------- |
+| `apps/server/src/gits/Services/HermesTelegramNotifier.ts`    | Small outbound notification service contract.                   |
+| `apps/server/src/gits/Layers/HermesTelegramNotifier.ts`      | Fixed-argv `hermes send` implementation.                        |
+| `apps/server/src/gits/Layers/HermesTelegramNotifier.test.ts` | No-network argv and error handling tests.                       |
+| `apps/server/src/gits/HermesTelegramCommand.ts`              | Pure strict command parser and dispatch function.               |
+| `apps/server/src/gits/HermesTelegramCommand.test.ts`         | Every allowed and malformed command test.                       |
+| `apps/server/src/gits/http.ts`                               | Guarded relay route.                                            |
+| `apps/server/src/gits/http.test.ts`                          | Route token, loopback, and service-wiring tests.                |
+| `apps/server/src/config.ts`                                  | Relay-token runtime configuration.                              |
+| `apps/server/src/server.ts`                                  | Provide notifier and route dependencies.                        |
+| `apps/server/src/gits/Services/AutomodeTelegramDigest.ts`    | Persisted once-per-London-day digest/report scheduling service. |
+| `apps/server/src/gits/Layers/AutomodeTelegramDigest.ts`      | Render and send the 22:00 digest and 10:00 morning report.      |
+| `apps/server/src/gits/Layers/AutomodeTelegramDigest.test.ts` | Clock-driven digest/report and restart-deduplication tests.     |
+| `apps/server/src/gits/Layers/AutomodeDriver.ts`              | Emit halt and held-PR notifications without changing outcomes.  |
+| `apps/server/src/gits/Layers/HermesCliAdapter.ts`            | Emit the Codex auth-chain-death alert.                          |
+| `profiles/motoko-gits/SOUL.md`                               | Hermes relay instruction for the six exact commands.            |
+| `docs/gits/HERMES.md`                                        | Deployment instructions for the relay token and behaviour.      |
 
 ## Task 1: Outbound Hermes notifier
 
@@ -56,7 +56,7 @@
 - [ ] **Step 1: Write the failing notifier tests.** Assert the process runner receives exactly:
 
   ```ts
-  ["send", "--to", "telegram", "--quiet", "--subject", "GITS", "hello"]
+  ["send", "--to", "telegram", "--quiet", "--subject", "GITS", "hello"];
   ```
 
   Assert a non-zero exit becomes `HermesTelegramNotifierError` and no network client is constructed.

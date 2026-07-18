@@ -114,9 +114,7 @@ export const hermesTelegramRelayRouteLayer = HttpRouter.add(
       parseHermesTelegramCommand((body as { readonly command: string }).command),
     );
     return HttpServerResponse.jsonUnsafe({ text }, { status: 200 });
-  }).pipe(
-    Effect.catchTag("HermesTelegramRelayRouteError", respondToHermesTelegramRelayRouteError),
-  ),
+  }).pipe(Effect.catchTag("HermesTelegramRelayRouteError", respondToHermesTelegramRelayRouteError)),
 );
 
 export const gitsBuildInfoRouteLayer = HttpRouter.add(
