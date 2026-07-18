@@ -247,3 +247,11 @@ Operator requested #169 (remote localhost access) back in: `d9209e464` = revert-
 DB backup `backup-pre-169-20260718-2222/`. Post-start: HTTP 200 in 5 ms, NRestarts=0, RSS settled
 376 MB after a 735 MB boot spike, first `runtime.metrics.window`: ELD p99 max 53 ms, 0 ws
 reconnects. Both `provider.auth.*` and `usage.modelBreakdown` RPC markers live in dist.
+
+## Redeploy 4 — 2026-07-18 23:0x BST (app-wide OLED)
+
+`f7571d255` (#180): GITS token layer lifted to `:root[data-gits-theme]` (whole app incl. portals),
+JetBrains Mono self-hosted, `gits-mascot-loop.gif` shipped (7-frame repair of the capped design-API
+transfer; full original is a drop-in at `apps/web/dist/gits-mascot-loop.gif`, no rebuild needed).
+Validated 6/6 turbo + 182/182 browser. Post-start: HTTP 200 in 1.8 ms, GIF served 200 (171,486 B),
+NRestarts=0, 0 errors.
