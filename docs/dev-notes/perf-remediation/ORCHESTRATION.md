@@ -163,14 +163,14 @@ journalctl, read-only SQL (`mode=ro`).
 
 ### Acceptance matrix
 
-| # | Assertion | Result | Evidence |
-|---|---|---|---|
-| 1 | Integrity: node flags, dist markers, NRestarts, commit | **PASS** | cmdline has `--max-old-space-size=4096 --max-semi-space-size=64`; `subscribeAggregate` ×3 + `truncateData` ×3 in `dist/bin.mjs`; NRestarts=0 (still 0 at 16:43); runtime HEAD `418d19763` |
-| 2 | RSS <1 GB after ≥1 h, non-monotonic | **PASS** | 16 samples 15:27–16:42: sawtooth 266→480 MB (drops to ~320 MB between waves), VmHWM pinned 716 MB the whole window, VmSwap 0. Baseline: 1.84 GiB RSS / 2.75 GiB HWM / 475 MiB swap |
-| 3 | `Failed to publish` == 0 since deploy | **PASS** | 0 matches 14:54–16:43 incl. full load phase (baseline 34/h). Zero WARN/ERROR besides known `worktree.burial.remove-failed` (T16, 5-min reaper cadence) |
-| 4 | Reconnect popups (see verdict below) | **PASS w/ 1 gap** | (a) 0 WS drops across 56 concurrent subscriptions; (b) latency p50 1.6 ms / p99 5.6 ms / max 137 ms, 0 samples >1 s; (c) `bufferOrTerminate` has **zero call sites** — overflow-terminate unreachable on subscribeThread/subscribeShell; (d) **FAIL**: client never sends `afterSequence` (see gap) |
-| 5 | `context-window.updated` −≥90%; payloads ≤~4 KB | **PASS w/ caveat** | 56 cw.updated events for 56 turns (exactly 1/turn, gated); busiest minute 4 vs 231/60 s baseline (−98%). `thread.activity-appended` max 1,134 B; `tool.completed` bloat absent. Caveat: 56 rows >4 KB are all `thread.message-sent` (max 8,924 B) — genuine assistant message text from the ~1200-word test prompts, scales with reply length; not the T1 bloat class |
-| 6 | No multi-second event-loop bursts | **PASS (by proxy)** | T14 metrics are dark in prod (see gap 2), so measured externally: 4,241 1 s-interval HTTP probes through the load window, max 137 ms, zero >1 s. Baseline symptom was 100–118% ELU bursts every 5–10 s |
+| #   | Assertion                                              | Result              | Evidence                                                                                                                                                                                                                                                                                                                                                              |
+| --- | ------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Integrity: node flags, dist markers, NRestarts, commit | **PASS**            | cmdline has `--max-old-space-size=4096 --max-semi-space-size=64`; `subscribeAggregate` ×3 + `truncateData` ×3 in `dist/bin.mjs`; NRestarts=0 (still 0 at 16:43); runtime HEAD `418d19763`                                                                                                                                                                             |
+| 2   | RSS <1 GB after ≥1 h, non-monotonic                    | **PASS**            | 16 samples 15:27–16:42: sawtooth 266→480 MB (drops to ~320 MB between waves), VmHWM pinned 716 MB the whole window, VmSwap 0. Baseline: 1.84 GiB RSS / 2.75 GiB HWM / 475 MiB swap                                                                                                                                                                                    |
+| 3   | `Failed to publish` == 0 since deploy                  | **PASS**            | 0 matches 14:54–16:43 incl. full load phase (baseline 34/h). Zero WARN/ERROR besides known `worktree.burial.remove-failed` (T16, 5-min reaper cadence)                                                                                                                                                                                                                |
+| 4   | Reconnect popups (see verdict below)                   | **PASS w/ 1 gap**   | (a) 0 WS drops across 56 concurrent subscriptions; (b) latency p50 1.6 ms / p99 5.6 ms / max 137 ms, 0 samples >1 s; (c) `bufferOrTerminate` has **zero call sites** — overflow-terminate unreachable on subscribeThread/subscribeShell; (d) **FAIL**: client never sends `afterSequence` (see gap)                                                                   |
+| 5   | `context-window.updated` −≥90%; payloads ≤~4 KB        | **PASS w/ caveat**  | 56 cw.updated events for 56 turns (exactly 1/turn, gated); busiest minute 4 vs 231/60 s baseline (−98%). `thread.activity-appended` max 1,134 B; `tool.completed` bloat absent. Caveat: 56 rows >4 KB are all `thread.message-sent` (max 8,924 B) — genuine assistant message text from the ~1200-word test prompts, scales with reply length; not the T1 bloat class |
+| 6   | No multi-second event-loop bursts                      | **PASS (by proxy)** | T14 metrics are dark in prod (see gap 2), so measured externally: 4,241 1 s-interval HTTP probes through the load window, max 137 ms, zero >1 s. Baseline symptom was 100–118% ELU bursts every 5–10 s                                                                                                                                                                |
 
 ### Reconnect-popup verdict: **fixed** (mechanism-level), with one unfinished limb
 
@@ -217,7 +217,7 @@ disconnects) is absent under sustained concurrent provider load. No restart, no 
 1. **client-afterSequence-resume** (MEDIUM): populate `afterSequence` in `subscribeThread`/
    `subscribeShell` from the client's last-seen sequence so reconnects use the T9 delta-replay path.
    Files: `apps/web/src/environments/runtime/service.ts`, `packages/client-runtime/src/
-   threadDetailState.ts`, `packages/client-runtime/src/wsRpcClient.ts` (+ delete stale overflow
+threadDetailState.ts`, `packages/client-runtime/src/wsRpcClient.ts` (+ delete stale overflow
    comments in `environmentConnection.ts`/`threadDetailState.ts`). Acceptance: reconnect after
    induced drop replays only events > last sequence (no full snapshot in the WS frame log); UI state
    coherent after resume.
