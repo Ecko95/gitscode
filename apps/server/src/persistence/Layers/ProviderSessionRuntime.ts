@@ -1,4 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
+import * as Arr from "effect/Array";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -26,6 +27,7 @@ const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
 );
 
 const decodeRuntime = Schema.decodeUnknownEffect(ProviderSessionRuntime);
+const decodeRuntimeDbRow = Schema.decodeUnknownEffect(ProviderSessionRuntimeDbRowSchema);
 
 const GetRuntimeRequestSchema = Schema.Struct({
   threadId: ThreadId,
@@ -102,25 +104,20 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
       `,
   });
 
-  const listRuntimeRows = SqlSchema.findAll({
-    Request: Schema.Void,
-    Result: ProviderSessionRuntimeDbRowSchema,
-    execute: () =>
-      sql`
-        SELECT
-          thread_id AS "threadId",
-          provider_name AS "providerName",
-          provider_instance_id AS "providerInstanceId",
-          adapter_key AS "adapterKey",
-          runtime_mode AS "runtimeMode",
-          status,
-          last_seen_at AS "lastSeenAt",
-          resume_cursor_json AS "resumeCursor",
-          runtime_payload_json AS "runtimePayload"
-        FROM provider_session_runtime
-        ORDER BY last_seen_at ASC, thread_id ASC
-      `,
-  });
+  const listRuntimeRows = sql<Record<string, unknown>>`
+    SELECT
+      thread_id AS "threadId",
+      provider_name AS "providerName",
+      provider_instance_id AS "providerInstanceId",
+      adapter_key AS "adapterKey",
+      runtime_mode AS "runtimeMode",
+      status,
+      last_seen_at AS "lastSeenAt",
+      resume_cursor_json AS "resumeCursor",
+      runtime_payload_json AS "runtimePayload"
+    FROM provider_session_runtime
+    ORDER BY last_seen_at ASC, thread_id ASC
+  `;
 
   const deleteRuntimeByThreadId = SqlSchema.void({
     Request: DeleteRuntimeRequestSchema,
@@ -166,24 +163,28 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
     );
 
   const list: ProviderSessionRuntimeRepositoryShape["list"] = () =>
-    listRuntimeRows(undefined).pipe(
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "ProviderSessionRuntimeRepository.list:query",
-          "ProviderSessionRuntimeRepository.list:decodeRows",
-        ),
-      ),
+    listRuntimeRows.pipe(
+      Effect.mapError(toPersistenceSqlError("ProviderSessionRuntimeRepository.list:query")),
       Effect.flatMap((rows) =>
+        // Skip rows that no longer decode (e.g. written by an older build)
+        // instead of failing the whole list — one stale row must not disable
+        // every consumer that enumerates sessions, such as the reaper.
         Effect.forEach(
           rows,
           (row) =>
-            decodeRuntime(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError("ProviderSessionRuntimeRepository.list:rowToRuntime"),
+            decodeRuntimeDbRow(row).pipe(
+              Effect.map(Option.some),
+              Effect.catch((cause) =>
+                Effect.logWarning("provider.session.runtime.row-skipped", {
+                  threadId: row.threadId,
+                  error: toPersistenceDecodeError(
+                    "ProviderSessionRuntimeRepository.list:decodeRows",
+                  )(cause).message,
+                }).pipe(Effect.as(Option.none<ProviderSessionRuntime>())),
               ),
             ),
           { concurrency: "unbounded" },
-        ),
+        ).pipe(Effect.map(Arr.getSomes)),
       ),
     );
 
