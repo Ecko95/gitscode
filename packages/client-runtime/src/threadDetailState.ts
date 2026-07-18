@@ -299,9 +299,10 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     target: { readonly environmentId: EnvironmentId; readonly threadId: ThreadIdType },
     client: ThreadDetailClient,
   ): () => void {
-    // The server terminates slow-subscriber streams (buffer overflow) and
-    // expects the client to resubscribe for a fresh snapshot. Without this
-    // onEnd handling the entry freezes forever after one overflow.
+    // The thread stream is unbounded server-side (it no longer terminates on
+    // buffer overflow), so onEnd fires only on a genuine non-transport stream
+    // error. When it does, resubscribe for a fresh snapshot; without this onEnd
+    // handling the entry would freeze forever after one such failure.
     let disposed = false;
     let unsub = NOOP;
     let retryFiber: Fiber.Fiber<void> | null = null;
