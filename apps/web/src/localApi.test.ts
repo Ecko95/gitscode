@@ -44,6 +44,7 @@ const rpcClientMock = {
     steerTurn: vi.fn(),
     generateFollowUpSuggestions: vi.fn(),
     codexAccountUsage: vi.fn(),
+    usageModelBreakdown: vi.fn(),
     consumeCodexResetCredit: vi.fn(),
   },
   crit: {
