@@ -2938,6 +2938,52 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("coalesces 10 rapid context-window updates into ≤1 activity per 5 s window", async () => {
+    const harness = await createHarness();
+    const base = "2026-01-01T00:00:00.000Z";
+
+    for (let i = 1; i <= 10; i++) {
+      harness.emit({
+        type: "thread.token-usage.updated",
+        eventId: asEventId(`evt-cw-coalesce-${i}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: base,
+        threadId: asThreadId("thread-1"),
+        payload: {
+          usage: {
+            usedTokens: i * 100,
+            totalProcessedTokens: i * 1_000,
+            maxTokens: 128_000,
+            inputTokens: i * 90,
+            cachedInputTokens: 0,
+            outputTokens: i * 10,
+            reasoningOutputTokens: 0,
+            lastUsedTokens: i * 100,
+            lastInputTokens: i * 90,
+            lastCachedInputTokens: 0,
+            lastOutputTokens: i * 10,
+            lastReasoningOutputTokens: 0,
+            compactsAutomatically: false,
+          },
+        },
+      });
+    }
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
+      ),
+    );
+
+    const cwActivities = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
+    );
+    // Leading-throttle: exactly 1 activity dispatched (the first that opens the gate)
+    expect(cwActivities).toHaveLength(1);
+    // Payload is the leading event (i=1, usedTokens=100)
+    expect(cwActivities[0]?.payload).toMatchObject({ usedTokens: 100 });
+  });
+
   it("projects compacted thread state into context compaction activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

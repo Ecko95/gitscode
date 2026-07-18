@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -55,6 +56,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+// ponytail: leading-throttle; upgrade to trailing-throttle if "value = last in window" matters
+const CONTEXT_WINDOW_COALESCE_MS = 5_000;
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -735,6 +738,33 @@ const make = Effect.gen(function* () {
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
+
+  // ponytail: plain Map leading-throttle; upgrade to trailing-throttle if "last value" matters
+  const contextWindowLastEmitMs = new Map<string, number>();
+
+  const gateContextWindowActivity = (
+    threadId: ThreadId,
+    activity: OrchestrationThreadActivity,
+  ) =>
+    Effect.gen(function* () {
+      const lastEmitMs = contextWindowLastEmitMs.get(threadId) ?? 0;
+      const now = yield* Clock.currentTimeMillis;
+      if (now - lastEmitMs < CONTEXT_WINDOW_COALESCE_MS) {
+        return; // suppressed: within coalesce window
+      }
+      contextWindowLastEmitMs.set(threadId, now);
+      const uuid = yield* crypto.randomUUIDv4;
+      yield* orchestrationEngine.dispatch(
+        {
+          type: "thread.activity.append",
+          commandId: CommandId.make(`provider:${activity.id}:thread-activity-append:${uuid}`),
+          threadId,
+          activity,
+          createdAt: activity.createdAt,
+        },
+        "provider",
+      );
+    });
 
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
@@ -1756,20 +1786,22 @@ const make = Effect.gen(function* () {
 
       const activities = runtimeEventToActivities(event);
       yield* Effect.forEach(activities, (activity) =>
-        providerCommandId(event, "thread-activity-append").pipe(
-          Effect.flatMap((commandId) =>
-            orchestrationEngine.dispatch(
-              {
-                type: "thread.activity.append",
-                commandId,
-                threadId: thread.id,
-                activity,
-                createdAt: activity.createdAt,
-              },
-              "provider",
+        activity.kind === "context-window.updated"
+          ? gateContextWindowActivity(thread.id, activity)
+          : providerCommandId(event, "thread-activity-append").pipe(
+              Effect.flatMap((commandId) =>
+                orchestrationEngine.dispatch(
+                  {
+                    type: "thread.activity.append",
+                    commandId,
+                    threadId: thread.id,
+                    activity,
+                    createdAt: activity.createdAt,
+                  },
+                  "provider",
+                ),
+              ),
             ),
-          ),
-        ),
       ).pipe(Effect.asVoid);
     });
 
