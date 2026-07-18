@@ -16,6 +16,7 @@ import { join } from "node:path";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 
 import {
   GitsCapacityError,
@@ -33,9 +34,10 @@ import {
   type GitsCapacityMonitorShape,
 } from "../Services/GitsCapacityMonitor.ts";
 
-const DEFAULT_TAIL_BYTES = 12 * 1024 * 1024;
+const DEFAULT_TAIL_BYTES = 256 * 1024;
 const DEFAULT_CURSOR_MONTHLY_BUDGET_USD = 500;
 const CURSOR_COMMAND_TIMEOUT_MS = 5_000;
+const SNAPSHOT_MEMO_TTL_MS = 60_000; // 60 second memoization
 
 interface RawRateLimit {
   readonly used_percent?: unknown;
@@ -973,28 +975,46 @@ export function formatCapacityForHermes(snapshot: GitsCapacitySnapshot): string 
   ].join("\n");
 }
 
-export const GitsCapacityMonitorLive = Layer.succeed(GitsCapacityMonitor, {
-  getSnapshot: () =>
-    Effect.gen(function* () {
-      const checkedAt = yield* nowIso;
-      const [codex, cursor] = yield* Effect.all([
-        Effect.sync(() => readCodexProviderUsage(checkedAt)),
-        readCursorProviderUsage(checkedAt),
-      ]);
+export const GitsCapacityMonitorLive = Layer.effect(
+  GitsCapacityMonitor,
+  Effect.gen(function* () {
+    const snapshotMemoRef = yield* Ref.make<
+      { at: number; snapshot: GitsCapacitySnapshot } | null
+    >(null);
 
-      return {
-        checkedAt,
-        codex,
-        cursor,
-        recommendation: recommendDelamainEngine(codex, cursor),
-        notes: [
-          "Codex utilization is derived from local Codex rate-limit events; no OAuth token material is read or exposed.",
-          "Cursor billing is read from cursor.com dashboard when a local WorkosCursorSessionToken is configured; otherwise GITS falls back to local budget configuration.",
-        ],
-      } satisfies GitsCapacitySnapshot;
-    }).pipe(
-      Effect.mapError((cause) =>
-        toCapacityError("Failed to read GITS provider capacity telemetry.", cause),
-      ),
-    ),
-} satisfies GitsCapacityMonitorShape);
+    return {
+      getSnapshot: () =>
+        Effect.gen(function* () {
+          const epochMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const memo = yield* Ref.get(snapshotMemoRef);
+          if (memo !== null && epochMs - memo.at < SNAPSHOT_MEMO_TTL_MS) {
+            return memo.snapshot;
+          }
+
+          const checkedAt = yield* nowIso;
+          const [codex, cursor] = yield* Effect.all([
+            Effect.sync(() => readCodexProviderUsage(checkedAt)),
+            readCursorProviderUsage(checkedAt),
+          ]);
+
+          const snapshot = {
+            checkedAt,
+            codex,
+            cursor,
+            recommendation: recommendDelamainEngine(codex, cursor),
+            notes: [
+              "Codex utilization is derived from local Codex rate-limit events; no OAuth token material is read or exposed.",
+              "Cursor billing is read from cursor.com dashboard when a local WorkosCursorSessionToken is configured; otherwise GITS falls back to local budget configuration.",
+            ],
+          } satisfies GitsCapacitySnapshot;
+
+          yield* Ref.set(snapshotMemoRef, { at: epochMs, snapshot });
+          return snapshot;
+        }).pipe(
+          Effect.mapError((cause) =>
+            toCapacityError("Failed to read GITS provider capacity telemetry.", cause),
+          ),
+        ),
+    };
+  }),
+);
