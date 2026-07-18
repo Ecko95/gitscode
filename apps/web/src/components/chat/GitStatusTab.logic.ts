@@ -16,9 +16,7 @@ export interface GitStatusPrActions {
   readonly review: { readonly reference: string } | null;
 }
 
-export function summarizeGitStatus(
-  gitStatus: VcsStatusResult | null,
-): GitStatusSummary {
+export function summarizeGitStatus(gitStatus: VcsStatusResult | null): GitStatusSummary {
   if (!gitStatus || !gitStatus.isRepo) {
     return {
       tone: "neutral",
@@ -34,9 +32,7 @@ export function summarizeGitStatus(
     parts.push("uncommitted changes");
   }
   if (isDiverged) {
-    parts.push(
-      `${gitStatus.aheadCount} ahead / ${gitStatus.behindCount} behind`,
-    );
+    parts.push(`${gitStatus.aheadCount} ahead / ${gitStatus.behindCount} behind`);
   } else if (gitStatus.behindCount > 0) {
     parts.push(`${gitStatus.behindCount} behind`);
   } else if (gitStatus.aheadCount > 0) {
@@ -45,12 +41,8 @@ export function summarizeGitStatus(
     parts.push("not pushed");
   }
   if (gitStatus.pr) {
-    const terminology = getSourceControlPresentation(
-      gitStatus.sourceControlProvider,
-    ).terminology;
-    parts.push(
-      `${terminology.shortLabel} #${gitStatus.pr.number} ${gitStatus.pr.state}`,
-    );
+    const terminology = getSourceControlPresentation(gitStatus.sourceControlProvider).terminology;
+    parts.push(`${terminology.shortLabel} #${gitStatus.pr.number} ${gitStatus.pr.state}`);
   }
   if (parts.length === 0) {
     parts.push("up to date");
@@ -77,17 +69,14 @@ export function resolvePrActions(
     return { createPr: null, openPr: null, review: null };
   }
 
-  const terminology = getSourceControlPresentation(
-    gitStatus.sourceControlProvider,
-  ).terminology;
+  const terminology = getSourceControlPresentation(gitStatus.sourceControlProvider).terminology;
   const pr = gitStatus.pr;
   const hasOpenPr = pr?.state === "open";
   const openPr =
     pr && pr.url.trim().length > 0
       ? { label: `View ${terminology.shortLabel} #${pr.number}`, url: pr.url }
       : null;
-  const review =
-    hasOpenPr && openPr !== null ? { reference: openPr.url } : null;
+  const review = hasOpenPr && openPr !== null ? { reference: openPr.url } : null;
 
   const aheadOfDefault = gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount;
   const canCreatePr =
@@ -101,9 +90,7 @@ export function resolvePrActions(
     gitStatus.behindCount === 0;
 
   return {
-    createPr: canCreatePr
-      ? { label: `Create ${terminology.shortLabel}` }
-      : null,
+    createPr: canCreatePr ? { label: `Create ${terminology.shortLabel}` } : null,
     openPr,
     review,
   };

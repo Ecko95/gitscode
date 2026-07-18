@@ -72,26 +72,19 @@ describe("summarizeGitStatus", () => {
   });
 
   it("blocks when the branch has diverged", () => {
-    const summary = summarizeGitStatus(
-      status({ aheadCount: 1, behindCount: 3 }),
-    );
+    const summary = summarizeGitStatus(status({ aheadCount: 1, behindCount: 3 }));
     assert.equal(summary.tone, "blocked");
     assert.include(summary.label, "1 ahead / 3 behind");
   });
 
   it("labels a detached HEAD as a warning", () => {
-    const summary = summarizeGitStatus(
-      status({ refName: null, hasUpstream: false }),
-    );
+    const summary = summarizeGitStatus(status({ refName: null, hasUpstream: false }));
     assert.equal(summary.tone, "warning");
     assert.equal(summary.branchLabel, "Detached HEAD");
   });
 
   it("mentions an open PR in the label", () => {
-    assert.include(
-      summarizeGitStatus(status({ pr: openPr })).label,
-      "PR #12 open",
-    );
+    assert.include(summarizeGitStatus(status({ pr: openPr })).label, "PR #12 open");
   });
 });
 
@@ -120,10 +113,7 @@ describe("resolvePrActions", () => {
   });
 
   it("uses aheadOfDefaultCount when the branch is pushed but ahead of default", () => {
-    const actions = resolvePrActions(
-      status({ aheadCount: 0, aheadOfDefaultCount: 3 }),
-      false,
-    );
+    const actions = resolvePrActions(status({ aheadCount: 0, aheadOfDefaultCount: 3 }), false);
     assert.isNotNull(actions.createPr);
   });
 
@@ -133,33 +123,21 @@ describe("resolvePrActions", () => {
 
   it("does not offer create PR with uncommitted changes", () => {
     assert.isNull(
-      resolvePrActions(
-        status({ aheadCount: 2, hasWorkingTreeChanges: true }),
-        false,
-      ).createPr,
+      resolvePrActions(status({ aheadCount: 2, hasWorkingTreeChanges: true }), false).createPr,
     );
   });
 
   it("does not offer create PR on the default ref", () => {
-    assert.isNull(
-      resolvePrActions(status({ aheadCount: 2, isDefaultRef: true }), false)
-        .createPr,
-    );
+    assert.isNull(resolvePrActions(status({ aheadCount: 2, isDefaultRef: true }), false).createPr);
   });
 
   it("does not offer create PR when behind upstream", () => {
-    assert.isNull(
-      resolvePrActions(status({ aheadCount: 2, behindCount: 1 }), false)
-        .createPr,
-    );
+    assert.isNull(resolvePrActions(status({ aheadCount: 2, behindCount: 1 }), false).createPr);
   });
 
   it("does not offer create PR without a primary remote", () => {
     assert.isNull(
-      resolvePrActions(
-        status({ aheadCount: 2, hasPrimaryRemote: false }),
-        false,
-      ).createPr,
+      resolvePrActions(status({ aheadCount: 2, hasPrimaryRemote: false }), false).createPr,
     );
   });
 

@@ -1,26 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  ExternalLinkIcon,
-  GitBranchIcon,
-  GitPullRequestIcon,
-  RefreshCwIcon,
-} from "lucide-react";
+import { ExternalLinkIcon, GitBranchIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
-import {
-  useGitStackedAction,
-  useSourceControlActionRunning,
-} from "~/lib/sourceControlActions";
+import { useGitStackedAction, useSourceControlActionRunning } from "~/lib/sourceControlActions";
 import { cn, randomUUID } from "~/lib/utils";
 import { refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
 import { GitChecksPane } from "../GitChecksPane";
-import {
-  type GitStatusTone,
-  resolvePrActions,
-  summarizeGitStatus,
-} from "./GitStatusTab.logic";
+import { type GitStatusTone, resolvePrActions, summarizeGitStatus } from "./GitStatusTab.logic";
 
 const RUNNING_SOURCE_CONTROL_ACTIONS = [
   "runStackedAction",
@@ -42,20 +30,10 @@ interface GitStatusTabProps {
   onReviewPullRequest?: (reference: string) => void;
 }
 
-export function GitStatusTab({
-  environmentId,
-  gitCwd,
-  onReviewPullRequest,
-}: GitStatusTabProps) {
-  const scope = useMemo(
-    () => ({ environmentId, cwd: gitCwd }),
-    [environmentId, gitCwd],
-  );
+export function GitStatusTab({ environmentId, gitCwd, onReviewPullRequest }: GitStatusTabProps) {
+  const scope = useMemo(() => ({ environmentId, cwd: gitCwd }), [environmentId, gitCwd]);
   const { data: gitStatus } = useVcsStatus(scope);
-  const isBusy = useSourceControlActionRunning(
-    scope,
-    RUNNING_SOURCE_CONTROL_ACTIONS,
-  );
+  const isBusy = useSourceControlActionRunning(scope, RUNNING_SOURCE_CONTROL_ACTIONS);
   const createPrAction = useGitStackedAction(scope);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -64,8 +42,7 @@ export function GitStatusTab({
     gitStatus,
     isBusy || createPrAction.isPending,
   );
-  const createPrError =
-    createPrAction.error instanceof Error ? createPrAction.error.message : null;
+  const createPrError = createPrAction.error instanceof Error ? createPrAction.error.message : null;
 
   if (!gitCwd) {
     return null;
@@ -79,9 +56,7 @@ export function GitStatusTab({
   };
 
   const runCreatePr = () => {
-    void createPrAction
-      .run({ actionId: randomUUID(), action: "create_pr" })
-      .catch(() => undefined);
+    void createPrAction.run({ actionId: randomUUID(), action: "create_pr" }).catch(() => undefined);
   };
 
   return (
@@ -113,22 +88,11 @@ export function GitStatusTab({
           data-testid="git-status-tab-dot"
         />
       </PopoverTrigger>
-      <PopoverPopup
-        align="end"
-        className="w-88"
-        data-testid="git-status-tab-panel"
-        side="bottom"
-      >
+      <PopoverPopup align="end" className="w-88" data-testid="git-status-tab-panel" side="bottom">
         <div className="flex items-center justify-between gap-2 px-1">
           <div className="flex min-w-0 items-center gap-1.5">
-            <GitBranchIcon
-              aria-hidden="true"
-              className="size-3.5 shrink-0 text-muted-foreground"
-            />
-            <span
-              className="truncate font-mono text-xs font-medium"
-              title={summary.branchLabel}
-            >
+            <GitBranchIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate font-mono text-xs font-medium" title={summary.branchLabel}>
               {summary.branchLabel}
             </span>
           </div>
@@ -161,13 +125,7 @@ export function GitStatusTab({
             ) : null}
             {openPr ? (
               <Button
-                render={
-                  <a
-                    href={openPr.url}
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  />
-                }
+                render={<a href={openPr.url} rel="noopener noreferrer" target="_blank" />}
                 size="xs"
                 variant="outline"
               >
