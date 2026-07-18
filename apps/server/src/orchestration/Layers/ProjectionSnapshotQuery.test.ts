@@ -1588,6 +1588,103 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("caps command read model activity hydration to the newest 500", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectRepository = yield* ProjectionProjectRepository;
+      const threadRepository = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-04-07T00:00:00.000Z";
+      const projectId = asProjectId("project-command-activity-cap");
+      const threadId = ThreadId.make("thread-command-activity-cap");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+      const total = 505;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_visual_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* projectRepository.upsert({
+        projectId,
+        title: "Command Activity Cap Project",
+        workspaceRoot: "/tmp/command-activity-cap-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      yield* threadRepository.upsert({
+        threadId,
+        projectId,
+        title: "Command Activity Cap Thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        parentThreadId: null,
+        forkedFromMessageId: null,
+        latestTurnId: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      // sequences 1..total; newest 500 are sequences 6..505
+      yield* Effect.forEach(
+        Array.from({ length: total }, (_, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id,
+              thread_id,
+              turn_id,
+              tone,
+              kind,
+              summary,
+              payload_json,
+              sequence,
+              created_at
+            )
+            VALUES (
+              ${`act-cap-${String(sequence).padStart(4, "0")}`},
+              ${threadId},
+              'turn-cap-1',
+              'info',
+              'runtime.note',
+              ${`activity ${sequence}`},
+              '{}',
+              ${sequence},
+              ${now}
+            )
+          `,
+        { concurrency: 1 },
+      );
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const thread = commandReadModel.threads.find((entry) => entry.id === threadId);
+
+      assert.equal(thread?.activities.length, 500);
+      assert.equal(thread?.activities[0]?.sequence, 6);
+      assert.equal(thread?.activities.at(-1)?.sequence, 505);
+    }),
+  );
+
   it.effect("hydrates pre-restart user messages used by revert-user-message mapping", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
