@@ -1111,9 +1111,8 @@ it.layer(
 
         // reattach without restart — snapshot should reload history from disk
         const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
-        const unsubscribe = yield* manager.attachStream(
-          openInput(),
-          (event) => Ref.update(attachEvents, (events) => [...events, event]),
+        const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+          Ref.update(attachEvents, (events) => [...events, event]),
         );
         yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
 

@@ -158,7 +158,10 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           if (subscribers.size === 0) {
             aggregateSubscribers.delete(aggregateId);
           }
-        }).pipe(Effect.flatMap(() => Queue.shutdown(queue)), Effect.asVoid),
+        }).pipe(
+          Effect.flatMap(() => Queue.shutdown(queue)),
+          Effect.asVoid,
+        ),
       );
       return queue;
     });

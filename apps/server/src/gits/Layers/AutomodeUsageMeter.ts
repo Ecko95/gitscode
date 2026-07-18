@@ -76,9 +76,10 @@ export const AutomodeUsageMeterLive = Layer.effect(
   AutomodeUsageMeter,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const memoRef = yield* Ref.make<{ readonly at: number; readonly usage: AutomodeBudgetUsage } | null>(
-      null,
-    );
+    const memoRef = yield* Ref.make<{
+      readonly at: number;
+      readonly usage: AutomodeBudgetUsage;
+    } | null>(null);
 
     // ponytail: filter to the two provider-usage kinds in SQL, reduce in JS with the
     // exact same helpers the old snapshot path used — guarantees byte-identical budget
@@ -125,7 +126,10 @@ export const AutomodeUsageMeterLive = Layer.effect(
           for (const row of rows) {
             const costUsd = costFromActivity(row.kind, row.payload);
             if (costUsd !== null) {
-              costByThread.set(row.threadId, Math.max(costByThread.get(row.threadId) ?? 0, costUsd));
+              costByThread.set(
+                row.threadId,
+                Math.max(costByThread.get(row.threadId) ?? 0, costUsd),
+              );
               updatedAt = latestIso(updatedAt, row.createdAt);
             }
 

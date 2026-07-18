@@ -1667,7 +1667,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   messages: (messagesByThread.get(row.threadId) ?? []).slice(-MAX_THREAD_MESSAGES),
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   visualPlans: visualPlansByThread.get(row.threadId) ?? [],
-                  activities: (activitiesByThread.get(row.threadId) ?? []).slice(-MAX_THREAD_ACTIVITIES),
+                  activities: (activitiesByThread.get(row.threadId) ?? []).slice(
+                    -MAX_THREAD_ACTIVITIES,
+                  ),
                   checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                   session: sessionByThread.get(row.threadId) ?? null,
                 });

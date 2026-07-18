@@ -136,18 +136,18 @@ function makeLayer(
       Effect.sync(() => {
         options?.onListPeers?.();
         return {
-        ...emptyList,
-        peers:
-          peerStatus.current === "absent"
-            ? []
-            : [
-                {
-                  ...basePeer,
-                  status: peerStatus.current,
-                  rawStatus: peerStatus.current,
-                  integrationStatus: peerStatus.integrationStatus ?? null,
-                },
-              ],
+          ...emptyList,
+          peers:
+            peerStatus.current === "absent"
+              ? []
+              : [
+                  {
+                    ...basePeer,
+                    status: peerStatus.current,
+                    rawStatus: peerStatus.current,
+                    integrationStatus: peerStatus.integrationStatus ?? null,
+                  },
+                ],
         };
       }),
     spawnPeer: (input) =>
@@ -172,11 +172,11 @@ function makeLayer(
       Effect.sync(() => {
         options?.onReadBudget?.();
         return {
-        source: "provider-runtime",
-        totalCostUsd: 0,
-        totalProcessedTokens: 0,
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        note: null,
+          source: "provider-runtime",
+          totalCostUsd: 0,
+          totalProcessedTokens: 0,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          note: null,
         };
       }),
   });

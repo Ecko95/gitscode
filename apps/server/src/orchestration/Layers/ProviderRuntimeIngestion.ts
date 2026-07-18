@@ -741,10 +741,7 @@ const make = Effect.gen(function* () {
   // ponytail: plain Map leading-throttle; upgrade to trailing-throttle if "last value" matters
   const contextWindowLastEmitMs = new Map<string, number>();
 
-  const gateContextWindowActivity = (
-    threadId: ThreadId,
-    activity: OrchestrationThreadActivity,
-  ) =>
+  const gateContextWindowActivity = (threadId: ThreadId, activity: OrchestrationThreadActivity) =>
     Effect.gen(function* () {
       const lastEmitMs = contextWindowLastEmitMs.get(threadId) ?? 0;
       const now = yield* Clock.currentTimeMillis;

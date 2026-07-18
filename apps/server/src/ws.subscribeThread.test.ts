@@ -173,7 +173,7 @@ describe("resumeThreadStream (T9-s2 resume-by-sequence)", () => {
   // resumeThreadStream reads only type/aggregateKind/aggregateId, so a minimal
   // synthetic event is enough to exercise the filter + ordering seam.
   const evt = (sequence: number, aggregateId: ThreadId, type: string): OrchestrationEvent =>
-    ({ sequence, aggregateKind: "thread", aggregateId, type } as unknown as OrchestrationEvent);
+    ({ sequence, aggregateKind: "thread", aggregateId, type }) as unknown as OrchestrationEvent;
 
   it("replays catch-up then live, keeping only this thread's detail events in order", async () => {
     // Client disconnected at sequence k=10; readEvents(10) yields 11..14 (after

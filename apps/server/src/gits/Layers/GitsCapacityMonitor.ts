@@ -978,9 +978,9 @@ export function formatCapacityForHermes(snapshot: GitsCapacitySnapshot): string 
 export const GitsCapacityMonitorLive = Layer.effect(
   GitsCapacityMonitor,
   Effect.gen(function* () {
-    const snapshotMemoRef = yield* Ref.make<
-      { at: number; snapshot: GitsCapacitySnapshot } | null
-    >(null);
+    const snapshotMemoRef = yield* Ref.make<{ at: number; snapshot: GitsCapacitySnapshot } | null>(
+      null,
+    );
 
     return {
       getSnapshot: () =>

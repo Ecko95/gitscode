@@ -3244,10 +3244,7 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-data"),
     });
 
-    await waitForThread(
-      harness.readModel,
-      (entry) => entry.session?.status === "running",
-    );
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "running");
 
     // small payload — must pass through unchanged
     const smallData = { pid: 42 };
@@ -3286,12 +3283,8 @@ describe("ProviderRuntimeIngestion", () => {
     const thread = await waitForThread(
       harness.readModel,
       (entry) =>
-        entry.activities.some(
-          (a: ProviderRuntimeTestActivity) => a.id === "evt-data-small",
-        ) &&
-        entry.activities.some(
-          (a: ProviderRuntimeTestActivity) => a.id === "evt-data-big",
-        ),
+        entry.activities.some((a: ProviderRuntimeTestActivity) => a.id === "evt-data-small") &&
+        entry.activities.some((a: ProviderRuntimeTestActivity) => a.id === "evt-data-big"),
     );
 
     const smallAct = thread.activities.find(
@@ -3327,10 +3320,7 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-completed-cap"),
     });
 
-    await waitForThread(
-      harness.readModel,
-      (entry) => entry.session?.status === "running",
-    );
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "running");
 
     // small payload — must pass through unchanged
     const smallData = { result: 1 };
@@ -3372,9 +3362,7 @@ describe("ProviderRuntimeIngestion", () => {
         entry.activities.some(
           (a: ProviderRuntimeTestActivity) => a.id === "evt-completed-cap-small",
         ) &&
-        entry.activities.some(
-          (a: ProviderRuntimeTestActivity) => a.id === "evt-completed-cap-big",
-        ),
+        entry.activities.some((a: ProviderRuntimeTestActivity) => a.id === "evt-completed-cap-big"),
     );
 
     const smallAct = thread.activities.find(

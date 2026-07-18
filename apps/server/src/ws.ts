@@ -101,7 +101,11 @@ import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
-import { denyThreadAccess, ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAuth.ts";
+import {
+  denyThreadAccess,
+  ServerAuth,
+  type AuthenticatedSession,
+} from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -252,9 +256,7 @@ export function bufferOrTerminate<A, E, R>(
 // or per-frame size ever demands it.
 export const WS_FRAME_BATCH_WINDOW = Duration.millis(33);
 
-export function coalescePerTick<A, E, R>(
-  self: Stream.Stream<A, E, R>,
-): Stream.Stream<A, E, R> {
+export function coalescePerTick<A, E, R>(self: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> {
   return self.pipe(
     Stream.groupedWithin(Number.MAX_SAFE_INTEGER, WS_FRAME_BATCH_WINDOW),
     Stream.flattenIterable,

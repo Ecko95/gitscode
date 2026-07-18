@@ -4202,7 +4202,7 @@ describe("ClaudeAdapterLive", () => {
           '{"file_path": "/srv/foo',
           '/bar.ts", "content": "ex',
           "port const x = 1;\\n",
-          'export const y = 2;',
+          "export const y = 2;",
         ]) {
           harness.query.emit({
             type: "stream_event",
@@ -4226,7 +4226,7 @@ describe("ClaudeAdapterLive", () => {
           event: {
             type: "content_block_delta",
             index: 1,
-            delta: { type: "input_json_delta", partial_json: '"}'  },
+            delta: { type: "input_json_delta", partial_json: '"}' },
           },
         } as unknown as SDKMessage);
 
@@ -4255,7 +4255,11 @@ describe("ClaudeAdapterLive", () => {
             event.type === "item.updated" &&
             (event.payload.data as { toolName?: string } | undefined)?.toolName === "Write",
         );
-        assert.equal(toolInputUpdates.length, 1, "parse guard: expected exactly 1 item.updated for tool input");
+        assert.equal(
+          toolInputUpdates.length,
+          1,
+          "parse guard: expected exactly 1 item.updated for tool input",
+        );
 
         // Final parsed value must be correct.
         const update = toolInputUpdates[0];

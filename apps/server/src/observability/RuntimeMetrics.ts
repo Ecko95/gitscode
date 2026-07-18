@@ -96,9 +96,7 @@ export const RuntimeMetricsLive: Layer.Layer<never> = Layer.effectDiscard(
         });
         eld.reset();
       }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("runtime.metrics.sample-failed", { cause }),
-        ),
+        Effect.catchCause((cause) => Effect.logWarning("runtime.metrics.sample-failed", { cause })),
         Effect.repeat(Schedule.spaced(Duration.millis(SAMPLE_INTERVAL_MS))),
       ),
     );
