@@ -28,6 +28,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -54,6 +55,7 @@ import { ProjectionThreadSession } from "../../persistence/Services/ProjectionTh
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import { RepositoryIdentityResolver } from "../../project/Services/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
+import { aggregateUsageModelBreakdown } from "./UsageModelBreakdown.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionFullThreadDiffContext,
@@ -2451,6 +2453,54 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const UsageCostActivityDbRow = Schema.Struct({
+    activityId: Schema.String,
+    turnId: Schema.NullOr(Schema.String),
+    providerName: Schema.NullOr(Schema.String),
+    payloadJson: Schema.String,
+  });
+
+  const listUsageCostActivitiesSince = SqlSchema.findAll({
+    Request: Schema.Struct({ since: Schema.String }),
+    Result: UsageCostActivityDbRow,
+    execute: ({ since }) =>
+      sql`
+        SELECT
+          a.activity_id AS "activityId",
+          a.turn_id AS "turnId",
+          s.provider_name AS "providerName",
+          a.payload_json AS "payloadJson"
+        FROM projection_thread_activities a
+        LEFT JOIN projection_thread_sessions s ON s.thread_id = a.thread_id
+        WHERE a.kind = 'usage.cost.updated'
+          AND a.created_at >= ${since}
+      `,
+  });
+
+  const getUsageModelBreakdown: NonNullable<
+    ProjectionSnapshotQueryShape["getUsageModelBreakdown"]
+  > = (input) =>
+    DateTime.now.pipe(
+      Effect.flatMap((now) => {
+        const windowMinutes = input.window === "fiveHour" ? 300 : 10_080;
+        const since = DateTime.formatIso(DateTime.subtract(now, { minutes: windowMinutes }));
+        return listUsageCostActivitiesSince({ since }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getUsageModelBreakdown:query",
+              "ProjectionSnapshotQuery.getUsageModelBreakdown:decodeRows",
+            ),
+          ),
+          Effect.map((rows) => ({
+            window: input.window,
+            since,
+            checkedAt: DateTime.formatIso(now),
+            entries: aggregateUsageModelBreakdown(rows),
+          })),
+        );
+      }),
+    );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2470,6 +2520,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     hasLiveThreadForWorktreePath,
     listThreadMessagesByTurn,
     listThreadProposedPlans,
+    getUsageModelBreakdown,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

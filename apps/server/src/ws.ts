@@ -1023,6 +1023,17 @@ const makeWsRpcLayer = (
                     new ProviderOperationError({ message: "Codex reset credits unavailable" }),
                   ),
           }),
+        [WS_METHODS.usageModelBreakdown]: (input) =>
+          projectionSnapshotQuery.getUsageModelBreakdown
+            ? projectionSnapshotQuery.getUsageModelBreakdown(input).pipe(
+                Effect.tapError((cause) =>
+                  Effect.logError("usage model breakdown load failed", { cause }),
+                ),
+                Effect.mapError(
+                  () => new ProviderOperationError({ message: "Failed to load usage breakdown" }),
+                ),
+              )
+            : Effect.fail(new ProviderOperationError({ message: "Usage breakdown unavailable" })),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

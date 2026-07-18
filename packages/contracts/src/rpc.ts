@@ -214,6 +214,8 @@ import {
   CodexAccountUsageInput,
   CodexResetCreditConsumeInput,
   CodexResetCreditConsumeResult,
+  UsageModelBreakdown,
+  UsageModelBreakdownInput,
 } from "./usage.ts";
 
 export const WS_METHODS = {
@@ -336,6 +338,7 @@ export const WS_METHODS = {
   providerGenerateFollowUpSuggestions: "provider.generateFollowUpSuggestions",
   providerCodexAccountUsage: "provider.codexAccountUsage",
   providerConsumeCodexResetCredit: "provider.consumeCodexResetCredit",
+  usageModelBreakdown: "usage.modelBreakdown",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -420,6 +423,12 @@ export const WsProviderConsumeCodexResetCreditRpc = Rpc.make(
     error: ProviderOperationError,
   },
 );
+
+export const WsUsageModelBreakdownRpc = Rpc.make(WS_METHODS.usageModelBreakdown, {
+  payload: UsageModelBreakdownInput,
+  success: UsageModelBreakdown,
+  error: ProviderOperationError,
+});
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
@@ -1113,6 +1122,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderGenerateFollowUpSuggestionsRpc,
   WsProviderCodexAccountUsageRpc,
   WsProviderConsumeCodexResetCreditRpc,
+  WsUsageModelBreakdownRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,

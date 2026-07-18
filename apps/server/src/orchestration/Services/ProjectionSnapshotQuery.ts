@@ -20,6 +20,8 @@ import type {
   ProjectId,
   ThreadId,
   TurnId,
+  UsageModelBreakdown,
+  UsageModelBreakdownInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -224,6 +226,18 @@ export interface ProjectionSnapshotQueryShape {
   readonly listThreadProposedPlans?: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationProposedPlan>, ProjectionRepositoryError>;
+
+  /**
+   * Aggregate `usage.cost.updated` projection activities into per-model
+   * token/cost totals for a rolling window (5h or weekly). Used by the chat
+   * usage panel.
+   *
+   * Optional so existing test doubles need not implement it; the live layer
+   * always provides it.
+   */
+  readonly getUsageModelBreakdown?: (
+    input: UsageModelBreakdownInput,
+  ) => Effect.Effect<UsageModelBreakdown, ProjectionRepositoryError>;
 }
 
 /**

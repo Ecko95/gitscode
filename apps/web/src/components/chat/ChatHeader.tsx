@@ -18,6 +18,7 @@ import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { GitStatusTab } from "./GitStatusTab";
 import { OpenInPicker } from "./OpenInPicker";
+import { UsagePanelControl } from "./UsagePanel";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
@@ -224,6 +225,7 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
+        <UsagePanelControl environmentId={activeThreadEnvironmentId} />
         <Tooltip>
           <TooltipTrigger
             render={

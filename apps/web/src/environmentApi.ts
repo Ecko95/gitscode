@@ -11,6 +11,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       steerTurn: rpcClient.provider.steerTurn,
       generateFollowUpSuggestions: rpcClient.provider.generateFollowUpSuggestions,
       codexAccountUsage: rpcClient.provider.codexAccountUsage,
+      usageModelBreakdown: rpcClient.provider.usageModelBreakdown,
       consumeCodexResetCredit: rpcClient.provider.consumeCodexResetCredit,
     },
     terminal: {
