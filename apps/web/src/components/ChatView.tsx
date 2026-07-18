@@ -107,6 +107,9 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { useGitsChatPrefs } from "../hooks/useGitsChatPrefs";
+import { ChatMascot } from "./chat/ChatMascot";
+import { playKeystrokeTick } from "../lib/keystrokeTick";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -850,6 +853,14 @@ export default function ChatView(props: ChatViewProps) {
     select: (params) => parseDiffRouteSearch(params),
   });
   const { resolvedTheme } = useTheme();
+  const { prefs: gitsChatPrefs } = useGitsChatPrefs();
+  // Tracks the last composer keystroke time; read by the mascot's rAF loop so it
+  // plays while typing without re-rendering ChatView on every key.
+  const composerTypingRef = useRef(0);
+  const onComposerKeystroke = useCallback(() => {
+    composerTypingRef.current = Date.now();
+    playKeystrokeTick(gitsChatPrefs.typeSound);
+  }, [gitsChatPrefs.typeSound]);
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -4653,7 +4664,12 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <div
+      className="gits-chat flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background"
+      data-gits-theme={gitsChatPrefs.theme}
+      data-gits-accent={gitsChatPrefs.accent}
+      data-gits-reduce-glow={gitsChatPrefs.reduceGlow ? "true" : "false"}
+    >
       {/* Top bar */}
       <header
         className={cn(
@@ -4815,7 +4831,8 @@ export default function ChatView(props: ChatViewProps) {
                   onSendNow={(message) => void sendQueuedComposerMessageNow(message)}
                   onRemove={removeQueuedComposerMessageFromQueue}
                 />
-                <div className="relative z-10">
+                <div className="relative z-10" onKeyDownCapture={onComposerKeystroke}>
+                  <ChatMascot typingRef={composerTypingRef} />
                   <ChatComposer
                     composerRef={composerRef}
                     composerDraftTarget={composerDraftTarget}

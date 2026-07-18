@@ -35,6 +35,12 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
+import {
+  DEFAULT_GITS_CHAT_PREFS,
+  useGitsChatPrefs,
+  type GitsChatAccent,
+  type GitsChatTheme,
+} from "../../hooks/useGitsChatPrefs";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { canUseWebPush } from "../../lib/webPush";
@@ -98,6 +104,19 @@ const THEME_OPTIONS = [
     value: "dark",
     label: "Dark",
   },
+] as const;
+
+const GITS_CHAT_THEME_OPTIONS = [
+  { value: "oled", label: "OLED" },
+  { value: "navy", label: "Navy" },
+  { value: "graphite", label: "Graphite" },
+] as const;
+
+const GITS_CHAT_ACCENT_OPTIONS = [
+  { value: "cyan", label: "Cyan" },
+  { value: "magenta", label: "Magenta" },
+  { value: "emerald", label: "Emerald" },
+  { value: "amber", label: "Amber" },
 ] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -503,6 +522,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
+  const { prefs: gitsChatPrefs, setPref: setGitsChatPref } = useGitsChatPrefs();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const observability = useServerObservability();
@@ -644,6 +664,96 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Chat theme"
+          description="Background palette for the GITS Chat pane."
+          resetAction={
+            gitsChatPrefs.theme !== DEFAULT_GITS_CHAT_PREFS.theme ? (
+              <SettingResetButton
+                label="chat theme"
+                onClick={() => setGitsChatPref("theme", DEFAULT_GITS_CHAT_PREFS.theme)}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={gitsChatPrefs.theme}
+              onValueChange={(value) => setGitsChatPref("theme", value as GitsChatTheme)}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Chat theme">
+                <SelectValue>
+                  {GITS_CHAT_THEME_OPTIONS.find((option) => option.value === gitsChatPrefs.theme)
+                    ?.label ?? "OLED"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {GITS_CHAT_THEME_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Chat accent"
+          description="Accent color for highlights, focus rings, and the mascot glow."
+          resetAction={
+            gitsChatPrefs.accent !== DEFAULT_GITS_CHAT_PREFS.accent ? (
+              <SettingResetButton
+                label="chat accent"
+                onClick={() => setGitsChatPref("accent", DEFAULT_GITS_CHAT_PREFS.accent)}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={gitsChatPrefs.accent}
+              onValueChange={(value) => setGitsChatPref("accent", value as GitsChatAccent)}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Chat accent">
+                <SelectValue>
+                  {GITS_CHAT_ACCENT_OPTIONS.find((option) => option.value === gitsChatPrefs.accent)
+                    ?.label ?? "Cyan"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {GITS_CHAT_ACCENT_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Reduce glow"
+          description="Dim the neon glow on the mascot and accent surfaces in the chat pane."
+          control={
+            <Switch
+              checked={gitsChatPrefs.reduceGlow}
+              onCheckedChange={(checked) => setGitsChatPref("reduceGlow", Boolean(checked))}
+              aria-label="Reduce chat glow"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Typing sounds"
+          description="Play a subtle synthesized keystroke tick while typing in the composer."
+          control={
+            <Switch
+              checked={gitsChatPrefs.typeSound}
+              onCheckedChange={(checked) => setGitsChatPref("typeSound", Boolean(checked))}
+              aria-label="Typing sounds"
+            />
           }
         />
 
