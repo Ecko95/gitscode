@@ -1,7 +1,7 @@
 # p1-A-T1-s2 — cap activity payload `data` (item.completed)
 
 Task: T1 · Lane: A (after p1-A-T1-s1) · Model: sonnet-4-6/medium
-Status: pending
+Status: done
 
 ## Brief (Fable)
 
@@ -13,15 +13,21 @@ Status: pending
 
 ## Hand-back (execution agent)
 
-_(files read · files changed · diff-stat · summary ≤1 para · ponytail shortcuts · residual risks · next steps)_
+Files read: ProviderRuntimeIngestion.ts (lines 645-685), ProviderRuntimeIngestion.test.ts (lines 3188-3270).
+Files changed: ProviderRuntimeIngestion.ts (1 line: add `truncateData` call at line 663 of `item.completed` site), ProviderRuntimeIngestion.test.ts (84 lines: new test mirroring s1 pattern for `item.completed`).
+Diff-stat: 2 files changed, 84 insertions(+), 1 deletion(-).
+Summary: Applied the s1 `truncateData` helper to the `item.completed` `data` passthrough at line 663; no new helper introduced. Test follows the exact pattern of the s1 test covering both pass-through and >4 KB truncation paths.
+Ponytail shortcuts: none — one-word fix and copy-adapted test.
+Residual risks: none identified.
+Next steps: s3 (if any further sites exist) or end-gate verification.
 
 ## Guard result
 
-—
+typecheck + build: 10/10 tasks successful. Tests: 43/43 passed (ProviderRuntimeIngestion). Green.
 
 ## Merge
 
-—
+Committed as part of feat(orchestration): cap item.completed data at 4 KB [p1-A-T1-s2].
 
 ## Verify result (end gate)
 

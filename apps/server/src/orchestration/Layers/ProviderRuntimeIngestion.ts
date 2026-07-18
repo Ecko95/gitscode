@@ -660,7 +660,7 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.taskId ? { taskId: event.taskId } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.data !== undefined ? { data: truncateData(event.payload.data) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

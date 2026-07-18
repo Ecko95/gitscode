@@ -3267,4 +3267,87 @@ describe("ProviderRuntimeIngestion", () => {
     expect(typeof bigPayload?.data).toBe("string");
     expect((bigPayload?.data as string).startsWith("[truncated:")).toBe(true);
   });
+
+  it("caps item.completed data at 4 KB, passes small data unchanged", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-completed-cap-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-completed-cap"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running",
+    );
+
+    // small payload — must pass through unchanged
+    const smallData = { result: 1 };
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-completed-cap-small"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-completed-cap"),
+      itemId: asItemId("item-completed-cap-small"),
+      payload: {
+        itemType: "command_execution",
+        title: "Done small",
+        data: smallData,
+      },
+    });
+
+    // large payload (>4 KB) — must be replaced with a truncation marker string
+    const bigData = { output: "x".repeat(5000) };
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-completed-cap-big"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-completed-cap"),
+      itemId: asItemId("item-completed-cap-big"),
+      payload: {
+        itemType: "command_execution",
+        title: "Done big",
+        data: bigData,
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.some(
+          (a: ProviderRuntimeTestActivity) => a.id === "evt-completed-cap-small",
+        ) &&
+        entry.activities.some(
+          (a: ProviderRuntimeTestActivity) => a.id === "evt-completed-cap-big",
+        ),
+    );
+
+    const smallAct = thread.activities.find(
+      (a: ProviderRuntimeTestActivity) => a.id === "evt-completed-cap-small",
+    );
+    const smallPayload =
+      smallAct?.payload && typeof smallAct.payload === "object"
+        ? (smallAct.payload as Record<string, unknown>)
+        : undefined;
+    expect(smallPayload?.data).toEqual(smallData);
+
+    const bigAct = thread.activities.find(
+      (a: ProviderRuntimeTestActivity) => a.id === "evt-completed-cap-big",
+    );
+    const bigPayload =
+      bigAct?.payload && typeof bigAct.payload === "object"
+        ? (bigAct.payload as Record<string, unknown>)
+        : undefined;
+    expect(typeof bigPayload?.data).toBe("string");
+    expect((bigPayload?.data as string).startsWith("[truncated:")).toBe(true);
+  });
 });
