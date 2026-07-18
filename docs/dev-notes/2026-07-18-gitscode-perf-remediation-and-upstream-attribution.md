@@ -53,45 +53,109 @@ JS-only agent SDKs `@anthropic-ai/claude-agent-sdk`, `@opencode-ai/sdk`, `node-p
 
 ## 1a. Upstream attribution — Sonnet 5 vs `pingdotgg/t3code` `main` (compared today)
 
-> **Correction (2026-07-18, git-verified against real upstream `5ca32661`).** The original
-> "source-level copy, zero shared commits, cannot `git merge`/`rebase`" premise below is **wrong**.
-> `git merge-base HEAD refs/upstream/t3code-main` resolves to **`b3e8c033`** ("T3 Code Mobile
-> [WIP] (#2013)", 2026-05-29) — the fork and `pingdotgg/t3code` **share real history** and diverged
-> there. Since that base the fork is **+479** commits and upstream **+497**
-> (`git rev-list --left-right --count refs/upstream/t3code-main...HEAD`). So a selective
-> `git merge` / `rebase` / cherry-pick of upstream **is** mechanically possible (large, but not
-> "file-by-file only"); `f194c966` (2026-02-07) is only where the fork's _own recorded_ history
-> starts, not a clean-room boundary. Upstream `main` is now **`5ca32661`** (2026-07-17,
-> **v0.0.29-nightly**), past the `0.0.28` assumed below. **Still under re-verification by the
-> 2026-07-18 verify+port workflow** (not yet folded in): the exact `effect` version + bun-vs-pnpm
-> divergence, and every **per-task classification (T1–T12) in the table below** — those are being
-> re-checked file-by-file against `5ca32661` and may change.
+> **Correction (2026-07-18, git-verified against real upstream `5ca32661`; confirmed by a 5-agent
+> verify pass).** The original "source-level copy, zero shared commits, cannot `git merge`/`rebase`"
+> premise below is **refuted**. This **IS a genuine git fork**: root commit **`f194c966`**
+> (2026-02-07) is a real _shared ancestor_ of both sides (`git merge-base --is-ancestor` succeeds
+> against HEAD and upstream), and history is common all the way to the merge-base **`b3e8c033`**
+> ("T3 Code Mobile [WIP] (#2013)", 2026-05-29) — **~1,480 shared commits** from root to that point.
+> The two lines diverged only after 2026-05-29: fork **+479**, upstream **+497**
+> (`git rev-list --left-right --count refs/upstream/t3code-main...HEAD`).
+>
+> A `git merge`/`rebase`/cherry-pick **is** mechanically possible (a real merge-base exists;
+> `git merge-tree` runs to completion). But a _wholesale_ merge is impractical: the dry-run conflicts
+> in **~240 files** (64 in server subsystems), drowned in upstream's pnpm+Vite migration, a ~40-commit
+> error-restructuring wave, and directory renames. **Correct framing: fixes are ported file-by-file /
+> cherry-picked _by choice_, not because merge is technically blocked.** Upstream `main` is now
+> **`5ca32661`** (2026-07-17, **v0.0.29-nightly**), past the `0.0.28` compared below. Version
+> divergence **confirmed exactly**: fork `t3@0.0.24` / `effect@beta.73` / `bun.lock` vs upstream
+> `t3@0.0.28` / `effect@beta.78` / `pnpm-lock.yaml`. Concrete port targets → **§1b**.
 
 **[SUPERSEDED — see correction above]** ~~This fork is a _source-level_ copy, not a git fork — its
 history starts fresh (`f194c966`, 2026-02-07) with **zero shared commits** with `pingdotgg/t3code`.
-You cannot `git merge`/`rebase` upstream; fixes port file-by-file.~~ Divergence (versions pending
-re-verification): fork `t3@0.0.24` / `effect@beta.73` / bun vs upstream `t3@0.0.28` /
+You cannot `git merge`/`rebase` upstream; fixes port file-by-file.~~ Divergence (versions
+**confirmed** — see correction): fork `t3@0.0.24` / `effect@beta.73` / bun vs upstream `t3@0.0.28` /
 `effect@beta.78` / pnpm. `gits/ delamain/ crit/ voice/ push/ rtk/ browser-preview/ provider-auth/
 perf/` are fork-only; `cloud/ mcp/ relay/ preview/` are upstream-only (the fork is behind there
 too).
 
-> ⚠️ **Rows below are under re-verification (2026-07-18 workflow) against real upstream `5ca32661`.**
-> The "byte-identical" and "absent upstream" classifications were made against a stale May mirror and
-> have not yet been re-confirmed against current upstream. Do not treat them as settled until the
-> verify pass lands.
+> ✅ **Rows below re-verified 2026-07-18 against real upstream `5ca32661`** (5-agent pass, byte-level
+> diffs). All classifications **hold**, with two refinements folded in: **T5** is split (part
+> fork-only), and **T9**'s "readEvents unused" is corrected (it _is_ wired into a replay RPC, just
+> not the live-subscription resume path). Evidence quoted per task in the workflow journal.
 
 | Tasks                            | Classification                                                                                                              | Action                                                                                                                |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **T1, T2, T4, T7, T8, T10, T11** | **upstream-shared** — byte-identical in t3code `main` as of today                                                           | fix locally **and** worth upstreaming as PRs (not fork damage)                                                        |
-| **T5**                           | **upstream-shared** — fork already half-fixed (messages capped, activities not); upstream caps neither                      | fix locally & upstream (cap both fields)                                                                              |
-| **T3, T12**                      | **fork-specific** — live in `gits/`, absent upstream entirely                                                               | your GITS code — fix locally only                                                                                     |
-| **T9**                           | fork-only mechanism (`bufferOrTerminate`), but **upstream ships a better fix**                                              | **port** upstream's `afterSequence`+`readEvents` resume; your `OrchestrationEngine.readEvents` already exists, unused |
-| **T6**                           | **dependency bug** — identical in effect beta.73 **and** beta.78 (bump won't fix; patch required); 45/h rate fork-amplified | patch effect locally + report to the Effect project                                                                   |
+| **T1, T2, T4, T7, T8, T10, T11** | **upstream-shared** ✅ — byte-identical in t3code `5ca32661` (verified; no upstream fix exists — still fork work)            | fix locally **and** worth upstreaming as PRs (not fork damage)                                                        |
+| **T5** _(split)_                 | **mixed** ✅ — module-level unbounded read model + missing `deleted_at` filter are **upstream-shared**; the activities-uncapped-while-messages-capped defect (`ProjectionSnapshotQuery.ts:1619-1622`) is **fork-only** (introduced by fork commits) | fix both locally; upstream-PR only the shared half |
+| **T3, T12**                      | **fork-specific** ✅ — whole `gits/` automode + capacity monitor absent upstream (verified `git ls-tree`)                   | your GITS code — fix locally only                                                                                     |
+| **T9**                           | fork-only `bufferOrTerminate` 512-cap; **upstream ships the fix** (`482d56233`+`c14a5ca49`)                                 | **port** upstream's `afterSequence`+`readEvents` resume. Correction: `OrchestrationEngine.readEvents` exists **and is** wired into the `replayEvents` RPC (`ws.ts:1190`) — just **not** into the `subscribeThread`/`subscribeShell` live paths (still full-resnapshot). Fork contracts have **no** `afterSequence` field yet. → §1b |
+| **T6**                           | **dependency bug** ✅ — `MutableList.take/filter/remove` byte-identical in beta.73 **and** beta.78 (verified; upstream's `effect@beta.78.patch` touches only `McpServer`, not `MutableList` — bump won't fix). Note: fork's `effect@beta.73.patch` currently patches only `RpcClient`, so the `MutableList.take` hunk **still needs adding** | patch effect locally + report to the Effect project |
 
 **Takeaway:** the freezes/RSS (T1/T2/T4/T5) and the fan-out+isolation gap (T7/T8) are **upstream
 t3code's existing design**, not something the fork broke — upstream still has them today. Only
 **T3 and T12** (GITS automode + capacity monitor) are perf risk this fork introduced. Heavy usage
 on this box (28 h, ~30k activities, 4 GB heap cap) multiplies severity but is not the root cause.
+
+---
+
+## 1b. Upstream port targets — what to pull from `t3code` (Fable xhigh survey, 2026-07-18)
+
+Surveyed all **497** upstream commits `b3e8c033..5ca32661` (2026-05-29 → 2026-07-17); 162 touch
+fork-relevant subsystems, 42 touch `ws.ts`. ~⅓ is pure churn (pnpm+Vite migration, a ~40-commit
+`[codex] Structure errors` wave, namespace-import refactors) — **skip all of it**.
+
+**Strategy:** selective `git cherry-pick`/`git format-patch` is now viable (real merge-base) and
+**preferred** for the fixes below; a wholesale merge is not (240-file conflict set). ⚠️ Cherry-pick
+windows are **closing** — each upstream refactor wave renames the files these patches target, so
+port the high-value ones soon.
+
+### High priority
+
+| Port | Upstream | Overlaps | Why |
+| ---- | -------- | -------- | --- |
+| **T9 resume path** | `482d56233` + `c14a5ca49` | **T9** | Exactly what T9 prescribes: `subscribeThread`/`subscribeShell` resume via `input.afterSequence` → `readEvents(afterSequence, …)` + `Queue.unbounded`. Fork still has `bufferOrTerminate` 512-cap (`ws.ts:213,226,1234,1302`) and **no** `afterSequence` in contracts. Port-adapted. |
+| **Claude SDK 0.3.x system messages** | `e1ce9f850` (+`75257d64e`) | T2-adjacent | Fork runs `@anthropic-ai/claude-agent-sdk ^0.3.154`; its system-message switch lacks all three new cases → every such message hits `emitRuntimeWarning` (`ClaudeAdapter.ts:2396`) = warning flood. Direct port. |
+| **Sonnet 5 + Fable 5 models** | `9d66b104f` + `de58ec8e2` | — | Fork catalog tops out at `opus-4-8`/`sonnet-4-6`/`haiku-4-5`. ~43-line catalog+contracts diff, immediate value on a box running Claude tasks. |
+
+### Medium priority (port unless noted)
+
+- **`c49d424e3`** normalize protocol-relative remote host as `https` — fork has the byte-identical
+  pre-fix expr at `packages/shared/src/remote.ts:15`; **directly relevant to the current
+  `feat/remote-localhost-access` branch**.
+- **`300f7fd11` + `a74dfd4f3`** drop `shell:true` for ssh/tunnel/tailscale spawns — injection-surface
+  hardening on a tailnet-reachable host (**overlaps T16**).
+- **`f5849f7d7`** redacted stdout on failed ssh commands — overlaps the fork's in-flight
+  `redactSecrets.ts` work.
+- **`24f9c2a08`** cross-instance MCP OAuth locks for concurrent Codex shadow homes — the plan's whole
+  target is 3–4 concurrent tasks, which is exactly what races OAuth (**T16**).
+- **`ae39bacf0`** handle non-resumable pending-user-input — fork has the pre-fix single-string match
+  (`ProviderCommandReactor.ts:281`) → codex-variant errors leave phantom pending state / stuck approvals.
+- **`31ca9e553`** skip undecodable provider-runtime rows when listing sessions — one stale row from an
+  older build currently disables every session-enumerating consumer (real availability bug for an
+  in-place-upgraded long-lived server).
+- **`eb733c10f` + `4e3f2f04d`** `CLAUDE_CONFIG_DIR` per-instance config isolation + cwd probe (**T16**);
+  **`bcd640bf4`** ACP assistant-ID collisions after restart; **`4abf8b46c`** ignore stale shell-reducer
+  events (2-line guard); **`57f6bf7ed`** turn-fold projection guard (port-adapted).
+- **`a04c09a19`** HttpApi for Environment APIs + standardized authn/authz — **investigate**: the
+  `feat/remote-localhost-access` branch is reworking exactly this surface; coordinate rather than port blind.
+
+### Low priority
+
+`7f1cb6103` (Cursor binary `cursor-agent` vs Grok's `agent`), `3201e00ad`/`d114e2772` (worktree
+metadata during branch sync, T16), `804d44cfb` (ssh `fnm` support), `ae7e88b0e` (codex app-server
+protocol/service-tiers — port-adapted; fork's `CodexDeveloperInstructions.ts` is heavily customized),
+`49c1b6468` (multi-account GitHub/GitLab/Azure auth — **investigate**, fork restructured
+`sourceControl/`).
+
+### Skip
+
+- **No upstream fix exists** for T1/T2/T4/T5/T7/T8/T10 — re-confirmed against `5ca32661`; these stay
+  fork work (and are legitimate upstream-PR candidates afterward).
+- **T6**: upstream never patched `MutableList` — bump won't help (see §1a).
+- New upstream subsystems (`cloud/` T3 Connect, `mcp/` McpHttpServer, `relay/`) — the fork has its own
+  equivalents (`browser-preview/`, `push/`, tailnet). Revisit `mcp/` only if HTTP-MCP is wanted.
+- The pnpm+Vite migration and refactor waves — pure churn vs a bun-based fork.
 
 ---
 
