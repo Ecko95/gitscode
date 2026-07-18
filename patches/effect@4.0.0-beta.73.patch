@@ -289,3 +289,16 @@ index 811a8a8..f9cf2eb 100644
 -//# sourceMappingURL=RpcClient.js.map
 \ No newline at end of file
 +//# sourceMappingURL=RpcClient.js.map
+diff --git a/dist/MutableList.js b/dist/MutableList.js
+index 6c69ed9..d5bbd36 100644
+--- a/dist/MutableList.js
++++ b/dist/MutableList.js
+@@ -629,7 +629,7 @@
+ export const take = self => {
+-  if (!self.head) return Empty;
++  if (!self.head || self.length <= 0) return Empty;
+   const message = self.head.array[self.head.offset];
+   if (self.head.mutable) self.head.array[self.head.offset] = undefined;
+   self.head.offset++;
+   self.length--;
+   if (self.head.offset === self.head.array.length) {
