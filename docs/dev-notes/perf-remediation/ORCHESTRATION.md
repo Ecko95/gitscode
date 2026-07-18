@@ -270,3 +270,25 @@ typing, keyboard ghost typing in build mode, plan animation typing in plan mode;
 drawing, tab-hidden pause; plan-mode transcript overlay removed per operator spec. Validated 6/6
 turbo + 182/182 browser. Post-start: app 200 in 1.6 ms, idle GIF served byte-exact, NRestarts=0,
 0 errors. All PRs #172–#182 merged; open remainders are operator PRs #163/#158.
+
+## Re-measure — 2026-07-18 23:25–23:56 BST (redeploy 6 sustained window)
+
+31 one-minute `runtime.metrics.window` samples: ELD p99 max 133.8 ms / mean 34.5 ms; RSS min
+327 MB, steady ~615 MB, one transient 1.45 GB peak while six concurrent CI/agent workloads (the
+port fleet below) ran on this box; wsReconnectCount 0 across all windows; `Failed to publish` 0
+(pre-remediation baseline: 45/h); gcTotalMs mean 113 ms/min. Only WARNs: 7×
+`worktree.burial.remove-failed` for thread `502fc036` (known T16 ledger item). All §2 phase gates
+hold under sustained real load. Verdict: **KEEP**.
+
+## Redeploy 7 — 2026-07-19 00:19 BST (queue cleared + upstream ports)
+
+Deployed `92b1fe027` (gits): #163 Hermes Telegram Phase 2 (rescued — rebased over #164–#182,
+digest tick preserved via `Effect.ensuring` under the perf cheap-gate), #183 protocol-relative
+remote host → https, #184 Sonnet 5 + Fable 5 catalog (Claude default is now `claude-sonnet-5`),
+#185 Claude SDK 0.3.x system-message subtypes, #186 shared MCP OAuth locks across Codex shadow
+homes, #188 skip undecodable provider-runtime rows, plus #187 base-format fix + plan/dev-notes and
+#158 docs. CI green on every PR (the base fmt defect that red-lighted all PRs was fixed in #187).
+Deploy note: this box needs `GITS_HOSTING_REPO=/srv/gits/repos/gitscode
+GITS_HOSTING_WORKTREE=/srv/gits/runtime/gits-hosted` — the script defaults point at the
+`~/dev/projects` layout. Post-start: HTTP 200 in ~7 s, NRestarts=0, first window ELD p99 37 ms /
+RSS 389 MB / 0 reconnects / 0 errors.
