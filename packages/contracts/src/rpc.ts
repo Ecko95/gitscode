@@ -152,6 +152,15 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderAuthError,
+  ProviderAuthLogoutInput,
+  ProviderAuthSession,
+  ProviderAuthSessionInput,
+  ProviderAuthStartInput,
+  ProviderAuthStartResult,
+  ProviderAuthSubmitCodeInput,
+} from "./providerAuth.ts";
+import {
   FollowUpSuggestionsInput,
   FollowUpSuggestionsResult,
   ProviderOperationError,
@@ -209,6 +218,7 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import { GitsPortsError, PortsListInput, PortsListResult } from "./ports.ts";
 import {
   CodexAccountUsage,
   CodexAccountUsageInput,
@@ -263,6 +273,7 @@ export const WS_METHODS = {
   gitsGetCockpit: "gits.cockpit.get",
   gitsDevCommandsList: "gits.devCommands.list",
   gitsDevCommandsInit: "gits.devCommands.init",
+  gitsPortsList: "gits.ports.list",
   gitsNotesList: "gits.notes.list",
   gitsNotesRead: "gits.notes.read",
   gitsNotesCreate: "gits.notes.create",
@@ -336,6 +347,11 @@ export const WS_METHODS = {
   providerGenerateFollowUpSuggestions: "provider.generateFollowUpSuggestions",
   providerCodexAccountUsage: "provider.codexAccountUsage",
   providerConsumeCodexResetCredit: "provider.consumeCodexResetCredit",
+  providerAuthStart: "provider.auth.start",
+  providerAuthGet: "provider.auth.get",
+  providerAuthCancel: "provider.auth.cancel",
+  providerAuthSubmitCode: "provider.auth.submitCode",
+  providerAuthLogout: "provider.auth.logout",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -420,6 +436,36 @@ export const WsProviderConsumeCodexResetCreditRpc = Rpc.make(
     error: ProviderOperationError,
   },
 );
+
+export const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
+  payload: ProviderAuthStartInput,
+  success: ProviderAuthStartResult,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthGetRpc = Rpc.make(WS_METHODS.providerAuthGet, {
+  payload: ProviderAuthSessionInput,
+  success: ProviderAuthSession,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
+  payload: ProviderAuthSessionInput,
+  success: Schema.Void,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthSubmitCodeRpc = Rpc.make(WS_METHODS.providerAuthSubmitCode, {
+  payload: ProviderAuthSubmitCodeInput,
+  success: ProviderAuthSession,
+  error: ProviderAuthError,
+});
+
+export const WsProviderAuthLogoutRpc = Rpc.make(WS_METHODS.providerAuthLogout, {
+  payload: ProviderAuthLogoutInput,
+  success: Schema.Void,
+  error: ProviderAuthError,
+});
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
@@ -688,6 +734,12 @@ export const WsGitsDevCommandsInitRpc = Rpc.make(WS_METHODS.gitsDevCommandsInit,
   payload: GitsDevCommandInitInput,
   success: GitsDevCommandListResult,
   error: GitsDevCommandError,
+});
+
+export const WsGitsPortsListRpc = Rpc.make(WS_METHODS.gitsPortsList, {
+  payload: PortsListInput,
+  success: PortsListResult,
+  error: GitsPortsError,
 });
 
 export const WsGitsNotesListRpc = Rpc.make(WS_METHODS.gitsNotesList, {
@@ -1113,6 +1165,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderGenerateFollowUpSuggestionsRpc,
   WsProviderCodexAccountUsageRpc,
   WsProviderConsumeCodexResetCreditRpc,
+  WsProviderAuthStartRpc,
+  WsProviderAuthGetRpc,
+  WsProviderAuthCancelRpc,
+  WsProviderAuthSubmitCodeRpc,
+  WsProviderAuthLogoutRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
@@ -1153,6 +1210,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsGetCockpitRpc,
   WsGitsDevCommandsListRpc,
   WsGitsDevCommandsInitRpc,
+  WsGitsPortsListRpc,
   WsGitsNotesListRpc,
   WsGitsNotesReadRpc,
   WsGitsNotesCreateRpc,

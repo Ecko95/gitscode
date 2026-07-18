@@ -137,7 +137,7 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           title="API key"
-          description="Stored server-side in the secret store, per provider. It is never written to disk in plain text or sent back to the browser."
+          description="Stored in a server-side file protected by filesystem permissions, per provider. It is not sent back to the browser."
           status={
             apiKeyRedacted ? (
               <Badge variant="success" size="sm">

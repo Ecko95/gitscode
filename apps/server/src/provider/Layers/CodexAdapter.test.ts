@@ -34,6 +34,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -132,6 +133,11 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
 
+  public readonly listMcpServersImpl = vi.fn(
+    (): Promise<ReadonlyArray<EffectCodexSchema.V2ListMcpServerStatusResponse__McpServerStatus>> =>
+      Promise.resolve([]),
+  );
+
   readonly options: CodexSessionRuntimeOptions;
 
   constructor(options: CodexSessionRuntimeOptions) {
@@ -165,6 +171,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
   }
+
+  listMcpServers = Effect.promise(() => this.listMcpServersImpl());
 
   respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
     return Effect.promise(() => this.respondToRequestImpl(requestId, decision));
@@ -369,6 +377,46 @@ const sessionErrorLayer = it.layer(
 );
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+  it.effect("projects only redacted MCP runtime status from an active session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      assert.deepStrictEqual(yield* adapter.listCodexMcpServers!(), []);
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-mcp-status"),
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+      runtime.listMcpServersImpl.mockResolvedValueOnce([
+        {
+          name: "supabase",
+          authStatus: "notLoggedIn",
+          tools: {
+            query: {
+              name: "query",
+              inputSchema: {},
+              description: "must not be projected",
+            },
+          },
+          resources: [{ name: "schema", uri: "secret://resource" }],
+          resourceTemplates: [{ name: "table", uriTemplate: "secret://{table}" }],
+        },
+      ]);
+
+      const statuses = yield* adapter.listCodexMcpServers!();
+      assert.deepStrictEqual(statuses, [
+        {
+          name: "supabase",
+          authStatus: "notLoggedIn",
+          tools: ["query"],
+          resourceCount: 2,
+        },
+      ]);
+    }),
+  );
+
   it.effect("advertises and routes native active-turn steering", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -465,9 +513,13 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     const customLayer = Layer.effect(
       CodexAdapter,
       Effect.gen(function* () {
-        const codexConfig = decodeCodexSettings({});
+        const codexConfig = decodeCodexSettings({
+          binaryPath: "/opt/codex",
+          homePath: "/tmp/codex-personal",
+        });
         return yield* makeCodexAdapter(codexConfig, {
           instanceId: customInstanceId,
+          environment: { HOME: "/home/test", PATH: "/bin" },
           makeRuntime: customRuntimeFactory.factory,
         });
       }),
@@ -480,6 +532,14 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
 
     return Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
+      assert.deepStrictEqual(adapter.getCodexMcpAuthLaunchConfig?.(), {
+        binaryPath: "/opt/codex",
+        credentialHome: "/tmp/codex-personal",
+        homePath: "/tmp/codex-personal",
+        environment: { HOME: "/home/test", PATH: "/bin" },
+      });
+      assert.deepStrictEqual(adapter.providerAuth?.methods, ["device-code"]);
+      assert.equal(adapter.providerAuth?.credentialHome, "/tmp/codex-personal");
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("codex"),
         threadId: asThreadId("sess-custom-instance"),

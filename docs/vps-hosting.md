@@ -19,6 +19,8 @@ tailscale serve --https=8443 → http://127.0.0.1:13773
 tailnet (https://<machine>.ts.net:8443)   — tailnet only, no Funnel
 ```
 
+This Serve mapping is a **Tailnet/private endpoint** for the GITS cockpit only. Keep project app ports on loopback. Open them as **In GITS (VPS browser)**, or as **Local via SSH (this computer only)** from a Desktop SSH environment. Native preview endpoints remain unavailable pending separate origin-isolation approval; do not add same-host Serve mappings for app ports, and never treat them as **Public**.
+
 The key difference from WSL: `tailscale` runs natively on the same Linux host as the
 service, so `configure-tailscale-serve.sh` can wire the ingress directly without any
 Windows-side step.

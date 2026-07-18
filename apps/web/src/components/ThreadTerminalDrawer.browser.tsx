@@ -169,6 +169,7 @@ vi.mock("@xterm/xterm", () => ({
 }));
 
 vi.mock("~/environmentApi", () => ({
+  readEnvironmentBrowserPreviewApi: vi.fn(() => undefined),
   readEnvironmentApi: readEnvironmentApiMock,
 }));
 
@@ -176,6 +177,7 @@ vi.mock("~/localApi", () => ({
   ensureLocalApi: vi.fn(() => {
     throw new Error("ensureLocalApi not implemented in browser test");
   }),
+  openDesktopSshUrl: vi.fn(),
   readLocalApi: readLocalApiMock,
 }));
 
@@ -306,7 +308,6 @@ describe("TerminalViewport", () => {
 
   it("does not create a terminal when APIs are unavailable", async () => {
     readEnvironmentApiMock.mockReturnValueOnce(undefined);
-    readLocalApiMock.mockReturnValueOnce(undefined);
 
     const mounted = await mountTerminalViewport({
       threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
@@ -314,8 +315,9 @@ describe("TerminalViewport", () => {
 
     try {
       await vi.waitFor(() => {
-        expect(terminalConstructorSpy).not.toHaveBeenCalled();
+        expect(readEnvironmentApiMock).toHaveBeenCalled();
       });
+      expect(terminalConstructorSpy).not.toHaveBeenCalled();
     } finally {
       await mounted.cleanup();
     }

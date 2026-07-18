@@ -37,6 +37,7 @@ import {
   getAppBranding,
   getLocalEnvironmentBootstrap,
   openExternal,
+  openRemoteSshUrl,
   pickFolder,
   setTheme,
   showContextMenu,
@@ -75,6 +76,7 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(setTheme);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
+  yield* ipc.handle(openRemoteSshUrl);
 
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

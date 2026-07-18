@@ -10,13 +10,14 @@ import type {
   BrowserPreviewStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { isLoopbackHostname } from "@t3tools/shared/environmentUrl";
 import { sessionPortForSessionId } from "../provider/sessionPort.ts";
 
 const exec_file = promisify(execFile);
 const TICKET_TTL_MS = 2 * 60 * 1000;
 const SESSION_PREFIX = "gits-";
 const CONTROL_COMMANDS: Record<
-  Exclude<BrowserPreviewAction, "navigate" | "instruct" | "connect-localhost" | "console">,
+  Exclude<BrowserPreviewAction, "navigate" | "instruct" | "console">,
   string
 > = {
   pause: "pause",
@@ -42,6 +43,16 @@ interface BrowserPreviewTicket {
   readonly thread_id: ThreadId;
   readonly viewer_url: URL;
   readonly expires_at_ms: number;
+}
+
+type BrowserPreviewRun = (
+  sessionName: string,
+  command: string,
+  commandArgs?: readonly string[],
+) => Promise<Record<string, unknown>>;
+
+export interface BrowserPreviewManagerOptions {
+  readonly run?: BrowserPreviewRun;
 }
 
 function resolve_browser_path(): string | undefined {
@@ -74,31 +85,21 @@ function parse_json_output(output: string): Record<string, unknown> {
   return JSON.parse(output.slice(start)) as Record<string, unknown>;
 }
 
-export function parse_localhost_dev_ports(output: string, preferred_port: number): number[] {
-  const ports = output
-    .split("\n")
-    .filter((line) => /(?:node|bun|deno|python|ruby|php|java)/i.test(line))
-    .flatMap((line) => {
-      const match = line.match(/:(\d+)\s/);
-      return match ? [Number(match[1])] : [];
-    })
-    .filter((port) => port > 0 && port !== 13_773);
-  return [...new Set(ports)].sort((left, right) => {
-    if (left === preferred_port) return -1;
-    if (right === preferred_port) return 1;
-    return left - right;
-  });
-}
-
 export class BrowserPreviewManager {
   readonly #sessions = new Map<ThreadId, BrowserPreviewSession>();
   readonly #tickets = new Map<string, BrowserPreviewTicket>();
+  readonly #runOverride: BrowserPreviewRun | undefined;
+
+  constructor(options: BrowserPreviewManagerOptions = {}) {
+    this.#runOverride = options.run;
+  }
 
   async #run(
     session_name: string,
     command: string,
     command_args: readonly string[] = [],
   ): Promise<Record<string, unknown>> {
+    if (this.#runOverride) return this.#runOverride(session_name, command, command_args);
     const browser_path = resolve_browser_path();
     const args = ["--session", session_name];
     if (browser_path) {
@@ -147,9 +148,15 @@ export class BrowserPreviewManager {
             : "Viewer URL was not returned.",
         );
       }
-      session.viewer_url = new URL(result.url);
-      session.preview_ticket = null;
-      session.preview_ticket_expires_at_ms = null;
+      const viewer_url = new URL(result.url);
+      if (
+        (viewer_url.protocol !== "http:" && viewer_url.protocol !== "https:") ||
+        !isLoopbackHostname(viewer_url.hostname)
+      ) {
+        throw new Error("Browser viewer URL must use HTTP(S) loopback.");
+      }
+      this.revokeThread(thread_id);
+      session.viewer_url = viewer_url;
       session.status = "live";
       session.message = null;
       return this.#issue_status(session);
@@ -207,13 +214,6 @@ export class BrowserPreviewManager {
         throw new Error("A browser instruction is required.");
       }
       await this.#run(session.session_name, "act-instruction", [browser_instruction]);
-    } else if (action === "connect-localhost") {
-      const { stdout } = await exec_file("ss", ["-ltnpH"]);
-      const [port] = parse_localhost_dev_ports(stdout, sessionPortForSessionId(thread_id));
-      if (!port) {
-        throw new Error("No local dev server is listening yet.");
-      }
-      await this.#run(session.session_name, "navigate", [`http://localhost:${port}/`]);
     } else if (action === "console") {
       const result = await this.#run(session.session_name, "console");
       session.console_entries = Array.isArray(result.entries)
@@ -236,9 +236,34 @@ export class BrowserPreviewManager {
 
   async stop(thread_id: ThreadId): Promise<void> {
     const session = this.#sessions.get(thread_id);
+    this.revokeThread(thread_id);
     if (!session) return;
     this.#sessions.delete(thread_id);
     await this.#run(session.session_name, "daemon", ["stop"]).catch(() => undefined);
+  }
+
+  async stopAll(): Promise<void> {
+    await Promise.all([...this.#sessions.keys()].map((thread_id) => this.stop(thread_id)));
+    this.revokeAll();
+  }
+
+  revokeThread(thread_id: ThreadId): void {
+    for (const [ticket, entry] of this.#tickets) {
+      if (entry.thread_id === thread_id) this.#tickets.delete(ticket);
+    }
+    const session = this.#sessions.get(thread_id);
+    if (session) {
+      session.preview_ticket = null;
+      session.preview_ticket_expires_at_ms = null;
+    }
+  }
+
+  revokeAll(): void {
+    this.#tickets.clear();
+    for (const session of this.#sessions.values()) {
+      session.preview_ticket = null;
+      session.preview_ticket_expires_at_ms = null;
+    }
   }
 
   #issue_status(session: BrowserPreviewSession): BrowserPreviewStatus {
@@ -252,6 +277,7 @@ export class BrowserPreviewManager {
       ? session.preview_ticket_expires_at_ms!
       : Date.now() + TICKET_TTL_MS;
     if (!can_reuse_ticket) {
+      if (session.preview_ticket) this.#tickets.delete(session.preview_ticket);
       session.preview_ticket = ticket;
       session.preview_ticket_expires_at_ms = expires_at_ms;
       this.#tickets.set(ticket, {
@@ -260,8 +286,7 @@ export class BrowserPreviewManager {
         expires_at_ms,
       });
     }
-    const preview_params = new URLSearchParams(session.viewer_url.searchParams);
-    preview_params.set("ticket", ticket);
+    const preview_params = new URLSearchParams({ ticket });
     return {
       available: true,
       status: session.status,
