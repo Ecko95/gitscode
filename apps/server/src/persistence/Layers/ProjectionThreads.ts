@@ -165,6 +165,110 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
+  // Recomputes the four shell-summary columns for one thread from SQL
+  // aggregates instead of materializing every message/activity/plan/approval
+  // row per event. The pending-user-input aggregate mirrors
+  // derivePendingUserInputCountFromActivities exactly: for each requestId, only
+  // state-changing activities participate (requested / resolved / stale-or-
+  // unknown failed), and the request is open iff its latest such activity is a
+  // request. The has-actionable-proposed-plan aggregate mirrors
+  // deriveHasActionableProposedPlan (latest plan for latest_turn_id, else latest
+  // plan overall, actionable iff not implemented). Backfilled identically by
+  // migration 024.
+  const refreshProjectionThreadShellSummaryRow = SqlSchema.void({
+    Request: GetProjectionThreadInput,
+    execute: ({ threadId }) =>
+      sql`
+        UPDATE projection_threads
+        SET
+          latest_user_message_at = (
+            SELECT MAX(message.created_at)
+            FROM projection_thread_messages AS message
+            WHERE message.thread_id = projection_threads.thread_id
+              AND message.role = 'user'
+          ),
+          pending_approval_count = COALESCE((
+            SELECT COUNT(*)
+            FROM projection_pending_approvals
+            WHERE projection_pending_approvals.thread_id = projection_threads.thread_id
+              AND projection_pending_approvals.status = 'pending'
+          ), 0),
+          pending_user_input_count = COALESCE((
+            WITH latest_user_input_states AS (
+              SELECT latest.kind
+              FROM (
+                SELECT
+                  activity.kind AS kind,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY json_extract(activity.payload_json, '$.requestId')
+                    ORDER BY activity.created_at DESC, activity.activity_id DESC
+                  ) AS row_number
+                FROM projection_thread_activities AS activity
+                WHERE activity.thread_id = projection_threads.thread_id
+                  AND json_extract(activity.payload_json, '$.requestId') IS NOT NULL
+                  AND (
+                    activity.kind IN ('user-input.requested', 'user-input.resolved')
+                    OR (
+                      activity.kind = 'provider.user-input.respond.failed'
+                      AND (
+                        lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
+                          LIKE '%stale pending user-input request%'
+                        OR lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
+                          LIKE '%unknown pending user-input request%'
+                      )
+                    )
+                  )
+              ) AS latest
+              WHERE latest.row_number = 1
+            )
+            SELECT COUNT(*)
+            FROM latest_user_input_states
+            WHERE latest_user_input_states.kind = 'user-input.requested'
+          ), 0),
+          has_actionable_proposed_plan = COALESCE((
+            SELECT CASE
+              WHEN projection_threads.latest_turn_id IS NOT NULL
+                AND EXISTS (
+                  SELECT 1
+                  FROM projection_thread_proposed_plans AS latest_turn_plan_exists
+                  WHERE latest_turn_plan_exists.thread_id = projection_threads.thread_id
+                    AND latest_turn_plan_exists.turn_id = projection_threads.latest_turn_id
+                )
+                THEN CASE
+                  WHEN (
+                    SELECT latest_turn_plan.implemented_at
+                    FROM projection_thread_proposed_plans AS latest_turn_plan
+                    WHERE latest_turn_plan.thread_id = projection_threads.thread_id
+                      AND latest_turn_plan.turn_id = projection_threads.latest_turn_id
+                    ORDER BY latest_turn_plan.updated_at DESC, latest_turn_plan.plan_id DESC
+                    LIMIT 1
+                  ) IS NULL
+                    THEN 1
+                    ELSE 0
+                  END
+              WHEN EXISTS (
+                SELECT 1
+                FROM projection_thread_proposed_plans AS any_plan
+                WHERE any_plan.thread_id = projection_threads.thread_id
+              )
+                THEN CASE
+                  WHEN (
+                    SELECT latest_plan.implemented_at
+                    FROM projection_thread_proposed_plans AS latest_plan
+                    WHERE latest_plan.thread_id = projection_threads.thread_id
+                    ORDER BY latest_plan.updated_at DESC, latest_plan.plan_id DESC
+                    LIMIT 1
+                  ) IS NULL
+                    THEN 1
+                    ELSE 0
+                  END
+              ELSE 0
+            END
+          ), 0)
+        WHERE projection_threads.thread_id = ${threadId}
+      `,
+  });
+
   const upsert: ProjectionThreadRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.upsert:query")),
@@ -185,11 +289,19 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.deleteById:query")),
     );
 
+  const refreshShellSummary: ProjectionThreadRepositoryShape["refreshShellSummary"] = (input) =>
+    refreshProjectionThreadShellSummaryRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadRepository.refreshShellSummary:query"),
+      ),
+    );
+
   return {
     upsert,
     getById,
     listByProjectId,
     deleteById,
+    refreshShellSummary,
   } satisfies ProjectionThreadRepositoryShape;
 });
 

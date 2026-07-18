@@ -6,6 +6,7 @@ import {
   EventId,
   MessageId,
   type OrchestrationMessage,
+  OrchestrationProposedPlanId,
   type OrchestrationReadModel,
   ProjectId,
   ThreadId,
@@ -30,9 +31,13 @@ import { OrchestrationEventStore } from "../../persistence/Services/Orchestratio
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import {
+  derivePendingUserInputCountFromActivities,
+  deriveHasActionableProposedPlan,
   ORCHESTRATION_PROJECTOR_NAMES,
   OrchestrationProjectionPipelineLive,
 } from "./ProjectionPipeline.ts";
+import type { ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import type { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
@@ -2287,6 +2292,399 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.deepEqual(threadRows, [{ pendingApprovalCount: 1 }]);
     }),
+  );
+
+  it.effect(
+    "shell-summary SQL aggregates match the JS derive oracle on a seeded thread",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-shell-eq");
+        const projectId = ProjectId.make("project-shell-eq");
+        const turnId = TurnId.make("turn-1");
+        const at = (seconds: number) =>
+          `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+
+        let sequence = 0;
+        const appendAndProject = (
+          event: Omit<Parameters<typeof eventStore.append>[0], "eventId" | "commandId" | "correlationId"> & {
+            readonly occurredAt: string;
+          },
+        ) => {
+          sequence += 1;
+          const suffix = `shell-eq-${sequence}`;
+          return eventStore
+            .append({
+              ...event,
+              eventId: EventId.make(`evt-${suffix}`),
+              commandId: CommandId.make(`cmd-${suffix}`),
+              correlationId: CorrelationId.make(`cmd-${suffix}`),
+            } as Parameters<typeof eventStore.append>[0])
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+        };
+
+        const activityAppended = (
+          occurredAt: string,
+          activity: {
+            readonly id: string;
+            readonly tone: string;
+            readonly kind: string;
+            readonly summary: string;
+            readonly payload: Record<string, unknown>;
+          },
+        ) =>
+          appendAndProject({
+            type: "thread.activity-appended",
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            causationEventId: null,
+            metadata: {},
+            payload: {
+              threadId,
+              activity: {
+                id: EventId.make(activity.id),
+                tone: activity.tone,
+                kind: activity.kind,
+                summary: activity.summary,
+                payload: activity.payload,
+                turnId: null,
+                createdAt: occurredAt,
+              },
+            },
+          } as unknown as Parameters<typeof appendAndProject>[0]);
+
+        const message = (occurredAt: string, id: string, role: string) =>
+          appendAndProject({
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            causationEventId: null,
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(id),
+              role,
+              text: "body",
+              turnId: null,
+              streaming: false,
+              createdAt: occurredAt,
+              updatedAt: occurredAt,
+            },
+          } as unknown as Parameters<typeof appendAndProject>[0]);
+
+        const proposedPlan = (
+          occurredAt: string,
+          plan: {
+            readonly id: string;
+            readonly turnId: string;
+            readonly implementedAt: string | null;
+            readonly updatedAt: string;
+          },
+        ) =>
+          appendAndProject({
+            type: "thread.proposed-plan-upserted",
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            causationEventId: null,
+            metadata: {},
+            payload: {
+              threadId,
+              proposedPlan: {
+                id: OrchestrationProposedPlanId.make(plan.id),
+                turnId: TurnId.make(plan.turnId),
+                planMarkdown: "Plan body",
+                implementedAt: plan.implementedAt,
+                implementationThreadId: null,
+                createdAt: occurredAt,
+                updatedAt: plan.updatedAt,
+              },
+            },
+          } as unknown as Parameters<typeof appendAndProject>[0]);
+
+        yield* appendAndProject({
+          type: "project.created",
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: at(0),
+          causationEventId: null,
+          metadata: {},
+          payload: {
+            projectId,
+            title: "Project Shell Eq",
+            workspaceRoot: "/tmp/project-shell-eq",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: at(0),
+            updatedAt: at(0),
+          },
+        } as unknown as Parameters<typeof appendAndProject>[0]);
+
+        yield* appendAndProject({
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: at(1),
+          causationEventId: null,
+          metadata: {},
+          payload: {
+            threadId,
+            projectId,
+            title: "Thread Shell Eq",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: at(1),
+            updatedAt: at(1),
+          },
+        } as unknown as Parameters<typeof appendAndProject>[0]);
+
+        // Messages: latest user message wins over a later assistant message.
+        yield* message(at(2), "message-u1", "user");
+        yield* message(at(3), "message-a1", "assistant");
+        yield* message(at(4), "message-u2", "user");
+
+        // User-input: ui-open stays open; ui-resolved is resolved; ui-stale is
+        // closed by a stale failure; ui-openfail stays open after a non-stale
+        // failure (ignored). Expected open count = 2.
+        yield* activityAppended(at(5), {
+          id: "act-ui-open",
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: { requestId: "ui-open", questions: [] },
+        });
+        yield* activityAppended(at(6), {
+          id: "act-ui-resolved-req",
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: { requestId: "ui-resolved", questions: [] },
+        });
+        yield* activityAppended(at(7), {
+          id: "act-ui-resolved-res",
+          tone: "info",
+          kind: "user-input.resolved",
+          summary: "User input submitted",
+          payload: { requestId: "ui-resolved", answers: [] },
+        });
+        yield* activityAppended(at(8), {
+          id: "act-ui-stale-req",
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: { requestId: "ui-stale", questions: [] },
+        });
+        yield* activityAppended(at(9), {
+          id: "act-ui-stale-fail",
+          tone: "error",
+          kind: "provider.user-input.respond.failed",
+          summary: "Provider user-input response failed",
+          payload: { requestId: "ui-stale", detail: "Stale pending user-input request: ui-stale" },
+        });
+        yield* activityAppended(at(10), {
+          id: "act-ui-openfail-req",
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: { requestId: "ui-openfail", questions: [] },
+        });
+        yield* activityAppended(at(11), {
+          id: "act-ui-openfail-fail",
+          tone: "error",
+          kind: "provider.user-input.respond.failed",
+          summary: "Provider user-input response failed",
+          payload: { requestId: "ui-openfail", detail: "Provider timed out while responding" },
+        });
+
+        // Approvals: appr-pending stays pending; appr-resolved is resolved.
+        // Expected pending count = 1.
+        yield* activityAppended(at(12), {
+          id: "act-appr-pending",
+          tone: "approval",
+          kind: "approval.requested",
+          summary: "Command approval requested",
+          payload: { requestId: "appr-pending", requestKind: "command" },
+        });
+        yield* activityAppended(at(13), {
+          id: "act-appr-resolved",
+          tone: "approval",
+          kind: "approval.requested",
+          summary: "Command approval requested",
+          payload: { requestId: "appr-resolved", requestKind: "command" },
+        });
+        yield* appendAndProject({
+          type: "thread.approval-response-requested",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: at(14),
+          causationEventId: null,
+          metadata: {},
+          payload: {
+            threadId,
+            requestId: "appr-resolved",
+            decision: "accept",
+            createdAt: at(14),
+          },
+        } as unknown as Parameters<typeof appendAndProject>[0]);
+
+        // Latest turn = turn-1. The newest plan overall (plan-other) is
+        // implemented and on a different turn; the latest-turn plan
+        // (plan-current) is not implemented → actionable.
+        yield* appendAndProject({
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: at(15),
+          causationEventId: null,
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: at(15),
+            },
+          },
+        } as unknown as Parameters<typeof appendAndProject>[0]);
+        yield* proposedPlan(at(16), {
+          id: "plan-other",
+          turnId: "turn-0",
+          implementedAt: at(16),
+          updatedAt: at(16),
+        });
+        yield* proposedPlan(at(17), {
+          id: "plan-current",
+          turnId: "turn-1",
+          implementedAt: null,
+          updatedAt: at(15),
+        });
+
+        // --- New path: read the summary columns written by SQL aggregates.
+        const summaryRows = yield* sql<{
+          readonly latestUserMessageAt: string | null;
+          readonly pendingApprovalCount: number;
+          readonly pendingUserInputCount: number;
+          readonly hasActionableProposedPlan: number;
+        }>`
+          SELECT
+            latest_user_message_at AS "latestUserMessageAt",
+            pending_approval_count AS "pendingApprovalCount",
+            pending_user_input_count AS "pendingUserInputCount",
+            has_actionable_proposed_plan AS "hasActionableProposedPlan"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+
+        // --- Old path: recompute the same summary from raw rows via the
+        // retained JS derive oracle.
+        const latestTurnRows = yield* sql<{ readonly latestTurnId: string | null }>`
+          SELECT latest_turn_id AS "latestTurnId"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+        const latestTurnId = latestTurnRows[0]?.latestTurnId ?? null;
+
+        const messageRows = yield* sql<{
+          readonly role: string;
+          readonly createdAt: string;
+        }>`
+          SELECT role, created_at AS "createdAt"
+          FROM projection_thread_messages
+          WHERE thread_id = ${threadId}
+        `;
+        let expectedLatestUserMessageAt: string | null = null;
+        for (const row of messageRows) {
+          if (
+            row.role === "user" &&
+            (expectedLatestUserMessageAt === null || row.createdAt > expectedLatestUserMessageAt)
+          ) {
+            expectedLatestUserMessageAt = row.createdAt;
+          }
+        }
+
+        const approvalRows = yield* sql<{ readonly status: string }>`
+          SELECT status
+          FROM projection_pending_approvals
+          WHERE thread_id = ${threadId}
+        `;
+        const expectedPendingApprovalCount = approvalRows.filter(
+          (row) => row.status === "pending",
+        ).length;
+
+        const activityRows = yield* sql<{
+          readonly activityId: string;
+          readonly kind: string;
+          readonly createdAt: string;
+          readonly payloadJson: string;
+        }>`
+          SELECT
+            activity_id AS "activityId",
+            kind,
+            created_at AS "createdAt",
+            payload_json AS "payloadJson"
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+        `;
+        const oracleActivities = activityRows.map((row) => ({
+          activityId: row.activityId,
+          kind: row.kind,
+          createdAt: row.createdAt,
+          payload: JSON.parse(row.payloadJson) as unknown,
+        })) as unknown as ReadonlyArray<ProjectionThreadActivity>;
+
+        const planRows = yield* sql<{
+          readonly planId: string;
+          readonly turnId: string | null;
+          readonly updatedAt: string;
+          readonly implementedAt: string | null;
+        }>`
+          SELECT
+            plan_id AS "planId",
+            turn_id AS "turnId",
+            updated_at AS "updatedAt",
+            implemented_at AS "implementedAt"
+          FROM projection_thread_proposed_plans
+          WHERE thread_id = ${threadId}
+        `;
+        const oraclePlans = planRows as unknown as ReadonlyArray<ProjectionThreadProposedPlan>;
+
+        const expected = {
+          latestUserMessageAt: expectedLatestUserMessageAt,
+          pendingApprovalCount: expectedPendingApprovalCount,
+          pendingUserInputCount: derivePendingUserInputCountFromActivities(oracleActivities),
+          hasActionableProposedPlan: deriveHasActionableProposedPlan({
+            latestTurnId,
+            proposedPlans: oraclePlans,
+          })
+            ? 1
+            : 0,
+        };
+
+        // Guard against a vacuous all-zero equivalence: the seed exercises
+        // every field.
+        assert.deepEqual(expected, {
+          latestUserMessageAt: at(4),
+          pendingApprovalCount: 1,
+          pendingUserInputCount: 2,
+          hasActionableProposedPlan: 1,
+        });
+
+        assert.deepEqual(summaryRows, [expected]);
+      }),
   );
 
   it.effect("does not fallback-retain messages whose turnId is removed by revert", () =>

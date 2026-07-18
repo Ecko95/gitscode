@@ -95,6 +95,18 @@ export interface ProjectionThreadRepositoryShape {
   readonly deleteById: (
     input: DeleteProjectionThreadInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * Recompute the shell-summary columns (`latestUserMessageAt`,
+   * `pendingApprovalCount`, `pendingUserInputCount`, `hasActionableProposedPlan`)
+   * for a single thread directly from SQL aggregates over the message,
+   * pending-approval, activity, and proposed-plan projections.
+   *
+   * No-ops when the thread row is absent. Leaves all other columns untouched.
+   */
+  readonly refreshShellSummary: (
+    input: GetProjectionThreadInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
 /**
