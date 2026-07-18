@@ -255,3 +255,10 @@ JetBrains Mono self-hosted, `gits-mascot-loop.gif` shipped (7-frame repair of th
 transfer; full original is a drop-in at `apps/web/dist/gits-mascot-loop.gif`, no rebuild needed).
 Validated 6/6 turbo + 182/182 browser. Post-start: HTTP 200 in 1.8 ms, GIF served 200 (171,486 B),
 NRestarts=0, 0 errors.
+
+## Redeploy 5 — 2026-07-18 23:2x BST (brand assets)
+
+`005f7f262` (#181): full 97-frame typing mascot (Taildrop transfer; frames decoded at 2x render
+size), white animated splash + GITS wordmark, plan-mode overlay animation. Validated 182/182
+browser. Post-start: app 200 in 1.8 ms, all three GIFs served byte-exact, NRestarts=0, 0 errors.
+Spare originals parked in /home/ops/design-assets/.
