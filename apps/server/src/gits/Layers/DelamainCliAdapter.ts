@@ -537,11 +537,9 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
         Effect.map((value) => normalizeWorkflowStatus(input.workflowId, value)),
       ),
     workflowKill: (input) =>
-      runJson<unknown>(processRunner, "workflow.kill", [
-        "workflow",
-        "kill",
-        input.workflowId,
-      ]).pipe(Effect.map((value) => normalizeWorkflowKill(input.workflowId, value))),
+      runJson<unknown>(processRunner, "workflow.kill", ["workflow", "kill", input.workflowId]).pipe(
+        Effect.map((value) => normalizeWorkflowKill(input.workflowId, value)),
+      ),
   };
 
   return adapter;
