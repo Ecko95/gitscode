@@ -120,6 +120,7 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 // Lazy-loaded: both sidebars only render when the user opens them, so they
 // don't need to sit in the eager ChatView chunk.
 const DelamainSidebar = lazy(() => import("./DelamainSidebar"));
+const DelamainThreadControls = lazy(() => import("./DelamainThreadControls"));
 const PlanSidebar = lazy(() => import("./PlanSidebar"));
 const VisualPlanPanel = lazy(() => import("./VisualPlanPanel"));
 // Lazy-loaded: pulls xterm.js (+addons) and the terminal CSS into a separate
@@ -1509,6 +1510,13 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatch !== null && versionMismatchDismissKey !== null && !versionMismatchDismissed;
   const hasMultipleRegisteredEnvironments = Object.keys(savedEnvironmentRegistry).length > 0;
   const phase = derivePhase(activeThread?.session ?? null);
+  // Delamain-mirrored threads carry branch "delamain/wf-<workflowId>" (t3Bridge marker).
+  // Their session is null, so the composer send path is a no-op — replace it with controls.
+  const delamainWorkflowId =
+    activeThread?.branch?.startsWith("delamain/wf-") === true
+      ? activeThread.branch.slice("delamain/wf-".length)
+      : null;
+  const isDelamainMirror = delamainWorkflowId !== null && delamainWorkflowId.length > 0;
   const versionMismatchServerLabel = useMemo(() => {
     if (!hasMultipleRegisteredEnvironments || !activeThread) {
       return "server";
@@ -4793,8 +4801,21 @@ export default function ChatView(props: ChatViewProps) {
             )}
           </div>
 
+          {/* Delamain-mirrored thread: controls replace the (no-op) composer + runtime toggle */}
+          {!activeSubagentTask && isDelamainMirror && delamainWorkflowId ? (
+            <div className="pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-2">
+              <Suspense fallback={null}>
+                <DelamainThreadControls
+                  environmentId={activeThread.environmentId}
+                  workflowId={delamainWorkflowId}
+                  subagentTasks={subagentTasks}
+                />
+              </Suspense>
+            </div>
+          ) : null}
+
           {/* Input bar */}
-          {activeSubagentTask ? null : (
+          {activeSubagentTask || isDelamainMirror ? null : (
             <div
               className={cn(
                 "pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-1.5 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-2",
