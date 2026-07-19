@@ -353,6 +353,9 @@ export const makeOrchestrationIntegrationHarness = (
           waitForPeer: () => Effect.die("delamain not available in integration harness") as never,
           integratePeer: () => Effect.die("delamain not available in integration harness") as never,
           sendMessage: () => Effect.die("delamain not available in integration harness") as never,
+          workflowStatus: () =>
+            Effect.die("delamain not available in integration harness") as never,
+          workflowKill: () => Effect.die("delamain not available in integration harness") as never,
         }),
       ),
     );

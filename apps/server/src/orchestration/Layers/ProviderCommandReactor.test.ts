@@ -332,6 +332,8 @@ describe("ProviderCommandReactor", () => {
       waitForPeer: delamainDie,
       integratePeer: delamainDie,
       sendMessage: delamainDie,
+      workflowStatus: delamainDie,
+      workflowKill: delamainDie,
     };
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
