@@ -306,6 +306,17 @@ describe("AutomodeGoal", () => {
     const parsed = decodeAutomodeGoal({ ...legacyGoal, episodeId: "epi-abc" });
     expect(parsed.episodeId).toBe("epi-abc");
   });
+
+  it("defaults workflowId to null when decoding a legacy persisted goal without one", () => {
+    // Same persisted-state-wipe guard: a legacy automode-state.json predates the
+    // workflow-dispatch field, so the decoding default must fill it (not fail decode).
+    expect(decodeAutomodeGoal(legacyGoal).workflowId).toBe(null);
+  });
+
+  it("keeps a provided workflowId", () => {
+    const parsed = decodeAutomodeGoal({ ...legacyGoal, workflowId: "wf-123" });
+    expect(parsed.workflowId).toBe("wf-123");
+  });
 });
 
 describe("Hermes Motoko contracts", () => {

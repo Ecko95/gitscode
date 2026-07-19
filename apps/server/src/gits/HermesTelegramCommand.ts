@@ -78,16 +78,19 @@ export function dispatchHermesTelegramCommand(command: HermesTelegramCommand) {
         for (const goal of snapshot.goals) {
           const status: string = goal.status;
           if (goal.peerId === null || (status !== "running" && status !== "pending")) continue;
-          yield* delamain.killPeer({ peerId: goal.peerId }).pipe(
-            Effect.match({
-              onFailure: () => {
-                failed += 1;
-              },
-              onSuccess: () => {
-                stopped += 1;
-              },
-            }),
-          );
+          // Workflow-dispatched goals track the run id as peerId — kill the whole run
+          // (runner + live leaves), not the run record as a lone peer. Both branches are
+          // mapped to a boolean so the differing success types don't form an Effect union.
+          const ok = yield* (
+            goal.workflowId
+              ? delamain.workflowKill({ workflowId: goal.workflowId }).pipe(Effect.as(true))
+              : delamain.killPeer({ peerId: goal.peerId }).pipe(Effect.as(true))
+          ).pipe(Effect.orElseSucceed(() => false));
+          if (ok) {
+            stopped += 1;
+          } else {
+            failed += 1;
+          }
         }
 
         return failed === 0

@@ -34,7 +34,11 @@ import {
   type GitsSchedulerGateResult,
   type GitsSchedulerGoalStartInput,
 } from "../Services/GitsSlotScheduler.ts";
-import { AutomodeLanding, type AutomodeLandResult } from "../Services/AutomodeLanding.ts";
+import {
+  AutomodeLanding,
+  type AutomodeLandResult,
+  type AutomodeLandSliceInput,
+} from "../Services/AutomodeLanding.ts";
 import {
   AutomodeHeldPr,
   type AutomodeOpenHeldPrInput,
@@ -130,6 +134,12 @@ interface MakeLayerOptions {
   readonly recordGoalStartError?: GitsSlotSchedulerError;
   readonly onListPeers?: () => void;
   readonly onReadBudget?: () => void;
+  // Workflow-dispatch mode: when set, dispatch shells runGoalWorkflow returning this id,
+  // and the reconciled run-record peer (in listPeers) takes this id as well.
+  readonly runGoalWorkflowId?: string;
+  readonly workflowLeafIds?: string[];
+  readonly leafPeer?: DelamainPeer;
+  readonly onLandSlice?: (input: AutomodeLandSliceInput) => void;
   readonly onDigestTick?: () => void;
   readonly onNotify?: (input: Parameters<HermesTelegramNotifierShape["notify"]>[0]) => void;
   readonly notifyError?: HermesTelegramNotifierError;
@@ -140,6 +150,9 @@ function makeLayer(
   peerStatus: { current: PeerStatus | "absent"; integrationStatus?: string | null },
   options?: MakeLayerOptions,
 ) {
+  // In workflow-dispatch mode the tracked peerId is the workflow run id, so the reconciled
+  // run-record peer must carry that same id.
+  const reconciledPeerId = options?.runGoalWorkflowId ?? basePeer.id;
   const spawnedPeerId = basePeer.id;
   const delamain = Layer.mock(DelamainAdapter)({
     listPeers: () =>
@@ -153,6 +166,7 @@ function makeLayer(
               : [
                   {
                     ...basePeer,
+                    id: reconciledPeerId,
                     status: peerStatus.current,
                     rawStatus: peerStatus.current,
                     integrationStatus: peerStatus.integrationStatus ?? null,
@@ -174,6 +188,31 @@ function makeLayer(
           rawStatus: "running",
         };
       }),
+    runGoalWorkflow: () =>
+      Effect.sync(() => {
+        options?.onSpawnPeer?.();
+        return { workflowId: options?.runGoalWorkflowId ?? "wf-run" };
+      }),
+    workflowStatus: (input) =>
+      Effect.succeed({
+        id: input.workflowId,
+        status: "completed",
+        label: null,
+        // Leaf ids nest under workflow.agentPeerIds on the wire; the adapter alias surfaces
+        // them here as peerIds.
+        peerIds: options?.workflowLeafIds ?? ["leaf-1"],
+      }),
+    getPeerStatus: (input) =>
+      Effect.succeed(
+        options?.leafPeer ?? {
+          ...basePeer,
+          id: input.peerId,
+          worktreePath: `/tmp/source-repo/.worktrees/${input.peerId}`,
+          branch: `codex-peer/${input.peerId}`,
+          status: "done",
+          rawStatus: "done",
+        },
+      ),
     killPeer: () => Effect.succeed({ ...basePeer, status: "killed", rawStatus: "killed" }),
   });
   const usage = Layer.mock(AutomodeUsageMeter)({
@@ -211,7 +250,11 @@ function makeLayer(
   });
   const landing = Layer.mock(AutomodeLanding)({
     ensure_integration_branch: () => Effect.void,
-    land_slice: () => Effect.succeed(options?.landResult ?? { status: "landed" }),
+    land_slice: (input) =>
+      Effect.sync(() => {
+        options?.onLandSlice?.(input);
+        return options?.landResult ?? { status: "landed" };
+      }),
   });
   const mergeQueue = [...(options?.mergeResults ?? [])];
   const heldPr = Layer.mock(AutomodeHeldPr)({
@@ -982,6 +1025,89 @@ describe("AutomodeDriver", () => {
           reviewError: new GitsReviewError({ message: "verifier exploded" }),
         }),
       ),
+    );
+  });
+
+  const withGoalWorkflowEnv =
+    (value: string) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const prev = process.env.GITS_AUTOMODE_GOAL_WORKFLOW;
+          process.env.GITS_AUTOMODE_GOAL_WORKFLOW = value;
+          return prev;
+        }),
+        () => effect,
+        (prev) =>
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env.GITS_AUTOMODE_GOAL_WORKFLOW;
+            else process.env.GITS_AUTOMODE_GOAL_WORKFLOW = prev;
+          }),
+      );
+
+  it.effect(
+    "reconciles a workflow-dispatched goal against the workflow run id as the tracked peer",
+    () => {
+      const peerStatus = { current: "absent" as PeerStatus | "absent" };
+      return Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        const driver = yield* AutomodeDriver;
+        yield* armAutonomous(supervisor);
+        yield* supervisor.enqueueGoal({ title: "WF", repo: "/tmp/source-repo", prompt: "x" });
+
+        yield* driver.tickOnce(); // dispatch via runGoalWorkflow
+        const dispatched = yield* supervisor.getSnapshot();
+        const goal = dispatched.goals.find((g) => g.title === "WF");
+        assert.equal(goal?.workflowId, "wf-run");
+        assert.equal(goal?.peerId, "wf-run"); // run id tracked as the peerId
+
+        // The run record surfaces in listPeers under that id → reconcile keeps it running,
+        // it does NOT hit the vanished-peer halt path.
+        peerStatus.current = "running";
+        yield* driver.tickOnce();
+        const after = yield* supervisor.getSnapshot();
+        assert.equal(after.goals.find((g) => g.title === "WF")?.status, "running");
+        assert.equal(after.driverHalted, false);
+      }).pipe(
+        Effect.provide(makeLayer(peerStatus, { runGoalWorkflowId: "wf-run" })),
+        withGoalWorkflowEnv("/srv/delamain/workflows/automode-goal.ts"),
+      );
+    },
+  );
+
+  it.effect("lands the leaf peer branch resolved from workflow.agentPeerIds", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    let landInput: AutomodeLandSliceInput | null = null;
+    let reviewWorktree: string | null = null;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "WF land", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done"; // run record finished
+      yield* driver.tickOnce(); // resolve leaf → verify → land → complete
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.find((g) => g.title === "WF land")?.status, "completed");
+      // Verify + land ran against the LEAF peer's worktree/branch, not the run record.
+      assert.equal(landInput?.sliceBranch, "codex-peer/leaf-7");
+      assert.equal(reviewWorktree, "/tmp/source-repo/.worktrees/leaf-7");
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          runGoalWorkflowId: "wf-run",
+          workflowLeafIds: ["leaf-7"],
+          onLandSlice: (input) => {
+            landInput = input;
+          },
+          onReview: (input) => {
+            reviewWorktree = input.worktree;
+          },
+        }),
+      ),
+      withGoalWorkflowEnv("/srv/delamain/workflows/automode-goal.ts"),
     );
   });
 });

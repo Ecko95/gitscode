@@ -348,6 +348,8 @@ export const makeOrchestrationIntegrationHarness = (
           readPeerLogParsed: () =>
             Effect.die("delamain not available in integration harness") as never,
           spawnPeer: () => Effect.die("delamain not available in integration harness") as never,
+          runGoalWorkflow: () =>
+            Effect.die("delamain not available in integration harness") as never,
           killPeer: () => Effect.die("delamain not available in integration harness") as never,
           sendPeerReply: () => Effect.die("delamain not available in integration harness") as never,
           waitForPeer: () => Effect.die("delamain not available in integration harness") as never,

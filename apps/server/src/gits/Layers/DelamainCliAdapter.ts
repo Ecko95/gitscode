@@ -17,6 +17,7 @@ import {
   type DelamainPeerListResult,
   type DelamainPeerLogResult,
   type DelamainPeerLogParsedResult,
+  type DelamainRunWorkflowResult,
   type ParsedLogEvent,
   type DelamainSendMessageResult,
   type DelamainWorkflowStatus,
@@ -374,12 +375,31 @@ function stringArray(value: unknown): string[] {
 
 function normalizeWorkflowStatus(workflowId: string, value: unknown): DelamainWorkflowStatus {
   const record = rawRecord(value);
+  // Real CLI JSON (`delamain workflow <id>`) nests the leaf peer ids at
+  // workflow.agentPeerIds; the older peerIds/peers aliases stay as tolerant fallbacks.
+  const workflow = rawRecord(record.workflow);
   return {
-    id: nullableString(record.id ?? record.workflowId) ?? workflowId,
-    status: rawStatus(record.status),
-    label: nullableString(record.label ?? record.title),
-    peerIds: stringArray(record.peerIds ?? record.peers),
+    id: nullableString(record.id ?? record.workflowId ?? workflow.id) ?? workflowId,
+    status: rawStatus(record.status ?? workflow.status),
+    label: nullableString(record.label ?? record.title ?? workflow.label ?? workflow.title),
+    peerIds: stringArray(
+      record.agentPeerIds ?? workflow.agentPeerIds ?? record.peerIds ?? record.peers,
+    ),
   };
+}
+
+function runWorkflowArgs(input: Parameters<DelamainAdapterShape["runGoalWorkflow"]>[0]): string[] {
+  return [
+    "run-workflow",
+    input.workflowScript,
+    "--repo",
+    input.repo,
+    "--name",
+    input.name,
+    "--args-json",
+    input.argsJson,
+    "--detach",
+  ];
 }
 
 function normalizeWorkflowKill(workflowId: string, value: unknown): DelamainWorkflowKillResult {
@@ -476,6 +496,17 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
     },
     spawnPeer: (input) =>
       runJson<unknown>(processRunner, "spawn", spawnArgs(input)).pipe(Effect.map(normalizePeer)),
+    runGoalWorkflow: (input) =>
+      runJson<unknown>(processRunner, "run-workflow", runWorkflowArgs(input)).pipe(
+        Effect.flatMap((value) => {
+          const workflowId = nullableString(
+            rawRecord(value).workflow_id ?? rawRecord(value).workflowId,
+          );
+          return workflowId === null
+            ? Effect.fail(toDelamainError("Delamain run-workflow did not return a workflow_id."))
+            : Effect.succeed({ workflowId } satisfies DelamainRunWorkflowResult);
+        }),
+      ),
     killPeer: (input) =>
       runJson<unknown>(processRunner, "kill", [
         "kill",

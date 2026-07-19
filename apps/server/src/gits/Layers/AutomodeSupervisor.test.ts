@@ -9,6 +9,7 @@ import type {
   AutomodeBudgetUsage,
   DelamainPeer,
   DelamainPeerListResult,
+  DelamainRunWorkflowInput,
   DelamainSendMessageInput,
   DelamainSpawnPeerInput,
 } from "@t3tools/contracts";
@@ -78,6 +79,9 @@ function makeLayer(options?: {
   readonly onSpawn?: (input: DelamainSpawnPeerInput) => void;
   readonly onSend?: (input: DelamainSendMessageInput) => void;
   readonly onKill?: () => void;
+  readonly onRunWorkflow?: (input: DelamainRunWorkflowInput) => void;
+  readonly workflowId?: string;
+  readonly onWorkflowKill?: () => void;
   readonly onEnsure?: (input: AutomodeEnsureIntegrationBranchInput) => void;
   readonly baseDir?: string;
 }) {
@@ -104,6 +108,16 @@ function makeLayer(options?: {
           Effect.sync(() => {
             options?.onKill?.();
             return { ...peer, status: "killed", rawStatus: "killed" } as DelamainPeer;
+          }),
+        runGoalWorkflow: (input) =>
+          Effect.sync(() => {
+            options?.onRunWorkflow?.(input);
+            return { workflowId: options?.workflowId ?? "wf-test" };
+          }),
+        workflowKill: (input) =>
+          Effect.sync(() => {
+            options?.onWorkflowKill?.();
+            return { workflowId: input.workflowId, status: "killed", peersKilled: [] };
           }),
         sendMessage: (input) =>
           Effect.sync(() => {
@@ -1278,4 +1292,192 @@ describe("AutomodeSupervisorLive", () => {
       ),
     );
   });
+
+  // Sets GITS_AUTOMODE_GOAL_WORKFLOW for the duration of the wrapped effect, restoring
+  // the previous value so tests don't leak the env into each other.
+  const withGoalWorkflowEnv =
+    (value: string) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const prev = process.env.GITS_AUTOMODE_GOAL_WORKFLOW;
+          process.env.GITS_AUTOMODE_GOAL_WORKFLOW = value;
+          return prev;
+        }),
+        () => effect,
+        (prev) =>
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env.GITS_AUTOMODE_GOAL_WORKFLOW;
+            else process.env.GITS_AUTOMODE_GOAL_WORKFLOW = prev;
+          }),
+      );
+
+  it.effect("env unset keeps the byte-identical spawnPeer dispatch path", () => {
+    let spawned = false;
+    let workflowRan = false;
+    return Effect.gen(function* () {
+      delete process.env.GITS_AUTOMODE_GOAL_WORKFLOW;
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Spawned goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(spawned, true);
+      assert.equal(workflowRan, false);
+      assert.equal(dispatched.goal.workflowId, null);
+      assert.equal(dispatched.goal.peerId, peer.id);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          onSpawn: () => {
+            spawned = true;
+          },
+          onRunWorkflow: () => {
+            workflowRan = true;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("env set dispatches the goal as a labeled workflow run", () => {
+    let runInput: DelamainRunWorkflowInput | null = null;
+    let spawned = false;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        defaultModel: "gpt-5.5",
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        integrationBranch: "auto/gits-self",
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Workflow goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+        episodeId: "epi-wf",
+      });
+      const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(spawned, false);
+      // The workflow run's id is tracked as the goal's peerId (reconcile treats it as a peer)
+      // AND recorded in workflowId (STOP/kill + landing take the workflow path).
+      assert.equal(dispatched.goal.workflowId, "wf-42");
+      assert.equal(dispatched.goal.peerId, "wf-42");
+      assert.equal(dispatched.goal.status, "running");
+      assert.equal(runInput?.workflowScript, "/srv/delamain/workflows/automode-goal.ts");
+      assert.equal(runInput?.repo, "/tmp/source-repo");
+      assert.equal(runInput?.name, "Motoko Proposal - Verified (Automated) · Workflow goal");
+      assert.equal(
+        runInput?.argsJson,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          title: "Workflow goal",
+          prompt: "Episode: epi-wf\nRun a safe task.",
+          startRef: "auto/gits-self",
+          mergeBranch: "auto/gits-self",
+          model: "gpt-5.5",
+        }),
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          workflowId: "wf-42",
+          onRunWorkflow: (input) => {
+            runInput = input;
+          },
+          onSpawn: () => {
+            spawned = true;
+          },
+        }),
+      ),
+      withGoalWorkflowEnv("/srv/delamain/workflows/automode-goal.ts"),
+    );
+  });
+
+  it.effect(
+    "runtime limit kills the workflow run (not a peer) for a workflow-dispatched goal",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "gits-automode-wf-deadline-",
+        });
+        const statePath = `${baseDir}/userdata/gits/automode-state.json`;
+        let workflowKilled = 0;
+        let peerKilled = 0;
+
+        const goalId = yield* Effect.gen(function* () {
+          const supervisor = yield* AutomodeSupervisor;
+          yield* supervisor.updatePolicy({
+            mode: "autonomous",
+            killSwitchEnabled: false,
+            allowedRepos: ["/tmp/source-repo"],
+            maxBudgetUsd: 10,
+            maxRuntimeMinutes: 30,
+            requireApprovalForPeerSpawn: false,
+          });
+          const queued = yield* supervisor.enqueueGoal({
+            title: "Workflow long runner",
+            repo: "/tmp/source-repo",
+            prompt: "Run a safe task.",
+          });
+          const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+          assert.equal(dispatched.goal.workflowId, "wf-99");
+          return dispatched.goal.id;
+        }).pipe(
+          Effect.provide(
+            makeLayer({ baseDir, budgetUsage: availableBudgetUsage, workflowId: "wf-99" }),
+          ),
+          withGoalWorkflowEnv("/srv/delamain/workflows/automode-goal.ts"),
+        );
+
+        // Push the persisted deadline into the past so a reboot enforces it immediately.
+        const raw = yield* fs.readFileString(statePath);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const persisted = JSON.parse(raw) as { runtimeDeadlines: Record<string, number> };
+        persisted.runtimeDeadlines[goalId] = -1;
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        yield* fs.writeFileString(statePath, JSON.stringify(persisted));
+
+        // Reboot with the env now unset: the workflow-kill decision comes from the persisted
+        // goal.workflowId, not the env.
+        const after = yield* Effect.gen(function* () {
+          const supervisor = yield* AutomodeSupervisor;
+          return yield* supervisor.getSnapshot();
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              baseDir,
+              onWorkflowKill: () => {
+                workflowKilled += 1;
+              },
+              onKill: () => {
+                peerKilled += 1;
+              },
+            }),
+          ),
+        );
+
+        assert.equal(workflowKilled, 1);
+        assert.equal(peerKilled, 0);
+        const goal = after.goals.find((g) => g.id === goalId);
+        assert.equal(goal?.status, "blocked");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

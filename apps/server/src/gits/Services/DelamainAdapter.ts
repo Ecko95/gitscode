@@ -17,6 +17,8 @@ import type {
   DelamainSendMessageInput,
   DelamainSendMessageResult,
   DelamainSpawnPeerInput,
+  DelamainRunWorkflowInput,
+  DelamainRunWorkflowResult,
   DelamainPeerStatusInput,
   DelamainPeerWaitInput,
   DelamainWorkflowStatusInput,
@@ -39,6 +41,9 @@ export interface DelamainAdapterShape {
   readonly spawnPeer: (
     input: DelamainSpawnPeerInput,
   ) => Effect.Effect<DelamainPeer, DelamainAdapterError>;
+  readonly runGoalWorkflow: (
+    input: DelamainRunWorkflowInput,
+  ) => Effect.Effect<DelamainRunWorkflowResult, DelamainAdapterError>;
   readonly killPeer: (
     input: DelamainPeerKillInput,
   ) => Effect.Effect<DelamainPeer, DelamainAdapterError>;
