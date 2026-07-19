@@ -42,6 +42,8 @@ describe("AutomodePolicy held-PR fields", () => {
     expect(decoded.verificationCommands).toEqual([]);
     expect(decoded.integrationBranch).toBeNull();
     expect(decoded.autoEnqueueApprovedProposals).toBe(false);
+    expect(decoded.nightlyProposalSweep).toBe(false);
+    expect(decoded.proposalRepos).toEqual([]);
   });
 
   it("accepts the new fields on the update input", () => {

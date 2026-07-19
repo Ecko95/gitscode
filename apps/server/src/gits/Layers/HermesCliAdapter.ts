@@ -1928,7 +1928,7 @@ const makeInspectGitsAndPropose =
         title: summary.title,
         summary: summary.summary,
         detail,
-        actionKind: "read-only",
+        actionKind: input.actionKind ?? "read-only",
         status: exec.exitCode === 0 ? "proposed" : "blocked",
         blockedReason: exec.exitCode === 0 ? null : "Hermes proposal command did not complete.",
         source: "hermes chat -q",
@@ -2104,7 +2104,7 @@ export const makeChat =
       } satisfies HermesChatResult;
     });
 
-const decideProposal: HermesAdapterShape["decideProposal"] = (input) =>
+export const decideProposal: HermesAdapterShape["decideProposal"] = (input) =>
   Effect.gen(function* () {
     const config = yield* getConfig();
     const proposals = yield* Effect.tryPromise({
@@ -2215,7 +2215,7 @@ function draftKindFor(proposal: HermesProposalCard) {
   return "delamain-peer" as const;
 }
 
-const draftFromProposal: HermesAdapterShape["draftFromProposal"] = (input) =>
+export const draftFromProposal: HermesAdapterShape["draftFromProposal"] = (input) =>
   Effect.gen(function* () {
     const config = yield* getConfig();
     const proposals = yield* Effect.tryPromise({

@@ -269,6 +269,29 @@ describe("decideProposalWithAutomodeBridge", () => {
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
+  it.effect("does not double-enqueue a card the sweep already enqueued (episode dedup)", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      // Simulate the nightly sweep having already enqueued this proposal's episode.
+      yield* supervisor.enqueueGoal({
+        title: "Fix flaky retry test",
+        prompt: "Deflake the retry test.",
+        repo: "/tmp/source-repo",
+        episodeId: "epi-proposal-1",
+      });
+      const { hermes, draftCallCount } = makeFakeHermes({ initialStatus: "proposed" });
+
+      // A cockpit approve of the same (still-"proposed") card must not add a second goal.
+      yield* decideProposalWithAutomodeBridge(hermes, supervisor, {
+        proposalId: "proposal-1",
+        decision: "approve",
+      });
+
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+      assert.equal(draftCallCount(), 1);
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
   it.effect("reject never enqueues", () =>
     Effect.gen(function* () {
       const supervisor = yield* armAutonomous;

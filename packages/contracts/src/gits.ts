@@ -842,6 +842,13 @@ export const AutomodePolicy = Schema.Struct({
   autoEnqueueApprovedProposals: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  // Nightly proposal sweep: once per night Motoko proposes to each opted-in repo and
+  // enqueues the draft as a waiting-approval goal. Off by default. proposalRepos is the
+  // manual opt-in list of repos Motoko may PROPOSE to (distinct from allowedRepos, which
+  // gates EXECUTION). Both carry decoding defaults — PersistedAutomodeState embeds this
+  // schema, so a legacy state file lacking these fields must still decode.
+  nightlyProposalSweep: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  proposalRepos: Schema.Array(PathString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   verificationCommands: Schema.Array(GitsVerifyCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -923,6 +930,8 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   requireApprovalBeforeIntegrate: Schema.optional(Schema.Boolean),
   requireApprovalBeforeDestructiveAction: Schema.optional(Schema.Boolean),
   autoEnqueueApprovedProposals: Schema.optional(Schema.Boolean),
+  nightlyProposalSweep: Schema.optional(Schema.Boolean),
+  proposalRepos: Schema.optional(Schema.Array(PathString)),
   verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   motokoAuthority: Schema.optional(MotokoAuthority),
@@ -1316,6 +1325,10 @@ export const HermesInspectGitsProposalInput = Schema.Struct({
   projectDir: PathString,
   prompt: Schema.optional(SummaryString),
   timeoutMs: Schema.optional(NonNegativeInt),
+  // Defaults to "read-only" (the cockpit propose button). The nightly sweep passes
+  // "worktree-spawn" so the card drafts as a delamain-peer instead of a verification
+  // draft — a read-only card can only ever become a verification draft (draftKindFor).
+  actionKind: Schema.optional(HermesProposalActionKind),
 });
 export type HermesInspectGitsProposalInput = typeof HermesInspectGitsProposalInput.Type;
 

@@ -80,6 +80,7 @@ import { OpenGsdCliAdapterLive } from "./gits/Layers/OpenGsdCliAdapter.ts";
 import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
+import { AutomodeProposalSweepLive } from "./gits/Layers/AutomodeProposalSweep.ts";
 import { AutomodeTelegramDigestLive } from "./gits/Layers/AutomodeTelegramDigest.ts";
 import { GitsSlotSchedulerLive } from "./gits/Layers/GitsSlotScheduler.ts";
 import { HermesTelegramNotifierLive } from "./gits/Layers/HermesTelegramNotifier.ts";
@@ -340,6 +341,19 @@ const AutomodeTelegramDigestLayerLive = AutomodeTelegramDigestLive.pipe(
   Layer.provide(HermesTelegramNotifierLive),
 );
 
+const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
+  Layer.provide(GitsCapacityMonitorLive),
+  Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(OpenGsdCliAdapterLive),
+  Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(HermesTelegramNotifierLive),
+);
+
+const AutomodeProposalSweepLayerLive = AutomodeProposalSweepLive.pipe(
+  Layer.provide(AutomodeSupervisorLayerLive),
+  Layer.provide(HermesAdapterLayerLive),
+);
+
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(GitsSlotSchedulerLayerLive),
@@ -348,6 +362,7 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeHeldPrLayerLive),
   Layer.provide(AutomodeEpisodeLedgerLayerLive),
   Layer.provide(AutomodeTelegramDigestLayerLive),
+  Layer.provide(AutomodeProposalSweepLayerLive),
   Layer.provide(HermesTelegramNotifierLive),
   Layer.provide(
     GitsReviewPipelineLive.pipe(
@@ -356,14 +371,6 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
       Layer.provide(GitsConfinedVerifyAdapterLive),
     ),
   ),
-);
-
-const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
-  Layer.provide(GitsCapacityMonitorLive),
-  Layer.provide(DelamainCliAdapterLive),
-  Layer.provide(OpenGsdCliAdapterLive),
-  Layer.provide(AutomodeSupervisorLayerLive),
-  Layer.provide(HermesTelegramNotifierLive),
 );
 
 const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
