@@ -35,119 +35,59 @@ import {
   sortDelamainPeers,
 } from "~/delamainPeers";
 import { readGitsEnvironmentClient } from "~/gitsClient";
-import type { DelamainPeer } from "@t3tools/contracts";
-
-// --- Transcript parser ---
-
-type LogEntryType =
-  | "system"
-  | "user"
-  | "assistant"
-  | "tool_call"
-  | "error"
-  | "turn.failed"
-  | string;
-
-interface ParsedLogEntry {
-  type: LogEntryType;
-  text: string | null;
-  tool: string | null;
-  raw: string;
-}
-
-function parse_log_line(raw: string): ParsedLogEntry {
-  try {
-    const obj = JSON.parse(raw) as Record<string, unknown>;
-    const type = (obj["type"] as LogEntryType) ?? "unknown";
-    const text: string | null =
-      typeof obj["content"] === "string"
-        ? obj["content"]
-        : typeof obj["message"] === "string"
-          ? obj["message"]
-          : typeof obj["text"] === "string"
-            ? obj["text"]
-            : typeof obj["summary"] === "string"
-              ? obj["summary"]
-              : null;
-    const tool: string | null = typeof obj["name"] === "string" ? obj["name"] : null;
-    return { type, text, tool, raw };
-  } catch {
-    return { type: "unknown", text: raw.trim() || null, tool: null, raw };
-  }
-}
-
-function parse_log_text(text: string): ParsedLogEntry[] {
-  return text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map(parse_log_line);
-}
+import type { DelamainPeer, ParsedLogEvent } from "@t3tools/contracts";
+import { Input } from "./ui/input";
 
 // --- Transcript renderer ---
 
-function LogEntryRow({ entry }: { entry: ParsedLogEntry }) {
-  const is_error = entry.type === "error" || entry.type === "turn.failed";
-  const is_tool = entry.type === "tool_call";
-  const is_assistant = entry.type === "assistant";
-  const is_user = entry.type === "user";
-  const is_system = entry.type === "system";
-
-  if (is_tool) {
-    return (
-      <div className="flex items-start gap-1.5 py-0.5">
-        <span className="mt-0.5 shrink-0 rounded bg-muted px-1 py-0 text-[10px] font-mono text-muted-foreground/60">
-          tool
-        </span>
-        <span className="truncate text-[11px] text-muted-foreground/55">
-          {entry.tool ?? entry.text ?? "—"}
-          {entry.tool && entry.text ? `: ${entry.text}` : ""}
-        </span>
-      </div>
-    );
-  }
-  if (is_error) {
-    return (
-      <div className="rounded border border-destructive/20 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
-        {entry.text ?? entry.raw}
-      </div>
-    );
-  }
-  if (is_assistant) {
+function TranscriptEvent({ event }: { event: ParsedLogEvent }) {
+  // Agent prose: the primary, readable content.
+  if (event.isAgentMessage) {
     return (
       <div className="flex items-start gap-1.5 py-0.5">
         <span className="mt-0.5 shrink-0 rounded bg-blue-500/10 px-1 py-0 text-[10px] font-semibold text-blue-400">
           AI
         </span>
-        <span className="text-[11px] text-foreground/75 whitespace-pre-wrap break-words">
-          {entry.text ?? entry.raw}
+        <span className="text-[11px] text-foreground/80 whitespace-pre-wrap break-words">
+          {event.text ?? ""}
         </span>
       </div>
     );
   }
-  if (is_user) {
+  // Runner / stderr breadcrumbs: muted mono one-liners.
+  if (event.type === "runner" || event.type === "stderr") {
     return (
-      <div className="flex items-start gap-1.5 py-0.5">
-        <span className="mt-0.5 shrink-0 rounded bg-muted px-1 py-0 text-[10px] font-semibold text-muted-foreground/70">
-          You
-        </span>
-        <span className="text-[11px] text-foreground/65 whitespace-pre-wrap break-words">
-          {entry.text ?? entry.raw}
-        </span>
+      <div
+        className={cn(
+          "truncate py-0.5 font-mono text-[10px]",
+          event.type === "stderr" ? "text-destructive/55" : "text-muted-foreground/40",
+        )}
+        title={event.text ?? undefined}
+      >
+        {event.text ?? ""}
       </div>
     );
   }
-  if (is_system) {
+  // Unparseable line: dimmed, collapsed, never dominant.
+  if (event.type === "raw") {
     return (
-      <div className="py-0.5 text-[10px] text-muted-foreground/35 italic">
-        {entry.text ?? entry.raw}
+      <div
+        className="truncate py-0.5 font-mono text-[10px] text-muted-foreground/30"
+        title={event.raw ?? undefined}
+      >
+        {event.raw ?? event.text ?? ""}
       </div>
     );
   }
-  // unknown / raw fallback
+  // Everything else (tool calls, structured events): compact label chip.
   return (
-    <div className="py-0.5 font-mono text-[10px] text-muted-foreground/30 break-all">
-      {entry.raw}
+    <div className="flex min-w-0 items-start gap-1.5 py-0.5">
+      <span className="mt-0.5 shrink-0 rounded bg-muted px-1 py-0 text-[10px] font-mono text-muted-foreground/60">
+        {event.label ?? event.type}
+      </span>
+      {event.text ? (
+        <span className="truncate text-[11px] text-muted-foreground/55">{event.text}</span>
+      ) : null}
     </div>
   );
 }
@@ -158,60 +98,132 @@ const TAIL_LINES = 120;
 const FULL_LINES = 500;
 
 function PeerTranscript({
-  peerId,
+  peer,
   environmentId,
 }: {
-  peerId: string;
+  peer: DelamainPeer;
   environmentId: EnvironmentId;
 }) {
+  const peerId = peer.id;
+  const queryClient = useQueryClient();
   const [full, set_full] = useState(false);
+  const [reply, set_reply] = useState("");
   const lines = full ? FULL_LINES : TAIL_LINES;
 
   const log_query = useQuery({
-    queryKey: ["gits", "delamain", "peer-log", environmentId, peerId, lines],
+    queryKey: ["gits", "delamain", "peer-log-parsed", environmentId, peerId, lines],
     queryFn: async () => {
       const client = readGitsEnvironmentClient(environmentId);
       if (!client) return null;
-      return client.delamain.readPeerLog({ peerId, lines });
+      return client.delamain.readPeerLogParsed({ peerId, lines });
     },
     refetchInterval: 5_000,
     retry: false,
   });
 
-  const entries = useMemo(
-    () => (log_query.data?.text ? parse_log_text(log_query.data.text) : []),
-    [log_query.data?.text],
-  );
+  const events = log_query.data?.events ?? [];
 
-  if (log_query.isPending) {
-    return <div className="py-2 text-center text-[11px] text-muted-foreground/40">Loading…</div>;
-  }
-  if (log_query.isError) {
-    return (
-      <div className="py-2 text-center text-[11px] text-destructive/60">Failed to load log.</div>
-    );
-  }
-  if (entries.length === 0) {
-    return <div className="py-2 text-center text-[11px] text-muted-foreground/35">No log yet.</div>;
-  }
+  const waiting_question = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const q = events[i]?.waitingQuestion;
+      if (q) return q;
+    }
+    return null;
+  }, [events]);
+  const is_waiting = peer.status === "waiting";
+
+  const reply_mutation = useMutation({
+    mutationFn: async (prompt: string) => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) throw new Error("No environment client");
+      return client.delamain.sendPeerReply({ peerId, prompt });
+    },
+    onSuccess: async () => {
+      set_reply("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["gits", "delamain", "peers", environmentId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["gits", "delamain", "peer-log-parsed", environmentId, peerId],
+        }),
+      ]);
+    },
+  });
+
+  const send_reply = useCallback(() => {
+    const trimmed = reply.trim();
+    if (trimmed && !reply_mutation.isPending) reply_mutation.mutate(trimmed);
+  }, [reply, reply_mutation]);
 
   return (
-    <div className="space-y-0.5">
-      <div className="max-h-56 overflow-y-auto pr-0.5">
-        {entries.map((entry, i) => (
-          /* ponytail: key by line-idx + type; JSONL has no stable id */
-          <LogEntryRow key={`${i}-${entry.type}`} entry={entry} />
-        ))}
-      </div>
-      {!full && (log_query.data?.lines ?? 0) > TAIL_LINES ? (
-        <button
-          className="mt-1 text-[10px] text-blue-400/70 hover:text-blue-400 underline-offset-2 hover:underline"
-          onClick={() => set_full(true)}
-          type="button"
-        >
-          Load more ({log_query.data!.lines} total lines)
-        </button>
+    <div className="space-y-2">
+      {is_waiting ? (
+        <div className="space-y-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
+          <p className="text-[11px] font-medium text-amber-500">Waiting for you</p>
+          {waiting_question ? (
+            <p className="text-[11px] whitespace-pre-wrap break-words text-foreground/70">
+              {waiting_question}
+            </p>
+          ) : null}
+          <div className="flex items-center gap-1.5">
+            <Input
+              value={reply}
+              onValueChange={set_reply}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send_reply();
+                }
+              }}
+              placeholder="Reply to peer…"
+              size="sm"
+              disabled={reply_mutation.isPending}
+              className="text-[11px]"
+            />
+            <Button
+              size="sm"
+              onClick={send_reply}
+              disabled={!reply.trim() || reply_mutation.isPending}
+              type="button"
+            >
+              {reply_mutation.isPending ? "Sending…" : "Send"}
+            </Button>
+          </div>
+        </div>
       ) : null}
+
+      {log_query.isPending ? (
+        <div className="py-2 text-center text-[11px] text-muted-foreground/40">Loading…</div>
+      ) : log_query.isError ? (
+        <div className="flex flex-col items-center gap-1.5 py-2">
+          <span className="text-[11px] text-destructive/60">Failed to load log.</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void log_query.refetch()}
+            type="button"
+          >
+            Retry
+          </Button>
+        </div>
+      ) : events.length === 0 ? (
+        <div className="py-2 text-center text-[11px] text-muted-foreground/35">No log yet.</div>
+      ) : (
+        <div className="space-y-0.5">
+          {events.map((event, i) => (
+            /* ponytail: key by line-idx + type; parsed events have no stable id */
+            <TranscriptEvent key={`${i}-${event.type}`} event={event} />
+          ))}
+          {!full && events.length >= TAIL_LINES ? (
+            <button
+              className="mt-1 text-[10px] text-blue-400/70 underline-offset-2 hover:text-blue-400 hover:underline"
+              onClick={() => set_full(true)}
+              type="button"
+            >
+              Load more
+            </button>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -361,8 +373,9 @@ function IntegrateDialog({
 
 // --- Active statuses ---
 
-const ACTIVE_STATUSES = new Set(["pending", "running", "blocked", "waiting", "frozen"]);
-const TERMINAL_STATUSES = new Set(["done", "completed", "failed", "killed", "halted"]);
+// frozen is terminal server-side (DelamainCliAdapter) — no Kill button on frozen peers.
+const ACTIVE_STATUSES = new Set(["pending", "running", "blocked", "waiting"]);
+const TERMINAL_STATUSES = new Set(["done", "completed", "failed", "frozen", "killed", "halted"]);
 
 // --- Per-peer card ---
 
@@ -525,7 +538,7 @@ function PeerCard({
         ) : null}
 
         {/* terminal status hint */}
-        {is_terminal && !peer.prUrl && !peer.integrationStatus ? (
+        {is_terminal && !peer.prUrl && peer.integrationStatus ? (
           <span className="text-[10px] text-muted-foreground/30">{peer.integrationStatus}</span>
         ) : null}
       </div>
@@ -533,7 +546,7 @@ function PeerCard({
       {/* transcript (collapsible) */}
       {chat_open ? (
         <div className="border-t border-border/40 px-2.5 py-2">
-          <PeerTranscript peerId={peer.id} environmentId={environmentId} />
+          <PeerTranscript peer={peer} environmentId={environmentId} />
         </div>
       ) : null}
     </div>
@@ -558,6 +571,7 @@ const DelamainSidebar = memo(function DelamainSidebar({
   const queryClient = useQueryClient();
   const [kill_state, set_kill_state] = useState<{ peer: DelamainPeer } | null>(null);
   const [integrate_state, set_integrate_state] = useState<{ peer: DelamainPeer } | null>(null);
+  const [show_all, set_show_all] = useState(false);
 
   const peers_query_key = ["gits", "delamain", "peers", environmentId];
 
@@ -580,7 +594,8 @@ const DelamainSidebar = memo(function DelamainSidebar({
     [delamain_peers_query.data?.peers, projectRepoRoot],
   );
 
-  const visible_peers = delamain_peers.slice(0, 6);
+  const DEFAULT_VISIBLE = 6;
+  const visible_peers = show_all ? delamain_peers : delamain_peers.slice(0, DEFAULT_VISIBLE);
   const hidden_count = Math.max(0, delamain_peers.length - visible_peers.length);
 
   const kill_mutation = useMutation({
@@ -662,10 +677,14 @@ const DelamainSidebar = memo(function DelamainSidebar({
                   />
                 ))}
               </div>
-              {hidden_count > 0 ? (
-                <p className="px-1 text-[11px] text-muted-foreground/40">
-                  +{hidden_count} more in Delamain.
-                </p>
+              {hidden_count > 0 || show_all ? (
+                <button
+                  type="button"
+                  onClick={() => set_show_all((v) => !v)}
+                  className="px-1 text-[11px] text-blue-400/70 underline-offset-2 hover:text-blue-400 hover:underline"
+                >
+                  {show_all ? "Show fewer" : `Show ${hidden_count} more`}
+                </button>
               ) : null}
             </>
           ) : (

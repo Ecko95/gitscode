@@ -325,6 +325,7 @@ describe("ProviderCommandReactor", () => {
       readInbox,
       getPeerStatus: delamainDie,
       readPeerLog: delamainDie,
+      readPeerLogParsed: delamainDie,
       spawnPeer: delamainDie,
       killPeer: delamainDie,
       sendPeerReply: delamainDie,

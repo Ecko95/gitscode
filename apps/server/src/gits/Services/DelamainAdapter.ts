@@ -11,6 +11,7 @@ import type {
   DelamainPeerListResult,
   DelamainPeerLogInput,
   DelamainPeerLogResult,
+  DelamainPeerLogParsedResult,
   DelamainPeerReplyInput,
   DelamainReadInboxInput,
   DelamainSendMessageInput,
@@ -28,6 +29,9 @@ export interface DelamainAdapterShape {
   readonly readPeerLog: (
     input: DelamainPeerLogInput,
   ) => Effect.Effect<DelamainPeerLogResult, DelamainAdapterError>;
+  readonly readPeerLogParsed: (
+    input: DelamainPeerLogInput,
+  ) => Effect.Effect<DelamainPeerLogParsedResult, DelamainAdapterError>;
   readonly spawnPeer: (
     input: DelamainSpawnPeerInput,
   ) => Effect.Effect<DelamainPeer, DelamainAdapterError>;

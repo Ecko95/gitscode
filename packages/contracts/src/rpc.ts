@@ -35,6 +35,7 @@ import {
   DelamainPeerListResult,
   DelamainPeerLogInput,
   DelamainPeerLogResult,
+  DelamainPeerLogParsedResult,
   DelamainPeerReplyInput,
   DelamainReadInboxInput,
   DelamainSendMessageInput,
@@ -286,6 +287,7 @@ export const WS_METHODS = {
   gitsDelamainListPeers: "gits.delamain.peers.list",
   gitsDelamainGetPeerStatus: "gits.delamain.peers.status",
   gitsDelamainReadPeerLog: "gits.delamain.peers.log",
+  gitsDelamainReadPeerLogParsed: "gits.delamain.peers.logParsed",
   gitsDelamainSpawnPeer: "gits.delamain.peers.spawn",
   gitsDelamainKillPeer: "gits.delamain.peers.kill",
   gitsDelamainSendPeerReply: "gits.delamain.peers.reply",
@@ -811,6 +813,15 @@ export const WsGitsDelamainReadPeerLogRpc = Rpc.make(WS_METHODS.gitsDelamainRead
   error: DelamainAdapterError,
 });
 
+export const WsGitsDelamainReadPeerLogParsedRpc = Rpc.make(
+  WS_METHODS.gitsDelamainReadPeerLogParsed,
+  {
+    payload: DelamainPeerLogInput,
+    success: DelamainPeerLogParsedResult,
+    error: DelamainAdapterError,
+  },
+);
+
 export const WsGitsDelamainSpawnPeerRpc = Rpc.make(WS_METHODS.gitsDelamainSpawnPeer, {
   payload: DelamainSpawnPeerInput,
   success: DelamainPeer,
@@ -1231,6 +1242,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsDelamainListPeersRpc,
   WsGitsDelamainGetPeerStatusRpc,
   WsGitsDelamainReadPeerLogRpc,
+  WsGitsDelamainReadPeerLogParsedRpc,
   WsGitsDelamainSpawnPeerRpc,
   WsGitsDelamainKillPeerRpc,
   WsGitsDelamainSendPeerReplyRpc,

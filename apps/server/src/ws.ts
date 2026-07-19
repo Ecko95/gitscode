@@ -2043,6 +2043,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.gitsDelamainReadPeerLog, delamainAdapter.readPeerLog(input), {
             "rpc.aggregate": "gits",
           }),
+        [WS_METHODS.gitsDelamainReadPeerLogParsed]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainReadPeerLogParsed,
+            delamainAdapter.readPeerLogParsed(input),
+            { "rpc.aggregate": "gits" },
+          ),
         // Human-in-the-loop RPC: spawn is intentionally outside automode's autonomous policy gate
         // (kill-switch/allowlist), because this is an explicit operator action.
         [WS_METHODS.gitsDelamainSpawnPeer]: (input) =>

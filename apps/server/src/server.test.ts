@@ -4596,6 +4596,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   text: "peer log",
                 };
               }),
+            readPeerLogParsed: (input) =>
+              Effect.sync(() => {
+                calls.push(`logParsed:${input.peerId}:${input.lines ?? 0}`);
+                return {
+                  peerId: input.peerId,
+                  engine: "codex",
+                  events: [],
+                };
+              }),
             spawnPeer: (input) =>
               Effect.sync(() => {
                 calls.push(`spawn:${input.repo}`);

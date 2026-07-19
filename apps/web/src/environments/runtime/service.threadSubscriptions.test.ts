@@ -185,6 +185,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         listPeers: vi.fn(),
         getPeerStatus: vi.fn(),
         readPeerLog: vi.fn(),
+        readPeerLogParsed: vi.fn(),
         spawnPeer: vi.fn(),
         killPeer: vi.fn(),
         sendPeerReply: vi.fn(),
