@@ -206,6 +206,8 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     requireApprovalBeforeIntegrate: true,
     requireApprovalBeforeDestructiveAction: true,
     autoEnqueueApprovedProposals: false,
+    nightlyProposalSweep: false,
+    proposalRepos: [],
     verificationCommands: [],
     integrationBranch: null,
     motokoAuthority: "observe",
@@ -221,7 +223,7 @@ function pendingApprovalCount(goals: ReadonlyArray<AutomodeGoal>): number {
   return goals.filter((goal) => goal.status === "waiting-approval").length;
 }
 
-function repoAllowed(policy: AutomodePolicy, repo: string): boolean {
+export function repoAllowed(policy: AutomodePolicy, repo: string): boolean {
   // ponytail: empty allowlist = deny-all (explicit opt-in), not allow-all.
   if (policy.allowedRepos.length === 0) {
     return false;
@@ -387,6 +389,8 @@ function applyPolicyUpdate(
       input.requireApprovalBeforeDestructiveAction ?? policy.requireApprovalBeforeDestructiveAction,
     autoEnqueueApprovedProposals:
       input.autoEnqueueApprovedProposals ?? policy.autoEnqueueApprovedProposals,
+    nightlyProposalSweep: input.nightlyProposalSweep ?? policy.nightlyProposalSweep,
+    proposalRepos: input.proposalRepos ?? policy.proposalRepos,
     verificationCommands: input.verificationCommands ?? policy.verificationCommands,
     integrationBranch:
       input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,

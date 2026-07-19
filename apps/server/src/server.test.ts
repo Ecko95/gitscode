@@ -269,6 +269,8 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     requireApprovalBeforeIntegrate: true,
     requireApprovalBeforeDestructiveAction: true,
     autoEnqueueApprovedProposals: false,
+    nightlyProposalSweep: false,
+    proposalRepos: [],
     verificationCommands: [],
     integrationBranch: null,
     motokoAuthority: "observe",
