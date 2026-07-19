@@ -150,4 +150,64 @@ describe("DelamainCliAdapter", () => {
       expect(peer.id).toBe("peer-x");
     }).pipe(Effect.provide(TestLayer)),
   );
+
+  it.effect("shells the pinned `run-workflow --detach` argv and parses workflow_id", () =>
+    Effect.gen(function* () {
+      runMock.mockImplementationOnce((input) => {
+        expect(input.command).toBe("delamain");
+        expect(input.args).toEqual([
+          "run-workflow",
+          "/srv/delamain/workflows/automode-goal.ts",
+          "--repo",
+          "/tmp/repo",
+          "--name",
+          "Motoko Proposal - Verified (Automated) · Fix the bug",
+          "--args-json",
+          '{"title":"Fix the bug","prompt":"Episode: epi-1\\ndo it"}',
+          "--detach",
+        ]);
+        return Effect.succeed({
+          stdout: JSON.stringify({ workflow_id: "wf-9", status: "running", workflow: {} }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+      });
+      const adapter = yield* DelamainAdapter;
+      const result = yield* adapter.runGoalWorkflow({
+        workflowScript: "/srv/delamain/workflows/automode-goal.ts",
+        repo: "/tmp/repo",
+        name: "Motoko Proposal - Verified (Automated) · Fix the bug",
+        argsJson: '{"title":"Fix the bug","prompt":"Episode: epi-1\\ndo it"}',
+      });
+      expect(result.workflowId).toBe("wf-9");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("reads leaf ids from the nested workflow.agentPeerIds alias", () =>
+    Effect.gen(function* () {
+      runMock.mockImplementationOnce((input) => {
+        expect(input.args).toEqual(["workflow", "wf-9"]);
+        return Effect.succeed({
+          // Real CLI nests ids under workflow.agentPeerIds.
+          stdout: JSON.stringify({
+            id: "wf-9",
+            status: "completed",
+            workflow: { label: "run", agentPeerIds: ["leaf-1", "leaf-2"] },
+          }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+      });
+      const adapter = yield* DelamainAdapter;
+      const status = yield* adapter.workflowStatus({ workflowId: "wf-9" });
+      expect(status.peerIds).toEqual(["leaf-1", "leaf-2"]);
+      expect(status.label).toBe("run");
+    }).pipe(Effect.provide(TestLayer)),
+  );
 });

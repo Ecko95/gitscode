@@ -260,10 +260,67 @@ export const AutomodeDriverLive = Layer.effect(
               );
               return;
             }
-            if (peer.worktreePath === null || peer.branch === null) {
+            // The work lands on the LEAF peer's branch, not the workflow run record's.
+            // For a workflow-dispatched goal, resolve the leaf via workflowStatus
+            // (agentPeerIds); the peer we reconciled on is the run record itself.
+            // ponytail: v1 lands exactly one leaf — multiple leaves land the first and warn;
+            // upgrade to fan-in landing when a goal-workflow spawns >1 producing leaf.
+            let slicePeer = peer;
+            if (running.workflowId !== null) {
+              const statusResult = yield* delamainAdapter
+                .workflowStatus({ workflowId: running.workflowId })
+                .pipe(Effect.result);
+              if (Result.isFailure(statusResult)) {
+                yield* supervisor.failGoal({
+                  goalId: running.id,
+                  reason: `Could not read workflow ${running.workflowId} status to resolve the landed slice.`,
+                });
+                yield* halt(
+                  running,
+                  `Halted: workflow ${running.workflowId} status read failed for ${running.title}.`,
+                );
+                return;
+              }
+              const leafIds = statusResult.success.peerIds;
+              if (leafIds.length === 0) {
+                yield* supervisor.failGoal({
+                  goalId: running.id,
+                  reason: `Workflow ${running.workflowId} finished with no leaf peer to land.`,
+                });
+                yield* halt(
+                  running,
+                  `Halted: workflow ${running.workflowId} produced no leaf peer for ${running.title}.`,
+                );
+                return;
+              }
+              if (leafIds.length > 1) {
+                yield* Effect.logWarning("gits.automode.driver.workflow-multiple-leaves", {
+                  goalId: running.id,
+                  workflowId: running.workflowId,
+                  leafIds,
+                });
+              }
+              const leafResult = yield* delamainAdapter
+                .getPeerStatus({ peerId: leafIds[0]! })
+                .pipe(Effect.result);
+              if (Result.isFailure(leafResult)) {
+                yield* supervisor.failGoal({
+                  goalId: running.id,
+                  reason: `Could not read leaf peer ${leafIds[0]} of workflow ${running.workflowId}.`,
+                });
+                yield* halt(
+                  running,
+                  `Halted: leaf peer ${leafIds[0]} status read failed for ${running.title}.`,
+                );
+                return;
+              }
+              slicePeer = leafResult.success;
+            }
+
+            if (slicePeer.worktreePath === null || slicePeer.branch === null) {
               yield* halt(
                 running,
-                `Halted: peer ${peer.id} has no worktree/branch to verify and land.`,
+                `Halted: peer ${slicePeer.id} has no worktree/branch to verify and land.`,
               );
               return;
             }
@@ -272,7 +329,7 @@ export const AutomodeDriverLive = Layer.effect(
             // not leave the goal running and retry the pipeline every tick.
             const reviewResult = yield* reviewPipeline
               .review({
-                worktree: peer.worktreePath,
+                worktree: slicePeer.worktreePath,
                 baseRef: policy.integrationBranch,
                 sliceId: running.id,
                 verificationCommands,
@@ -302,7 +359,7 @@ export const AutomodeDriverLive = Layer.effect(
               repo: running.repo,
               integrationBranch: policy.integrationBranch,
               baseRef: AUTOMODE_BASE_REF,
-              sliceBranch: peer.branch,
+              sliceBranch: slicePeer.branch,
             });
             if (landResult.status === "rejected") {
               yield* halt(
@@ -324,7 +381,7 @@ export const AutomodeDriverLive = Layer.effect(
                 repo: running.repo,
                 goalId: running.id,
                 goalTitle: running.title,
-                sliceBranch: peer.branch,
+                sliceBranch: slicePeer.branch,
                 verdict: review.semantic?.verdict ?? "uncertain",
                 confidence: review.semantic?.confidence ?? null,
                 recommendation: review.recommendation,

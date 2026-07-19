@@ -81,6 +81,44 @@ const decodePersistedAutomodeState = Schema.decodeUnknownEffect(
 
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
+// Safe rollout gate (repo env idiom: inline read + default). Unset -> dispatchGoal keeps
+// the byte-identical spawnPeer path. Set to delamain's workflows/automode-goal.ts absolute
+// path -> goals dispatch as labeled workflow runs.
+function resolveGoalWorkflowScript(): string | null {
+  const raw = process.env.GITS_AUTOMODE_GOAL_WORKFLOW?.trim();
+  return raw !== undefined && raw.length > 0 ? raw : null;
+}
+
+// Synthetic peer for a workflow dispatch: the workflow run IS a delamain peer record
+// (id = workflow_id), so the dispatch result carries this stand-in until the driver
+// re-reads live status. worktree/branch stay null — the WORK lands on the leaf peer.
+function workflowRunPeer(
+  workflowId: string,
+  goal: AutomodeGoal,
+  model: string | null,
+): DelamainPeer {
+  return {
+    id: workflowId,
+    name: goal.title,
+    engine: "unknown",
+    model,
+    status: "running",
+    rawStatus: "running",
+    integrationStatus: null,
+    sourceRepo: goal.repo,
+    worktreePath: null,
+    branch: null,
+    baseBranch: null,
+    mergeBranch: null,
+    prUrl: null,
+    task: goal.title,
+    lastEvent: null,
+    startedAt: null,
+    updatedAt: null,
+    finishedAt: null,
+  };
+}
+
 function toAutomodeError(message: string, cause?: unknown) {
   return new AutomodeSupervisorError({
     message,
@@ -502,7 +540,13 @@ export const AutomodeSupervisorLive = Layer.effect(
         ) {
           return;
         }
-        yield* delamainAdapter.killPeer({ peerId, signal: "SIGTERM" });
+        // Workflow-dispatched goals track the workflow run's id as peerId; kill the whole
+        // run (runner + live leaves), not the run record as if it were a leaf peer.
+        if (currentGoal.workflowId !== null) {
+          yield* delamainAdapter.workflowKill({ workflowId: currentGoal.workflowId });
+        } else {
+          yield* delamainAdapter.killPeer({ peerId, signal: "SIGTERM" });
+        }
         const updatedAt = yield* nowIso;
         yield* commitState((state) =>
           updateGoal(
@@ -595,6 +639,7 @@ export const AutomodeSupervisorLive = Layer.effect(
             updatedAt: createdAt,
             approvedAt: null,
             rejectedAt: null,
+            workflowId: null,
           };
           const nextState = yield* commitState((state) => ({
             ...state,
@@ -758,31 +803,61 @@ export const AutomodeSupervisorLive = Layer.effect(
             });
           }
 
-          const peer = yield* delamainAdapter
-            .spawnPeer({
-              repo: goal.repo,
-              // Episode threading v1: traceability via the prompt (delamain untouched).
-              prompt: `Episode: ${goal.episodeId}\n${goal.prompt}`,
-              name: goal.title,
-              ...(effectiveModel ? { model: effectiveModel } : {}),
-              ...(state.policy.integrationBranch
-                ? {
-                    startRef: state.policy.integrationBranch,
-                    // delamain treats mergeBranch as the SYNC BASE (fetch + merge origin/<ref>
-                    // into the peer branch before pushing the peer branch) — it never creates
-                    // the ref, so it must be the integration branch landing fast-forwards.
-                    mergeBranch: state.policy.integrationBranch,
-                  }
-                : {}),
-              confine: true,
-              yolo: true,
-              egress: "host",
-            })
-            .pipe(
-              Effect.mapError((cause) =>
-                toAutomodeError("Automode failed to spawn a Delamain peer.", cause),
-              ),
-            );
+          // Episode threading v1: traceability via the prompt (delamain untouched).
+          const episodePrompt = `Episode: ${goal.episodeId}\n${goal.prompt}`;
+          const workflowScript = resolveGoalWorkflowScript();
+          const { peer, workflowId } = yield* workflowScript === null
+            ? delamainAdapter
+                .spawnPeer({
+                  repo: goal.repo,
+                  prompt: episodePrompt,
+                  name: goal.title,
+                  ...(effectiveModel ? { model: effectiveModel } : {}),
+                  ...(state.policy.integrationBranch
+                    ? {
+                        startRef: state.policy.integrationBranch,
+                        // delamain treats mergeBranch as the SYNC BASE (fetch + merge
+                        // origin/<ref> into the peer branch before pushing the peer branch) —
+                        // it never creates the ref, so it must be the integration branch
+                        // landing fast-forwards.
+                        mergeBranch: state.policy.integrationBranch,
+                      }
+                    : {}),
+                  confine: true,
+                  yolo: true,
+                  egress: "host",
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toAutomodeError("Automode failed to spawn a Delamain peer.", cause),
+                  ),
+                  Effect.map((spawned) => ({ peer: spawned, workflowId: null as string | null })),
+                )
+            : delamainAdapter
+                .runGoalWorkflow({
+                  workflowScript,
+                  repo: goal.repo,
+                  name: `Motoko Proposal - Verified (Automated) · ${goal.title}`,
+                  // Same integration-branch rails as the spawn path: startRef == mergeBranch
+                  // == the integration branch (or null). The leaf runs integrate:true.
+                  // @effect-diagnostics-next-line preferSchemaOverJson:off
+                  argsJson: JSON.stringify({
+                    title: goal.title,
+                    prompt: episodePrompt,
+                    startRef: state.policy.integrationBranch ?? null,
+                    mergeBranch: state.policy.integrationBranch ?? null,
+                    model: effectiveModel ?? null,
+                  }),
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toAutomodeError("Automode failed to dispatch a Delamain workflow.", cause),
+                  ),
+                  Effect.map((result) => ({
+                    peer: workflowRunPeer(result.workflowId, goal, effectiveModel),
+                    workflowId: result.workflowId as string | null,
+                  })),
+                );
           const deadlineEpochMs = shouldScheduleRuntimeLimit(state.policy)
             ? DateTime.toEpochMillis(yield* DateTime.now) + state.policy.maxRuntimeMinutes * 60_000
             : null;
@@ -796,7 +871,10 @@ export const AutomodeSupervisorLive = Layer.effect(
                   deadlineEpochMs === null
                     ? current.runtimeDeadlines
                     : { ...current.runtimeDeadlines, [goal.id]: deadlineEpochMs },
-                lastEvent: `Spawned peer ${peer.id} for ${goal.title}.`,
+                lastEvent:
+                  workflowId === null
+                    ? `Spawned peer ${peer.id} for ${goal.title}.`
+                    : `Dispatched workflow ${workflowId} for ${goal.title}.`,
                 updatedAt,
               },
               goal.id,
@@ -804,6 +882,7 @@ export const AutomodeSupervisorLive = Layer.effect(
                 ...existing,
                 status: "running",
                 peerId: peer.id,
+                workflowId,
                 blockedReason: null,
                 updatedAt,
               }),

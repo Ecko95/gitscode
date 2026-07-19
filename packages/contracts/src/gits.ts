@@ -641,6 +641,22 @@ export const DelamainWorkflowKillResult = Schema.Struct({
 });
 export type DelamainWorkflowKillResult = typeof DelamainWorkflowKillResult.Type;
 
+// Dispatch a labeled workflow run: `delamain run-workflow <script> --repo <repo>
+// --name <name> --args-json <argsJson> --detach` -> {workflow_id}. argsJson is the
+// already-serialized workflow args object (title/prompt/startRef/mergeBranch/model).
+export const DelamainRunWorkflowInput = Schema.Struct({
+  workflowScript: PathString,
+  repo: PathString,
+  name: TrimmedNonEmptyString,
+  argsJson: TrimmedNonEmptyString,
+});
+export type DelamainRunWorkflowInput = typeof DelamainRunWorkflowInput.Type;
+
+export const DelamainRunWorkflowResult = Schema.Struct({
+  workflowId: TrimmedNonEmptyString,
+});
+export type DelamainRunWorkflowResult = typeof DelamainRunWorkflowResult.Type;
+
 export const DelamainSpawnPeerInput = Schema.Struct({
   repo: PathString,
   prompt: SummaryString,
@@ -881,6 +897,14 @@ export const AutomodeGoal = Schema.Struct({
   updatedAt: IsoDateTime,
   approvedAt: Schema.NullOr(IsoDateTime),
   rejectedAt: Schema.NullOr(IsoDateTime),
+  // Dispatch mode: when non-null the goal was dispatched as a delamain workflow run
+  // (peerId tracks the workflow run's id) and STOP/kill + landing take the workflow path.
+  // Decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a
+  // legacy automode-state.json without workflowId must still decode (a failed decode
+  // silently resets ALL persisted automode state to locked defaults).
+  workflowId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type AutomodeGoal = typeof AutomodeGoal.Type;
 

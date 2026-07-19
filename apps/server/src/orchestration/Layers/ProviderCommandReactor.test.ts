@@ -327,6 +327,7 @@ describe("ProviderCommandReactor", () => {
       readPeerLog: delamainDie,
       readPeerLogParsed: delamainDie,
       spawnPeer: delamainDie,
+      runGoalWorkflow: delamainDie,
       killPeer: delamainDie,
       sendPeerReply: delamainDie,
       waitForPeer: delamainDie,
