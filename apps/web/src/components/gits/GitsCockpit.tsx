@@ -4264,6 +4264,8 @@ function AutomodePanel({
   requireIntegrateApproval,
   requireDestructiveApproval,
   autoEnqueueProposals,
+  nightlyProposalSweep,
+  proposalRepos,
   goalTitle,
   goalRepo,
   goalModel,
@@ -4281,6 +4283,8 @@ function AutomodePanel({
   onRequireIntegrateApprovalChange,
   onRequireDestructiveApprovalChange,
   onAutoEnqueueProposalsChange,
+  onNightlyProposalSweepChange,
+  onProposalReposChange,
   onGoalTitleChange,
   onGoalRepoChange,
   onGoalModelChange,
@@ -4313,6 +4317,8 @@ function AutomodePanel({
   requireIntegrateApproval: boolean;
   requireDestructiveApproval: boolean;
   autoEnqueueProposals: boolean;
+  nightlyProposalSweep: boolean;
+  proposalRepos: string;
   goalTitle: string;
   goalRepo: string;
   goalModel: string;
@@ -4330,6 +4336,8 @@ function AutomodePanel({
   onRequireIntegrateApprovalChange: (value: boolean) => void;
   onRequireDestructiveApprovalChange: (value: boolean) => void;
   onAutoEnqueueProposalsChange: (value: boolean) => void;
+  onNightlyProposalSweepChange: (value: boolean) => void;
+  onProposalReposChange: (value: string) => void;
   onGoalTitleChange: (value: string) => void;
   onGoalRepoChange: (value: string) => void;
   onGoalModelChange: (value: string) => void;
@@ -4365,6 +4373,12 @@ function AutomodePanel({
       : actionError instanceof Error
         ? actionError.message
         : null;
+  const proposalRepoList = parseLines(proposalRepos);
+  const allowedRepoList = parseLines(allowedRepos);
+  const proposalReposNotAllowed = proposalRepoList.filter(
+    (repo) =>
+      !allowedRepoList.some((a) => repo === a || repo.startsWith(a.endsWith("/") ? a : a + "/")),
+  );
 
   return (
     <section className="border-b border-border bg-background">
@@ -4617,6 +4631,38 @@ function AutomodePanel({
               />
               Auto-enqueue approved Motoko proposals (autonomous mode only)
             </label>
+          </div>
+
+          <div className="grid gap-2 border-t border-border/60 pt-3 text-xs">
+            <label className="flex items-center gap-2 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={nightlyProposalSweep}
+                onChange={(event) => onNightlyProposalSweepChange(event.currentTarget.checked)}
+              />
+              Nightly proposal sweep
+            </label>
+            <p className="text-muted-foreground">
+              Proposes from 20:00 London ·{" "}
+              {nightlyProposalSweep
+                ? `${formatCount(proposalRepoList.length)} repos opted in`
+                : "sweep disabled"}
+            </p>
+            <Textarea
+              value={proposalRepos}
+              placeholder="Proposal repos (one path per line)"
+              className="min-h-24 text-xs"
+              onChange={(event) => onProposalReposChange(event.currentTarget.value)}
+            />
+            {proposalReposNotAllowed.length > 0 ? (
+              <ul className="grid gap-1 text-destructive">
+                {proposalReposNotAllowed.map((repo) => (
+                  <li key={repo} className="truncate font-mono text-[11px]">
+                    {repo} — won&apos;t run — repo not in allowedRepos
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
 
           <div className="flex justify-end">
@@ -4906,6 +4952,8 @@ export function GitsCockpit() {
   const [automodeRequireDestructiveApproval, setAutomodeRequireDestructiveApproval] =
     useState(true);
   const [automodeAutoEnqueueProposals, setAutomodeAutoEnqueueProposals] = useState(false);
+  const [automodeNightlyProposalSweep, setAutomodeNightlyProposalSweep] = useState(false);
+  const [automodeProposalRepos, setAutomodeProposalRepos] = useState("");
   const [skillReviews, setSkillReviews] = useState<SkillReviewState>(() => loadSkillReviewState());
   const [mcpOverrides, setMcpOverrides] = useState<McpOverrideState>(() => loadMcpOverrideState());
   const [automodeGoalTitle, setAutomodeGoalTitle] = useState("");
@@ -5542,6 +5590,8 @@ export function GitsCockpit() {
       requireApprovalBeforeIntegrate: automodeRequireIntegrateApproval,
       requireApprovalBeforeDestructiveAction: automodeRequireDestructiveApproval,
       autoEnqueueApprovedProposals: automodeAutoEnqueueProposals,
+      nightlyProposalSweep: automodeNightlyProposalSweep,
+      proposalRepos: parseLines(automodeProposalRepos),
     };
   };
   const automodePolicyMutation = useMutation({
@@ -5885,6 +5935,8 @@ export function GitsCockpit() {
     setAutomodeRequireIntegrateApproval(policy.requireApprovalBeforeIntegrate);
     setAutomodeRequireDestructiveApproval(policy.requireApprovalBeforeDestructiveAction);
     setAutomodeAutoEnqueueProposals(policy.autoEnqueueApprovedProposals);
+    setAutomodeNightlyProposalSweep(policy.nightlyProposalSweep);
+    setAutomodeProposalRepos(policy.proposalRepos.join("\n"));
   }, [automodePolicyDirty, automodeQuery.data?.policy]);
 
   useEffect(() => {
@@ -6091,6 +6143,8 @@ export function GitsCockpit() {
                   requireIntegrateApproval={automodeRequireIntegrateApproval}
                   requireDestructiveApproval={automodeRequireDestructiveApproval}
                   autoEnqueueProposals={automodeAutoEnqueueProposals}
+                  nightlyProposalSweep={automodeNightlyProposalSweep}
+                  proposalRepos={automodeProposalRepos}
                   goalTitle={automodeGoalTitle}
                   goalRepo={automodeGoalRepo}
                   goalModel={automodeGoalModel}
@@ -6116,6 +6170,10 @@ export function GitsCockpit() {
                   onAutoEnqueueProposalsChange={setAutomodePolicyField(
                     setAutomodeAutoEnqueueProposals,
                   )}
+                  onNightlyProposalSweepChange={setAutomodePolicyField(
+                    setAutomodeNightlyProposalSweep,
+                  )}
+                  onProposalReposChange={setAutomodePolicyField(setAutomodeProposalRepos)}
                   onGoalTitleChange={setAutomodeGoalTitle}
                   onGoalRepoChange={setAutomodeGoalRepo}
                   onGoalModelChange={setAutomodeGoalModel}
