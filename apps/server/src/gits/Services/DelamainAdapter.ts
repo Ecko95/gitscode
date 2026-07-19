@@ -19,6 +19,10 @@ import type {
   DelamainSpawnPeerInput,
   DelamainPeerStatusInput,
   DelamainPeerWaitInput,
+  DelamainWorkflowStatusInput,
+  DelamainWorkflowStatus,
+  DelamainWorkflowKillInput,
+  DelamainWorkflowKillResult,
 } from "@t3tools/contracts";
 
 export interface DelamainAdapterShape {
@@ -53,6 +57,12 @@ export interface DelamainAdapterShape {
   readonly sendMessage: (
     input: DelamainSendMessageInput,
   ) => Effect.Effect<DelamainSendMessageResult, DelamainAdapterError>;
+  readonly workflowStatus: (
+    input: DelamainWorkflowStatusInput,
+  ) => Effect.Effect<DelamainWorkflowStatus, DelamainAdapterError>;
+  readonly workflowKill: (
+    input: DelamainWorkflowKillInput,
+  ) => Effect.Effect<DelamainWorkflowKillResult, DelamainAdapterError>;
 }
 
 export class DelamainAdapter extends Context.Service<DelamainAdapter, DelamainAdapterShape>()(

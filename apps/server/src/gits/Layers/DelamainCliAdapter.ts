@@ -19,6 +19,8 @@ import {
   type DelamainPeerLogParsedResult,
   type ParsedLogEvent,
   type DelamainSendMessageResult,
+  type DelamainWorkflowStatus,
+  type DelamainWorkflowKillResult,
   type PeerStatus,
 } from "@t3tools/contracts";
 
@@ -364,6 +366,31 @@ function synthesizeRawParsedLog(peerId: string, text: string): DelamainPeerLogPa
   return { peerId, engine: "unknown", events };
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((v) => nullableString(v)).filter((v): v is string => v !== null)
+    : [];
+}
+
+function normalizeWorkflowStatus(workflowId: string, value: unknown): DelamainWorkflowStatus {
+  const record = rawRecord(value);
+  return {
+    id: nullableString(record.id ?? record.workflowId) ?? workflowId,
+    status: rawStatus(record.status),
+    label: nullableString(record.label ?? record.title),
+    peerIds: stringArray(record.peerIds ?? record.peers),
+  };
+}
+
+function normalizeWorkflowKill(workflowId: string, value: unknown): DelamainWorkflowKillResult {
+  const record = rawRecord(value);
+  return {
+    workflowId: nullableString(record.workflowId ?? record.id) ?? workflowId,
+    status: rawStatus(record.status),
+    peersKilled: stringArray(record.peersKilled),
+  };
+}
+
 function normalizeMessage(value: unknown): DelamainMessage {
   const message = rawRecord(value);
   return {
@@ -504,6 +531,14 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
     sendMessage: (input) =>
       runJson<unknown>(processRunner, "delamain.sendMessage", sendArgs(input)).pipe(
         Effect.map(normalizeSendResult),
+      ),
+    workflowStatus: (input) =>
+      runJson<unknown>(processRunner, "workflow.status", ["workflow", input.workflowId]).pipe(
+        Effect.map((value) => normalizeWorkflowStatus(input.workflowId, value)),
+      ),
+    workflowKill: (input) =>
+      runJson<unknown>(processRunner, "workflow.kill", ["workflow", "kill", input.workflowId]).pipe(
+        Effect.map((value) => normalizeWorkflowKill(input.workflowId, value)),
       ),
   };
 

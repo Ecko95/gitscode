@@ -43,6 +43,10 @@ import {
   DelamainSpawnPeerInput,
   DelamainPeerStatusInput,
   DelamainPeerWaitInput,
+  DelamainWorkflowStatusInput,
+  DelamainWorkflowStatus,
+  DelamainWorkflowKillInput,
+  DelamainWorkflowKillResult,
   GitsCapacityError,
   GitsCapacitySnapshot,
   GitsCapacitySnapshotInput,
@@ -293,6 +297,8 @@ export const WS_METHODS = {
   gitsDelamainSendPeerReply: "gits.delamain.peers.reply",
   gitsDelamainWaitForPeer: "gits.delamain.peers.wait",
   gitsDelamainIntegratePeer: "gits.delamain.peers.integrate",
+  gitsDelamainWorkflowStatus: "gits.delamain.workflow.status",
+  gitsDelamainWorkflowKill: "gits.delamain.workflow.kill",
   gitsDelamainReadInbox: "gits.delamain.messages.inbox",
   gitsDelamainSendMessage: "gits.delamain.messages.send",
   gitsOpenGsdGetStatus: "gits.openGsd.status",
@@ -852,6 +858,18 @@ export const WsGitsDelamainIntegratePeerRpc = Rpc.make(WS_METHODS.gitsDelamainIn
   error: DelamainAdapterError,
 });
 
+export const WsGitsDelamainWorkflowStatusRpc = Rpc.make(WS_METHODS.gitsDelamainWorkflowStatus, {
+  payload: DelamainWorkflowStatusInput,
+  success: DelamainWorkflowStatus,
+  error: DelamainAdapterError,
+});
+
+export const WsGitsDelamainWorkflowKillRpc = Rpc.make(WS_METHODS.gitsDelamainWorkflowKill, {
+  payload: DelamainWorkflowKillInput,
+  success: DelamainWorkflowKillResult,
+  error: DelamainAdapterError,
+});
+
 export const WsGitsDelamainReadInboxRpc = Rpc.make(WS_METHODS.gitsDelamainReadInbox, {
   payload: DelamainReadInboxInput,
   success: DelamainInboxResult,
@@ -1248,6 +1266,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsDelamainSendPeerReplyRpc,
   WsGitsDelamainWaitForPeerRpc,
   WsGitsDelamainIntegratePeerRpc,
+  WsGitsDelamainWorkflowStatusRpc,
+  WsGitsDelamainWorkflowKillRpc,
   WsGitsDelamainReadInboxRpc,
   WsGitsDelamainSendMessageRpc,
   WsGitsOpenGsdGetStatusRpc,

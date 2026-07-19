@@ -612,6 +612,35 @@ export const DelamainPeerLogParsedResult = Schema.Struct({
 });
 export type DelamainPeerLogParsedResult = typeof DelamainPeerLogParsedResult.Type;
 
+// Workflow status/kill (delamain `workflow <id>` / `workflow kill <id>`). Tolerant
+// passthrough — the adapter normalizes the CLI JSON so unknown extra fields never
+// fail decode and `status` stays a plain string.
+export const DelamainWorkflowStatusInput = Schema.Struct({
+  workflowId: TrimmedNonEmptyString,
+});
+export type DelamainWorkflowStatusInput = typeof DelamainWorkflowStatusInput.Type;
+
+export const DelamainWorkflowStatus = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  status: Schema.String,
+  label: Schema.NullOr(Schema.String),
+  peerIds: Schema.Array(Schema.String),
+});
+export type DelamainWorkflowStatus = typeof DelamainWorkflowStatus.Type;
+
+export const DelamainWorkflowKillInput = Schema.Struct({
+  workflowId: TrimmedNonEmptyString,
+});
+export type DelamainWorkflowKillInput = typeof DelamainWorkflowKillInput.Type;
+
+// Wire contract: `workflow kill` prints {workflowId, status:"killed", peersKilled[]}.
+export const DelamainWorkflowKillResult = Schema.Struct({
+  workflowId: TrimmedNonEmptyString,
+  status: Schema.String,
+  peersKilled: Schema.Array(Schema.String),
+});
+export type DelamainWorkflowKillResult = typeof DelamainWorkflowKillResult.Type;
+
 export const DelamainSpawnPeerInput = Schema.Struct({
   repo: PathString,
   prompt: SummaryString,

@@ -210,6 +210,10 @@ export interface WsRpcClient {
       readonly sendPeerReply: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSendPeerReply>;
       readonly waitForPeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainWaitForPeer>;
       readonly integratePeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainIntegratePeer>;
+      readonly workflow: {
+        readonly status: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainWorkflowStatus>;
+        readonly kill: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainWorkflowKill>;
+      };
       readonly messages: {
         readonly inbox: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainReadInbox>;
         readonly send: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSendMessage>;
@@ -491,6 +495,12 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsDelamainWaitForPeer](input)),
         integratePeer: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDelamainIntegratePeer](input)),
+        workflow: {
+          status: (input) =>
+            transport.request((client) => client[WS_METHODS.gitsDelamainWorkflowStatus](input)),
+          kill: (input) =>
+            transport.request((client) => client[WS_METHODS.gitsDelamainWorkflowKill](input)),
+        },
         messages: {
           inbox: (input) =>
             transport.request((client) => client[WS_METHODS.gitsDelamainReadInbox](input)),
