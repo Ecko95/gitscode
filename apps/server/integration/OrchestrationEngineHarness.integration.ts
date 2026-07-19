@@ -345,6 +345,8 @@ export const makeOrchestrationIntegrationHarness = (
           readInbox: (input) => Effect.succeed({ peerId: input.peerId, messages: [] }),
           getPeerStatus: () => Effect.die("delamain not available in integration harness") as never,
           readPeerLog: () => Effect.die("delamain not available in integration harness") as never,
+          readPeerLogParsed: () =>
+            Effect.die("delamain not available in integration harness") as never,
           spawnPeer: () => Effect.die("delamain not available in integration harness") as never,
           killPeer: () => Effect.die("delamain not available in integration harness") as never,
           sendPeerReply: () => Effect.die("delamain not available in integration harness") as never,

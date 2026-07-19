@@ -16,6 +16,8 @@ import {
   type DelamainPeerIntegrateResult,
   type DelamainPeerListResult,
   type DelamainPeerLogResult,
+  type DelamainPeerLogParsedResult,
+  type ParsedLogEvent,
   type DelamainSendMessageResult,
   type PeerStatus,
 } from "@t3tools/contracts";
@@ -320,6 +322,48 @@ function sendArgs(input: Parameters<DelamainAdapterShape["sendMessage"]>[0]): st
   return args;
 }
 
+function normalizeParsedEvent(value: unknown): ParsedLogEvent {
+  const event = rawRecord(value);
+  const raw = typeof event.raw === "string" ? event.raw : undefined;
+  return {
+    type: typeof event.type === "string" && event.type.length > 0 ? event.type : "raw",
+    text: typeof event.text === "string" ? event.text : null,
+    label: typeof event.label === "string" ? event.label : null,
+    isAgentMessage: Boolean(event.isAgentMessage),
+    waitingQuestion: typeof event.waitingQuestion === "string" ? event.waitingQuestion : null,
+    ...(raw === undefined ? {} : { raw }),
+  };
+}
+
+function normalizeParsedLog(peerId: string, value: unknown): DelamainPeerLogParsedResult {
+  const record = rawRecord(value);
+  const events = Array.isArray(record.events) ? record.events.map(normalizeParsedEvent) : [];
+  return {
+    peerId: nullableString(record.peerId) ?? peerId,
+    engine: nullableString(record.engine) ?? "unknown",
+    events,
+  };
+}
+
+// Fallback for old binaries without `--parsed`: wrap each raw line as a {type:"raw"} event.
+function synthesizeRawParsedLog(peerId: string, text: string): DelamainPeerLogParsedResult {
+  const events = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map(
+      (line): ParsedLogEvent => ({
+        type: "raw",
+        text: null,
+        label: null,
+        isAgentMessage: false,
+        waitingQuestion: null,
+        raw: line,
+      }),
+    );
+  return { peerId, engine: "unknown", events };
+}
+
 function normalizeMessage(value: unknown): DelamainMessage {
   const message = rawRecord(value);
   return {
@@ -387,6 +431,20 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
               text: result.stdout,
             }) satisfies DelamainPeerLogResult,
         ),
+      );
+    },
+    readPeerLogParsed: (input) => {
+      const lines = input.lines ?? DEFAULT_LOG_LINES;
+      const fallback = adapter
+        .readPeerLog(input)
+        .pipe(Effect.map((raw) => synthesizeRawParsedLog(input.peerId, raw.text)));
+      return execDelamain(processRunner, ["log", input.peerId, String(lines), "--parsed"], {
+        outputMode: "truncate",
+      }).pipe(
+        Effect.flatMap((result) => parseJson<unknown>("logParsed", result.stdout)),
+        Effect.map((value) => normalizeParsedLog(input.peerId, value)),
+        // Old binary (no --parsed) or malformed output -> raw fallback so the UI still works.
+        Effect.catch(() => fallback),
       );
     },
     spawnPeer: (input) =>

@@ -593,6 +593,25 @@ export const DelamainPeerLogResult = Schema.Struct({
 });
 export type DelamainPeerLogResult = typeof DelamainPeerLogResult.Type;
 
+// Wire contract: one parsed log event. `engine` on the result stays a plain string so
+// unknown engines (or a synthesized raw fallback) never fail schema decode.
+export const ParsedLogEvent = Schema.Struct({
+  type: Schema.String,
+  text: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+  isAgentMessage: Schema.Boolean,
+  waitingQuestion: Schema.NullOr(Schema.String),
+  raw: Schema.optional(Schema.String),
+});
+export type ParsedLogEvent = typeof ParsedLogEvent.Type;
+
+export const DelamainPeerLogParsedResult = Schema.Struct({
+  peerId: TrimmedNonEmptyString,
+  engine: Schema.String,
+  events: Schema.Array(ParsedLogEvent),
+});
+export type DelamainPeerLogParsedResult = typeof DelamainPeerLogParsedResult.Type;
+
 export const DelamainSpawnPeerInput = Schema.Struct({
   repo: PathString,
   prompt: SummaryString,

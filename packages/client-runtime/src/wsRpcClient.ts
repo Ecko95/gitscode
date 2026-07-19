@@ -204,6 +204,7 @@ export interface WsRpcClient {
       readonly listPeers: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsDelamainListPeers>;
       readonly getPeerStatus: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainGetPeerStatus>;
       readonly readPeerLog: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainReadPeerLog>;
+      readonly readPeerLogParsed: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainReadPeerLogParsed>;
       readonly spawnPeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSpawnPeer>;
       readonly killPeer: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainKillPeer>;
       readonly sendPeerReply: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainSendPeerReply>;
@@ -478,6 +479,8 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsDelamainGetPeerStatus](input)),
         readPeerLog: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDelamainReadPeerLog](input)),
+        readPeerLogParsed: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsDelamainReadPeerLogParsed](input)),
         spawnPeer: (input) =>
           transport.request((client) => client[WS_METHODS.gitsDelamainSpawnPeer](input)),
         killPeer: (input) =>
