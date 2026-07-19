@@ -21,6 +21,7 @@ import {
 } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
+import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
 import {
   HermesTelegramNotifier,
@@ -237,6 +238,9 @@ function makeLayer(
   const digest = Layer.mock(AutomodeTelegramDigest)({
     tick: () => Effect.sync(() => options?.onDigestTick?.()),
   });
+  const proposalSweep = Layer.mock(AutomodeProposalSweep)({
+    tick: () => Effect.void,
+  });
   const notifier = Layer.mock(HermesTelegramNotifier)({
     notify: (input) =>
       Effect.suspend(() => {
@@ -263,6 +267,7 @@ function makeLayer(
     Layer.provide(heldPr),
     Layer.provide(ledger),
     Layer.provide(digest),
+    Layer.provide(proposalSweep),
     Layer.provide(notifier),
   );
 }

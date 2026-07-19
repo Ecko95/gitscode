@@ -20,6 +20,8 @@ import {
   classifyHermesChatAction,
   codexChainPreflight,
   codexReauthCommand,
+  decideProposal,
+  draftFromProposal,
   hermesDirectExecutionBlocked,
   hermesModelCommand,
   hermesProposalRequiresApproval,
@@ -316,6 +318,56 @@ describe("HermesCliAdapter cockpit chat", () => {
     expect(markdown).toContain("Capacity routed to Codex.");
     expect(markdown).toContain("RUNBOOK.md");
     expect(markdown).toContain("Motoko may inspect and propose only.");
+  });
+});
+
+// Exercises the REAL decideProposal→draftFromProposal chain (no mocks) on a sweep-shaped
+// card, guarding the nightly sweep against regressing to a no-op: a read-only or
+// un-approved card can only ever draft as verification/blocked, never delamain-peer.
+describe("HermesCliAdapter sweep draft derivation", () => {
+  async function seed(actionKind: "worktree-spawn" | "read-only") {
+    const home = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-sweep-draft-"));
+    const repo = await Fs.mkdtemp(Path.join(Os.tmpdir(), "gits-sweep-repo-"));
+    vi.stubEnv("GITS_HERMES_HOME", home);
+    const card = makeProposal({
+      title: "Sweep improvement",
+      summary: "Improve the repo.",
+      detail: "Detail.",
+      actionKind,
+      status: "proposed",
+      blockedReason: null,
+      source: "hermes chat -q",
+      projectDir: repo,
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    await Fs.writeFile(
+      Path.join(home, "gits-proposals.json"),
+      JSON.stringify([card], null, 2),
+      "utf8",
+    );
+    return { card, repo };
+  }
+
+  it("blocks the draft until the card is approved (why the sweep must decide first)", async () => {
+    const { card } = await seed("worktree-spawn");
+    const draft = await Effect.runPromise(draftFromProposal({ proposalId: card.id }));
+    expect(draft.status).toBe("blocked");
+  });
+
+  it("drafts an approved worktree-spawn card as a delamain-peer", async () => {
+    const { card, repo } = await seed("worktree-spawn");
+    await Effect.runPromise(decideProposal({ proposalId: card.id, decision: "approve" }));
+    const draft = await Effect.runPromise(draftFromProposal({ proposalId: card.id }));
+    expect(draft.kind).toBe("delamain-peer");
+    expect(draft.status).toBe("draft");
+    expect(draft.repo).toBe(repo);
+  });
+
+  it("drafts an approved read-only card as verification (why the sweep must not use read-only)", async () => {
+    const { card } = await seed("read-only");
+    await Effect.runPromise(decideProposal({ proposalId: card.id, decision: "approve" }));
+    const draft = await Effect.runPromise(draftFromProposal({ proposalId: card.id }));
+    expect(draft.kind).toBe("verification");
   });
 });
 

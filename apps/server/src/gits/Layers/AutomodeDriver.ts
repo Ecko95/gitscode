@@ -15,6 +15,7 @@ import {
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeDriver, type AutomodeDriverShape } from "../Services/AutomodeDriver.ts";
+import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { GitsSlotScheduler } from "../Services/GitsSlotScheduler.ts";
@@ -77,6 +78,7 @@ export const AutomodeDriverLive = Layer.effect(
     const ledger = yield* AutomodeEpisodeLedger;
     const scheduler = yield* GitsSlotScheduler;
     const telegramDigest = yield* AutomodeTelegramDigest;
+    const proposalSweep = yield* AutomodeProposalSweep;
     const telegramNotifier = yield* HermesTelegramNotifier;
 
     const toDriverError = (message: string) => (cause: unknown) =>
@@ -399,7 +401,7 @@ export const AutomodeDriverLive = Layer.effect(
             result.blockedReason ?? `Dispatch of ${next.title} did not spawn a peer.`,
           );
         }
-      }).pipe(Effect.ensuring(telegramDigest.tick()));
+      }).pipe(Effect.ensuring(proposalSweep.tick()), Effect.ensuring(telegramDigest.tick()));
 
     // Forked, scoped polling fiber — runs for the lifetime of the layer.
     // Sleep first so that tests can call tickOnce() directly without
