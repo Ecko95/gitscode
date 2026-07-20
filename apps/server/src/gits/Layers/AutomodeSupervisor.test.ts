@@ -540,6 +540,94 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("stopAll flips the kill switch, kills live peers, and returns counts", () => {
+    let killCount = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Live goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(dispatched.goal.status, "running");
+
+      const result = yield* supervisor.stopAll();
+
+      assert.equal(killCount, 1);
+      assert.deepEqual(result, { stoppedPeers: 1, failures: 0 });
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.policy.killSwitchEnabled, true);
+      // Mirrors STOP today: goal status is left untouched by the bulk stop.
+      const goal = snapshot.goals.find((g) => g.id === dispatched.goal.id);
+      assert.equal(goal?.status, "running");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          onKill: () => {
+            killCount += 1;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("killGoal kills the peer and marks the goal failed", () => {
+    let killCount = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Cockpit-killed goal",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+      const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(dispatched.goal.status, "running");
+
+      const killed = yield* supervisor.killGoal({ goalId: dispatched.goal.id });
+
+      assert.equal(killCount, 1);
+      assert.equal(killed.status, "failed");
+      assert.equal(killed.blockedReason, "Killed from cockpit.");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          onKill: () => {
+            killCount += 1;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("killGoal errors when the goal is unknown", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const error = yield* Effect.flip(supervisor.killGoal({ goalId: "goal-missing" }));
+      assert.include(error.message, "goal-missing");
+      assert.include(error.message, "not found");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("driverHalted persists across supervisor restart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

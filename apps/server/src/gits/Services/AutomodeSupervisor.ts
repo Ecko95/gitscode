@@ -13,6 +13,7 @@ import type {
   AutomodeRecordHeldPrInput,
   AutomodeRejectGoalInput,
   AutomodeSnapshot,
+  AutomodeStopAllResult,
   AutomodeSupervisorError,
   DelamainSendMessageInput,
   DelamainSendMessageResult,
@@ -46,6 +47,13 @@ export interface AutomodeSupervisorShape {
   ) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
   readonly failGoal: (
     input: AutomodeGoalOutcomeInput,
+  ) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
+  /** Kill switch on first, then best-effort kill every live goal's peer/workflow. Mirrors the
+   * Telegram STOP command; goal status is left untouched (same as STOP today). */
+  readonly stopAll: () => Effect.Effect<AutomodeStopAllResult, AutomodeSupervisorError>;
+  /** Kill one goal's peer/workflow (if any) and mark it failed. Errors if the goal is unknown. */
+  readonly killGoal: (
+    input: AutomodeGoalInput,
   ) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
   readonly haltDriver: (
     input: AutomodeDriverHaltInput,

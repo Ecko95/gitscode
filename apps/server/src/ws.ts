@@ -2222,28 +2222,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "gits" },
           ),
-        // ponytail: schema-only RPCs (WsRpcGroup.of requires an exhaustive handler map, so a
-        // stub is unavoidable to keep this file compiling) — real logic lands next wave.
         [WS_METHODS.gitsAutomodeStopAll]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.gitsAutomodeStopAll,
-            Effect.fail(
-              new AutomodeSupervisorError({
-                message: "gits.automode.stopAll is not implemented yet.",
-              }),
-            ),
-            { "rpc.aggregate": "gits" },
-          ),
-        [WS_METHODS.gitsAutomodeGoalsKill]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.gitsAutomodeGoalsKill,
-            Effect.fail(
-              new AutomodeSupervisorError({
-                message: "gits.automode.goals.kill is not implemented yet.",
-              }),
-            ),
-            { "rpc.aggregate": "gits" },
-          ),
+          observeRpcEffect(WS_METHODS.gitsAutomodeStopAll, automodeSupervisor.stopAll(), {
+            "rpc.aggregate": "gits",
+          }),
+        [WS_METHODS.gitsAutomodeGoalsKill]: (input) =>
+          observeRpcEffect(WS_METHODS.gitsAutomodeGoalsKill, automodeSupervisor.killGoal(input), {
+            "rpc.aggregate": "gits",
+          }),
         [WS_METHODS.gitsCapacityGetSnapshot]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsCapacityGetSnapshot,

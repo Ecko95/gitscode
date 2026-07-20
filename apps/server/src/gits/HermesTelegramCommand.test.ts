@@ -7,7 +7,6 @@ import {
   parseHermesTelegramCommand,
 } from "./HermesTelegramCommand.ts";
 import { AutomodeSupervisor, type AutomodeSupervisorShape } from "./Services/AutomodeSupervisor.ts";
-import { DelamainAdapter, type DelamainAdapterShape } from "./Services/DelamainAdapter.ts";
 import { GitsSlotScheduler, type GitsSlotSchedulerShape } from "./Services/GitsSlotScheduler.ts";
 
 describe("parseHermesTelegramCommand", () => {
@@ -43,15 +42,7 @@ describe("parseHermesTelegramCommand", () => {
   });
 });
 
-function testLayer(calls: string[], killFailures = new Set<string>()) {
-  const snapshot = {
-    goals: [
-      { peerId: "peer-running", status: "running" },
-      { peerId: "peer-pending", status: "pending" },
-      { peerId: "peer-completed", status: "completed" },
-      { peerId: null, status: "running" },
-    ],
-  };
+function testLayer(calls: string[], stopAllResult = { stoppedPeers: 2, failures: 0 }) {
   const supervisor = {
     approveGoal: ({ goalId }: { readonly goalId: string }) => {
       calls.push(`approve:${goalId}`);
@@ -61,13 +52,9 @@ function testLayer(calls: string[], killFailures = new Set<string>()) {
       calls.push(`reject:${goalId}:${reason ?? ""}`);
       return Effect.succeed({});
     },
-    updatePolicy: ({ killSwitchEnabled }: { readonly killSwitchEnabled?: boolean }) => {
-      calls.push(`policy:${String(killSwitchEnabled)}`);
-      return Effect.succeed(snapshot);
-    },
-    getSnapshot: () => {
-      calls.push("snapshot");
-      return Effect.succeed(snapshot);
+    stopAll: () => {
+      calls.push("stopAll");
+      return Effect.succeed(stopAllResult);
     },
   } as unknown as AutomodeSupervisorShape;
   const scheduler = {
@@ -76,24 +63,21 @@ function testLayer(calls: string[], killFailures = new Set<string>()) {
       return Effect.succeed({});
     },
   } as unknown as GitsSlotSchedulerShape;
-  const delamain = {
-    killPeer: ({ peerId }: { readonly peerId: string }) => {
-      calls.push(`kill:${peerId}`);
-      return killFailures.has(peerId) ? Effect.fail({ _tag: "TestFailure" }) : Effect.succeed({});
-    },
-  } as unknown as DelamainAdapterShape;
 
   return Layer.mergeAll(
     Layer.succeed(AutomodeSupervisor, supervisor),
     Layer.succeed(GitsSlotScheduler, scheduler),
-    Layer.succeed(DelamainAdapter, delamain),
   );
 }
 
-async function dispatch(text: string, calls: string[], killFailures?: Set<string>) {
+async function dispatch(
+  text: string,
+  calls: string[],
+  stopAllResult?: { stoppedPeers: number; failures: number },
+) {
   return Effect.runPromise(
     dispatchHermesTelegramCommand(parseHermesTelegramCommand(text)).pipe(
-      Effect.provide(testLayer(calls, killFailures)),
+      Effect.provide(testLayer(calls, stopAllResult)),
     ),
   );
 }
@@ -128,22 +112,24 @@ describe("dispatchHermesTelegramCommand", () => {
     expect(calls).toEqual(["arm"]);
   });
 
-  it("enables the kill switch before reading and terminating active peers", async () => {
+  it("delegates STOP to supervisor.stopAll and formats its counts", async () => {
     const calls: string[] = [];
 
-    await expect(dispatch("STOP", calls)).resolves.toBe("Stop requested for 2 peer(s).");
+    await expect(dispatch("STOP", calls, { stoppedPeers: 2, failures: 0 })).resolves.toBe(
+      "Stop requested for 2 peer(s).",
+    );
 
-    expect(calls).toEqual(["policy:true", "snapshot", "kill:peer-running", "kill:peer-pending"]);
+    expect(calls).toEqual(["stopAll"]);
   });
 
-  it("keeps the kill switch enabled and reports bounded stop failures", async () => {
+  it("reports bounded stop failures from supervisor.stopAll", async () => {
     const calls: string[] = [];
 
-    await expect(dispatch("STOP", calls, new Set(["peer-pending"]))).resolves.toBe(
+    await expect(dispatch("STOP", calls, { stoppedPeers: 1, failures: 1 })).resolves.toBe(
       "Stop requested for 1 peer(s); 1 failed.",
     );
 
-    expect(calls[0]).toBe("policy:true");
+    expect(calls).toEqual(["stopAll"]);
   });
 
   it("returns help without calling a service for invalid commands", async () => {
