@@ -892,6 +892,10 @@ export const AutomodePolicy = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   motokoAuthority: MotokoAuthority.pipe(Schema.withDecodingDefault(Effect.succeed("observe"))),
+  // Owner kill-switch for the daily Telegram digest/report. On by default (existing behavior);
+  // decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a legacy
+  // automode-state.json without telegramDigestEnabled must still decode.
+  telegramDigestEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   updatedAt: IsoDateTime,
 });
 export type AutomodePolicy = typeof AutomodePolicy.Type;
@@ -979,6 +983,7 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   motokoAuthority: Schema.optional(MotokoAuthority),
+  telegramDigestEnabled: Schema.optional(Schema.Boolean),
 });
 export type AutomodePolicyUpdateInput = typeof AutomodePolicyUpdateInput.Type;
 
@@ -1028,6 +1033,13 @@ export const AutomodeDispatchResult = Schema.Struct({
   blockedReason: Schema.NullOr(SummaryString),
 });
 export type AutomodeDispatchResult = typeof AutomodeDispatchResult.Type;
+
+// Mirrors the counters the Telegram STOP command already reports (HermesTelegramCommand.ts).
+export const AutomodeStopAllResult = Schema.Struct({
+  stoppedPeers: NonNegativeInt,
+  failures: NonNegativeInt,
+});
+export type AutomodeStopAllResult = typeof AutomodeStopAllResult.Type;
 
 // --- Slot scheduler (off-hours autonomy phase 1) -------------------------------------------
 // Gates autonomous goal STARTS to London night slots (decisions 6, 7, 11, 20).
@@ -1789,3 +1801,31 @@ export class GitsReviewError extends Schema.TaggedErrorClass<GitsReviewError>()(
   message: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect),
 }) {}
+
+// --- Automode episode ledger (RPC exposure) ------------------------------------------------
+// Mirrors apps/server/src/persistence/Services/AutomodeEpisodeLedger.ts's (server-only,
+// SQL-backed) AutomodeEpisode row shape 1:1 so it can be exposed over
+// gits.automode.episodes.list. Keep both definitions in sync by hand.
+
+export const AutomodeEpisode = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  episodeId: Schema.NullOr(TrimmedNonEmptyString),
+  repo: PathString,
+  goalId: TrimmedNonEmptyString,
+  goalTitle: TrimmedNonEmptyString,
+  sliceBranch: Schema.NullOr(TrimmedNonEmptyString),
+  verdict: GitsVerifierVerdict,
+  confidence: Schema.NullOr(GitsVerifierConfidence),
+  recommendation: GitsVerifierRecommendation,
+  flagged: Schema.Boolean,
+  summary: SummaryString,
+  review: GitsReviewResult,
+  createdAt: IsoDateTime,
+});
+export type AutomodeEpisode = typeof AutomodeEpisode.Type;
+
+export const AutomodeEpisodesListInput = Schema.Struct({
+  limit: Schema.optional(PositiveInt),
+  repo: Schema.optional(PathString),
+});
+export type AutomodeEpisodesListInput = typeof AutomodeEpisodesListInput.Type;

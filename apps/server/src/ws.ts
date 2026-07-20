@@ -104,6 +104,7 @@ import { GitsSlotScheduler } from "./gits/Services/GitsSlotScheduler.ts";
 import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
+import { AutomodeEpisodeLedger } from "./persistence/Services/AutomodeEpisodeLedger.ts";
 import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import {
@@ -423,6 +424,7 @@ const makeWsRpcLayer = (
       const hermesAdapter = yield* HermesAdapter;
       const openGsdAdapter = yield* OpenGsdAdapter;
       const automodeSupervisor = yield* AutomodeSupervisor;
+      const automodeEpisodeLedger = yield* AutomodeEpisodeLedger;
       // R#1 (kill-switch-only manual gate): manual peer actions stay human-driven, but the
       // global automode kill switch also freezes them. ponytail: reuse DelamainAdapterError
       // (these RPC channels already carry it) so no rpc.ts/client contract change is needed.
@@ -2206,6 +2208,42 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.gitsAutomodeDriverResume, automodeSupervisor.resumeDriver(), {
             "rpc.aggregate": "gits",
           }),
+        [WS_METHODS.gitsAutomodeEpisodesList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeEpisodesList,
+            automodeEpisodeLedger.list_episodes(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AutomodeSupervisorError({
+                    message: "Failed to list automode episodes.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        // ponytail: schema-only RPCs (WsRpcGroup.of requires an exhaustive handler map, so a
+        // stub is unavoidable to keep this file compiling) — real logic lands next wave.
+        [WS_METHODS.gitsAutomodeStopAll]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeStopAll,
+            Effect.fail(
+              new AutomodeSupervisorError({
+                message: "gits.automode.stopAll is not implemented yet.",
+              }),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsAutomodeGoalsKill]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeGoalsKill,
+            Effect.fail(
+              new AutomodeSupervisorError({
+                message: "gits.automode.goals.kill is not implemented yet.",
+              }),
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsCapacityGetSnapshot]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsCapacityGetSnapshot,

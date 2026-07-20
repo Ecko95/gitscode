@@ -249,6 +249,7 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     verificationCommands: [],
     integrationBranch: null,
     motokoAuthority: "observe",
+    telegramDigestEnabled: true,
     updatedAt,
   };
 }
@@ -433,6 +434,7 @@ function applyPolicyUpdate(
     integrationBranch:
       input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,
     motokoAuthority: input.motokoAuthority ?? policy.motokoAuthority,
+    telegramDigestEnabled: input.telegramDigestEnabled ?? policy.telegramDigestEnabled,
     updatedAt,
   };
 }

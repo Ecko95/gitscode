@@ -129,6 +129,7 @@ import {
   AutomodeSupervisor,
   type AutomodeSupervisorShape,
 } from "./gits/Services/AutomodeSupervisor.ts";
+import { AutomodeEpisodeLedger } from "./persistence/Services/AutomodeEpisodeLedger.ts";
 import { CritSidecarManager } from "./crit/crit-sidecar-manager.ts";
 import {
   GitsCapacityMonitor,
@@ -275,6 +276,7 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     verificationCommands: [],
     integrationBranch: null,
     motokoAuthority: "observe",
+    telegramDigestEnabled: true,
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
   budgetUsage: {
@@ -1141,6 +1143,10 @@ const buildAppUnderTest = (options?: {
           }),
         dispatchGoal: () => Effect.succeed(defaultAutomodeDispatchResult),
         ...options?.layers?.automodeSupervisor,
+      }),
+      Layer.mock(AutomodeEpisodeLedger)({
+        record_episode: () => Effect.void,
+        list_episodes: () => Effect.succeed([]),
       }),
       Layer.mock(GitsSlotScheduler)({
         getSnapshot: () => Effect.succeed(defaultGitsSchedulerSnapshot),

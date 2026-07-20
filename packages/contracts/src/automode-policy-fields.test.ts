@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
-import { AutomodePolicy, AutomodePolicyUpdateInput } from "./gits.ts";
+import {
+  AutomodeEpisode,
+  AutomodeEpisodesListInput,
+  AutomodePolicy,
+  AutomodePolicyUpdateInput,
+} from "./gits.ts";
 
 describe("AutomodePolicy held-PR fields", () => {
   it("decodes verificationCommands + integrationBranch", () => {
@@ -44,6 +49,7 @@ describe("AutomodePolicy held-PR fields", () => {
     expect(decoded.autoEnqueueApprovedProposals).toBe(false);
     expect(decoded.nightlyProposalSweep).toBe(false);
     expect(decoded.proposalRepos).toEqual([]);
+    expect(decoded.telegramDigestEnabled).toBe(true);
   });
 
   it("accepts the new fields on the update input", () => {
@@ -55,5 +61,79 @@ describe("AutomodePolicy held-PR fields", () => {
     });
     expect(decoded.integrationBranch).toBe("auto/x");
     expect(decoded.autoEnqueueApprovedProposals).toBe(true);
+  });
+
+  it("decodes an explicit telegramDigestEnabled and accepts it on the update input", () => {
+    const decoded = Schema.decodeUnknownSync(AutomodePolicy)({
+      mode: "manual",
+      killSwitchEnabled: true,
+      maxActivePeers: 1,
+      allowedRepos: [],
+      allowedModels: [],
+      defaultModel: null,
+      maxBudgetUsd: null,
+      maxRuntimeMinutes: 60,
+      requireApprovalForPeerSpawn: true,
+      requireApprovalBeforeIntegrate: true,
+      requireApprovalBeforeDestructiveAction: true,
+      telegramDigestEnabled: false,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(decoded.telegramDigestEnabled).toBe(false);
+
+    const updateDecoded = Schema.decodeUnknownSync(AutomodePolicyUpdateInput)({
+      telegramDigestEnabled: false,
+    });
+    expect(updateDecoded.telegramDigestEnabled).toBe(false);
+  });
+});
+
+describe("Automode episode ledger contract", () => {
+  const baseEpisode = {
+    id: "epi-1",
+    episodeId: "epi-thread-1",
+    repo: "/tmp/repo",
+    goalId: "goal-1",
+    goalTitle: "Ship the thing",
+    sliceBranch: "auto/slice-1",
+    verdict: "pass" as const,
+    confidence: "high" as const,
+    recommendation: "auto-merge" as const,
+    flagged: false,
+    summary: "All good.",
+    review: {
+      sliceId: "slice-1",
+      recommendation: "auto-merge" as const,
+      mechanicalPassed: true,
+      mechanical: {
+        worktree: "/tmp/repo",
+        confined: true,
+        passed: true,
+        results: [],
+        checkedAt: "2026-01-01T00:00:00.000Z",
+      },
+      semantic: null,
+      criteriaSource: "authored" as const,
+      summary: "All good.",
+      checkedAt: "2026-01-01T00:00:00.000Z",
+    },
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("decodes an AutomodeEpisode row", () => {
+    const decoded = Schema.decodeUnknownSync(AutomodeEpisode)(baseEpisode);
+    expect(decoded.id).toBe("epi-1");
+    expect(decoded.review.recommendation).toBe("auto-merge");
+  });
+
+  it("decodes AutomodeEpisodesListInput with both fields optional", () => {
+    expect(Schema.decodeUnknownSync(AutomodeEpisodesListInput)({})).toEqual({});
+    expect(
+      Schema.decodeUnknownSync(AutomodeEpisodesListInput)({ limit: 10, repo: "/tmp/repo" }),
+    ).toEqual({ limit: 10, repo: "/tmp/repo" });
+  });
+
+  it("rejects a non-positive limit", () => {
+    expect(() => Schema.decodeUnknownSync(AutomodeEpisodesListInput)({ limit: 0 })).toThrow();
   });
 });

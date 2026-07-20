@@ -407,6 +407,9 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(AutomodeSupervisorLayerLive),
   Layer.provideMerge(GitsSlotSchedulerLayerLive),
   Layer.provideMerge(AutomodeDriverLayerLive),
+  // Exposed directly (not just as AutomodeDriverLayerLive's internal dependency) so the ws.ts
+  // RPC layer can `yield* AutomodeEpisodeLedger` for gits.automode.episodes.list.
+  Layer.provideMerge(AutomodeEpisodeLedgerLayerLive),
   // GitsReviewPipeline composes the gate/verifier/criteria services. Provide them
   // directly to it so its own requirements are satisfied here rather than leaking
   // into the server launch layer (which must only require ServerConfig). The dep
