@@ -25,6 +25,8 @@ import type {
   DelamainWorkflowStatus,
   DelamainWorkflowKillInput,
   DelamainWorkflowKillResult,
+  DelamainWorkflowRunInput,
+  DelamainWorkflowRunResult,
 } from "@t3tools/contracts";
 
 export interface DelamainAdapterShape {
@@ -68,6 +70,9 @@ export interface DelamainAdapterShape {
   readonly workflowKill: (
     input: DelamainWorkflowKillInput,
   ) => Effect.Effect<DelamainWorkflowKillResult, DelamainAdapterError>;
+  readonly runWorkflow: (
+    input: DelamainWorkflowRunInput,
+  ) => Effect.Effect<DelamainWorkflowRunResult, DelamainAdapterError>;
 }
 
 export class DelamainAdapter extends Context.Service<DelamainAdapter, DelamainAdapterShape>()(

@@ -657,6 +657,26 @@ export const DelamainRunWorkflowResult = Schema.Struct({
 });
 export type DelamainRunWorkflowResult = typeof DelamainRunWorkflowResult.Type;
 
+// Operator-initiated workflow launch from the GITS UI (`gits.delamain.workflow.run`):
+// shells `run-workflow <script> --repo <repo> [--name ..] [--args-json ..] --detach`.
+// name/argsJson are optional so a bare `run-workflow <script> --repo <repo> --detach`
+// stays valid; the adapter validates argsJson is parseable JSON before shelling.
+export const DelamainWorkflowRunInput = Schema.Struct({
+  script: PathString,
+  repo: PathString,
+  name: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  argsJson: Schema.optional(Schema.NullOr(SummaryString)),
+});
+export type DelamainWorkflowRunInput = typeof DelamainWorkflowRunInput.Type;
+
+// `run-workflow --detach` prints {workflow_id, status, workflow}; status stays a plain
+// string so unknown CLI states never fail decode.
+export const DelamainWorkflowRunResult = Schema.Struct({
+  workflowId: TrimmedNonEmptyString,
+  status: Schema.String,
+});
+export type DelamainWorkflowRunResult = typeof DelamainWorkflowRunResult.Type;
+
 export const DelamainSpawnPeerInput = Schema.Struct({
   repo: PathString,
   prompt: SummaryString,

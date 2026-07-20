@@ -2091,6 +2091,13 @@ const makeWsRpcLayer = (
             withKillSwitchGuard(delamainAdapter.workflowKill(input)),
             { "rpc.aggregate": "gits" },
           ),
+        // Operator launch — kill-switch guarded like spawn (it dispatches peers).
+        [WS_METHODS.gitsDelamainRunWorkflow]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsDelamainRunWorkflow,
+            withKillSwitchGuard(delamainAdapter.runWorkflow(input)),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsDelamainReadInbox]: (input) =>
           observeRpcEffect(WS_METHODS.gitsDelamainReadInbox, delamainAdapter.readInbox(input), {
             "rpc.aggregate": "gits",

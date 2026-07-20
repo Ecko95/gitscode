@@ -186,6 +186,87 @@ describe("DelamainCliAdapter", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "shells the pinned operator `run-workflow --detach` argv with argsJson passthrough",
+    () =>
+      Effect.gen(function* () {
+        runMock.mockImplementationOnce((input) => {
+          expect(input.command).toBe("delamain");
+          expect(input.args).toEqual([
+            "run-workflow",
+            "/srv/delamain/workflows/automode-goal.ts",
+            "--repo",
+            "/tmp/repo",
+            "--name",
+            "Nightly sweep",
+            "--args-json",
+            '{"title":"Ship it"}',
+            "--detach",
+          ]);
+          return Effect.succeed({
+            stdout: JSON.stringify({ workflow_id: "wf-launch", status: "running", workflow: {} }),
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          });
+        });
+        const adapter = yield* DelamainAdapter;
+        const result = yield* adapter.runWorkflow({
+          script: "/srv/delamain/workflows/automode-goal.ts",
+          repo: "/tmp/repo",
+          name: "Nightly sweep",
+          argsJson: '{"title":"Ship it"}',
+        });
+        expect(result.workflowId).toBe("wf-launch");
+        expect(result.status).toBe("running");
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("omits --name/--args-json when the operator leaves them unset", () =>
+    Effect.gen(function* () {
+      runMock.mockImplementationOnce((input) => {
+        expect(input.args).toEqual([
+          "run-workflow",
+          "/srv/delamain/workflows/automode-goal.ts",
+          "--repo",
+          "/tmp/repo",
+          "--detach",
+        ]);
+        return Effect.succeed({
+          stdout: JSON.stringify({ workflow_id: "wf-bare", status: "queued" }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+      });
+      const adapter = yield* DelamainAdapter;
+      const result = yield* adapter.runWorkflow({
+        script: "/srv/delamain/workflows/automode-goal.ts",
+        repo: "/tmp/repo",
+      });
+      expect(result.workflowId).toBe("wf-bare");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("rejects unparseable argsJson before shelling the CLI", () =>
+    Effect.gen(function* () {
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .runWorkflow({
+          script: "/srv/delamain/workflows/automode-goal.ts",
+          repo: "/tmp/repo",
+          argsJson: "{not json",
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toBe("run-workflow argsJson is not valid JSON.");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("reads leaf ids from the nested workflow.agentPeerIds alias", () =>
     Effect.gen(function* () {
       runMock.mockImplementationOnce((input) => {

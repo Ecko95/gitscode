@@ -194,6 +194,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         workflow: {
           status: vi.fn(),
           kill: vi.fn(),
+          run: vi.fn(),
         },
         messages: {
           inbox: vi.fn(),
