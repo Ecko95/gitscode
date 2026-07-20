@@ -896,6 +896,11 @@ export const AutomodePolicy = Schema.Struct({
   // decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a legacy
   // automode-state.json without telegramDigestEnabled must still decode.
   telegramDigestEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Human-in-the-loop gate for the nightly sweep: when true (default), sweep-drafted goals
+  // enter waiting-approval so the owner confirms them (e.g. Telegram APPROVE <id>) before
+  // dispatch; when false, the sweep keeps its legacy self-approved queued behavior.
+  // Decoding default is load-bearing — see telegramDigestEnabled above.
+  sweepRequiresConfirmation: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   updatedAt: IsoDateTime,
 });
 export type AutomodePolicy = typeof AutomodePolicy.Type;
@@ -984,6 +989,7 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   motokoAuthority: Schema.optional(MotokoAuthority),
   telegramDigestEnabled: Schema.optional(Schema.Boolean),
+  sweepRequiresConfirmation: Schema.optional(Schema.Boolean),
 });
 export type AutomodePolicyUpdateInput = typeof AutomodePolicyUpdateInput.Type;
 

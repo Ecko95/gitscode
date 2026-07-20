@@ -50,6 +50,7 @@ describe("AutomodePolicy held-PR fields", () => {
     expect(decoded.nightlyProposalSweep).toBe(false);
     expect(decoded.proposalRepos).toEqual([]);
     expect(decoded.telegramDigestEnabled).toBe(true);
+    expect(decoded.sweepRequiresConfirmation).toBe(true);
   });
 
   it("accepts the new fields on the update input", () => {
@@ -83,8 +84,10 @@ describe("AutomodePolicy held-PR fields", () => {
 
     const updateDecoded = Schema.decodeUnknownSync(AutomodePolicyUpdateInput)({
       telegramDigestEnabled: false,
+      sweepRequiresConfirmation: false,
     });
     expect(updateDecoded.telegramDigestEnabled).toBe(false);
+    expect(updateDecoded.sweepRequiresConfirmation).toBe(false);
   });
 });
 

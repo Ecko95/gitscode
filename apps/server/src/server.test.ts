@@ -277,6 +277,7 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     integrationBranch: null,
     motokoAuthority: "observe",
     telegramDigestEnabled: true,
+    sweepRequiresConfirmation: true,
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
   budgetUsage: {
