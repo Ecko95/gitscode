@@ -213,6 +213,7 @@ export interface WsRpcClient {
       readonly workflow: {
         readonly status: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainWorkflowStatus>;
         readonly kill: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainWorkflowKill>;
+        readonly run: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainRunWorkflow>;
       };
       readonly messages: {
         readonly inbox: RpcUnaryMethod<typeof WS_METHODS.gitsDelamainReadInbox>;
@@ -500,6 +501,8 @@ export function createWsRpcClient(
             transport.request((client) => client[WS_METHODS.gitsDelamainWorkflowStatus](input)),
           kill: (input) =>
             transport.request((client) => client[WS_METHODS.gitsDelamainWorkflowKill](input)),
+          run: (input) =>
+            transport.request((client) => client[WS_METHODS.gitsDelamainRunWorkflow](input)),
         },
         messages: {
           inbox: (input) =>

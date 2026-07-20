@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   AutomodeGoal,
+  DelamainWorkflowRunInput,
+  DelamainWorkflowRunResult,
   GitsBuildInfo,
   GitsCapacitySnapshot,
   GitsMcpInventorySnapshot,
@@ -316,6 +318,49 @@ describe("AutomodeGoal", () => {
   it("keeps a provided workflowId", () => {
     const parsed = decodeAutomodeGoal({ ...legacyGoal, workflowId: "wf-123" });
     expect(parsed.workflowId).toBe("wf-123");
+  });
+});
+
+describe("Delamain workflow launch contracts", () => {
+  const decodeInput = Schema.decodeUnknownSync(DelamainWorkflowRunInput);
+  const encodeInput = Schema.encodeSync(DelamainWorkflowRunInput);
+  const decodeResult = Schema.decodeUnknownSync(DelamainWorkflowRunResult);
+
+  it("round-trips a full launch input (script/repo/name/argsJson)", () => {
+    const input = {
+      script: "/srv/delamain/workflows/automode-goal.ts",
+      repo: "/home/test/project",
+      name: "Nightly sweep",
+      argsJson: '{"title":"Ship it"}',
+    };
+    expect(encodeInput(decodeInput(input))).toEqual(input);
+  });
+
+  it("accepts a bare input with name/argsJson omitted", () => {
+    const parsed = decodeInput({
+      script: "/srv/delamain/workflows/automode-goal.ts",
+      repo: "/home/test/project",
+    });
+    expect(parsed.name).toBeUndefined();
+    expect(parsed.argsJson).toBeUndefined();
+  });
+
+  it("accepts explicit null for name/argsJson", () => {
+    const parsed = decodeInput({
+      script: "/srv/delamain/workflows/automode-goal.ts",
+      repo: "/home/test/project",
+      name: null,
+      argsJson: null,
+    });
+    expect(parsed.name).toBeNull();
+    expect(parsed.argsJson).toBeNull();
+  });
+
+  it("decodes the launch result with an arbitrary status string", () => {
+    expect(decodeResult({ workflowId: "wf-launch", status: "running" })).toEqual({
+      workflowId: "wf-launch",
+      status: "running",
+    });
   });
 });
 

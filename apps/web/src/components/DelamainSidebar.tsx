@@ -15,6 +15,15 @@ import {
 } from "./ui/alert-dialog";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import {
+  Dialog,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { Textarea } from "./ui/textarea";
+import {
   BotIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -24,7 +33,9 @@ import {
   GitMergeIcon,
   MoreHorizontalIcon,
   PanelRightCloseIcon,
+  PlusIcon,
   ScrollTextIcon,
+  WorkflowIcon,
   XCircleIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
@@ -371,6 +382,284 @@ function IntegrateDialog({
   );
 }
 
+// --- Launch dialog (spawn peer / run workflow) ---
+
+// ponytail: plain default path. A workflow-script registry (list + pick) is the upgrade
+// path when there is more than one script worth launching from the UI.
+const DEFAULT_WORKFLOW_SCRIPT = "/srv/gits/repos/delamain/workflows/automode-goal.ts";
+// spawnPeer's contract engine values are codex/cursor/unknown — only the two real engines
+// are operator-selectable here. ("pi" is not in the contract's DelamainEngine literals.)
+const SPAWN_ENGINES = ["codex", "cursor"] as const;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error.";
+}
+
+function LaunchDialog({
+  open,
+  onOpenChange,
+  environmentId,
+  repo,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  environmentId: EnvironmentId;
+  repo: string;
+}) {
+  const queryClient = useQueryClient();
+  const [mode, set_mode] = useState<"spawn" | "workflow">("spawn");
+
+  // Spawn-peer form.
+  const [prompt, set_prompt] = useState("");
+  const [spawn_name, set_spawn_name] = useState("");
+  const [engine, set_engine] = useState<(typeof SPAWN_ENGINES)[number]>("codex");
+
+  // Run-workflow form.
+  const [script, set_script] = useState(DEFAULT_WORKFLOW_SCRIPT);
+  const [wf_name, set_wf_name] = useState("");
+  const [args_json, set_args_json] = useState("");
+
+  // Client-side JSON validation — inline error, blocks submit before we ever shell the CLI.
+  const args_json_error = useMemo(() => {
+    const trimmed = args_json.trim();
+    if (!trimmed) return null;
+    try {
+      JSON.parse(trimmed);
+      return null;
+    } catch (err) {
+      return errorMessage(err);
+    }
+  }, [args_json]);
+
+  const spawn_mutation = useMutation({
+    mutationFn: async () => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) throw new Error("No environment client");
+      return client.delamain.spawnPeer({
+        repo,
+        prompt: prompt.trim(),
+        engine,
+        ...(spawn_name.trim() ? { name: spawn_name.trim() } : {}),
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["gits", "delamain", "peers", environmentId],
+      });
+    },
+  });
+
+  const workflow_mutation = useMutation({
+    mutationFn: async () => {
+      const client = readGitsEnvironmentClient(environmentId);
+      if (!client) throw new Error("No environment client");
+      const trimmedArgs = args_json.trim();
+      return client.delamain.workflow.run({
+        script: script.trim(),
+        repo,
+        ...(wf_name.trim() ? { name: wf_name.trim() } : {}),
+        ...(trimmedArgs ? { argsJson: trimmedArgs } : {}),
+      });
+    },
+  });
+
+  const pending = spawn_mutation.isPending || workflow_mutation.isPending;
+
+  const reset_and_close = useCallback(
+    (next: boolean) => {
+      if (!next && !pending) {
+        spawn_mutation.reset();
+        workflow_mutation.reset();
+        onOpenChange(false);
+      } else if (next) {
+        onOpenChange(true);
+      }
+    },
+    [pending, spawn_mutation, workflow_mutation, onOpenChange],
+  );
+
+  const can_spawn = prompt.trim().length > 0 && !pending;
+  const can_run = script.trim().length > 0 && args_json_error === null && !pending;
+
+  return (
+    <Dialog open={open} onOpenChange={reset_and_close}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Launch</DialogTitle>
+        </DialogHeader>
+        <DialogPanel className="space-y-3">
+          {/* mode selector */}
+          <div className="flex gap-1.5">
+            <Button
+              size="sm"
+              variant={mode === "spawn" ? "default" : "outline"}
+              onClick={() => set_mode("spawn")}
+              type="button"
+            >
+              <BotIcon className="size-3.5" />
+              Spawn peer
+            </Button>
+            <Button
+              size="sm"
+              variant={mode === "workflow" ? "default" : "outline"}
+              onClick={() => set_mode("workflow")}
+              type="button"
+            >
+              <WorkflowIcon className="size-3.5" />
+              Run workflow
+            </Button>
+          </div>
+
+          {/* repo (read-only, prefilled from the active project) */}
+          <div className="grid gap-1">
+            <label className="text-[11px] font-medium text-muted-foreground/70">Repo</label>
+            <div className="truncate rounded-md border border-border/50 bg-muted/40 px-2 py-1.5 font-mono text-[11px] text-muted-foreground/70">
+              {repo}
+            </div>
+          </div>
+
+          {mode === "spawn" ? (
+            <>
+              <div className="grid gap-1">
+                <label className="text-[11px] font-medium text-muted-foreground/70">Prompt</label>
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => set_prompt(e.currentTarget.value)}
+                  placeholder="What should the peer do?"
+                  className="min-h-20 text-xs"
+                  disabled={pending}
+                />
+              </div>
+              <div className="grid gap-1">
+                <label className="text-[11px] font-medium text-muted-foreground/70">
+                  Name (optional)
+                </label>
+                <Input
+                  value={spawn_name}
+                  onValueChange={set_spawn_name}
+                  placeholder="Peer name"
+                  size="sm"
+                  disabled={pending}
+                  className="text-[11px]"
+                />
+              </div>
+              <div className="grid gap-1">
+                <label className="text-[11px] font-medium text-muted-foreground/70">Engine</label>
+                <div className="flex gap-1.5">
+                  {SPAWN_ENGINES.map((eng) => (
+                    <Button
+                      key={eng}
+                      size="sm"
+                      variant={engine === eng ? "default" : "outline"}
+                      onClick={() => set_engine(eng)}
+                      type="button"
+                      disabled={pending}
+                    >
+                      {eng}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              {spawn_mutation.isError ? (
+                <p className="text-[11px] text-destructive/70">
+                  {errorMessage(spawn_mutation.error)}
+                </p>
+              ) : null}
+              {spawn_mutation.isSuccess ? (
+                <p className="text-[11px] text-emerald-500">
+                  Spawned peer <span className="font-mono">{spawn_mutation.data.id}</span>.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="grid gap-1">
+                <label className="text-[11px] font-medium text-muted-foreground/70">
+                  Workflow script
+                </label>
+                <Input
+                  value={script}
+                  onValueChange={set_script}
+                  placeholder="/path/to/workflow.ts"
+                  size="sm"
+                  disabled={pending}
+                  className="font-mono text-[11px]"
+                />
+              </div>
+              <div className="grid gap-1">
+                <label className="text-[11px] font-medium text-muted-foreground/70">
+                  Name (optional)
+                </label>
+                <Input
+                  value={wf_name}
+                  onValueChange={set_wf_name}
+                  placeholder="Run name"
+                  size="sm"
+                  disabled={pending}
+                  className="text-[11px]"
+                />
+              </div>
+              <div className="grid gap-1">
+                <label className="text-[11px] font-medium text-muted-foreground/70">
+                  Args JSON (optional)
+                </label>
+                <Textarea
+                  value={args_json}
+                  onChange={(e) => set_args_json(e.currentTarget.value)}
+                  placeholder='{"title":"…","prompt":"…"}'
+                  className="min-h-16 font-mono text-[11px]"
+                  aria-invalid={args_json_error !== null}
+                  disabled={pending}
+                />
+                {args_json_error ? (
+                  <p className="text-[11px] text-destructive/70">Invalid JSON: {args_json_error}</p>
+                ) : null}
+              </div>
+              {workflow_mutation.isError ? (
+                <p className="text-[11px] text-destructive/70">
+                  {errorMessage(workflow_mutation.error)}
+                </p>
+              ) : null}
+              {workflow_mutation.isSuccess ? (
+                <div className="space-y-0.5">
+                  <p className="text-[11px] text-emerald-500">
+                    Started workflow{" "}
+                    <span className="font-mono">{workflow_mutation.data.workflowId}</span>.
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/50">
+                    It will appear as a mirrored thread shortly.
+                  </p>
+                </div>
+              ) : null}
+            </>
+          )}
+        </DialogPanel>
+        <DialogFooter>
+          {mode === "spawn" ? (
+            <Button
+              onClick={() => spawn_mutation.mutate()}
+              disabled={!can_spawn}
+              type="button"
+              size="sm"
+            >
+              {spawn_mutation.isPending ? "Spawning…" : "Spawn peer"}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => workflow_mutation.mutate()}
+              disabled={!can_run}
+              type="button"
+              size="sm"
+            >
+              {workflow_mutation.isPending ? "Starting…" : "Run workflow"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 // --- Active statuses ---
 
 // frozen is terminal server-side (DelamainCliAdapter) — no Kill button on frozen peers.
@@ -572,6 +861,7 @@ const DelamainSidebar = memo(function DelamainSidebar({
   const [kill_state, set_kill_state] = useState<{ peer: DelamainPeer } | null>(null);
   const [integrate_state, set_integrate_state] = useState<{ peer: DelamainPeer } | null>(null);
   const [show_all, set_show_all] = useState(false);
+  const [launch_open, set_launch_open] = useState(false);
 
   const peers_query_key = ["gits", "delamain", "peers", environmentId];
 
@@ -651,15 +941,29 @@ const DelamainSidebar = memo(function DelamainSidebar({
             {delamain_peers.length} peer{delamain_peers.length === 1 ? "" : "s"}
           </span>
         </div>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          onClick={onClose}
-          aria-label="Close delamain sidebar"
-          className="text-muted-foreground/50 hover:text-foreground/70"
-        >
-          <PanelRightCloseIcon className="size-3.5" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {projectRepoRoot ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => set_launch_open(true)}
+              aria-label="Launch delamain peer or workflow"
+              title="Launch peer or workflow"
+              className="text-muted-foreground/50 hover:text-foreground/70"
+            >
+              <PlusIcon className="size-3.5" />
+            </Button>
+          ) : null}
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            onClick={onClose}
+            aria-label="Close delamain sidebar"
+            className="text-muted-foreground/50 hover:text-foreground/70"
+          >
+            <PanelRightCloseIcon className="size-3.5" />
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -713,6 +1017,15 @@ const DelamainSidebar = memo(function DelamainSidebar({
         onIntegrate={(peerId) => integrate_mutation.mutate(peerId)}
         isPending={integrate_mutation.isPending}
       />
+
+      {projectRepoRoot ? (
+        <LaunchDialog
+          open={launch_open}
+          onOpenChange={set_launch_open}
+          environmentId={environmentId}
+          repo={projectRepoRoot}
+        />
+      ) : null}
     </div>
   );
 });

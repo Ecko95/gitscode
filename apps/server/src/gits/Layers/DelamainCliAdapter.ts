@@ -22,6 +22,7 @@ import {
   type DelamainSendMessageResult,
   type DelamainWorkflowStatus,
   type DelamainWorkflowKillResult,
+  type DelamainWorkflowRunResult,
   type PeerStatus,
 } from "@t3tools/contracts";
 
@@ -402,6 +403,17 @@ function runWorkflowArgs(input: Parameters<DelamainAdapterShape["runGoalWorkflow
   ];
 }
 
+// Operator launch (`gits.delamain.workflow.run`): name/argsJson are optional so a bare
+// `run-workflow <script> --repo <repo> --detach` is valid. --detach stays last (mirrors
+// runWorkflowArgs) so the CLI prints the detach JSON envelope.
+function workflowRunArgs(input: Parameters<DelamainAdapterShape["runWorkflow"]>[0]): string[] {
+  const args = ["run-workflow", input.script, "--repo", input.repo];
+  if (input.name) args.push("--name", input.name);
+  if (input.argsJson) args.push("--args-json", input.argsJson);
+  args.push("--detach");
+  return args;
+}
+
 function normalizeWorkflowKill(workflowId: string, value: unknown): DelamainWorkflowKillResult {
   const record = rawRecord(value);
   return {
@@ -571,6 +583,28 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
       runJson<unknown>(processRunner, "workflow.kill", ["workflow", "kill", input.workflowId]).pipe(
         Effect.map((value) => normalizeWorkflowKill(input.workflowId, value)),
       ),
+    runWorkflow: (input) =>
+      Effect.gen(function* () {
+        // Reject garbage before shelling — never pass an unparseable blob to the CLI.
+        if (input.argsJson != null) {
+          yield* Effect.try({
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            try: () => JSON.parse(input.argsJson as string) as unknown,
+            catch: (cause) => toDelamainError("run-workflow argsJson is not valid JSON.", cause),
+          });
+        }
+        const value = yield* runJson<unknown>(
+          processRunner,
+          "run-workflow",
+          workflowRunArgs(input),
+        );
+        const record = rawRecord(value);
+        const workflowId = nullableString(record.workflow_id ?? record.workflowId);
+        if (workflowId === null) {
+          return yield* toDelamainError("Delamain run-workflow did not return a workflow_id.");
+        }
+        return { workflowId, status: rawStatus(record.status) } satisfies DelamainWorkflowRunResult;
+      }),
   };
 
   return adapter;

@@ -358,6 +358,7 @@ export const makeOrchestrationIntegrationHarness = (
           workflowStatus: () =>
             Effect.die("delamain not available in integration harness") as never,
           workflowKill: () => Effect.die("delamain not available in integration harness") as never,
+          runWorkflow: () => Effect.die("delamain not available in integration harness") as never,
         }),
       ),
     );

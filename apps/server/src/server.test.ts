@@ -4732,6 +4732,49 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes the Delamain run-workflow launch rpc through to the adapter", () =>
+    Effect.gen(function* () {
+      let launched: { script: string; repo: string; name: string | null | undefined } | null = null;
+      yield* buildAppUnderTest({
+        layers: {
+          delamainAdapter: {
+            runWorkflow: (input) =>
+              Effect.sync(() => {
+                launched = { script: input.script, repo: input.repo, name: input.name };
+                return { workflowId: "wf-launch", status: "running" };
+              }),
+          },
+          automodeSupervisor: {
+            getSnapshot: () =>
+              Effect.succeed({
+                ...defaultAutomodeSnapshot,
+                policy: { ...defaultAutomodeSnapshot.policy, killSwitchEnabled: false },
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsDelamainRunWorkflow]({
+            script: "/srv/delamain/workflows/automode-goal.ts",
+            repo: "/tmp/source-repo",
+            name: "Nightly sweep",
+          }),
+        ),
+      );
+
+      assert.equal(result.workflowId, "wf-launch");
+      assert.equal(result.status, "running");
+      assert.deepEqual(launched, {
+        script: "/srv/delamain/workflows/automode-goal.ts",
+        repo: "/tmp/source-repo",
+        name: "Nightly sweep",
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("blocks manual Delamain peer actions when the kill switch is enabled", () =>
     Effect.gen(function* () {
       let spawnCalled = false;
