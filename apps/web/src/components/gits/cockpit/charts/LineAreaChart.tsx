@@ -35,7 +35,6 @@ const PAD = { top: 10, right: 10, bottom: 18, left: 34 };
 
 interface HoverState {
   readonly clientX: number;
-  readonly clientY: number;
   readonly t: number;
 }
 
@@ -79,7 +78,7 @@ export function LineAreaChart({ series, height = 160, unit, showLegend }: LineAr
     const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
     const viewBoxX = PAD.left + fraction * (VIEW_W - PAD.left - PAD.right);
     const t = Math.min(maxT, Math.max(minT, xInvert(viewBoxX)));
-    setHover({ clientX: event.clientX, clientY: event.clientY, t });
+    setHover({ clientX: event.clientX, t });
   }
 
   const hoverX = hover ? xScale(hover.t) : null;
@@ -149,7 +148,11 @@ export function LineAreaChart({ series, height = 160, unit, showLegend }: LineAr
 
         {seriesPaths.map(({ series: s, pixelPoints }, i) => (
           <g key={s.id}>
-            <path d={buildAreaPath(pixelPoints, height - PAD.bottom)} fill={seriesVar(i)} fillOpacity={0.1} />
+            <path
+              d={buildAreaPath(pixelPoints, height - PAD.bottom)}
+              fill={seriesVar(i)}
+              fillOpacity={0.1}
+            />
             <path
               d={buildLinePath(pixelPoints)}
               stroke={seriesVar(i)}
@@ -232,7 +235,8 @@ export function LineAreaChart({ series, height = 160, unit, showLegend }: LineAr
           className="pointer-events-none absolute top-0 z-10 min-w-28 rounded-md border border-border bg-popover px-2 py-1.5 text-xs text-popover-foreground shadow-md"
           style={{
             left: tooltipAlignEnd ? undefined : tooltipLeft + 10,
-            right: tooltipAlignEnd && wrapperRect ? wrapperRect.width - tooltipLeft + 10 : undefined,
+            right:
+              tooltipAlignEnd && wrapperRect ? wrapperRect.width - tooltipLeft + 10 : undefined,
           }}
         >
           <div className="mb-1 text-[10px] text-muted-foreground">
