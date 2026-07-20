@@ -218,6 +218,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         schedulerArm: vi.fn(),
         schedulerDisarm: vi.fn(),
         resumeDriver: vi.fn(),
+        stopAll: vi.fn(),
+        killGoal: vi.fn(),
+        episodesList: vi.fn(),
       },
       capacity: {
         getSnapshot: vi.fn(),

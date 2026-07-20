@@ -239,6 +239,9 @@ export interface WsRpcClient {
       readonly schedulerArm: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsAutomodeSchedulerArm>;
       readonly schedulerDisarm: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeSchedulerDisarm>;
       readonly resumeDriver: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsAutomodeDriverResume>;
+      readonly stopAll: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsAutomodeStopAll>;
+      readonly killGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeGoalsKill>;
+      readonly episodesList: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeEpisodesList>;
     };
     readonly capacity: {
       readonly getSnapshot: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsCapacityGetSnapshot>;
@@ -541,6 +544,11 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsAutomodeSchedulerDisarm](input)),
         resumeDriver: () =>
           transport.request((client) => client[WS_METHODS.gitsAutomodeDriverResume]({})),
+        stopAll: () => transport.request((client) => client[WS_METHODS.gitsAutomodeStopAll]({})),
+        killGoal: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeGoalsKill](input)),
+        episodesList: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeEpisodesList](input)),
       },
       capacity: {
         getSnapshot: () =>
