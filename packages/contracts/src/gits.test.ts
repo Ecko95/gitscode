@@ -319,6 +319,17 @@ describe("AutomodeGoal", () => {
     const parsed = decodeAutomodeGoal({ ...legacyGoal, workflowId: "wf-123" });
     expect(parsed.workflowId).toBe("wf-123");
   });
+
+  it("defaults origin to manual when decoding a legacy persisted goal without one", () => {
+    // Same persisted-state-wipe guard: a legacy automode-state.json predates the origin
+    // field, and every goal minted before it existed was operator-authored ("manual").
+    expect(decodeAutomodeGoal(legacyGoal).origin).toBe("manual");
+  });
+
+  it("keeps a provided origin", () => {
+    const parsed = decodeAutomodeGoal({ ...legacyGoal, origin: "sweep" });
+    expect(parsed.origin).toBe("sweep");
+  });
 });
 
 describe("Delamain workflow launch contracts", () => {

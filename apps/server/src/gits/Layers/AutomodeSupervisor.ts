@@ -296,6 +296,12 @@ function goalNeedsApproval(policy: AutomodePolicy, goal: AutomodeGoal): boolean 
   if (goal.approvedAt !== null) {
     return false;
   }
+  // Sweep-drafted goals gate on sweepRequiresConfirmation alone, independent of
+  // requireApprovalForPeerSpawn — otherwise an operator who disables per-peer-spawn
+  // approval also (unintentionally) waives the owner's sweep confirmation contract.
+  if (goal.origin === "sweep" && policy.sweepRequiresConfirmation) {
+    return true;
+  }
   return promptNeedsApproval(policy, goal.prompt);
 }
 
@@ -633,6 +639,7 @@ export const AutomodeSupervisorLive = Layer.effect(
             id: `goal-${randomUUID()}`,
             // Episode thread (decision 23): carried from the proposal when present.
             episodeId: input.episodeId ?? `epi-${randomUUID()}`,
+            origin: input.origin ?? "manual",
             title: input.title,
             prompt: input.prompt,
             repo: input.repo,

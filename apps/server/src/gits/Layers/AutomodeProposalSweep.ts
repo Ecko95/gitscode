@@ -172,6 +172,7 @@ export const AutomodeProposalSweepLive = Layer.effect(
           prompt: draft.prompt,
           repo: draft.repo,
           episodeId: card.episodeId,
+          origin: "sweep",
         });
         // enqueueGoal prepends the new goal, so it's always the freshest entry.
         return enqueued.goals[0] ?? null;
@@ -220,12 +221,10 @@ export const AutomodeProposalSweepLive = Layer.effect(
             if (goal === null) continue;
             newGoals.push(goal);
             if (policy.sweepRequiresConfirmation) {
-              // ponytail: parks the goal at waiting-approval via the shared dispatch-time
-              // approval gate (requireApprovalForPeerSpawn / mode / integrate-destructive
-              // patterns) rather than a dedicated per-goal-origin check — that needs a small
-              // change inside AutomodeSupervisor.ts's promptNeedsApproval, out of scope here
-              // (file owned by a concurrent agent this round). Still bounded by the existing
-              // maxActivePeers gate if an operator runs with requireApprovalForPeerSpawn off.
+              // Parks the goal at waiting-approval via the shared dispatch-time approval gate:
+              // the goal carries origin "sweep" (enqueued above), and goalNeedsApproval in
+              // AutomodeSupervisor.ts treats sweep + sweepRequiresConfirmation as needing
+              // approval independent of requireApprovalForPeerSpawn.
               yield* supervisor.dispatchGoal({ goalId: goal.id }).pipe(
                 Effect.catchCause((cause) =>
                   Effect.logWarning("gits.sweep.confirm-gate-failed", {

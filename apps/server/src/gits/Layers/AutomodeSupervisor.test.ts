@@ -285,6 +285,64 @@ describe("AutomodeSupervisorLive", () => {
     );
   });
 
+  it.effect(
+    "sweep-origin goal needs approval when sweepRequiresConfirmation is on, even with requireApprovalForPeerSpawn off",
+    () =>
+      Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.updatePolicy({
+          mode: "autonomous",
+          killSwitchEnabled: false,
+          allowedRepos: ["/tmp/source-repo"],
+          maxBudgetUsd: 10,
+          maxRuntimeMinutes: null,
+          requireApprovalForPeerSpawn: false,
+          sweepRequiresConfirmation: true,
+        });
+        const queued = yield* supervisor.enqueueGoal({
+          title: "Sweep goal",
+          repo: "/tmp/source-repo",
+          prompt: "Run a safe task.",
+          origin: "sweep",
+        });
+
+        const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+        assert.equal(result.approvalRequired, true);
+        assert.equal(result.peer, null);
+        assert.equal(result.goal.status, "waiting-approval");
+      }).pipe(Effect.provide(makeLayer({ budgetUsage: availableBudgetUsage }))),
+  );
+
+  it.effect(
+    "does not gate a manual goal on sweepRequiresConfirmation when requireApprovalForPeerSpawn is off",
+    () =>
+      Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        yield* supervisor.updatePolicy({
+          mode: "autonomous",
+          killSwitchEnabled: false,
+          allowedRepos: ["/tmp/source-repo"],
+          maxBudgetUsd: 10,
+          maxRuntimeMinutes: null,
+          requireApprovalForPeerSpawn: false,
+          sweepRequiresConfirmation: true,
+        });
+        const queued = yield* supervisor.enqueueGoal({
+          title: "Manual goal",
+          repo: "/tmp/source-repo",
+          prompt: "Run a safe task.",
+        });
+        assert.equal(queued.goals[0]!.origin, "manual");
+
+        const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+        assert.equal(result.approvalRequired, false);
+        assert.equal(result.peer?.id, peer.id);
+        assert.equal(result.goal.status, "running");
+      }).pipe(Effect.provide(makeLayer({ budgetUsage: availableBudgetUsage }))),
+  );
+
   it.effect("persists policy and queued goals across supervisor restart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

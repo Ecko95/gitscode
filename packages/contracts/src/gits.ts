@@ -905,6 +905,12 @@ export const AutomodePolicy = Schema.Struct({
 });
 export type AutomodePolicy = typeof AutomodePolicy.Type;
 
+// Goal origin: distinguishes an operator-authored goal from one drafted by the nightly
+// sweep or the Motoko proposal bridge. The sweep uses this (not requireApprovalForPeerSpawn)
+// to decide whether sweepRequiresConfirmation must park the goal at waiting-approval.
+export const AutomodeGoalOrigin = Schema.Literals(["manual", "proposal", "sweep"]);
+export type AutomodeGoalOrigin = typeof AutomodeGoalOrigin.Type;
+
 export const AutomodeGoal = Schema.Struct({
   id: TrimmedNonEmptyString,
   // Episode thread (decision 23): proposal → goal → peer → ledger row. The decoding
@@ -934,6 +940,11 @@ export const AutomodeGoal = Schema.Struct({
   workflowId: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // Decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a
+  // legacy automode-state.json predating this field must still decode (a failed decode
+  // silently resets ALL persisted automode state to locked defaults). Legacy goals default
+  // to "manual", the correct answer for every goal minted before origin existed.
+  origin: AutomodeGoalOrigin.pipe(Schema.withDecodingDefault(Effect.succeed("manual"))),
 });
 export type AutomodeGoal = typeof AutomodeGoal.Type;
 
@@ -1000,6 +1011,8 @@ export const AutomodeEnqueueGoalInput = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   // Carries the proposal's episode thread into the goal; the supervisor mints one when absent.
   episodeId: Schema.optional(TrimmedNonEmptyString),
+  // Goal origin (manual/proposal/sweep); the supervisor defaults to "manual" when absent.
+  origin: Schema.optional(AutomodeGoalOrigin),
 });
 export type AutomodeEnqueueGoalInput = typeof AutomodeEnqueueGoalInput.Type;
 

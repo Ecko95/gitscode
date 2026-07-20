@@ -356,6 +356,30 @@ describe("AutomodeProposalSweep", () => {
   );
 
   it.effect(
+    "parks the sweep-drafted goal at waiting-approval even when requireApprovalForPeerSpawn is off",
+    () => {
+      return Effect.gen(function* () {
+        // sweepRequiresConfirmation must gate independent of requireApprovalForPeerSpawn —
+        // an operator who disables per-peer-spawn approval must not thereby also waive the
+        // owner's sweep confirmation contract.
+        const supervisor = yield* arm({
+          sweepRequiresConfirmation: true,
+          requireApprovalForPeerSpawn: false,
+        });
+        const sweep = yield* AutomodeProposalSweep;
+        yield* TestClock.setTime(EVENING);
+        yield* sweep.tick();
+
+        const snapshot = yield* supervisor.getSnapshot();
+        assert.equal(snapshot.goals.length, 1);
+        const goal = snapshot.goals[0]!;
+        assert.equal(goal.status, "waiting-approval");
+        assert.isNull(goal.approvedAt);
+      }).pipe(Effect.provide(makeLayer()));
+    },
+  );
+
+  it.effect(
     "keeps the legacy self-queued path (still Telegram-announced) when sweepRequiresConfirmation is off",
     () => {
       const telegramSent: string[] = [];
