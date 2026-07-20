@@ -996,15 +996,15 @@ export const WsGitsAutomodeEpisodesListRpc = Rpc.make(WS_METHODS.gitsAutomodeEpi
   error: AutomodeSupervisorError,
 });
 
-// Schema-only for now — no server handler wired yet (next wave). Mirrors the counters the
-// Telegram STOP command already computes (HermesTelegramCommand.ts `case "stop"`).
+// Wired to automodeSupervisor.stopAll() in ws.ts. Mirrors the counters the Telegram STOP
+// command already computes (HermesTelegramCommand.ts `case "stop"`).
 export const WsGitsAutomodeStopAllRpc = Rpc.make(WS_METHODS.gitsAutomodeStopAll, {
   payload: Schema.Struct({}),
   success: AutomodeStopAllResult,
   error: AutomodeSupervisorError,
 });
 
-// Schema-only for now — no server handler wired yet (next wave). Payload/success shape mirrors
+// Wired to automodeSupervisor.killGoal(input) in ws.ts. Payload/success shape mirrors
 // the other single-goal siblings (approveGoal/rejectGoal: {goalId} -> AutomodeGoal).
 export const WsGitsAutomodeGoalsKillRpc = Rpc.make(WS_METHODS.gitsAutomodeGoalsKill, {
   payload: AutomodeGoalInput,

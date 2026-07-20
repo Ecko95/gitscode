@@ -181,6 +181,16 @@ export function useGitsCockpitQueries({
     enabled: selectedProjectRoot.trim().length > 0,
     refetchInterval: 30_000,
   });
+  // Overview's "episodes by night" bar chart. Panel-local `episodesQuery` in
+  // AutopilotPanel.tsx covers its own (smaller, always-on) ledger list — this is a
+  // separate, wider pull just for the 14-night chart, so it only runs while Overview
+  // is the active tab.
+  const episodesListQuery = useQuery({
+    queryKey: ["gits", "automode", "episodes", "overview", targetEnvironmentId],
+    queryFn: async () => readGitsClient().automode.episodesList({ limit: 100 }),
+    enabled: activeTab === "overview",
+    refetchInterval: 60_000,
+  });
   const resourceQuery = useQuery({
     queryKey: [
       "gits",
@@ -255,7 +265,7 @@ export function useGitsCockpitQueries({
       }
       return (await response.json()) as GitsCodexMcpAuthAvailability;
     },
-    enabled: activeTab === "mcp",
+    enabled: activeTab === "system",
     retry: false,
   });
   const mcpAuthStatusQuery = useQuery({
@@ -290,7 +300,8 @@ export function useGitsCockpitQueries({
   const usageQuery = useQuery({
     queryKey: ["gits", "usage"],
     queryFn: readUsageSummary,
-    enabled: activeTab === "usage",
+    // Overview's cost stat tile and System's Usage section both need this.
+    enabled: activeTab === "overview" || activeTab === "system",
     refetchOnMount: "always",
     retry: false,
   });
@@ -323,6 +334,7 @@ export function useGitsCockpitQueries({
     hermesLogQuery,
     hermesProposalsQuery,
     devCommandsQuery,
+    episodesListQuery,
     resourceQuery,
     buildInfoQuery,
     skillsQuery,

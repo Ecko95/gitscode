@@ -1,5 +1,4 @@
 import type {
-  AutomodeSnapshot,
   GitsCodexMcpAuthStartResult,
   GitsMcpServerItem,
   HermesCommandResult,
@@ -18,30 +17,26 @@ import { SidebarInset, SidebarTrigger } from "../ui/sidebar";
 
 import { CockpitTabNav } from "./cockpit/CockpitTabNav";
 import type { GitsCockpitTab } from "./cockpit/tabs";
-import { formatCount, formatUsd, parseLines } from "./cockpit/primitives";
+import { formatCount } from "./cockpit/primitives";
 import {
   BuildProvenancePanel,
   CockpitOverviewPanel,
   ResourceVisibilityPanel,
 } from "./cockpit/OverviewPanel";
-import { UsagePanel } from "./cockpit/UsagePanel";
-import { PeerFleetPanel } from "./cockpit/FleetPanel";
-import { OpenGsdPanel } from "./cockpit/GsdPanel";
-import { AutomodePanel } from "./cockpit/AutomodePanel";
+import { AutopilotPanel } from "./cockpit/AutopilotPanel";
+import { FleetOpsPanel } from "./cockpit/FleetOpsPanel";
+import { SystemPanel } from "./cockpit/SystemPanel";
 import {
-  SkillsPanel,
   loadSkillReviewState,
   saveSkillReviewState,
   type SkillReviewState,
 } from "./cockpit/SkillsPanel";
 import {
-  McpServersPanel,
   loadMcpOverrideState,
   readMcpAuthResponseError,
   saveMcpOverrideState,
   type McpOverrideState,
 } from "./cockpit/McpPanel";
-import { CockpitContent } from "./cockpit/ProjectsPanel";
 import {
   EMPTY_MOTOKO_TRANSCRIPT,
   MOTOKO_ROOT_ROUTE_VALUE,
@@ -55,7 +50,7 @@ import {
   type MotokoTranscriptEntry,
   type MotokoTranscriptState,
 } from "./cockpit/MotokoPanel";
-import { DevCommandPanel, handleDevOpenPreview } from "./cockpit/DevPanel";
+import { handleDevOpenPreview } from "./cockpit/DevPanel";
 import { useGitsCockpitQueries } from "./cockpit/useGitsCockpitQueries";
 import { useDevCommandSessions } from "./cockpit/useDevCommandSessions";
 
@@ -96,21 +91,6 @@ export function GitsCockpit() {
   const [gsdAutoInitInput, setGsdAutoInitInput] = useState("");
   const [gsdModel, setGsdModel] = useState("");
   const [gsdMaxBudget, setGsdMaxBudget] = useState("");
-  const [automodeMode, setAutomodeMode] = useState<AutomodeSnapshot["policy"]["mode"]>("manual");
-  const [automodePolicyDirty, setAutomodePolicyDirty] = useState(false);
-  const [automodeMaxPeers, setAutomodeMaxPeers] = useState("1");
-  const [automodeAllowedRepos, setAutomodeAllowedRepos] = useState("");
-  const [automodeAllowedModels, setAutomodeAllowedModels] = useState("");
-  const [automodeDefaultModel, setAutomodeDefaultModel] = useState("");
-  const [automodeMaxBudget, setAutomodeMaxBudget] = useState("");
-  const [automodeMaxRuntime, setAutomodeMaxRuntime] = useState("60");
-  const [automodeRequireSpawnApproval, setAutomodeRequireSpawnApproval] = useState(true);
-  const [automodeRequireIntegrateApproval, setAutomodeRequireIntegrateApproval] = useState(true);
-  const [automodeRequireDestructiveApproval, setAutomodeRequireDestructiveApproval] =
-    useState(true);
-  const [automodeAutoEnqueueProposals, setAutomodeAutoEnqueueProposals] = useState(false);
-  const [automodeNightlyProposalSweep, setAutomodeNightlyProposalSweep] = useState(false);
-  const [automodeProposalRepos, setAutomodeProposalRepos] = useState("");
   const [skillReviews, setSkillReviews] = useState<SkillReviewState>(() => loadSkillReviewState());
   const [mcpOverrides, setMcpOverrides] = useState<McpOverrideState>(() => loadMcpOverrideState());
   const [automodeGoalTitle, setAutomodeGoalTitle] = useState("");
@@ -138,6 +118,7 @@ export function GitsCockpit() {
     hermesLogQuery,
     hermesProposalsQuery,
     devCommandsQuery,
+    episodesListQuery,
     resourceQuery,
     buildInfoQuery,
     skillsQuery,
@@ -484,38 +465,6 @@ export function GitsCockpit() {
     },
   });
   const automodeKillSwitchEnabled = automodeQuery.data?.policy.killSwitchEnabled ?? true;
-  const automodePolicyInput = () => {
-    const maxPeers = Math.max(0, Math.floor(Number(automodeMaxPeers)));
-    const maxBudget = Number(automodeMaxBudget);
-    const maxRuntime = Math.max(0, Math.floor(Number(automodeMaxRuntime)));
-    return {
-      mode: automodeMode,
-      killSwitchEnabled: automodeKillSwitchEnabled,
-      maxActivePeers: Number.isFinite(maxPeers) ? maxPeers : 0,
-      allowedRepos: parseLines(automodeAllowedRepos),
-      allowedModels: parseLines(automodeAllowedModels),
-      defaultModel: automodeDefaultModel.trim().length > 0 ? automodeDefaultModel.trim() : null,
-      maxBudgetUsd:
-        Number.isFinite(maxBudget) && maxBudget >= 0 && automodeMaxBudget.trim().length > 0
-          ? maxBudget
-          : null,
-      maxRuntimeMinutes:
-        Number.isFinite(maxRuntime) && automodeMaxRuntime.trim().length > 0 ? maxRuntime : null,
-      requireApprovalForPeerSpawn: automodeRequireSpawnApproval,
-      requireApprovalBeforeIntegrate: automodeRequireIntegrateApproval,
-      requireApprovalBeforeDestructiveAction: automodeRequireDestructiveApproval,
-      autoEnqueueApprovedProposals: automodeAutoEnqueueProposals,
-      nightlyProposalSweep: automodeNightlyProposalSweep,
-      proposalRepos: parseLines(automodeProposalRepos),
-    };
-  };
-  const automodePolicyMutation = useMutation({
-    mutationFn: async () => readGitsClient().automode.updatePolicy(automodePolicyInput()),
-    onSuccess: async () => {
-      setAutomodePolicyDirty(false);
-      await automodeQuery.refetch();
-    },
-  });
   const automodeKillSwitchMutation = useMutation({
     mutationFn: async (killSwitchEnabled: boolean) =>
       readGitsClient().automode.updatePolicy({ killSwitchEnabled }),
@@ -617,7 +566,6 @@ export function GitsCockpit() {
     hermesDraftMutation.isPending ||
     hermesScheduleMutation.isPending;
   const automodeActionError =
-    automodePolicyMutation.error ??
     automodeKillSwitchMutation.error ??
     automodeEnqueueMutation.error ??
     automodeApproveMutation.error ??
@@ -628,7 +576,6 @@ export function GitsCockpit() {
     schedulerDisarmMutation.error ??
     driverResumeMutation.error;
   const automodeActionPending =
-    automodePolicyMutation.isPending ||
     automodeKillSwitchMutation.isPending ||
     automodeEnqueueMutation.isPending ||
     automodeApproveMutation.isPending ||
@@ -638,12 +585,6 @@ export function GitsCockpit() {
     schedulerArmMutation.isPending ||
     schedulerDisarmMutation.isPending ||
     driverResumeMutation.isPending;
-  const setAutomodePolicyField =
-    <T,>(setter: (value: T) => void) =>
-    (value: T) => {
-      setAutomodePolicyDirty(true);
-      setter(value);
-    };
   const updateSkillReview = (
     skillId: string,
     updater: (current: SkillReviewState[string]) => SkillReviewState[string],
@@ -693,59 +634,37 @@ export function GitsCockpit() {
   }, [query.data?.projects, selectedProjectRoot]);
 
   useEffect(() => {
-    const policy = automodeQuery.data?.policy;
-    if (!policy || automodePolicyDirty) {
-      return;
-    }
-    setAutomodeMode(policy.mode);
-    setAutomodeMaxPeers(String(policy.maxActivePeers));
-    setAutomodeAllowedRepos(policy.allowedRepos.join("\n"));
-    setAutomodeAllowedModels(policy.allowedModels.join("\n"));
-    setAutomodeDefaultModel(policy.defaultModel ?? "");
-    setAutomodeMaxBudget(policy.maxBudgetUsd === null ? "" : String(policy.maxBudgetUsd));
-    setAutomodeMaxRuntime(
-      policy.maxRuntimeMinutes === null ? "" : String(policy.maxRuntimeMinutes),
-    );
-    setAutomodeRequireSpawnApproval(policy.requireApprovalForPeerSpawn);
-    setAutomodeRequireIntegrateApproval(policy.requireApprovalBeforeIntegrate);
-    setAutomodeRequireDestructiveApproval(policy.requireApprovalBeforeDestructiveAction);
-    setAutomodeAutoEnqueueProposals(policy.autoEnqueueApprovedProposals);
-    setAutomodeNightlyProposalSweep(policy.nightlyProposalSweep);
-    setAutomodeProposalRepos(policy.proposalRepos.join("\n"));
-  }, [automodePolicyDirty, automodeQuery.data?.policy]);
-
-  useEffect(() => {
     if (automodeGoalRepo.trim().length > 0) {
       return;
     }
     setAutomodeGoalRepo(selectedProjectRoot);
   }, [automodeGoalRepo, selectedProjectRoot]);
 
-  const tabCounts = useMemo<Record<GitsCockpitTab, string>>(
-    () => ({
-      overview: "live",
-      motoko: formatCount(hermesProposalsQuery.data?.proposals.length ?? 0),
-      dev: formatCount(devCommandsQuery.data?.commands.length ?? 0),
-      fleet: formatCount(delamainQuery.data?.peers.length ?? 0),
-      automode: formatCount(automodeQuery.data?.goals.length ?? 0),
-      usage: usageQuery.data ? formatUsd(usageQuery.data.estimatedCostUsd) : "open",
-      gsd: openGsdQuery.data?.available ? "ready" : "check",
-      skills: formatCount(skillsQuery.data?.totals.skillCount ?? 0),
-      mcp: formatCount(mcpQuery.data?.totals.serverCount ?? 0),
-      projects: formatCount(query.data?.totals.projectCount ?? 0),
-    }),
-    [
-      automodeQuery.data?.goals.length,
-      devCommandsQuery.data?.commands.length,
-      delamainQuery.data?.peers.length,
-      hermesProposalsQuery.data?.proposals.length,
-      mcpQuery.data?.totals.serverCount,
-      openGsdQuery.data?.available,
-      query.data?.totals.projectCount,
-      skillsQuery.data?.totals.skillCount,
-      usageQuery.data,
-    ],
-  );
+  const tabCounts = useMemo<Record<GitsCockpitTab, string>>(() => {
+    const runningGoals =
+      automodeQuery.data?.goals.filter((goal) => goal.status === "running").length ?? 0;
+    const runningDevSessions = Object.values(devSessionStateByCommandId).filter(
+      (session) => session?.status === "running",
+    ).length;
+    const pendingProposals =
+      hermesProposalsQuery.data?.proposals.filter((proposal) => proposal.status === "proposed")
+        .length ?? 0;
+    const mcpErrorCount = mcpQuery.data?.totals.errorCount ?? 0;
+    return {
+      overview: "—",
+      motoko: formatCount(pendingProposals),
+      autopilot: formatCount((automodeQuery.data?.pendingApprovalCount ?? 0) + runningGoals),
+      fleet: formatCount((automodeQuery.data?.activePeerCount ?? 0) + runningDevSessions),
+      system: mcpQuery.data ? (mcpErrorCount > 0 ? formatCount(mcpErrorCount) : "ok") : "—",
+    };
+  }, [
+    automodeQuery.data?.activePeerCount,
+    automodeQuery.data?.goals,
+    automodeQuery.data?.pendingApprovalCount,
+    devSessionStateByCommandId,
+    hermesProposalsQuery.data?.proposals,
+    mcpQuery.data,
+  ]);
   // ponytail: 5s/10s pollers excluded so the header spinner only reflects slower, user-meaningful refreshes
   const isRefreshing =
     capacityQuery.isFetching ||
@@ -777,12 +696,14 @@ export function GitsCockpit() {
               query.refetch(),
               delamainQuery.refetch(),
               automodeQuery.refetch(),
+              schedulerQuery.refetch(),
               capacityQuery.refetch(),
               hermesQuery.refetch(),
               hermesSessionsQuery.refetch(),
               hermesLogQuery.refetch(),
               hermesProposalsQuery.refetch(),
               ...(selectedProjectRoot ? [devCommandsQuery.refetch()] : []),
+              episodesListQuery.refetch(),
               openGsdQuery.refetch(),
               resourceQuery.refetch(),
               buildInfoQuery.refetch(),
@@ -816,156 +737,34 @@ export function GitsCockpit() {
               {activeTab === "overview" ? (
                 <>
                   <CockpitOverviewPanel
-                    snapshot={query.data}
-                    delamain={delamainQuery.data}
                     automode={automodeQuery.data}
-                    openGsd={openGsdQuery.data}
-                    hermes={hermesQuery.data}
-                    proposals={hermesProposalsQuery.data}
+                    scheduler={schedulerQuery.data}
                     capacity={capacityQuery.data}
                     history={resourceQuery.data}
-                    buildInfo={buildInfoQuery.data}
+                    episodes={episodesListQuery.data}
+                    usage={usageQuery.data}
+                    onNavigate={setActiveTab}
                   />
-                  <BuildProvenancePanel
-                    buildInfo={buildInfoQuery.data}
-                    loading={buildInfoQuery.isPending || buildInfoQuery.isFetching}
-                    error={buildInfoQuery.error}
-                    onRefresh={() => void buildInfoQuery.refetch()}
-                  />
-                  <ResourceVisibilityPanel
-                    snapshot={query.data}
-                    automode={automodeQuery.data}
-                    history={resourceQuery.data}
-                    loading={resourceQuery.isPending || resourceQuery.isFetching}
-                    error={resourceQuery.error}
-                    onRefresh={() => void resourceQuery.refetch()}
-                  />
+                  <details className="border-b border-border bg-background">
+                    <summary className="cursor-pointer select-none px-4 py-3 text-xs font-semibold uppercase text-muted-foreground/80 sm:px-5">
+                      Build provenance &amp; runtime visibility
+                    </summary>
+                    <BuildProvenancePanel
+                      buildInfo={buildInfoQuery.data}
+                      loading={buildInfoQuery.isPending || buildInfoQuery.isFetching}
+                      error={buildInfoQuery.error}
+                      onRefresh={() => void buildInfoQuery.refetch()}
+                    />
+                    <ResourceVisibilityPanel
+                      snapshot={query.data}
+                      automode={automodeQuery.data}
+                      history={resourceQuery.data}
+                      loading={resourceQuery.isPending || resourceQuery.isFetching}
+                      error={resourceQuery.error}
+                      onRefresh={() => void resourceQuery.refetch()}
+                    />
+                  </details>
                 </>
-              ) : null}
-              {activeTab === "fleet" ? (
-                <PeerFleetPanel
-                  list={delamainQuery.data}
-                  loading={delamainQuery.isPending || delamainQuery.isFetching}
-                  error={delamainQuery.error}
-                  selectedPeerId={selectedPeer?.id ?? selectedPeerId}
-                  logText={logQuery.data?.text}
-                  logLoading={logQuery.isPending || logQuery.isFetching}
-                  inbox={inboxQuery.data}
-                  actionError={actionError ?? logQuery.error}
-                  spawnRepo={spawnRepo}
-                  spawnName={spawnName}
-                  spawnPrompt={spawnPrompt}
-                  replyText={replyText}
-                  actionPending={actionPending}
-                  killSwitchEnabled={automodeQuery.data?.policy.killSwitchEnabled ?? false}
-                  onRefresh={() => void delamainQuery.refetch()}
-                  onSelectPeer={setSelectedPeerId}
-                  onSpawnRepoChange={setSpawnRepo}
-                  onSpawnNameChange={setSpawnName}
-                  onSpawnPromptChange={setSpawnPrompt}
-                  onReplyTextChange={setReplyText}
-                  onSpawn={() => void spawnMutation.mutate()}
-                  onReply={() => void replyMutation.mutate()}
-                  onWait={() => void waitMutation.mutate()}
-                  onKill={() => {
-                    if (!selectedPeerId) {
-                      return;
-                    }
-                    if (window.confirm(`Kill Delamain peer ${selectedPeerId}?`)) {
-                      void killMutation.mutate();
-                    }
-                  }}
-                  onIntegrate={() => {
-                    if (!selectedPeerId) {
-                      return;
-                    }
-                    if (
-                      window.confirm(`Open an integration PR for Delamain peer ${selectedPeerId}?`)
-                    ) {
-                      void integrateMutation.mutate();
-                    }
-                  }}
-                />
-              ) : null}
-              {activeTab === "automode" ? (
-                <AutomodePanel
-                  snapshot={automodeQuery.data}
-                  scheduler={schedulerQuery.data}
-                  loading={automodeQuery.isPending || automodeQuery.isFetching}
-                  error={automodeQuery.error}
-                  actionError={automodeActionError}
-                  actionPending={automodeActionPending}
-                  policyMode={automodeMode}
-                  killSwitchEnabled={automodeKillSwitchEnabled}
-                  maxActivePeers={automodeMaxPeers}
-                  allowedRepos={automodeAllowedRepos}
-                  allowedModels={automodeAllowedModels}
-                  defaultModel={automodeDefaultModel}
-                  maxBudget={automodeMaxBudget}
-                  maxRuntime={automodeMaxRuntime}
-                  requireSpawnApproval={automodeRequireSpawnApproval}
-                  requireIntegrateApproval={automodeRequireIntegrateApproval}
-                  requireDestructiveApproval={automodeRequireDestructiveApproval}
-                  autoEnqueueProposals={automodeAutoEnqueueProposals}
-                  nightlyProposalSweep={automodeNightlyProposalSweep}
-                  proposalRepos={automodeProposalRepos}
-                  goalTitle={automodeGoalTitle}
-                  goalRepo={automodeGoalRepo}
-                  goalModel={automodeGoalModel}
-                  goalPrompt={automodeGoalPrompt}
-                  onRefresh={() => void automodeQuery.refetch()}
-                  onPolicyModeChange={setAutomodePolicyField(setAutomodeMode)}
-                  onKillSwitchChange={(next) => void automodeKillSwitchMutation.mutate(next)}
-                  onMaxActivePeersChange={setAutomodePolicyField(setAutomodeMaxPeers)}
-                  onAllowedReposChange={setAutomodePolicyField(setAutomodeAllowedRepos)}
-                  onAllowedModelsChange={setAutomodePolicyField(setAutomodeAllowedModels)}
-                  onDefaultModelChange={setAutomodePolicyField(setAutomodeDefaultModel)}
-                  onMaxBudgetChange={setAutomodePolicyField(setAutomodeMaxBudget)}
-                  onMaxRuntimeChange={setAutomodePolicyField(setAutomodeMaxRuntime)}
-                  onRequireSpawnApprovalChange={setAutomodePolicyField(
-                    setAutomodeRequireSpawnApproval,
-                  )}
-                  onRequireIntegrateApprovalChange={setAutomodePolicyField(
-                    setAutomodeRequireIntegrateApproval,
-                  )}
-                  onRequireDestructiveApprovalChange={setAutomodePolicyField(
-                    setAutomodeRequireDestructiveApproval,
-                  )}
-                  onAutoEnqueueProposalsChange={setAutomodePolicyField(
-                    setAutomodeAutoEnqueueProposals,
-                  )}
-                  onNightlyProposalSweepChange={setAutomodePolicyField(
-                    setAutomodeNightlyProposalSweep,
-                  )}
-                  onProposalReposChange={setAutomodePolicyField(setAutomodeProposalRepos)}
-                  onGoalTitleChange={setAutomodeGoalTitle}
-                  onGoalRepoChange={setAutomodeGoalRepo}
-                  onGoalModelChange={setAutomodeGoalModel}
-                  onGoalPromptChange={setAutomodeGoalPrompt}
-                  onSavePolicy={() => void automodePolicyMutation.mutate()}
-                  onEnqueueGoal={() => void automodeEnqueueMutation.mutate()}
-                  onApproveGoal={(goalId) => void automodeApproveMutation.mutate(goalId)}
-                  onRejectGoal={(goalId) => {
-                    if (window.confirm(`Reject automode goal ${goalId}?`)) {
-                      void automodeRejectMutation.mutate(goalId);
-                    }
-                  }}
-                  onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
-                  onSchedulerEnabledChange={(enabled) =>
-                    void schedulerSetConfigMutation.mutate({ enabled })
-                  }
-                  onSchedulerArm={() => void schedulerArmMutation.mutate()}
-                  onSchedulerDisarm={() => void schedulerDisarmMutation.mutate()}
-                  onResumeDriver={() => void driverResumeMutation.mutate()}
-                />
-              ) : null}
-              {activeTab === "usage" ? (
-                <UsagePanel
-                  usage={usageQuery.data}
-                  loading={usageQuery.isPending || usageQuery.isFetching}
-                  error={usageQuery.error}
-                  onRefresh={() => void usageQuery.refetch()}
-                />
               ) : null}
               {activeTab === "motoko" ? (
                 <MotokoPanel
@@ -1048,99 +847,182 @@ export function GitsCockpit() {
                   onRunSchedule={() => void hermesScheduleMutation.mutate()}
                 />
               ) : null}
-              {activeTab === "dev" ? (
-                <DevCommandPanel
-                  list={devCommandsQuery.data}
-                  loading={devCommandsQuery.isFetching}
-                  error={devCommandsQuery.error}
-                  selectedProjectRoot={selectedProjectRoot}
-                  onRefresh={() => void devCommandsQuery.refetch()}
-                  sessionStateByCommandId={devSessionStateByCommandId}
-                  activeCommandId={devActiveCommandId}
-                  actionError={devActionError}
-                  actionPending={devActionPending}
-                  onStart={(command) => void handleDevStart(command)}
-                  onStop={(command) => void handleDevStop(command)}
-                  onCopyLaunchCommand={(command) => void handleDevCopyLaunchCommand(command)}
-                  onOpenPreview={handleDevOpenPreview}
+              {activeTab === "autopilot" ? (
+                <AutopilotPanel
+                  snapshot={automodeQuery.data}
+                  scheduler={schedulerQuery.data}
+                  loading={automodeQuery.isPending || automodeQuery.isFetching}
+                  error={automodeQuery.error}
+                  actionError={automodeActionError}
+                  actionPending={automodeActionPending}
+                  killSwitchEnabled={automodeKillSwitchEnabled}
+                  goalTitle={automodeGoalTitle}
+                  goalRepo={automodeGoalRepo}
+                  goalModel={automodeGoalModel}
+                  goalPrompt={automodeGoalPrompt}
+                  projects={query.data?.projects}
+                  onRefresh={() => void automodeQuery.refetch()}
+                  onKillSwitchChange={(next) => void automodeKillSwitchMutation.mutate(next)}
+                  onGoalTitleChange={setAutomodeGoalTitle}
+                  onGoalRepoChange={setAutomodeGoalRepo}
+                  onGoalModelChange={setAutomodeGoalModel}
+                  onGoalPromptChange={setAutomodeGoalPrompt}
+                  onEnqueueGoal={() => void automodeEnqueueMutation.mutate()}
+                  onApproveGoal={(goalId) => void automodeApproveMutation.mutate(goalId)}
+                  onRejectGoal={(goalId) => {
+                    if (window.confirm(`Reject automode goal ${goalId}?`)) {
+                      void automodeRejectMutation.mutate(goalId);
+                    }
+                  }}
+                  onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
+                  onSchedulerEnabledChange={(enabled) =>
+                    void schedulerSetConfigMutation.mutate({ enabled })
+                  }
+                  onSchedulerArm={() => void schedulerArmMutation.mutate()}
+                  onSchedulerDisarm={() => void schedulerDisarmMutation.mutate()}
+                  onResumeDriver={() => void driverResumeMutation.mutate()}
                 />
               ) : null}
-              {activeTab === "gsd" ? (
-                <OpenGsdPanel
-                  status={openGsdQuery.data}
-                  loading={openGsdQuery.isPending || openGsdQuery.isFetching}
-                  error={openGsdQuery.error}
-                  projects={query.data.projects}
-                  selectedProjectRoot={selectedProjectRoot}
-                  initInput={gsdInitInput}
-                  autoInitInput={gsdAutoInitInput}
-                  model={gsdModel}
-                  maxBudget={gsdMaxBudget}
-                  commandResult={openGsdCommandResult}
-                  actionError={openGsdActionError}
-                  actionPending={openGsdActionPending}
-                  onRefresh={() => void openGsdQuery.refetch()}
-                  onProjectRootChange={setSelectedProjectRoot}
-                  onInitInputChange={setGsdInitInput}
-                  onAutoInitInputChange={setGsdAutoInitInput}
-                  onModelChange={setGsdModel}
-                  onMaxBudgetChange={setGsdMaxBudget}
-                  onInit={() => void gsdInitMutation.mutate()}
-                  onAuto={() => {
-                    if (!selectedProjectRoot) {
-                      return;
-                    }
-                    if (window.confirm(`Run gsd-sdk auto in ${selectedProjectRoot}?`)) {
-                      void gsdAutoMutation.mutate();
-                    }
+              {activeTab === "fleet" ? (
+                <FleetOpsPanel
+                  peerFleet={{
+                    list: delamainQuery.data,
+                    loading: delamainQuery.isPending || delamainQuery.isFetching,
+                    error: delamainQuery.error,
+                    selectedPeerId: selectedPeer?.id ?? selectedPeerId,
+                    logText: logQuery.data?.text,
+                    logLoading: logQuery.isPending || logQuery.isFetching,
+                    inbox: inboxQuery.data,
+                    actionError: actionError ?? logQuery.error,
+                    spawnRepo,
+                    spawnName,
+                    spawnPrompt,
+                    replyText,
+                    actionPending,
+                    killSwitchEnabled: automodeQuery.data?.policy.killSwitchEnabled ?? false,
+                    onRefresh: () => void delamainQuery.refetch(),
+                    onSelectPeer: setSelectedPeerId,
+                    onSpawnRepoChange: setSpawnRepo,
+                    onSpawnNameChange: setSpawnName,
+                    onSpawnPromptChange: setSpawnPrompt,
+                    onReplyTextChange: setReplyText,
+                    onSpawn: () => void spawnMutation.mutate(),
+                    onReply: () => void replyMutation.mutate(),
+                    onWait: () => void waitMutation.mutate(),
+                    onKill: () => {
+                      if (!selectedPeerId) {
+                        return;
+                      }
+                      if (window.confirm(`Kill Delamain peer ${selectedPeerId}?`)) {
+                        void killMutation.mutate();
+                      }
+                    },
+                    onIntegrate: () => {
+                      if (!selectedPeerId) {
+                        return;
+                      }
+                      if (
+                        window.confirm(
+                          `Open an integration PR for Delamain peer ${selectedPeerId}?`,
+                        )
+                      ) {
+                        void integrateMutation.mutate();
+                      }
+                    },
+                  }}
+                  devCommands={{
+                    list: devCommandsQuery.data,
+                    loading: devCommandsQuery.isFetching,
+                    error: devCommandsQuery.error,
+                    selectedProjectRoot,
+                    onRefresh: () => void devCommandsQuery.refetch(),
+                    sessionStateByCommandId: devSessionStateByCommandId,
+                    activeCommandId: devActiveCommandId,
+                    actionError: devActionError,
+                    actionPending: devActionPending,
+                    onStart: (command) => void handleDevStart(command),
+                    onStop: (command) => void handleDevStop(command),
+                    onCopyLaunchCommand: (command) => void handleDevCopyLaunchCommand(command),
+                    onOpenPreview: handleDevOpenPreview,
                   }}
                 />
               ) : null}
-              {activeTab === "skills" ? (
-                <SkillsPanel
-                  snapshot={skillsQuery.data}
-                  loading={skillsQuery.isPending || skillsQuery.isFetching}
-                  error={skillsQuery.error}
-                  reviews={skillReviews}
-                  onRefresh={() => void skillsQuery.refetch()}
-                  onRatingChange={(skillId, rating) =>
-                    updateSkillReview(skillId, (current) => ({ ...current, rating }))
-                  }
-                  onReviewChange={(skillId, review) =>
-                    updateSkillReview(skillId, (current) => ({ ...current, review }))
-                  }
+              {activeTab === "system" ? (
+                <SystemPanel
+                  usage={{
+                    usage: usageQuery.data,
+                    loading: usageQuery.isPending || usageQuery.isFetching,
+                    error: usageQuery.error,
+                    onRefresh: () => void usageQuery.refetch(),
+                  }}
+                  skills={{
+                    snapshot: skillsQuery.data,
+                    loading: skillsQuery.isPending || skillsQuery.isFetching,
+                    error: skillsQuery.error,
+                    reviews: skillReviews,
+                    onRefresh: () => void skillsQuery.refetch(),
+                    onRatingChange: (skillId, rating) =>
+                      updateSkillReview(skillId, (current) => ({ ...current, rating })),
+                    onReviewChange: (skillId, review) =>
+                      updateSkillReview(skillId, (current) => ({ ...current, review })),
+                  }}
+                  mcp={{
+                    snapshot: mcpQuery.data,
+                    loading: mcpQuery.isPending || mcpQuery.isFetching,
+                    error: mcpQuery.error,
+                    overrides: mcpOverrides,
+                    authAvailability:
+                      mcpAuthCapabilityQuery.data ??
+                      (mcpAuthCapabilityQuery.error
+                        ? {
+                            available: false,
+                            message: "Browser callback relay is unavailable on this host.",
+                          }
+                        : undefined),
+                    authPending: mcpAuthStartMutation.isPending || mcpAuthCancelMutation.isPending,
+                    authStatus: mcpAuthStatusQuery.data ?? null,
+                    authError:
+                      mcpAuthError ??
+                      (mcpAuthStatusQuery.error instanceof Error
+                        ? mcpAuthStatusQuery.error.message
+                        : null),
+                    onRefresh: () => void mcpQuery.refetch(),
+                    onToggleServer: toggleMcpServer,
+                    onAuthenticate: (server) => mcpAuthStartMutation.mutate(server),
+                    onCancelAuthentication: () => mcpAuthCancelMutation.mutate(),
+                  }}
+                  gsd={{
+                    status: openGsdQuery.data,
+                    loading: openGsdQuery.isPending || openGsdQuery.isFetching,
+                    error: openGsdQuery.error,
+                    projects: query.data.projects,
+                    selectedProjectRoot,
+                    initInput: gsdInitInput,
+                    autoInitInput: gsdAutoInitInput,
+                    model: gsdModel,
+                    maxBudget: gsdMaxBudget,
+                    commandResult: openGsdCommandResult,
+                    actionError: openGsdActionError,
+                    actionPending: openGsdActionPending,
+                    onRefresh: () => void openGsdQuery.refetch(),
+                    onProjectRootChange: setSelectedProjectRoot,
+                    onInitInputChange: setGsdInitInput,
+                    onAutoInitInputChange: setGsdAutoInitInput,
+                    onModelChange: setGsdModel,
+                    onMaxBudgetChange: setGsdMaxBudget,
+                    onInit: () => void gsdInitMutation.mutate(),
+                    onAuto: () => {
+                      if (!selectedProjectRoot) {
+                        return;
+                      }
+                      if (window.confirm(`Run gsd-sdk auto in ${selectedProjectRoot}?`)) {
+                        void gsdAutoMutation.mutate();
+                      }
+                    },
+                  }}
+                  projects={{ snapshot: query.data }}
                 />
               ) : null}
-              {activeTab === "mcp" ? (
-                <McpServersPanel
-                  snapshot={mcpQuery.data}
-                  loading={mcpQuery.isPending || mcpQuery.isFetching}
-                  error={mcpQuery.error}
-                  overrides={mcpOverrides}
-                  authAvailability={
-                    mcpAuthCapabilityQuery.data ??
-                    (mcpAuthCapabilityQuery.error
-                      ? {
-                          available: false,
-                          message: "Browser callback relay is unavailable on this host.",
-                        }
-                      : undefined)
-                  }
-                  authPending={mcpAuthStartMutation.isPending || mcpAuthCancelMutation.isPending}
-                  authStatus={mcpAuthStatusQuery.data ?? null}
-                  authError={
-                    mcpAuthError ??
-                    (mcpAuthStatusQuery.error instanceof Error
-                      ? mcpAuthStatusQuery.error.message
-                      : null)
-                  }
-                  onRefresh={() => void mcpQuery.refetch()}
-                  onToggleServer={toggleMcpServer}
-                  onAuthenticate={(server) => mcpAuthStartMutation.mutate(server)}
-                  onCancelAuthentication={() => mcpAuthCancelMutation.mutate()}
-                />
-              ) : null}
-              {activeTab === "projects" ? <CockpitContent snapshot={query.data} /> : null}
             </div>
           </>
         ) : null}

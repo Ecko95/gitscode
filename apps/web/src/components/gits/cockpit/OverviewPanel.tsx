@@ -1,34 +1,36 @@
 import type {
+  AutomodeEpisode,
   AutomodeSnapshot,
-  DelamainPeerListResult,
   GitsCapacitySnapshot,
   GitsCockpitSnapshot,
-  GsdPhase,
-  HermesProposalListResult,
-  HermesStatusResult,
-  OpenGsdStatusResult,
+  GitsSchedulerSnapshot,
   ServerProcessResourceHistoryResult,
-  VerificationGate,
+  UsageSummary,
 } from "@t3tools/contracts";
+import { CODEX_MODEL_TIER_LABELS } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import {
   AlertTriangleIcon,
   BotIcon,
   CheckCircle2Icon,
+  CircleDollarSignIcon,
   CircleIcon,
-  GitBranchIcon,
-  PowerIcon,
+  ListChecksIcon,
+  OctagonAlertIcon,
+  PlayIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 
+import { formatGateDecision, modelTierOf } from "./autopilot/autopilot.logic";
+import { BarChart, LineAreaChart, Meter, StatTile, type BarDatum } from "./charts";
+import { countGoalsCompletedToday, groupEpisodesByLondonDay } from "./overview.logic";
 import {
   EmptyState,
-  GATE_STATUS_LABELS,
-  PHASE_STATUS_LABELS,
   SectionHeader,
   SignalRow,
   StatBlock,
@@ -37,12 +39,12 @@ import {
   formatCount,
   formatCpuTime,
   formatIsoDate,
-  formatPercent,
+  formatSlotRemaining,
   formatUsd,
   isRecord,
   statusTone,
-  tallyValues,
 } from "./primitives";
+import type { GitsCockpitTab } from "./tabs";
 
 type BuildInfoField = {
   readonly label: string;
@@ -128,302 +130,336 @@ export function normalizeBuildInfo(value: unknown): BuildInfoSnapshot {
   return { status: "available", fields, note };
 }
 
-function barToneClass(tone: ReturnType<typeof statusTone>): string {
-  if (tone === "success") {
-    return "bg-emerald-500";
-  }
-  if (tone === "warning") {
-    return "bg-amber-500";
-  }
-  if (tone === "danger") {
-    return "bg-destructive";
-  }
-  return "bg-muted-foreground/45";
+const CAPACITY_FIVE_HOUR_MINUTES = 300;
+const CAPACITY_WEEKLY_MINUTES = 10_080;
+
+function findCapacityWindow(
+  windows:
+    | ReadonlyArray<{ readonly windowMinutes: number | null; readonly usedPercent: number | null }>
+    | undefined,
+  minutes: number,
+) {
+  return windows?.find((window) => window.windowMinutes === minutes) ?? null;
 }
 
-function DistributionPanel({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: ReadonlyArray<{
-    label: string;
-    value: number;
-    tone: ReturnType<typeof statusTone>;
-  }>;
-}) {
-  const total = rows.reduce((sum, row) => sum + row.value, 0);
-
+function ChartCard({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="min-w-0 border-b border-r border-border/60 last:border-r-0 xl:border-b-0">
-      <SectionHeader title={title} count={total} />
-      <div className="grid gap-2 px-4 py-3 sm:px-5">
-        {rows.length === 0 ? (
-          <EmptyState label="No data." />
-        ) : (
-          rows.map((row) => {
-            const width = total === 0 ? 0 : Math.max(4, Math.round((row.value / total) * 100));
-            return (
-              <div key={row.label} className="grid gap-1.5 text-xs">
-                <div className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="truncate text-muted-foreground">{row.label}</span>
-                  <span className="font-mono text-[11px] tabular-nums">
-                    {formatCount(row.value)}
-                  </span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-sm bg-muted">
-                  <div
-                    className={cn("h-full rounded-sm", barToneClass(row.tone))}
-                    style={{ width: `${width}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+    <div className="min-w-0 rounded-lg border border-border/60 bg-card p-3">
+      <h4 className="mb-2 text-[11px] font-medium uppercase text-muted-foreground/70">{title}</h4>
+      {children}
     </div>
   );
 }
 
+/**
+ * Analytics-first Overview ("Command") dashboard: a run-status strip every item of which
+ * deep-links to the tab that can act on it, a charts row (resource history, codex capacity,
+ * episode ledger, goals pipeline), and a "Tonight" scheduler summary. Build provenance and
+ * raw per-process resource detail live below this, in the shell's collapsed secondary panels.
+ */
 export function CockpitOverviewPanel({
-  snapshot,
-  delamain,
   automode,
-  openGsd,
-  hermes,
-  proposals,
+  scheduler,
   capacity,
   history,
-  buildInfo,
+  episodes,
+  usage,
+  onNavigate,
 }: {
-  snapshot: GitsCockpitSnapshot;
-  delamain: DelamainPeerListResult | undefined;
   automode: AutomodeSnapshot | undefined;
-  openGsd: OpenGsdStatusResult | undefined;
-  hermes: HermesStatusResult | undefined;
-  proposals: HermesProposalListResult | undefined;
+  scheduler: GitsSchedulerSnapshot | undefined;
   capacity: GitsCapacitySnapshot | undefined;
   history: ServerProcessResourceHistoryResult | undefined;
-  buildInfo: BuildInfoSnapshot | undefined;
+  episodes: ReadonlyArray<AutomodeEpisode> | undefined;
+  usage: UsageSummary | undefined;
+  onNavigate: (tab: GitsCockpitTab) => void;
 }) {
-  const phases = snapshot.projects.flatMap((project) => project.phases);
-  const gates = snapshot.projects.flatMap((project) => project.verificationGates);
-  const yourTurn = snapshot.projects.flatMap((project) => project.yourTurn);
-  const peers = delamain?.peers ?? [];
-  const phaseCounts = tallyValues(phases.map((phase) => phase.status));
-  const gateCounts = tallyValues(gates.map((gate) => gate.status));
-  const peerCounts = tallyValues(peers.map((peer) => peer.status));
-  const phaseRows = (Object.keys(PHASE_STATUS_LABELS) as Array<GsdPhase["status"]>)
-    .map((status) => ({
-      label: PHASE_STATUS_LABELS[status],
-      value: phaseCounts[status] ?? 0,
-      tone: statusTone(status),
-    }))
-    .filter((row) => row.value > 0);
-  const gateRows = (Object.keys(GATE_STATUS_LABELS) as Array<VerificationGate["status"]>)
-    .map((status) => ({
-      label: GATE_STATUS_LABELS[status],
-      value: gateCounts[status] ?? 0,
-      tone: statusTone(status),
-    }))
-    .filter((row) => row.value > 0);
-  const peerRows = Object.entries(peerCounts)
-    .map(([status, value]) => ({
-      label: status,
-      value,
-      tone: statusTone(status),
-    }))
-    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
-  const blockedPhaseCount = phases.filter((phase) => phase.status === "blocked").length;
-  const failedGateCount = gates.filter(
-    (gate) => gate.status === "failed" || gate.status === "blocked",
-  ).length;
-  const criticalTurnCount = yourTurn.filter((card) => card.severity === "critical").length;
-  const issueCount =
-    blockedPhaseCount + failedGateCount + criticalTurnCount + (automode?.pendingApprovalCount ?? 0);
-  const resourceError = history ? Option.getOrNull(history.error) : null;
-  const pendingProposalCount =
-    proposals?.proposals.filter((proposal) => proposal.status === "proposed").length ?? 0;
-  const topProposal = proposals?.proposals.find((proposal) => proposal.status === "proposed");
+  const policy = automode?.policy;
+  const goals = automode?.goals ?? [];
+  const waitingApproval = goals.filter((goal) => goal.status === "waiting-approval").length;
+  const queued = goals.filter((goal) => goal.status === "queued").length;
+  const running = goals.filter((goal) => goal.status === "running").length;
+  const completedToday = countGoalsCompletedToday(goals);
+
+  const fiveHourWindow = findCapacityWindow(capacity?.codex.windows, CAPACITY_FIVE_HOUR_MINUTES);
+  const weeklyWindow = findCapacityWindow(capacity?.codex.windows, CAPACITY_WEEKLY_MINUTES);
+
+  const hasResourceData = (history?.buckets.length ?? 0) > 0;
+  const rssSeries = history
+    ? [
+        {
+          id: "rss",
+          label: "RSS",
+          points: history.buckets.map((bucket) => ({
+            t: DateTime.toEpochMillis(bucket.startedAt),
+            v: bucket.maxRssBytes / (1024 * 1024),
+          })),
+        },
+      ]
+    : [];
+  const cpuSeries = history
+    ? [
+        {
+          id: "cpu",
+          label: "CPU",
+          points: history.buckets.map((bucket) => ({
+            t: DateTime.toEpochMillis(bucket.startedAt),
+            v: bucket.avgCpuPercent,
+          })),
+        },
+      ]
+    : [];
+
+  const hasEpisodeData = (episodes?.length ?? 0) > 0;
+  const episodeBarData: BarDatum[] = groupEpisodesByLondonDay(episodes ?? [], 14).map((night) => ({
+    label: night.label,
+    values: [
+      { key: "landed", value: night.landed },
+      { key: "flagged", value: night.flagged },
+      { key: "failed", value: night.failed },
+    ],
+  }));
+
+  const defaultModelTier = modelTierOf(policy?.defaultModel ?? null);
+  const defaultModelLabel = defaultModelTier
+    ? CODEX_MODEL_TIER_LABELS[defaultModelTier]
+    : (policy?.defaultModel ?? "not set");
+  const slotWindowText = scheduler?.currentSlot
+    ? `${scheduler.currentSlot.start}–${scheduler.currentSlot.end} · ${formatSlotRemaining(
+        scheduler.slotRemainingMs ?? 0,
+      )} left`
+    : (scheduler?.arming.disarmedReason ?? "No active slot right now.");
+  const gateDecisionText = scheduler?.lastGateDecision
+    ? `${formatGateDecision(scheduler.lastGateDecision)} · ${formatIsoDate(scheduler.lastGateDecision.at)}`
+    : "No gate decisions recorded yet.";
 
   return (
     <section className="border-b border-border bg-background">
       <div className="flex flex-col gap-2 border-b border-border/70 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
         <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h2 className="truncate text-base font-semibold">Overview</h2>
-            <StatusPill
-              label={issueCount === 0 ? "clear" : `${formatCount(issueCount)} attention`}
-              tone={issueCount === 0 ? "success" : "warning"}
-            />
-            <StatusPill
-              label={buildInfo?.status === "available" ? "provenance" : "runtime"}
-              tone={buildInfo?.status === "available" ? "success" : "default"}
-            />
-          </div>
+          <h2 className="truncate text-base font-semibold">Command</h2>
           <p className="mt-1 truncate text-xs text-muted-foreground">
-            scanned {formatIsoDate(snapshot.scannedAt)} |{" "}
-            {formatCount(snapshot.totals.projectCount)} projects |{" "}
-            {formatCount(snapshot.totals.phaseCount)} phases
+            Automode, scheduler, and fleet status at a glance.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 border-b border-border/60 sm:grid-cols-4 xl:grid-cols-8">
-        <StatBlock
-          label="Projects"
-          value={formatCount(snapshot.totals.projectCount)}
-          icon={CircleIcon}
-        />
-        <StatBlock
-          label="Planning"
-          value={formatCount(snapshot.totals.planningProjectCount)}
-          icon={CheckCircle2Icon}
-        />
-        <StatBlock
-          label="Phases"
-          value={formatCount(snapshot.totals.phaseCount)}
-          icon={GitBranchIcon}
-        />
-        <StatBlock
-          label="Gates"
-          value={formatCount(snapshot.totals.verificationGateCount)}
-          icon={ShieldCheckIcon}
-        />
-        <StatBlock
-          label="Your Turn"
-          value={formatCount(snapshot.totals.pendingYourTurnCount)}
-          icon={AlertTriangleIcon}
-        />
-        <StatBlock
-          label="Agents"
-          value={formatCount(snapshot.totals.activeAgentSessionCount)}
-          icon={BotIcon}
-        />
-        <StatBlock
-          label="Peers"
-          value={formatCount(peers.length || snapshot.totals.peerCount)}
-          icon={CircleIcon}
-        />
-        <StatBlock
-          label="Approvals"
-          value={formatCount(automode?.pendingApprovalCount ?? 0)}
-          icon={PowerIcon}
-        />
-      </div>
-
-      <div className="grid min-w-0 border-b border-border/60 sm:grid-cols-2 xl:grid-cols-7">
+      <div className="grid min-w-0 grid-cols-2 border-b border-border/60 sm:grid-cols-4 xl:grid-cols-8">
         <SignalRow
-          label="Motoko"
-          value={hermes?.available ? "ready" : "setup"}
-          tone={hermes?.available ? "success" : "warning"}
-          detail={
-            hermes
-              ? (hermes.setupWarnings[0] ??
-                `${formatCount(hermes.proposalCount)} proposals | ${hermes.config.hermesHome}`)
-              : "Hermes operator status unavailable"
-          }
-        />
-        <SignalRow
-          label="Proposals"
-          value={formatCount(pendingProposalCount)}
-          tone={pendingProposalCount > 0 ? "warning" : "success"}
-          detail={topProposal?.title ?? "No pending Motoko proposals"}
-        />
-        <SignalRow
-          label="Capacity"
-          value={capacity?.recommendation.recommendedEngine ?? "check"}
+          label="Automode"
+          value={policy?.mode ?? "unknown"}
           tone={
-            capacity?.recommendation.confidence === "high"
+            policy?.mode === "autonomous"
               ? "success"
-              : capacity
+              : policy?.mode === "supervised"
                 ? "warning"
                 : "default"
           }
-          detail={capacity?.recommendation.reason ?? "Provider capacity unavailable"}
+          detail={`${formatCount(goals.length)} goals tracked`}
+          onClick={() => onNavigate("autopilot")}
         />
         <SignalRow
-          label="Delamain"
-          value={delamain?.capabilities.available ? "ready" : "offline"}
-          tone={delamain?.capabilities.available ? "success" : "warning"}
-          detail={`${formatCount(peers.length)} live peers`}
-        />
-        <SignalRow
-          label="Automode"
-          value={automode?.policy.mode ?? "unknown"}
-          tone={
-            automode?.policy.killSwitchEnabled
-              ? "warning"
-              : automode?.policy.mode === "autonomous"
-                ? "success"
-                : "default"
-          }
+          label="Kill switch"
+          value={policy?.killSwitchEnabled ? "engaged" : "off"}
+          tone={policy?.killSwitchEnabled ? "danger" : "success"}
           detail={
-            automode
-              ? `${formatCount(automode.goals.length)} goals | ${formatCount(
-                  automode.pendingApprovalCount,
-                )} approvals`
-              : "Automode state unavailable"
+            policy?.killSwitchEnabled
+              ? "Automode execution is blocked."
+              : "Automode may run within policy."
           }
+          onClick={() => onNavigate("autopilot")}
         />
         <SignalRow
-          label="Open GSD"
-          value={openGsd?.available ? "ready" : "check"}
-          tone={openGsd?.available ? "success" : "warning"}
-          detail={openGsd?.version ?? openGsd?.packageName ?? "GSD CLI state unavailable"}
-        />
-        <SignalRow
-          label="Resources"
-          value={history ? formatPercent(history.topProcesses[0]?.currentCpuPercent ?? 0) : "check"}
-          tone={resourceError ? "warning" : history ? "success" : "default"}
+          label="Driver"
+          value={automode?.driverHalted ? "halted" : "running"}
+          tone={automode?.driverHalted ? "danger" : "success"}
           detail={
-            resourceError
-              ? resourceError.message
-              : history
-                ? `${formatCount(history.retainedSampleCount)} samples | ${formatCpuTime(
-                    history.totalCpuSecondsApprox,
-                  )} CPU`
-                : "Runtime resource history unavailable"
+            automode?.driverHalted
+              ? (automode.driverHaltedReason ?? "Halted — reason unknown.")
+              : "Running nominally."
           }
+          onClick={() => onNavigate("autopilot")}
         />
         <SignalRow
-          label="Build"
-          value={
-            buildInfo?.status === "available"
-              ? "ready"
-              : buildInfo?.status === "missing"
-                ? "missing"
-                : "check"
-          }
-          tone={
-            buildInfo?.status === "available"
-              ? "success"
-              : buildInfo?.status === "missing"
-                ? "default"
-                : "warning"
-          }
+          label="Scheduler"
+          value={scheduler?.arming.status ?? "unknown"}
+          tone={scheduler?.arming.status === "armed" ? "success" : "default"}
+          detail={slotWindowText}
+          onClick={() => onNavigate("autopilot")}
+        />
+        <SignalRow
+          label="Held PR"
+          value={automode?.heldPrUrl ? `#${automode.heldPrNumber ?? "?"}` : "none"}
+          tone={automode?.heldPrUrl ? "warning" : "default"}
           detail={
-            buildInfo?.status === "available"
-              ? buildInfo.fields
-                  .slice(0, 2)
-                  .map((field) =>
-                    field.label === "Built"
-                      ? `${field.label} ${formatIsoDate(field.value)}`
-                      : `${field.label} ${field.value}`,
-                  )
-                  .join(" | ") || "Build metadata detected"
-              : buildInfo?.status === "missing"
-                ? "No /api/gits/build-info endpoint"
-                : "Checking build provenance"
+            automode?.heldPrUrl ? "Awaiting merge — opens in a new tab." : "No PR held for review."
           }
+          href={automode?.heldPrUrl ?? undefined}
+        />
+        <SignalRow
+          label="Run merged"
+          value={automode?.runMerged ? "merged" : "pending"}
+          tone={automode?.runMerged ? "success" : "default"}
+          detail={automode?.runMerged ? "Latest run merged to main." : "No merge recorded yet."}
+          onClick={() => onNavigate("autopilot")}
+        />
+        <SignalRow
+          label="Active peers"
+          value={formatCount(automode?.activePeerCount ?? 0)}
+          tone="default"
+          detail="Delamain peers currently running."
+          onClick={() => onNavigate("fleet")}
+        />
+        <SignalRow
+          label="Approvals"
+          value={formatCount(automode?.pendingApprovalCount ?? 0)}
+          tone={(automode?.pendingApprovalCount ?? 0) > 0 ? "warning" : "success"}
+          detail="Goals waiting on operator approval."
+          onClick={() => onNavigate("autopilot")}
         />
       </div>
 
-      <div className="grid min-w-0 xl:grid-cols-3">
-        <DistributionPanel title="Phase states" rows={phaseRows} />
-        <DistributionPanel title="Verification gates" rows={gateRows} />
-        <DistributionPanel title="Peer status" rows={peerRows} />
+      <div className="grid gap-3 border-b border-border/60 p-4 sm:grid-cols-2 sm:p-5">
+        <ChartCard title="Memory — RSS peak per minute">
+          {hasResourceData ? (
+            <LineAreaChart series={rssSeries} unit=" MB" />
+          ) : (
+            <EmptyState label="No resource samples yet." />
+          )}
+        </ChartCard>
+        <ChartCard title="CPU — average per minute">
+          {hasResourceData ? (
+            <LineAreaChart series={cpuSeries} unit="%" />
+          ) : (
+            <EmptyState label="No resource samples yet." />
+          )}
+        </ChartCard>
+      </div>
+
+      <div className="grid gap-3 border-b border-border/60 p-4 sm:grid-cols-2 sm:p-5">
+        <ChartCard title="Codex capacity">
+          {capacity ? (
+            <div className="grid gap-3">
+              <Meter
+                label="5h window"
+                value={fiveHourWindow?.usedPercent ?? 0}
+                warnAt={75}
+                dangerAt={90}
+              />
+              <Meter
+                label="Weekly window"
+                value={weeklyWindow?.usedPercent ?? 0}
+                warnAt={75}
+                dangerAt={90}
+              />
+            </div>
+          ) : (
+            <EmptyState label="Codex capacity unavailable." />
+          )}
+        </ChartCard>
+        <ChartCard title="Episodes — last 14 nights">
+          {hasEpisodeData ? (
+            <BarChart data={episodeBarData} />
+          ) : (
+            <EmptyState label="No automode episodes recorded yet." />
+          )}
+        </ChartCard>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 border-b border-border/60 p-4 sm:grid-cols-4 sm:p-5">
+        <StatTile
+          label="Waiting approval"
+          value={waitingApproval}
+          icon={OctagonAlertIcon}
+          tone={waitingApproval > 0 ? "warning" : "default"}
+        />
+        <StatTile label="Queued" value={queued} icon={ListChecksIcon} />
+        <StatTile
+          label="Running"
+          value={running}
+          icon={PlayIcon}
+          tone={running > 0 ? "success" : "default"}
+        />
+        <StatTile
+          label="Completed today"
+          value={completedToday}
+          icon={CheckCircle2Icon}
+          tone="success"
+        />
+        {usage ? (
+          <StatTile
+            label="Cost (est.)"
+            value={formatUsd(usage.estimatedCostUsd)}
+            icon={CircleDollarSignIcon}
+          />
+        ) : null}
+      </div>
+
+      <div className="border-b border-border/60 px-4 py-4 sm:px-5">
+        <div className="rounded-lg border border-border/60 bg-card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Tonight</h3>
+            <StatusPill
+              label={
+                !scheduler?.config.enabled
+                  ? "disabled"
+                  : scheduler.arming.status === "armed"
+                    ? "armed"
+                    : "enabled"
+              }
+              tone={
+                !scheduler?.config.enabled
+                  ? "default"
+                  : scheduler.arming.status === "armed"
+                    ? "success"
+                    : "warning"
+              }
+            />
+          </div>
+          <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Active/next slot</dt>
+              <dd className="mt-0.5 text-foreground">{slotWindowText}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Goals started tonight</dt>
+              <dd className="mt-0.5 font-mono tabular-nums text-foreground">
+                {formatCount(scheduler?.goalsStartedTonight ?? 0)} /{" "}
+                {formatCount(scheduler?.config.maxGoalsPerNight ?? 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Default model</dt>
+              <dd className="mt-0.5 text-foreground">{defaultModelLabel}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-muted-foreground">Last gate decision</dt>
+              <dd className="mt-0.5 text-foreground">{gateDecisionText}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="mb-1 text-muted-foreground">Proposal repos</dt>
+              <dd className="flex flex-wrap gap-1.5">
+                {(policy?.proposalRepos.length ?? 0) === 0 ? (
+                  <span className="text-muted-foreground">None opted in.</span>
+                ) : (
+                  policy!.proposalRepos.map((repo) => (
+                    <span
+                      key={repo}
+                      className="max-w-52 truncate rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[11px]"
+                    >
+                      {repo}
+                    </span>
+                  ))
+                )}
+              </dd>
+            </div>
+          </dl>
+          <div className="mt-3">
+            <Button size="sm" variant="outline" onClick={() => onNavigate("autopilot")}>
+              Configure in Autopilot
+            </Button>
+          </div>
+        </div>
       </div>
     </section>
   );

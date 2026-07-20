@@ -188,19 +188,44 @@ export function SignalRow({
   value,
   detail,
   tone,
+  onClick,
+  href,
 }: {
   label: string;
   value: string;
   detail: string;
   tone: ReturnType<typeof statusTone>;
+  /** Deep-links this cell to another cockpit tab. Ignored when `href` is set. */
+  onClick?: () => void;
+  /** Opens an external URL (e.g. a held PR) instead of switching tabs. */
+  href?: string | undefined;
 }) {
-  return (
-    <div className="grid min-h-16 gap-1 border-b border-r border-border/60 px-4 py-3 last:border-r-0 sm:px-5">
+  const content = (
+    <>
       <div className="flex min-w-0 items-center justify-between gap-2">
         <span className="truncate text-xs font-medium text-foreground">{label}</span>
         <StatusPill label={value} tone={tone} />
       </div>
       <div className="line-clamp-2 text-[11px] text-muted-foreground">{detail}</div>
-    </div>
+    </>
   );
+  const className = cn(
+    "grid min-h-16 w-full min-w-0 gap-1 border-b border-r border-border/60 px-4 py-3 text-left last:border-r-0 sm:px-5",
+    (onClick || href) && "transition-colors hover:bg-muted/40",
+  );
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className={className}>
+        {content}
+      </a>
+    );
+  }
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className}>
+        {content}
+      </button>
+    );
+  }
+  return <div className={className}>{content}</div>;
 }
