@@ -236,12 +236,20 @@ export const AutomodeProposalSweepLive = Layer.effect(
             }
           }
           if (newGoals.length > 0) {
-            const text = [
-              "New goals from tonight's sweep:",
-              ...newGoals.map((goal) => `${goal.title} — ${path.basename(goal.repo)} [${goal.id}]`),
-              "",
-              REPLY_HINT,
-            ].join("\n");
+            const goalLines = newGoals.map(
+              (goal) => `${goal.title} — ${path.basename(goal.repo)} [${goal.id}]`,
+            );
+            // The reply hint must reflect reality: with confirmation off, goals are already
+            // queued for autonomous dispatch — APPROVE/REJECT would be a false gate; STOP is
+            // the only real control.
+            const text = policy.sweepRequiresConfirmation
+              ? ["New goals from tonight's sweep:", ...goalLines, "", REPLY_HINT].join("\n")
+              : [
+                  "New goals from tonight's sweep (queued for autonomous run — no confirmation required):",
+                  ...goalLines,
+                  "",
+                  "Reply: STOP to halt automode.",
+                ].join("\n");
             yield* notifier
               .notify({ subject: "GITS nightly sweep", text })
               .pipe(

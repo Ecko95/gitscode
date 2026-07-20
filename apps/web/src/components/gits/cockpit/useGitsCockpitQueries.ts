@@ -186,7 +186,15 @@ export function useGitsCockpitQueries({
   // separate, wider pull just for the 14-night chart, so it only runs while Overview
   // is the active tab.
   const episodesListQuery = useQuery({
-    queryKey: ["gits", "automode", "episodes", "overview", targetEnvironmentId],
+    queryKey: [
+      "gits",
+      "automode",
+      "episodes",
+      "overview",
+      targetEnvironmentId,
+      activeRemoteRuntime?.connectionState,
+      activeRemoteRuntime?.authState,
+    ],
     queryFn: async () => readGitsClient().automode.episodesList({ limit: 100 }),
     enabled: activeTab === "overview",
     refetchInterval: 60_000,

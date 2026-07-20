@@ -398,6 +398,11 @@ describe("AutomodeProposalSweep", () => {
 
         assert.equal(telegramSent.length, 1);
         assert.include(telegramSent[0] ?? "", `[${snapshot.goals[0]!.id}]`);
+        // With confirmation off the goals are already queued for autonomous dispatch —
+        // the message must not advertise an APPROVE/REJECT gate that does nothing.
+        assert.notInclude(telegramSent[0] ?? "", "APPROVE");
+        assert.include(telegramSent[0] ?? "", "no confirmation required");
+        assert.include(telegramSent[0] ?? "", "STOP");
       }).pipe(Effect.provide(makeLayer({ telegramSent })));
     },
   );

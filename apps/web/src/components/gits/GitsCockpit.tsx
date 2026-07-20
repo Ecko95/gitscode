@@ -306,7 +306,9 @@ export function GitsCockpit() {
         createdAt: result.createdAt,
         result,
       });
-      setMotokoChatInput("");
+      // No input clear here: MotokoPanel clears optimistically at submit time and pushes
+      // the empty value up. Clearing again would wipe a message typed during the in-flight
+      // window (the panel's ref-diff sync treats direct shell writes as external resets).
       await Promise.all([
         hermesLogQuery.refetch(),
         hermesQuery.refetch(),
