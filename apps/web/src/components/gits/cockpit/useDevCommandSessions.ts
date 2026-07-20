@@ -14,12 +14,41 @@ export type DevCommandSessionState = {
   readonly pid: number | null;
 };
 
-function makeDevTerminalId(commandId: string): string {
+export function makeDevTerminalId(commandId: string): string {
   return `gits-dev-${commandId}`;
 }
 
-function makeDevThreadId(projectDir: string): string {
+export function makeDevThreadId(projectDir: string): string {
   return `gits-dev:${projectDir}`;
+}
+
+/**
+ * Stop must target the session's own thread — the one captured on `DevCommandSessionState`
+ * when the command was started — never the currently selected project. Falls back to the
+ * current selection only when no session was ever recorded (nothing to stop, no-op close).
+ */
+export function resolveDevStopThreadId(
+  sessionThreadId: string | undefined,
+  selectedProjectRoot: string,
+): string {
+  return sessionThreadId ?? makeDevThreadId(selectedProjectRoot);
+}
+
+/** Detach one command's attach subscription (if any) and forget it. */
+export function detachDevSession(
+  detachByCommandId: Map<string, () => void>,
+  commandId: string,
+): void {
+  detachByCommandId.get(commandId)?.();
+  detachByCommandId.delete(commandId);
+}
+
+/** Detach every live subscription and clear the map — the target-project-change reset. */
+export function detachAllDevSessions(detachByCommandId: Map<string, () => void>): void {
+  for (const detach of detachByCommandId.values()) {
+    detach();
+  }
+  detachByCommandId.clear();
 }
 
 function trimTerminalLog(log: string): string {
@@ -27,7 +56,7 @@ function trimTerminalLog(log: string): string {
   return log.length <= maxLength ? log : log.slice(log.length - maxLength);
 }
 
-function reduceDevCommandEvent(
+export function reduceDevCommandEvent(
   current: DevCommandSessionState,
   event: TerminalAttachStreamEvent,
 ): DevCommandSessionState {
@@ -129,8 +158,7 @@ export function useDevCommandSessions({
     setDevActionPending(true);
     setDevActiveCommandId(command.id);
     setDevActionError(null);
-    devTerminalDetachByCommandIdRef.current.get(command.id)?.();
-    devTerminalDetachByCommandIdRef.current.delete(command.id);
+    detachDevSession(devTerminalDetachByCommandIdRef.current, command.id);
     setDevSessionStateByCommandId((current) => ({
       ...current,
       [command.id]: {
@@ -207,8 +235,10 @@ export function useDevCommandSessions({
       setDevActionError("Environment API is not available.");
       return;
     }
-    const threadId =
-      devSessionStateByCommandId[command.id]?.threadId ?? makeDevThreadId(selectedProjectRoot);
+    const threadId = resolveDevStopThreadId(
+      devSessionStateByCommandId[command.id]?.threadId,
+      selectedProjectRoot,
+    );
     const terminalId = makeDevTerminalId(command.id);
     setDevActionPending(true);
     setDevActiveCommandId(command.id);
@@ -220,8 +250,7 @@ export function useDevCommandSessions({
       await api.terminal
         .close({ threadId, terminalId, deleteHistory: false })
         .catch(() => undefined);
-      devTerminalDetachByCommandIdRef.current.get(command.id)?.();
-      devTerminalDetachByCommandIdRef.current.delete(command.id);
+      detachDevSession(devTerminalDetachByCommandIdRef.current, command.id);
       setDevSessionStateByCommandId((current) => ({
         ...current,
         [command.id]: {
@@ -255,13 +284,13 @@ export function useDevCommandSessions({
     }
   };
 
+  // Reset on every target-project change (and unmount): detach all live attach
+  // subscriptions and drop the session map so a stale "running" row from the
+  // previous project can never bleed into the newly selected one.
   useEffect(() => {
     const detachByCommandId = devTerminalDetachByCommandIdRef.current;
     return () => {
-      for (const detach of detachByCommandId.values()) {
-        detach();
-      }
-      detachByCommandId.clear();
+      detachAllDevSessions(detachByCommandId);
       setDevSessionStateByCommandId({});
     };
   }, [selectedProjectRoot]);
