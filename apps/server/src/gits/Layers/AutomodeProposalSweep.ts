@@ -11,6 +11,7 @@ import * as Semaphore from "effect/Semaphore";
 import type { AutomodeGoal } from "@t3tools/contracts";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { shortGoalCode } from "../HermesTelegramCommand.ts";
 import { ServerConfig } from "../../config.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { HermesAdapter } from "../Services/HermesAdapter.ts";
@@ -21,7 +22,7 @@ import { hasLiveGoalForRepo } from "./HermesAutomodeBridge.ts";
 import { london_instant } from "./GitsSlotScheduler.ts";
 import { repoAllowed } from "./AutomodeSupervisor.ts";
 
-const REPLY_HINT = "Reply: APPROVE <id> · REJECT <id>";
+const REPLY_HINT = "Reply: APPROVE <code> · REJECT <code>";
 
 const STATE_FILE_NAME = "automode-proposal-sweep-state.json";
 const DEFAULT_START_MINUTES = 20 * 60; // 20:00 London dinner window.
@@ -254,7 +255,7 @@ export const AutomodeProposalSweepLive = Layer.effect(
           }
           if (newGoals.length > 0) {
             const goalLines = newGoals.map(
-              (goal) => `${goal.title} — ${path.basename(goal.repo)} [${goal.id}]`,
+              (goal) => `${goal.title} — ${path.basename(goal.repo)} [${shortGoalCode(goal.id)}]`,
             );
             // The reply hint must reflect reality: with confirmation off, goals are already
             // queued for autonomous dispatch — APPROVE/REJECT would be a false gate; STOP is

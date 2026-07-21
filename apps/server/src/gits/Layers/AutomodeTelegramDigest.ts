@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { shortGoalCode } from "../HermesTelegramCommand.ts";
 import { ServerConfig } from "../../config.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
@@ -17,7 +18,7 @@ import { GitsSlotScheduler } from "../Services/GitsSlotScheduler.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { london_instant } from "./GitsSlotScheduler.ts";
 
-const REPLY_HINT = "Reply: APPROVE <id> · REJECT <id>";
+const REPLY_HINT = "Reply: APPROVE <code> · REJECT <code>";
 
 const STATE_FILE_NAME = "automode-telegram-digest-state.json";
 const PersistedState = Schema.Struct({
@@ -145,9 +146,16 @@ export const AutomodeTelegramDigestLive = Layer.effect(
               [
                 "Queued/proposed goals:",
                 ...snapshot.goals
-                  .filter((goal) => goal.status === "queued" || goal.status === "waiting-approval")
+                  // blocked included: goals parked by the kill switch / gates are exactly
+                  // the ones the operator needs to see and can APPROVE.
+                  .filter(
+                    (goal) =>
+                      goal.status === "queued" ||
+                      goal.status === "waiting-approval" ||
+                      goal.status === "blocked",
+                  )
                   .slice(0, 5)
-                  .map((goal) => `- ${goal.title} [${goal.id}]`),
+                  .map((goal) => `- ${goal.title} [${shortGoalCode(goal.id)}]`),
                 "",
                 REPLY_HINT,
               ].join("\n"),

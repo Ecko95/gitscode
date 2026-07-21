@@ -95,10 +95,10 @@ describe("AutomodeTelegramDigest", () => {
       assert.match(sent[0] ?? "", /finished/);
       assert.match(sent[0] ?? "", /failed/);
       assert.match(sent[0] ?? "", /1/);
-      assert.match(sent[1] ?? "", /one \[goal-one\]/);
-      assert.match(sent[1] ?? "", /five \[goal-five\]/);
+      assert.match(sent[1] ?? "", /one \[one\]/);
+      assert.match(sent[1] ?? "", /five \[five\]/);
       assert.notMatch(sent[1] ?? "", /six/);
-      assert.match(sent[1] ?? "", /Reply: APPROVE <id> · REJECT <id>/);
+      assert.match(sent[1] ?? "", /Reply: APPROVE <code> · REJECT <code>/);
     }).pipe(Effect.provide(makeLayer({ sent })));
   });
 

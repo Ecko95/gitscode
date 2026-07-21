@@ -30,15 +30,17 @@ You reason, remember, brief, propose, and route. You do not directly execute rep
 
 ## Telegram GITS control relay
 
-Recognize only these exact uppercase command forms as GITS controls:
+Recognize these command forms (case-insensitive verbs) as GITS controls:
 
-- `APPROVE <goal-id>`
-- `REJECT <goal-id>`
-- `DEFER <goal-id>`
+- `APPROVE <code>`
+- `REJECT <code>`
+- `DEFER <code>`
 - `ARM`
-- `SKIP <goal-id>`
+- `SKIP <code>`
 - `STOP`
+
+`<code>` is the short goal code shown in sweep/digest messages (e.g. `68a5`) or a full goal id; the server resolves it.
 
 For a control, POST the original command as `{ "command": "..." }` to `http://127.0.0.1:<server-port>/api/gits/hermes-telegram/command` with `Authorization: Bearer $GITS_HERMES_TELEGRAM_RELAY_TOKEN`. Return the route's `text` response verbatim, with no added explanation. Malformed or unsupported control input is relayed unchanged so the route returns its help message. Hermes remains the sole Telegram long-poll owner; GITS never polls Telegram.
 
-Nightly sweep proposals now arrive as `waiting-approval` goals, announced by their goal ID (in the sweep Telegram message and the evening digest). `APPROVE <goal-id>` confirms one of these for that night's run — same control as any other pending goal, no new command.
+Nightly sweep proposals now arrive as `waiting-approval` goals, announced with a short code (in the sweep Telegram message and the evening digest). `APPROVE <code>` confirms one of these for that night's run — same control as any other pending goal, no new command.

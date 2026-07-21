@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   dispatchHermesTelegramCommand,
   parseHermesTelegramCommand,
+  resolveGoalToken,
+  shortGoalCode,
 } from "./HermesTelegramCommand.ts";
 import { AutomodeSupervisor, type AutomodeSupervisorShape } from "./Services/AutomodeSupervisor.ts";
 import { GitsSlotScheduler, type GitsSlotSchedulerShape } from "./Services/GitsSlotScheduler.ts";
@@ -42,8 +44,18 @@ describe("parseHermesTelegramCommand", () => {
   });
 });
 
+// Live goals visible to short-code resolution; ids match the test commands.
+const SNAPSHOT_GOALS = [
+  { id: "goal-1", title: "Goal one", status: "waiting-approval" },
+  { id: "goal-2", title: "Goal two", status: "blocked" },
+  { id: "goal-abc123", title: "Goal abc one", status: "queued" },
+  { id: "goal-abc999", title: "Goal abc two", status: "queued" },
+  { id: "goal-dead00", title: "Done goal", status: "completed" },
+];
+
 function testLayer(calls: string[], stopAllResult = { stoppedPeers: 2, failures: 0 }) {
   const supervisor = {
+    getSnapshot: () => Effect.succeed({ goals: SNAPSHOT_GOALS }),
     approveGoal: ({ goalId }: { readonly goalId: string }) => {
       calls.push(`approve:${goalId}`);
       return Effect.succeed({});
@@ -136,9 +148,39 @@ describe("dispatchHermesTelegramCommand", () => {
     const calls: string[] = [];
 
     await expect(dispatch("RUN arbitrary rpc payload", calls)).resolves.toBe(
-      "Commands: APPROVE <goal-id>, REJECT <goal-id>, DEFER <goal-id>, ARM, SKIP <goal-id>, STOP.",
+      "Commands: APPROVE <code>, REJECT <code>, DEFER <code>, ARM, SKIP <code>, STOP. <code> is the short code from the goal message (e.g. 68a5) or a full goal id.",
     );
 
     expect(calls).toEqual([]);
+  });
+
+  it("resolves short codes (case-insensitive) to the full goal id", async () => {
+    const calls: string[] = [];
+    await expect(dispatch("APPROVE ABC1", calls)).resolves.toBe("Goal approved.");
+    expect(calls).toEqual(["approve:goal-abc123"]);
+  });
+
+  it("reports ambiguity instead of guessing", async () => {
+    const calls: string[] = [];
+    const reply = await dispatch("APPROVE abc", calls);
+    expect(reply).toContain("matches several goals");
+    expect(reply).toContain("abc1");
+    expect(reply).toContain("abc9");
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects unknown codes and does not match terminal goals", async () => {
+    const calls: string[] = [];
+    await expect(dispatch("APPROVE zzz9", calls)).resolves.toBe("No live goal matches 'zzz9'.");
+    await expect(dispatch("APPROVE dead", calls)).resolves.toBe("No live goal matches 'dead'.");
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("shortGoalCode / resolveGoalToken", () => {
+  it("derives 4-char codes and resolves exact full ids even when terminal", () => {
+    expect(shortGoalCode("goal-68a553c5-9252")).toBe("68a5");
+    const exact = resolveGoalToken(SNAPSHOT_GOALS as never, "goal-dead00");
+    expect(exact).toEqual({ kind: "ok", goalId: "goal-dead00" });
   });
 });
