@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vitest";
+import { CODEX_MODEL_TIERS } from "@t3tools/contracts";
 
 import { ProcessRunner, type ProcessRunnerShape } from "../../processRunner.ts";
 import { GitsSemanticVerifier } from "../Services/GitsSemanticVerifier.ts";
@@ -159,6 +160,39 @@ describe("GitsCodexVerifierAdapter", () => {
       expect(r.recommendation).toBe("auto-merge");
       expect(runMock).toHaveBeenCalledTimes(3);
     }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "defaults to the light tier when no model is given and escalates to the medium tier",
+    () =>
+      Effect.gen(function* () {
+        runMock.mockImplementationOnce(() => execOk(0, DIFF)); // diff
+        runMock.mockImplementationOnce((input) => {
+          expect(input.args[5]).toBe(CODEX_MODEL_TIERS.light);
+          return execOk(
+            0,
+            '{"verdict":"uncertain","confidence":"low","reasons":["not sure"],"missed":[]}',
+          );
+        });
+        runMock.mockImplementationOnce((input) => {
+          expect(input.args[5]).toBe(CODEX_MODEL_TIERS.medium); // escalated, no env override
+          return execOk(
+            0,
+            '{"verdict":"pass","confidence":"high","reasons":["clear on review"],"missed":[]}',
+          );
+        });
+        const verifier = yield* GitsSemanticVerifier;
+        const r = yield* verifier.verify({
+          worktree: "/wt",
+          baseRef: "origin/main",
+          acceptanceCriteria: ["c"],
+          sliceTitle: "x",
+          // no `model` — exercises DEFAULT_MODEL / default escalationModel()
+        });
+        expect(r.model).toBe(CODEX_MODEL_TIERS.medium);
+        expect(r.verdict).toBe("pass");
+        expect(r.recommendation).toBe("auto-merge");
+      }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("falls back to uncertain+hold when codex output has no parseable verdict", () =>

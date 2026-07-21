@@ -27,9 +27,10 @@ const snapshot = {
     ...["one", "two", "three", "four", "five", "six"].map((title) => ({
       title,
       status: "queued",
+      id: `goal-${title}`,
     })),
-    { title: "finished", status: "completed" },
-    { title: "failed", status: "failed" },
+    { title: "finished", status: "completed", id: "goal-finished" },
+    { title: "failed", status: "failed", id: "goal-failed" },
   ],
   heldPrUrl: "https://github.com/t3tools/gits/pull/42",
 };
@@ -38,6 +39,7 @@ function makeLayer(options: {
   readonly sent: string[];
   readonly failFirst?: boolean;
   readonly baseDir?: string;
+  readonly telegramDigestEnabled?: boolean;
 }) {
   let attempts = 0;
   const notifier = Layer.mock(HermesTelegramNotifier)({
@@ -50,6 +52,8 @@ function makeLayer(options: {
   });
   const supervisor = Layer.mock(AutomodeSupervisor)({
     getSnapshot: () => Effect.succeed(snapshot as never),
+    getPolicy: () =>
+      Effect.succeed({ telegramDigestEnabled: options.telegramDigestEnabled ?? true } as never),
   });
   const scheduler = Layer.mock(GitsSlotScheduler)({
     getSnapshot: () => Effect.succeed({ goalsStartedTonight: 1 } as never),
@@ -91,10 +95,23 @@ describe("AutomodeTelegramDigest", () => {
       assert.match(sent[0] ?? "", /finished/);
       assert.match(sent[0] ?? "", /failed/);
       assert.match(sent[0] ?? "", /1/);
-      assert.match(sent[1] ?? "", /one/);
-      assert.match(sent[1] ?? "", /five/);
+      assert.match(sent[1] ?? "", /one \[goal-one\]/);
+      assert.match(sent[1] ?? "", /five \[goal-five\]/);
       assert.notMatch(sent[1] ?? "", /six/);
+      assert.match(sent[1] ?? "", /Reply: APPROVE <id> · REJECT <id>/);
     }).pipe(Effect.provide(makeLayer({ sent })));
+  });
+
+  it.effect("sends nothing when telegramDigestEnabled is off", () => {
+    const sent: string[] = [];
+    return Effect.gen(function* () {
+      const digest = yield* AutomodeTelegramDigest;
+      yield* TestClock.setTime(MORNING);
+      yield* digest.tick();
+      yield* TestClock.setTime(DIGEST);
+      yield* digest.tick();
+      assert.equal(sent.length, 0);
+    }).pipe(Effect.provide(makeLayer({ sent, telegramDigestEnabled: false })));
   });
 
   it.effect("retries a failed delivery and retains successful dates across a fresh layer", () => {

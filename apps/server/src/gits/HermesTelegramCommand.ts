@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 
 import { AutomodeSupervisor } from "./Services/AutomodeSupervisor.ts";
-import { DelamainAdapter } from "./Services/DelamainAdapter.ts";
 import { GitsSlotScheduler } from "./Services/GitsSlotScheduler.ts";
 
 export type HermesTelegramCommand =
@@ -69,33 +68,10 @@ export function dispatchHermesTelegramCommand(command: HermesTelegramCommand) {
       }
       case "stop": {
         const supervisor = yield* AutomodeSupervisor;
-        const delamain = yield* DelamainAdapter;
-        yield* supervisor.updatePolicy({ killSwitchEnabled: true });
-        const snapshot = yield* supervisor.getSnapshot();
-        let stopped = 0;
-        let failed = 0;
-
-        for (const goal of snapshot.goals) {
-          const status: string = goal.status;
-          if (goal.peerId === null || (status !== "running" && status !== "pending")) continue;
-          // Workflow-dispatched goals track the run id as peerId — kill the whole run
-          // (runner + live leaves), not the run record as a lone peer. Both branches are
-          // mapped to a boolean so the differing success types don't form an Effect union.
-          const ok = yield* (
-            goal.workflowId
-              ? delamain.workflowKill({ workflowId: goal.workflowId }).pipe(Effect.as(true))
-              : delamain.killPeer({ peerId: goal.peerId }).pipe(Effect.as(true))
-          ).pipe(Effect.orElseSucceed(() => false));
-          if (ok) {
-            stopped += 1;
-          } else {
-            failed += 1;
-          }
-        }
-
-        return failed === 0
-          ? `Stop requested for ${stopped} peer(s).`
-          : `Stop requested for ${stopped} peer(s); ${failed} failed.`;
+        const { stoppedPeers, failures } = yield* supervisor.stopAll();
+        return failures === 0
+          ? `Stop requested for ${stoppedPeers} peer(s).`
+          : `Stop requested for ${stoppedPeers} peer(s); ${failures} failed.`;
       }
       case "invalid":
         return HELP;

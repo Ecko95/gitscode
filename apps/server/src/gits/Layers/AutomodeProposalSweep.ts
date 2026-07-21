@@ -8,14 +8,20 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import type { AutomodeGoal } from "@t3tools/contracts";
+
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
+import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
+import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { hasLiveGoalForRepo } from "./HermesAutomodeBridge.ts";
 import { london_instant } from "./GitsSlotScheduler.ts";
 import { repoAllowed } from "./AutomodeSupervisor.ts";
+
+const REPLY_HINT = "Reply: APPROVE <id> · REJECT <id>";
 
 const STATE_FILE_NAME = "automode-proposal-sweep-state.json";
 const DEFAULT_START_MINUTES = 20 * 60; // 20:00 London dinner window.
@@ -95,6 +101,8 @@ export const AutomodeProposalSweepLive = Layer.effect(
     const path = yield* Path.Path;
     const supervisor = yield* AutomodeSupervisor;
     const hermes = yield* HermesAdapter;
+    const ledger = yield* AutomodeEpisodeLedger;
+    const notifier = yield* HermesTelegramNotifier;
     const parsedStart = parseStartMinutes(process.env.GITS_PROPOSAL_SWEEP_START_HHMM);
     if (parsedStart.error !== null) {
       yield* Effect.logWarning("gits.sweep.start-invalid", { detail: parsedStart.error });
@@ -106,9 +114,10 @@ export const AutomodeProposalSweepLive = Layer.effect(
 
     // Propose to ONE repo: skip it if a goal is already live for it (dedup BEFORE the codex
     // spend), then spawn Hermes, approve the card, draft it, and enqueue the drafted
-    // delamain-peer as a waiting-approval goal carrying the card's episodeId. A failure here
-    // is logged and swallowed so the sweep continues to the next repo.
-    const sweepRepo = (repo: string) =>
+    // delamain-peer as a queued goal carrying the card's episodeId. A failure here is
+    // logged and swallowed so the sweep continues to the next repo. Returns the enqueued
+    // goal (null on any skip/failure) so the caller can gate approval and notify.
+    const sweepRepo = (repo: string): Effect.Effect<AutomodeGoal | null> =>
       Effect.gen(function* () {
         // Dedup by repo, ahead of hermes: a fresh inspect always mints a new episodeId, so
         // episode dedup could never fire here. A repo whose prior-night sweep or cockpit
@@ -116,13 +125,27 @@ export const AutomodeProposalSweepLive = Layer.effect(
         const snapshot = yield* supervisor.getSnapshot();
         if (hasLiveGoalForRepo(snapshot.goals, repo)) {
           yield* Effect.logInfo("gits.sweep.dedup-skipped", { repo });
-          return;
+          return null;
         }
+        // Feedback loop: fold the repo's recent ledger outcomes into the proposal prompt so
+        // Hermes doesn't blindly repeat an idea that already ran, landed, or got flagged.
+        const episodes = yield* ledger.list_episodes({ repo, limit: 5 });
+        const outcomesSection =
+          episodes.length === 0
+            ? undefined
+            : [
+                "Recent automode outcomes for this repo:",
+                ...episodes.map(
+                  (episode) =>
+                    `- ${episode.goalTitle}: ${episode.verdict}${episode.flagged ? " (flagged)" : ""}`,
+                ),
+              ].join("\n");
         // "worktree-spawn" makes the card actionable: a read-only inspect card can only ever
         // draft as "verification", never "delamain-peer" (draftKindFor keys on actionKind).
         const card = yield* hermes.inspectGitsAndPropose({
           projectDir: repo,
           actionKind: "worktree-spawn",
+          ...(outcomesSection === undefined ? {} : { prompt: outcomesSection }),
         });
         if (card.status === "blocked" || card.projectDir === null) {
           yield* Effect.logInfo("gits.sweep.card-skipped", {
@@ -130,7 +153,7 @@ export const AutomodeProposalSweepLive = Layer.effect(
             status: card.status,
             blockedReason: card.blockedReason,
           });
-          return;
+          return null;
         }
         // Approve before drafting — mirrors the approve bridge's decide→draft order.
         // draftFromProposal blocks any card whose status !== "approved".
@@ -142,17 +165,22 @@ export const AutomodeProposalSweepLive = Layer.effect(
             kind: draft.kind,
             status: draft.status,
           });
-          return;
+          return null;
         }
-        yield* supervisor.enqueueGoal({
+        const enqueued = yield* supervisor.enqueueGoal({
           title: draft.title,
           prompt: draft.prompt,
           repo: draft.repo,
           episodeId: card.episodeId,
+          origin: "sweep",
         });
+        // enqueueGoal prepends the new goal, so it's always the freshest entry.
+        return enqueued.goals[0] ?? null;
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("gits.sweep.repo-failed", { repo, cause: Cause.pretty(cause) }),
+          Effect.logWarning("gits.sweep.repo-failed", { repo, cause: Cause.pretty(cause) }).pipe(
+            Effect.as(null),
+          ),
         ),
       );
 
@@ -183,12 +211,52 @@ export const AutomodeProposalSweepLive = Layer.effect(
           );
           yield* Ref.set(stateRef, next);
           // Sequential: hermes invocations share codex capacity — never parallelise.
+          const newGoals: AutomodeGoal[] = [];
           for (const repo of policy.proposalRepos) {
             if (!repoAllowed(policy, repo)) {
               yield* Effect.logWarning("gits.sweep.repo-not-allowed", { repo });
               continue;
             }
-            yield* sweepRepo(repo);
+            const goal = yield* sweepRepo(repo);
+            if (goal === null) continue;
+            newGoals.push(goal);
+            if (policy.sweepRequiresConfirmation) {
+              // Parks the goal at waiting-approval via the shared dispatch-time approval gate:
+              // the goal carries origin "sweep" (enqueued above), and goalNeedsApproval in
+              // AutomodeSupervisor.ts treats sweep + sweepRequiresConfirmation as needing
+              // approval independent of requireApprovalForPeerSpawn.
+              yield* supervisor.dispatchGoal({ goalId: goal.id }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("gits.sweep.confirm-gate-failed", {
+                    goalId: goal.id,
+                    cause: Cause.pretty(cause),
+                  }),
+                ),
+              );
+            }
+          }
+          if (newGoals.length > 0) {
+            const goalLines = newGoals.map(
+              (goal) => `${goal.title} — ${path.basename(goal.repo)} [${goal.id}]`,
+            );
+            // The reply hint must reflect reality: with confirmation off, goals are already
+            // queued for autonomous dispatch — APPROVE/REJECT would be a false gate; STOP is
+            // the only real control.
+            const text = policy.sweepRequiresConfirmation
+              ? ["New goals from tonight's sweep:", ...goalLines, "", REPLY_HINT].join("\n")
+              : [
+                  "New goals from tonight's sweep (queued for autonomous run — no confirmation required):",
+                  ...goalLines,
+                  "",
+                  "Reply: STOP to halt automode.",
+                ].join("\n");
+            yield* notifier
+              .notify({ subject: "GITS nightly sweep", text })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("gits.sweep.telegram-failed", { cause: Cause.pretty(cause) }),
+                ),
+              );
           }
         }).pipe(
           Effect.catchCause((cause) =>

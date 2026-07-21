@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  CODEX_MODEL_TIERS,
+  CODEX_MODEL_TIER_LABELS,
   DEFAULT_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -79,6 +81,14 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("sonnet-4.6", claude)).toBe("claude-sonnet-4-6");
   });
 
+  it("maps the gpt-5.6 tier aliases (luna/terra/sol) to canonical slugs", () => {
+    expect(normalizeModelSlug("luna")).toBe(CODEX_MODEL_TIERS.light);
+    expect(normalizeModelSlug("5.6-luna")).toBe(CODEX_MODEL_TIERS.light);
+    expect(normalizeModelSlug("terra")).toBe(CODEX_MODEL_TIERS.medium);
+    expect(normalizeModelSlug("5.6-terra")).toBe(CODEX_MODEL_TIERS.medium);
+    expect(normalizeModelSlug("sol")).toBe(CODEX_MODEL_TIERS.high);
+  });
+
   it("returns null for empty or missing values", () => {
     expect(normalizeModelSlug("")).toBeNull();
     expect(normalizeModelSlug("   ")).toBeNull();
@@ -120,6 +130,19 @@ describe("resolveSelectableModel", () => {
     expect(resolveSelectableModel(ProviderDriverKind.make("claudeAgent"), "sonnet", options)).toBe(
       "claude-sonnet-5",
     );
+  });
+});
+
+describe("CODEX_MODEL_TIERS", () => {
+  it("exports the light/medium/high gpt-5.6 tier slugs and labels", () => {
+    expect(CODEX_MODEL_TIERS).toEqual({
+      light: "gpt-5.6-luna",
+      medium: "gpt-5.6-terra",
+      high: "gpt-5.6-sol",
+    });
+    expect(CODEX_MODEL_TIER_LABELS.light).toContain("Luna");
+    expect(CODEX_MODEL_TIER_LABELS.medium).toContain("Terra");
+    expect(CODEX_MODEL_TIER_LABELS.high).toContain("Sol");
   });
 });
 

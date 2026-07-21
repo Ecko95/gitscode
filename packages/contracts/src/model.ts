@@ -165,6 +165,10 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "5.5": "gpt-5.5",
     "5.6": "gpt-5.6-sol",
     sol: "gpt-5.6-sol",
+    luna: "gpt-5.6-luna",
+    "5.6-luna": "gpt-5.6-luna",
+    terra: "gpt-5.6-terra",
+    "5.6-terra": "gpt-5.6-terra",
   },
   [CLAUDE_DRIVER_KIND]: {
     opus: "claude-opus-4-8",
@@ -199,6 +203,22 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5": "claude-opus-4-5",
   },
   [OPENCODE_DRIVER_KIND]: {},
+};
+
+// ── Codex gpt-5.6 tier family ──────────────────────────────────────────
+// Three fixed-purpose tiers on the gpt-5.6 codex line: light/fast for cheap
+// mechanical passes, balanced for escalation, deep for the primary driver model.
+export const CODEX_MODEL_TIERS = {
+  light: "gpt-5.6-luna",
+  medium: "gpt-5.6-terra",
+  high: "gpt-5.6-sol",
+} as const;
+export type CodexModelTier = keyof typeof CODEX_MODEL_TIERS;
+
+export const CODEX_MODEL_TIER_LABELS: Record<CodexModelTier, string> = {
+  light: "Luna — light/fast",
+  medium: "Terra — balanced",
+  high: "Sol — deep analysis & execution",
 };
 
 // ── Provider display names ────────────────────────────────────────────

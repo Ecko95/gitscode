@@ -18,12 +18,15 @@ import {
 import {
   AutomodeDispatchResult,
   AutomodeEnqueueGoalInput,
+  AutomodeEpisode,
+  AutomodeEpisodesListInput,
   AutomodeGoal,
   AutomodeGoalInput,
   AutomodePolicyUpdateInput,
   AutomodeRejectGoalInput,
   AutomodeSnapshot,
   AutomodeSnapshotInput,
+  AutomodeStopAllResult,
   AutomodeSupervisorError,
   DelamainAdapterError,
   DelamainInboxResult,
@@ -318,6 +321,9 @@ export const WS_METHODS = {
   gitsAutomodeSchedulerArm: "gits.automode.scheduler.arm",
   gitsAutomodeSchedulerDisarm: "gits.automode.scheduler.disarm",
   gitsAutomodeDriverResume: "gits.automode.driver.resume",
+  gitsAutomodeEpisodesList: "gits.automode.episodes.list",
+  gitsAutomodeStopAll: "gits.automode.stopAll",
+  gitsAutomodeGoalsKill: "gits.automode.goals.kill",
   gitsCapacityGetSnapshot: "gits.capacity.snapshot",
   gitsHermesGetStatus: "gits.hermes.status",
   gitsHermesGetConfig: "gits.hermes.config",
@@ -984,6 +990,28 @@ export const WsGitsAutomodeDriverResumeRpc = Rpc.make(WS_METHODS.gitsAutomodeDri
   error: AutomodeSupervisorError,
 });
 
+export const WsGitsAutomodeEpisodesListRpc = Rpc.make(WS_METHODS.gitsAutomodeEpisodesList, {
+  payload: AutomodeEpisodesListInput,
+  success: Schema.Array(AutomodeEpisode),
+  error: AutomodeSupervisorError,
+});
+
+// Wired to automodeSupervisor.stopAll() in ws.ts. Mirrors the counters the Telegram STOP
+// command already computes (HermesTelegramCommand.ts `case "stop"`).
+export const WsGitsAutomodeStopAllRpc = Rpc.make(WS_METHODS.gitsAutomodeStopAll, {
+  payload: Schema.Struct({}),
+  success: AutomodeStopAllResult,
+  error: AutomodeSupervisorError,
+});
+
+// Wired to automodeSupervisor.killGoal(input) in ws.ts. Payload/success shape mirrors
+// the other single-goal siblings (approveGoal/rejectGoal: {goalId} -> AutomodeGoal).
+export const WsGitsAutomodeGoalsKillRpc = Rpc.make(WS_METHODS.gitsAutomodeGoalsKill, {
+  payload: AutomodeGoalInput,
+  success: AutomodeGoal,
+  error: AutomodeSupervisorError,
+});
+
 export const WsGitsCapacityGetSnapshotRpc = Rpc.make(WS_METHODS.gitsCapacityGetSnapshot, {
   payload: GitsCapacitySnapshotInput,
   success: GitsCapacitySnapshot,
@@ -1294,6 +1322,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsAutomodeSchedulerArmRpc,
   WsGitsAutomodeSchedulerDisarmRpc,
   WsGitsAutomodeDriverResumeRpc,
+  WsGitsAutomodeEpisodesListRpc,
+  WsGitsAutomodeStopAllRpc,
+  WsGitsAutomodeGoalsKillRpc,
   WsGitsCapacityGetSnapshotRpc,
   WsGitsHermesGetStatusRpc,
   WsGitsHermesGetConfigRpc,

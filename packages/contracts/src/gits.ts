@@ -892,9 +892,24 @@ export const AutomodePolicy = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   motokoAuthority: MotokoAuthority.pipe(Schema.withDecodingDefault(Effect.succeed("observe"))),
+  // Owner kill-switch for the daily Telegram digest/report. On by default (existing behavior);
+  // decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a legacy
+  // automode-state.json without telegramDigestEnabled must still decode.
+  telegramDigestEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Human-in-the-loop gate for the nightly sweep: when true (default), sweep-drafted goals
+  // enter waiting-approval so the owner confirms them (e.g. Telegram APPROVE <id>) before
+  // dispatch; when false, the sweep keeps its legacy self-approved queued behavior.
+  // Decoding default is load-bearing — see telegramDigestEnabled above.
+  sweepRequiresConfirmation: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   updatedAt: IsoDateTime,
 });
 export type AutomodePolicy = typeof AutomodePolicy.Type;
+
+// Goal origin: distinguishes an operator-authored goal from one drafted by the nightly
+// sweep or the Motoko proposal bridge. The sweep uses this (not requireApprovalForPeerSpawn)
+// to decide whether sweepRequiresConfirmation must park the goal at waiting-approval.
+export const AutomodeGoalOrigin = Schema.Literals(["manual", "proposal", "sweep"]);
+export type AutomodeGoalOrigin = typeof AutomodeGoalOrigin.Type;
 
 export const AutomodeGoal = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -925,6 +940,11 @@ export const AutomodeGoal = Schema.Struct({
   workflowId: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // Decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a
+  // legacy automode-state.json predating this field must still decode (a failed decode
+  // silently resets ALL persisted automode state to locked defaults). Legacy goals default
+  // to "manual", the correct answer for every goal minted before origin existed.
+  origin: AutomodeGoalOrigin.pipe(Schema.withDecodingDefault(Effect.succeed("manual"))),
 });
 export type AutomodeGoal = typeof AutomodeGoal.Type;
 
@@ -979,6 +999,8 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   motokoAuthority: Schema.optional(MotokoAuthority),
+  telegramDigestEnabled: Schema.optional(Schema.Boolean),
+  sweepRequiresConfirmation: Schema.optional(Schema.Boolean),
 });
 export type AutomodePolicyUpdateInput = typeof AutomodePolicyUpdateInput.Type;
 
@@ -989,6 +1011,8 @@ export const AutomodeEnqueueGoalInput = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   // Carries the proposal's episode thread into the goal; the supervisor mints one when absent.
   episodeId: Schema.optional(TrimmedNonEmptyString),
+  // Goal origin (manual/proposal/sweep); the supervisor defaults to "manual" when absent.
+  origin: Schema.optional(AutomodeGoalOrigin),
 });
 export type AutomodeEnqueueGoalInput = typeof AutomodeEnqueueGoalInput.Type;
 
@@ -1028,6 +1052,13 @@ export const AutomodeDispatchResult = Schema.Struct({
   blockedReason: Schema.NullOr(SummaryString),
 });
 export type AutomodeDispatchResult = typeof AutomodeDispatchResult.Type;
+
+// Mirrors the counters the Telegram STOP command already reports (HermesTelegramCommand.ts).
+export const AutomodeStopAllResult = Schema.Struct({
+  stoppedPeers: NonNegativeInt,
+  failures: NonNegativeInt,
+});
+export type AutomodeStopAllResult = typeof AutomodeStopAllResult.Type;
 
 // --- Slot scheduler (off-hours autonomy phase 1) -------------------------------------------
 // Gates autonomous goal STARTS to London night slots (decisions 6, 7, 11, 20).
@@ -1789,3 +1820,31 @@ export class GitsReviewError extends Schema.TaggedErrorClass<GitsReviewError>()(
   message: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect),
 }) {}
+
+// --- Automode episode ledger (RPC exposure) ------------------------------------------------
+// Mirrors apps/server/src/persistence/Services/AutomodeEpisodeLedger.ts's (server-only,
+// SQL-backed) AutomodeEpisode row shape 1:1 so it can be exposed over
+// gits.automode.episodes.list. Keep both definitions in sync by hand.
+
+export const AutomodeEpisode = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  episodeId: Schema.NullOr(TrimmedNonEmptyString),
+  repo: PathString,
+  goalId: TrimmedNonEmptyString,
+  goalTitle: TrimmedNonEmptyString,
+  sliceBranch: Schema.NullOr(TrimmedNonEmptyString),
+  verdict: GitsVerifierVerdict,
+  confidence: Schema.NullOr(GitsVerifierConfidence),
+  recommendation: GitsVerifierRecommendation,
+  flagged: Schema.Boolean,
+  summary: SummaryString,
+  review: GitsReviewResult,
+  createdAt: IsoDateTime,
+});
+export type AutomodeEpisode = typeof AutomodeEpisode.Type;
+
+export const AutomodeEpisodesListInput = Schema.Struct({
+  limit: Schema.optional(PositiveInt),
+  repo: Schema.optional(PathString),
+});
+export type AutomodeEpisodesListInput = typeof AutomodeEpisodesListInput.Type;

@@ -23,6 +23,7 @@ import {
   type AutomodePolicyUpdateInput,
   type AutomodePolicy,
   type AutomodeSnapshot,
+  type AutomodeStopAllResult,
   type DelamainPeer,
   type PeerStatus,
 } from "@t3tools/contracts";
@@ -249,6 +250,8 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     verificationCommands: [],
     integrationBranch: null,
     motokoAuthority: "observe",
+    telegramDigestEnabled: true,
+    sweepRequiresConfirmation: true,
     updatedAt,
   };
 }
@@ -292,6 +295,12 @@ function promptNeedsApproval(policy: AutomodePolicy, prompt: string): boolean {
 function goalNeedsApproval(policy: AutomodePolicy, goal: AutomodeGoal): boolean {
   if (goal.approvedAt !== null) {
     return false;
+  }
+  // Sweep-drafted goals gate on sweepRequiresConfirmation alone, independent of
+  // requireApprovalForPeerSpawn — otherwise an operator who disables per-peer-spawn
+  // approval also (unintentionally) waives the owner's sweep confirmation contract.
+  if (goal.origin === "sweep" && policy.sweepRequiresConfirmation) {
+    return true;
   }
   return promptNeedsApproval(policy, goal.prompt);
 }
@@ -433,6 +442,8 @@ function applyPolicyUpdate(
     integrationBranch:
       input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,
     motokoAuthority: input.motokoAuthority ?? policy.motokoAuthority,
+    telegramDigestEnabled: input.telegramDigestEnabled ?? policy.telegramDigestEnabled,
+    sweepRequiresConfirmation: input.sweepRequiresConfirmation ?? policy.sweepRequiresConfirmation,
     updatedAt,
   };
 }
@@ -628,6 +639,7 @@ export const AutomodeSupervisorLive = Layer.effect(
             id: `goal-${randomUUID()}`,
             // Episode thread (decision 23): carried from the proposal when present.
             episodeId: input.episodeId ?? `epi-${randomUUID()}`,
+            origin: input.origin ?? "manual",
             title: input.title,
             prompt: input.prompt,
             repo: input.repo,
@@ -961,6 +973,59 @@ export const AutomodeSupervisorLive = Layer.effect(
             return yield* toAutomodeError(`Automode goal ${input.goalId} was not found.`);
           }
           return goal;
+        }),
+      // ponytail: promoted verbatim from HermesTelegramCommand.ts `case "stop"` — same
+      // kill-switch-first + best-effort peer/workflow kill loop, now callable from ws.ts too.
+      // Self-referencing supervisor.updatePolicy/getSnapshot (closure) instead of duplicating
+      // their logic. Goal status is left untouched, matching STOP's existing behavior exactly.
+      stopAll: () =>
+        Effect.gen(function* () {
+          yield* supervisor.updatePolicy({ killSwitchEnabled: true });
+          const snapshot = yield* supervisor.getSnapshot();
+          let stoppedPeers = 0;
+          let failures = 0;
+
+          for (const goal of snapshot.goals) {
+            const status: string = goal.status;
+            if (goal.peerId === null || (status !== "running" && status !== "pending")) continue;
+            const ok = yield* (
+              goal.workflowId
+                ? delamainAdapter
+                    .workflowKill({ workflowId: goal.workflowId })
+                    .pipe(Effect.as(true))
+                : delamainAdapter.killPeer({ peerId: goal.peerId }).pipe(Effect.as(true))
+            ).pipe(Effect.orElseSucceed(() => false));
+            if (ok) {
+              stoppedPeers += 1;
+            } else {
+              failures += 1;
+            }
+          }
+
+          return { stoppedPeers, failures } satisfies AutomodeStopAllResult;
+        }),
+      killGoal: (input) =>
+        Effect.gen(function* () {
+          const state = yield* Ref.get(stateRef);
+          const goal = findGoal(state, input.goalId);
+          if (goal === null) {
+            return yield* toAutomodeError(`Automode goal ${input.goalId} was not found.`);
+          }
+
+          if (goal.peerId !== null) {
+            // ponytail: kill failure is swallowed (peer may already be dead) — the goal is
+            // still marked failed below, mirroring stopAll's per-goal tolerance.
+            yield* (
+              goal.workflowId
+                ? delamainAdapter.workflowKill({ workflowId: goal.workflowId }).pipe(Effect.asVoid)
+                : delamainAdapter.killPeer({ peerId: goal.peerId }).pipe(Effect.asVoid)
+            ).pipe(Effect.orElseSucceed(() => undefined));
+          }
+
+          return yield* supervisor.failGoal({
+            goalId: input.goalId,
+            reason: "Killed from cockpit.",
+          });
         }),
       haltDriver: (input) =>
         Effect.gen(function* () {

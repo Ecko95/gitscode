@@ -5,7 +5,7 @@ import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { McpServersPanel } from "./GitsCockpit";
+import { McpServersPanel } from "./cockpit/McpPanel";
 
 const snapshot: GitsMcpInventorySnapshot = {
   scannedAt: "2026-07-17T12:00:00.000Z",

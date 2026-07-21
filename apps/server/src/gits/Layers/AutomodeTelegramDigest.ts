@@ -17,6 +17,8 @@ import { GitsSlotScheduler } from "../Services/GitsSlotScheduler.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { london_instant } from "./GitsSlotScheduler.ts";
 
+const REPLY_HINT = "Reply: APPROVE <id> · REJECT <id>";
+
 const STATE_FILE_NAME = "automode-telegram-digest-state.json";
 const PersistedState = Schema.Struct({
   version: Schema.Literal(1),
@@ -101,6 +103,9 @@ export const AutomodeTelegramDigestLive = Layer.effect(
         Effect.gen(function* () {
           const now = london_instant(yield* Clock.currentTimeMillis);
           const state = yield* Ref.get(stateRef);
+          // Owner kill-switch: skip both reports outright, before any read/send, when off.
+          const policy = yield* supervisor.getPolicy();
+          if (!policy.telegramDigestEnabled) return;
           const morningDue =
             now.minutesOfDay >= 10 * 60 && state.lastMorningReportDate !== now.dateKey;
           const digestDue = now.minutesOfDay >= 22 * 60 && state.lastDigestDate !== now.dateKey;
@@ -142,7 +147,9 @@ export const AutomodeTelegramDigestLive = Layer.effect(
                 ...snapshot.goals
                   .filter((goal) => goal.status === "queued" || goal.status === "waiting-approval")
                   .slice(0, 5)
-                  .map((goal) => `- ${goal.title}`),
+                  .map((goal) => `- ${goal.title} [${goal.id}]`),
+                "",
+                REPLY_HINT,
               ].join("\n"),
             );
             if (delivered) next = { ...next, lastDigestDate: now.dateKey };

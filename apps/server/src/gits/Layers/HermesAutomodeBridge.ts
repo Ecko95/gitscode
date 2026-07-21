@@ -83,6 +83,7 @@ export const decideProposalWithAutomodeBridge = (
                   title: draft.title,
                   prompt: draft.prompt,
                   repo: draft.repo,
+                  origin: "proposal",
                   ...(priorProposal === null ? {} : { episodeId: priorProposal.episodeId }),
                 })
                 .pipe(Effect.asVoid)

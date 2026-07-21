@@ -40,3 +40,5 @@ Recognize only these exact uppercase command forms as GITS controls:
 - `STOP`
 
 For a control, POST the original command as `{ "command": "..." }` to `http://127.0.0.1:<server-port>/api/gits/hermes-telegram/command` with `Authorization: Bearer $GITS_HERMES_TELEGRAM_RELAY_TOKEN`. Return the route's `text` response verbatim, with no added explanation. Malformed or unsupported control input is relayed unchanged so the route returns its help message. Hermes remains the sole Telegram long-poll owner; GITS never polls Telegram.
+
+Nightly sweep proposals now arrive as `waiting-approval` goals, announced by their goal ID (in the sweep Telegram message and the evening digest). `APPROVE <goal-id>` confirms one of these for that night's run — same control as any other pending goal, no new command.

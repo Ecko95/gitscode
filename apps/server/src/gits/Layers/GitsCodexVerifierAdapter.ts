@@ -5,6 +5,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
+  CODEX_MODEL_TIERS,
   GitsSemanticVerifierError,
   type GitsSemanticVerifyInput,
   type GitsSemanticVerifyResult,
@@ -22,7 +23,7 @@ import { ProcessRunner, layer as ProcessRunnerLive } from "../../processRunner.t
 const MAX_DIFF_BYTES = 256 * 1024;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const TRUNCATED_MARKER = "\n\n[truncated]";
-const DEFAULT_MODEL = "gpt-5.4-mini";
+const DEFAULT_MODEL = CODEX_MODEL_TIERS.light;
 const DEFAULT_TIMEOUT_MS = 300_000;
 
 function toError(message: string, cause?: unknown) {
@@ -46,7 +47,7 @@ function codexHome() {
   );
 }
 function escalationModel() {
-  return process.env.GITS_VERIFIER_ESCALATION_MODEL?.trim() || "gpt-5.5";
+  return process.env.GITS_VERIFIER_ESCALATION_MODEL?.trim() || CODEX_MODEL_TIERS.medium;
 }
 function resolveModel(input: GitsSemanticVerifyInput) {
   return input.model?.trim() || process.env.GITS_VERIFIER_MODEL?.trim() || DEFAULT_MODEL;
