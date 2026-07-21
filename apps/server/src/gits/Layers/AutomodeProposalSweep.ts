@@ -212,11 +212,13 @@ export const AutomodeProposalSweepLive = Layer.effect(
           yield* Ref.set(stateRef, next);
           // Sequential: hermes invocations share codex capacity — never parallelise.
           const newGoals: AutomodeGoal[] = [];
+          let attemptedRepos = 0;
           for (const repo of policy.proposalRepos) {
             if (!repoAllowed(policy, repo)) {
               yield* Effect.logWarning("gits.sweep.repo-not-allowed", { repo });
               continue;
             }
+            attemptedRepos += 1;
             const goal = yield* sweepRepo(repo);
             if (goal === null) continue;
             newGoals.push(goal);
@@ -234,6 +236,21 @@ export const AutomodeProposalSweepLive = Layer.effect(
                 ),
               );
             }
+          }
+          if (attemptedRepos > 0 && newGoals.length === 0) {
+            // A sweep night is consumed up front, so a silent zero-goal run means the owner
+            // waits a whole day without knowing anything went wrong. Always say so.
+            // ponytail: generic message; per-repo reasons live in the gits.sweep.* logs.
+            yield* notifier
+              .notify({
+                subject: "GITS nightly sweep",
+                text: `Sweep ran for ${attemptedRepos} repo(s) but drafted no goals. Check the cockpit logs (gits.sweep.*) for reasons.`,
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("gits.sweep.telegram-failed", { cause: Cause.pretty(cause) }),
+                ),
+              );
           }
           if (newGoals.length > 0) {
             const goalLines = newGoals.map(

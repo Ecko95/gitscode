@@ -92,15 +92,30 @@
         color: #171717;
         user-select: none;
       }
+
+      html.dark .gits-boot {
+        background: #161616;
+      }
+
+      html.dark .gits-boot-title {
+        color: #f5f5f5;
+      }
     </style>
     <title>GITS</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell" class="gits-boot" aria-label="GITS is starting">
-        <img class="gits-boot-logo" src="/gits-logo-anim.gif" alt="" />
+        <img class="gits-boot-logo" alt="" />
         <span class="gits-boot-title">GITS</span>
       </div>
+      <script>
+        document.querySelector(".gits-boot-logo").src = document.documentElement.classList.contains(
+          "dark",
+        )
+          ? "/gits-logo-anim-dark.gif"
+          : "/gits-logo-anim.gif";
+      </script>
     </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
