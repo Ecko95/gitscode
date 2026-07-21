@@ -1,7 +1,9 @@
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 
 import {
@@ -24,6 +26,17 @@ import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { decide_automode_gate } from "./AutomodeReviewGate.ts";
+
+export const HALT_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+
+/** Pure gate for halt Telegram alerts: send unless the same reason fired within the cooldown. */
+export function shouldSendHaltAlert(
+  last: { readonly reason: string; readonly at: number } | null,
+  reason: string,
+  now: number,
+): boolean {
+  return last === null || last.reason !== reason || now - last.at >= HALT_ALERT_COOLDOWN_MS;
+}
 
 const TICK_INTERVAL_MS = (() => {
   const raw = process.env.GITS_AUTOMODE_DRIVER_TICK_MS?.trim();
@@ -109,14 +122,27 @@ export const AutomodeDriverLive = Layer.effect(
           ),
         );
 
+    // Same-reason halt alerts are suppressed for a cooldown window: a driver that
+    // re-halts into the same failure (e.g. operator keeps resuming, or a gate keeps
+    // denying) must not flood Telegram with identical messages.
+    // ponytail: in-memory, resets on restart — acceptable, restarts re-arm the kill switch.
+    const lastHaltAlertRef = yield* Ref.make<{ reason: string; at: number } | null>(null);
     const halt = (goal: AutomodeGoal | null, reason: string) =>
       supervisor.haltDriver({ reason }).pipe(
         Effect.tap(() =>
-          notify({
-            subject: "GITS automode halted",
-            title: goal?.title ?? "Automode driver",
-            goalId: goal?.id ?? null,
-            reason,
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            const last = yield* Ref.get(lastHaltAlertRef);
+            if (!shouldSendHaltAlert(last, reason, now)) {
+              return yield* Effect.logInfo("gits.automode.halt-alert-suppressed", { reason });
+            }
+            yield* Ref.set(lastHaltAlertRef, { reason, at: now });
+            yield* notify({
+              subject: "GITS automode halted",
+              title: goal?.title ?? "Automode driver",
+              goalId: goal?.id ?? null,
+              reason,
+            });
           }),
         ),
       );
