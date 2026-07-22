@@ -348,9 +348,9 @@ describe("AutomodeProposalSweep", () => {
 
         assert.equal(telegramSent.length, 1);
         const message = telegramSent[0] ?? "";
-        assert.include(message, `[${goal.id}]`);
+        assert.include(message, `[${goal.id.replace(/^goal-/, "").slice(0, 4)}]`);
         assert.match(message, /Improve sweep repo — sweep-repo/);
-        assert.include(message, "Reply: APPROVE <id> · REJECT <id>");
+        assert.include(message, "Reply: APPROVE <code> · REJECT <code>");
       }).pipe(Effect.provide(makeLayer({ telegramSent })));
     },
   );
@@ -397,7 +397,10 @@ describe("AutomodeProposalSweep", () => {
         assert.isNull(snapshot.goals[0]!.approvedAt);
 
         assert.equal(telegramSent.length, 1);
-        assert.include(telegramSent[0] ?? "", `[${snapshot.goals[0]!.id}]`);
+        assert.include(
+          telegramSent[0] ?? "",
+          `[${snapshot.goals[0]!.id.replace(/^goal-/, "").slice(0, 4)}]`,
+        );
         // With confirmation off the goals are already queued for autonomous dispatch —
         // the message must not advertise an APPROVE/REJECT gate that does nothing.
         assert.notInclude(telegramSent[0] ?? "", "APPROVE");
