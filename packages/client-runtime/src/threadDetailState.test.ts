@@ -342,6 +342,125 @@ describe("createThreadDetailManager", () => {
     expect(mock.listeners.size).toBe(0);
   });
 
+  it("clears retained detail data when idle eviction disposes the entry", () => {
+    vi.useFakeTimers();
+    const mock = createMockClient();
+    const manager = createThreadDetailManager({
+      getRegistry: () => atomRegistry,
+      getClient: () => mock.client,
+      retention: {
+        idleTtlMs: 60_000,
+        maxRetainedEntries: 10,
+      },
+    });
+
+    const release = manager.watch(TARGET);
+    mock.emit({
+      kind: "snapshot",
+      snapshot: {
+        snapshotSequence: 1,
+        thread: BASE_THREAD,
+      },
+    });
+    expect(manager.getSnapshot(TARGET).data?.id).toBe(ThreadId.make("thread-1"));
+
+    release();
+    vi.advanceTimersByTime(60_000);
+
+    expect(manager.getSnapshot(TARGET)).toEqual({
+      data: null,
+      error: null,
+      isPending: false,
+      isDeleted: false,
+    });
+  });
+
+  it("ignores events after stream end until a fresh snapshot reseeds state", () => {
+    vi.useFakeTimers();
+    const activeListeners: Array<(event: OrchestrationThreadStreamItem) => void> = [];
+    const endCallbacks: Array<() => void> = [];
+    type SubscribeThreadOptions = Parameters<ThreadDetailClient["subscribeThread"]>[2];
+    const client: ThreadDetailClient = {
+      subscribeThread: vi.fn(
+        (
+          _input,
+          listener: (event: OrchestrationThreadStreamItem) => void,
+          options?: SubscribeThreadOptions,
+        ) => {
+          activeListeners.push(listener);
+          endCallbacks.push(() => options?.onEnd?.(new Error("stream ended")));
+          return () => undefined;
+        },
+      ),
+    };
+    const manager = createThreadDetailManager({
+      getRegistry: () => atomRegistry,
+      getClient: () => client,
+    });
+
+    const release = manager.watch(TARGET);
+    activeListeners[0]?.({
+      kind: "snapshot",
+      snapshot: {
+        snapshotSequence: 5,
+        thread: BASE_THREAD,
+      },
+    });
+
+    endCallbacks[0]?.();
+    activeListeners[0]?.({
+      kind: "event",
+      event: {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T01:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          title: "ignored after end",
+          updatedAt: "2026-04-01T01:00:00.000Z",
+        },
+      } as any,
+    });
+    expect(manager.getSnapshot(TARGET).data?.title).toBe("Test Thread");
+
+    vi.advanceTimersByTime(1_000);
+    expect(client.subscribeThread).toHaveBeenCalledTimes(2);
+    activeListeners[1]?.({
+      kind: "snapshot",
+      snapshot: {
+        snapshotSequence: 7,
+        thread: {
+          ...BASE_THREAD,
+          title: "fresh snapshot",
+          updatedAt: "2026-04-01T01:01:00.000Z",
+        },
+      },
+    });
+
+    activeListeners[1]?.({
+      kind: "event",
+      event: {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T01:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          title: "accepted after snapshot",
+          updatedAt: "2026-04-01T01:02:00.000Z",
+        },
+      } as any,
+    });
+
+    expect(manager.getSnapshot(TARGET).data?.title).toBe("accepted after snapshot");
+    release();
+  });
+
   it("keeps non-idle threads warm when the retention policy says to", () => {
     vi.useFakeTimers();
     const mock = createMockClient();

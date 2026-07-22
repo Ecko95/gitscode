@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import type {
   OrchestrationThread,
+  OrchestrationEvent,
   OrchestrationThreadStreamItem,
   EnvironmentId,
   ThreadId as ThreadIdType,
@@ -34,20 +35,22 @@ export interface ThreadDetailTarget {
 
 export type ThreadDetailClient = Pick<WsRpcClient["orchestration"], "subscribeThread">;
 
+export interface ResolvedThreadDetailTarget {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadIdType;
+}
+
 export interface ThreadDetailRetentionPolicy {
   readonly idleTtlMs: number;
   readonly maxRetainedEntries: number;
   readonly shouldKeepWarm?: (
-    target: { readonly environmentId: EnvironmentId; readonly threadId: ThreadIdType },
+    target: ResolvedThreadDetailTarget,
     state: ThreadDetailState,
   ) => boolean;
 }
 
 interface ThreadDetailEntry {
-  readonly target: {
-    readonly environmentId: EnvironmentId;
-    readonly threadId: ThreadIdType;
-  };
+  readonly target: ResolvedThreadDetailTarget;
   watcherCount: number;
   retainCount: number;
   teardown: () => void;
@@ -109,10 +112,21 @@ export interface ThreadDetailManagerConfig {
   readonly subscribeClientChanges?: (listener: () => void) => () => void;
   readonly limits?: ThreadDetailRetentionLimits;
   readonly retention?: ThreadDetailRetentionPolicy;
+  readonly onSnapshotApplied?: (
+    target: ResolvedThreadDetailTarget,
+    thread: OrchestrationThread,
+  ) => void;
+  readonly onEventApplied?: (target: ResolvedThreadDetailTarget, event: OrchestrationEvent) => void;
+  readonly onDetailCleared?: (target: ResolvedThreadDetailTarget) => void;
 }
 
 export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
   const entries = new Map<string, ThreadDetailEntry>();
+  // Sequence floor per target: the server publishes events after commit, so a
+  // subscribe racing a commit legitimately redelivers events already contained
+  // in the snapshot. Event application is not idempotent (streaming deltas
+  // append), so replaying one duplicates message text.
+  const snapshotFloorByKey = new Map<string, number>();
 
   function getSnapshot(target: ThreadDetailTarget): ThreadDetailState {
     const targetKey = getThreadDetailTargetKey(target);
@@ -159,15 +173,23 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     return config.retention?.shouldKeepWarm?.(entry.target, getSnapshot(entry.target)) ?? false;
   }
 
-  function disposeEntry(targetKey: string): void {
+  function clearState(targetKey: string, target: ResolvedThreadDetailTarget): void {
+    snapshotFloorByKey.delete(targetKey);
+    config.getRegistry().set(threadDetailStateAtom(targetKey), EMPTY_THREAD_DETAIL_STATE);
+    config.onDetailCleared?.(target);
+  }
+
+  function disposeEntry(targetKey: string): boolean {
     const entry = entries.get(targetKey);
     if (!entry) {
-      return;
+      return false;
     }
 
     clearEntryEviction(entry);
     entry.teardown();
     entries.delete(targetKey);
+    clearState(targetKey, entry.target);
+    return true;
   }
 
   function evictIdleEntriesToCapacity(): void {
@@ -243,21 +265,15 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     evictIdleEntriesToCapacity();
   }
 
-  // Sequence floor per target: the server publishes events after commit, so a
-  // subscribe racing a commit legitimately redelivers events already contained
-  // in the snapshot. Event application is not idempotent (streaming deltas
-  // append), so replaying one duplicates message text. Same guard as the web
-  // app's lastDetailSnapshotSequence.
-  const snapshotFloorByKey = new Map<string, number>();
-
   function applyStreamItem(
     targetKey: string,
     item: OrchestrationThreadStreamItem,
-    threadId: ThreadIdType,
+    target: ResolvedThreadDetailTarget,
   ): void {
     if (item.kind === "snapshot") {
       snapshotFloorByKey.set(targetKey, item.snapshot.snapshotSequence);
       setData(targetKey, item.snapshot.thread);
+      config.onSnapshotApplied?.(target, item.snapshot.thread);
       return;
     }
 
@@ -266,10 +282,9 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
       return;
     }
 
-    const current = getSnapshot({
-      environmentId: entries.get(targetKey)?.target.environmentId ?? null,
-      threadId,
-    }).data;
+    config.onEventApplied?.(target, item.event);
+
+    const current = getSnapshot(target).data;
 
     if (current === null) {
       if (item.event.type === "thread.deleted") {
@@ -296,7 +311,7 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
 
   function subscribeStream(
     targetKey: string,
-    target: { readonly environmentId: EnvironmentId; readonly threadId: ThreadIdType },
+    target: ResolvedThreadDetailTarget,
     client: ThreadDetailClient,
   ): () => void {
     // The thread stream is unbounded server-side (it no longer terminates on
@@ -309,14 +324,23 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     // ponytail: capped exponential backoff so a permanently-failing thread
     // (e.g. deleted) retries at 30s, not in a tight loop.
     let retryDelayMs = 1_000;
+    let streamEndRefetchPending = false;
 
     const start = () => {
       markPending(targetKey);
       unsub = client.subscribeThread(
         { threadId: target.threadId },
         (item) => {
-          retryDelayMs = 1_000;
-          applyStreamItem(targetKey, item, target.threadId);
+          if (item.kind === "snapshot") {
+            retryDelayMs = 1_000;
+            streamEndRefetchPending = false;
+            applyStreamItem(targetKey, item, target);
+            return;
+          }
+          if (streamEndRefetchPending) {
+            return;
+          }
+          applyStreamItem(targetKey, item, target);
         },
         {
           onResubscribe: () => markPending(targetKey),
@@ -324,6 +348,10 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
             if (disposed) {
               return;
             }
+            if (retryFiber !== null) {
+              return;
+            }
+            streamEndRefetchPending = true;
             const delay = retryDelayMs;
             retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
             retryFiber = Effect.runFork(
@@ -357,7 +385,7 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
 
   function createDynamicSubscription(
     targetKey: string,
-    target: { readonly environmentId: EnvironmentId; readonly threadId: ThreadIdType },
+    target: ResolvedThreadDetailTarget,
   ): () => void {
     let currentIdentity: string | null = null;
     let currentUnsub = NOOP;
@@ -474,9 +502,14 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
   function invalidate(target?: ThreadDetailTarget): void {
     if (target) {
       const targetKey = getThreadDetailTargetKey(target);
-      if (targetKey !== null) {
-        disposeEntry(targetKey);
-        config.getRegistry().set(threadDetailStateAtom(targetKey), EMPTY_THREAD_DETAIL_STATE);
+      if (targetKey !== null && target.environmentId !== null && target.threadId !== null) {
+        const cleared = disposeEntry(targetKey);
+        if (!cleared) {
+          clearState(targetKey, {
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          });
+        }
       }
       return;
     }
@@ -489,6 +522,36 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     }
   }
 
+  function invalidateEnvironment(
+    environmentId: EnvironmentId,
+    options?: { readonly exceptThreadIds?: ReadonlySet<ThreadIdType> },
+  ): void {
+    for (const [targetKey, entry] of Array.from(entries)) {
+      if (entry.target.environmentId !== environmentId) {
+        continue;
+      }
+      if (options?.exceptThreadIds?.has(entry.target.threadId)) {
+        continue;
+      }
+      disposeEntry(targetKey);
+    }
+  }
+
+  function reconcileRetained(target?: ThreadDetailTarget): void {
+    if (target) {
+      const targetKey = getThreadDetailTargetKey(target);
+      if (targetKey !== null) {
+        reconcileRetention(targetKey);
+      }
+      return;
+    }
+
+    for (const targetKey of entries.keys()) {
+      reconcileRetention(targetKey);
+    }
+    evictIdleEntriesToCapacity();
+  }
+
   function reset(): void {
     invalidate();
   }
@@ -498,6 +561,8 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     retain,
     getSnapshot,
     invalidate,
+    invalidateEnvironment,
+    reconcileRetention: reconcileRetained,
     reset,
   };
 }

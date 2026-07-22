@@ -1245,9 +1245,8 @@ export function syncServerThreadDetail(
   thread: OrchestrationThread,
   environmentId: EnvironmentId,
 ): AppState {
-  // TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
-  // Keep web-specific projection here only until the store can consume
-  // createThreadDetailManager or a shared adapter over its reducer.
+  // Web/Zustand adapter projection for createThreadDetailManager snapshots.
+  // Shared lifecycle and event reduction belong in @t3tools/client-runtime.
   const environmentState = getStoredEnvironmentState(state, environmentId);
   const previousThread = getThreadFromEnvironmentState(environmentState, thread.id);
   return commitEnvironmentState(
@@ -2114,8 +2113,6 @@ interface AppStore extends AppState {
     snapshot: OrchestrationShellSnapshot,
     environmentId: EnvironmentId,
   ) => void;
-  syncServerThreadDetail: (thread: OrchestrationThread, environmentId: EnvironmentId) => void;
-  clearServerThreadDetail: (threadRef: ScopedThreadRef) => void;
   applyOrchestrationEvent: (event: OrchestrationEvent, environmentId: EnvironmentId) => void;
   applyOrchestrationEvents: (
     events: ReadonlyArray<OrchestrationEvent>,
@@ -2138,9 +2135,6 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => removeEnvironmentState(state, environmentId)),
   syncServerShellSnapshot: (snapshot, environmentId) =>
     set((state) => syncServerShellSnapshot(state, snapshot, environmentId)),
-  syncServerThreadDetail: (thread, environmentId) =>
-    set((state) => syncServerThreadDetail(state, thread, environmentId)),
-  clearServerThreadDetail: (threadRef) => set((state) => clearServerThreadDetail(state, threadRef)),
   applyOrchestrationEvent: (event, environmentId) =>
     set((state) => applyOrchestrationEvent(state, event, environmentId)),
   applyOrchestrationEvents: (events, environmentId) =>
