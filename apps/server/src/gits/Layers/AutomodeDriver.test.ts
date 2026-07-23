@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import {
+  AutomodeSupervisorError,
   GitsReviewError,
   GitsSlotSchedulerError,
   type DelamainPeer,
@@ -125,6 +126,8 @@ interface MakeLayerOptions {
   readonly onReview?: (input: GitsReviewInput) => void;
   readonly landResult?: AutomodeLandResult;
   readonly openResult?: AutomodeOpenHeldPrResult;
+  readonly openHeldPrError?: AutomodeSupervisorError;
+  readonly ensureError?: AutomodeSupervisorError;
   readonly onOpenHeldPr?: (input: AutomodeOpenHeldPrInput) => void;
   readonly mergeResults?: boolean[];
   readonly onRecordEpisode?: (episode: AutomodeEpisode) => void;
@@ -249,7 +252,8 @@ function makeLayer(
       }),
   });
   const landing = Layer.mock(AutomodeLanding)({
-    ensure_integration_branch: () => Effect.void,
+    ensure_integration_branch: () =>
+      options?.ensureError === undefined ? Effect.void : Effect.fail(options.ensureError),
     land_slice: (input) =>
       Effect.sync(() => {
         options?.onLandSlice?.(input);
@@ -259,14 +263,17 @@ function makeLayer(
   const mergeQueue = [...(options?.mergeResults ?? [])];
   const heldPr = Layer.mock(AutomodeHeldPr)({
     open_held_pr: (input) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         options?.onOpenHeldPr?.(input);
-        return (
+        if (options?.openHeldPrError !== undefined) {
+          return Effect.fail(options.openHeldPrError);
+        }
+        return Effect.succeed(
           options?.openResult ?? {
-            status: "opened",
+            status: "opened" as const,
             url: "https://github.com/o/r/pull/30",
             number: 30,
-          }
+          },
         );
       }),
     detect_merge: () => Effect.succeed({ merged: mergeQueue.shift() ?? false }),
@@ -756,7 +763,54 @@ describe("AutomodeDriver", () => {
     );
   });
 
-  it.effect("on done: no integration branch configured → halts (fail-closed)", () => {
+  it.effect("on done: no integration branch → lands on the goal's own branch, PR per goal", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const landed: AutomodeLandSliceInput[] = [];
+    const opened: AutomodeOpenHeldPrInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 25,
+        maxRuntimeMinutes: null,
+        integrationBranch: null,
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        requireApprovalForPeerSpawn: false,
+        requireApprovalBeforeIntegrate: false,
+        requireApprovalBeforeDestructiveAction: false,
+      });
+      yield* supervisor.enqueueGoal({ title: "Own branch", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch — mints automode/goal-<uuid>
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // verify → land on the goal branch → complete → open PR
+
+      const snapshot = yield* supervisor.getSnapshot();
+      const goal = snapshot.goals.find((g) => g.title === "Own branch");
+      assert.equal(goal?.status, "completed");
+      assert.equal(snapshot.driverHalted, false);
+      assert.match(goal?.branch ?? "", /^automode\/goal-[0-9a-f-]{36}$/);
+      assert.equal(landed[0]?.integrationBranch, goal?.branch);
+      assert.equal(opened.length, 1);
+      assert.equal(opened[0]?.integrationBranch, goal?.branch);
+      assert.equal(opened[0]?.baseBranch, "gits");
+      // The run-level held-PR record only serves shared-branch runs.
+      assert.equal(snapshot.heldPrUrl, null);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          onLandSlice: (input) => landed.push(input),
+          onOpenHeldPr: (input) => opened.push(input),
+        }),
+      ),
+    );
+  });
+
+  it.effect("halts when the per-goal held PR cannot be opened (goal stays landed)", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
@@ -774,16 +828,131 @@ describe("AutomodeDriver", () => {
         requireApprovalBeforeIntegrate: false,
         requireApprovalBeforeDestructiveAction: false,
       });
-      yield* supervisor.enqueueGoal({ title: "No target", repo: "/tmp/source-repo", prompt: "x" });
+      yield* supervisor.enqueueGoal({ title: "PR fails", repo: "/tmp/source-repo", prompt: "x" });
 
       yield* driver.tickOnce(); // dispatch
       peerStatus.current = "done";
-      yield* driver.tickOnce(); // no integration branch → halt
+      yield* driver.tickOnce(); // land + complete → PR open rejected → halt
 
       const snapshot = yield* supervisor.getSnapshot();
-      assert.notEqual(snapshot.goals.find((g) => g.title === "No target")?.status, "completed");
+      // The slice already landed on its own branch — the goal stays completed; the halt
+      // tells the operator the PR needs opening by hand.
+      assert.equal(snapshot.goals.find((g) => g.title === "PR fails")?.status, "completed");
       assert.equal(snapshot.driverHalted, true);
-    }).pipe(Effect.provide(makeLayer(peerStatus)));
+      assert.include(snapshot.driverHaltedReason ?? "", "could not open held PR");
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          openResult: { status: "rejected", reason: "gh pr create failed" },
+        }),
+      ),
+    );
+  });
+
+  it.effect("halts when the per-goal held PR open ERRORS (gh failure, not a rejection)", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 25,
+        maxRuntimeMinutes: null,
+        integrationBranch: null,
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        requireApprovalForPeerSpawn: false,
+        requireApprovalBeforeIntegrate: false,
+        requireApprovalBeforeDestructiveAction: false,
+      });
+      yield* supervisor.enqueueGoal({ title: "gh down", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch
+      peerStatus.current = "done";
+      yield* driver.tickOnce(); // land + complete → PR open fails on the error channel → halt
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.find((g) => g.title === "gh down")?.status, "completed");
+      assert.equal(snapshot.driverHalted, true);
+      assert.include(snapshot.driverHaltedReason ?? "", "held PR open errored");
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          openHeldPrError: new AutomodeSupervisorError({ message: "gh pr create failed." }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("opens the per-goal PR even when the policy integration branch changed mid-run", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const opened: AutomodeOpenHeldPrInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        maxActivePeers: 1,
+        allowedRepos: ["/tmp/source-repo"],
+        maxBudgetUsd: 25,
+        maxRuntimeMinutes: null,
+        integrationBranch: null,
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        requireApprovalForPeerSpawn: false,
+        requireApprovalBeforeIntegrate: false,
+        requireApprovalBeforeDestructiveAction: false,
+      });
+      yield* supervisor.enqueueGoal({ title: "Mid-run", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // dispatch on a per-goal branch
+      // Operator sets a shared integration branch while the peer is in flight — the
+      // landed goal must still get ITS branch's PR, not silently lose it.
+      yield* supervisor.updatePolicy({ integrationBranch: "auto/gits-self" });
+      peerStatus.current = "done";
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      const goal = snapshot.goals.find((g) => g.title === "Mid-run");
+      assert.equal(goal?.status, "completed");
+      assert.match(goal?.branch ?? "", /^automode\/goal-[0-9a-f-]{36}$/);
+      assert.equal(opened.length, 1);
+      assert.equal(opened[0]?.integrationBranch, goal?.branch);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          onOpenHeldPr: (input) => opened.push(input),
+        }),
+      ),
+    );
+  });
+
+  it.effect("halts when dispatch errors (ensure fails) instead of silently retrying", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const starts: GitsSchedulerGoalStartInput[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Bad base", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce(); // ensure fails → dispatch errors → halt (fail-closed)
+      yield* driver.tickOnce(); // halted: must NOT retry and burn another night-cap slot
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.driverHalted, true);
+      assert.include(snapshot.driverHaltedReason ?? "", "dispatch of Bad base errored");
+      assert.equal(starts.length, 1);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          ensureError: new AutomodeSupervisorError({ message: "git fetch origin gits failed." }),
+          onRecordGoalStart: (input) => starts.push(input),
+        }),
+      ),
+    );
   });
 
   it.effect("halts when the held PR cannot be opened", () => {

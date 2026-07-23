@@ -652,6 +652,7 @@ export const AutomodeSupervisorLive = Layer.effect(
             approvedAt: null,
             rejectedAt: null,
             workflowId: null,
+            branch: null,
           };
           const nextState = yield* commitState((state) => ({
             ...state,
@@ -803,17 +804,20 @@ export const AutomodeSupervisorLive = Layer.effect(
             } satisfies AutomodeDispatchResult;
           }
 
-          // The peer spawns from (startRef) and syncs against (mergeBranch) the integration
+          // The peer spawns from (startRef) and syncs against (mergeBranch) the goal's
           // branch, so it must exist on origin before delamain touches it — first dispatch
-          // against a fresh integration branch would otherwise fail at spawn/integration.
-          // Same baseRef the driver lands with.
-          if (state.policy.integrationBranch !== null) {
-            yield* landing.ensure_integration_branch({
-              repo: goal.repo,
-              integrationBranch: state.policy.integrationBranch,
-              baseRef: AUTOMODE_BASE_REF,
-            });
-          }
+          // against a fresh branch would otherwise fail at spawn/integration. Same baseRef
+          // the driver lands with. Without a shared integration branch each goal gets its
+          // own branch off the base ref — the full goal id, so two goals can never collide
+          // into one branch, and deterministic, so a re-approved goal resumes its branch.
+          // Never spawn unpinned: delamain's default would merge peer work straight into
+          // the origin default branch.
+          const goalBranch = state.policy.integrationBranch ?? `automode/${goal.id}`;
+          yield* landing.ensure_integration_branch({
+            repo: goal.repo,
+            integrationBranch: goalBranch,
+            baseRef: AUTOMODE_BASE_REF,
+          });
 
           // Episode threading v1: traceability via the prompt (delamain untouched).
           const episodePrompt = `Episode: ${goal.episodeId}\n${goal.prompt}`;
@@ -825,16 +829,12 @@ export const AutomodeSupervisorLive = Layer.effect(
                   prompt: episodePrompt,
                   name: goal.title,
                   ...(effectiveModel ? { model: effectiveModel } : {}),
-                  ...(state.policy.integrationBranch
-                    ? {
-                        startRef: state.policy.integrationBranch,
-                        // delamain treats mergeBranch as the SYNC BASE (fetch + merge
-                        // origin/<ref> into the peer branch before pushing the peer branch) —
-                        // it never creates the ref, so it must be the integration branch
-                        // landing fast-forwards.
-                        mergeBranch: state.policy.integrationBranch,
-                      }
-                    : {}),
+                  startRef: goalBranch,
+                  // delamain treats mergeBranch as the SYNC BASE (fetch + merge
+                  // origin/<ref> into the peer branch before pushing the peer branch) —
+                  // it never creates the ref, so it must be the branch landing
+                  // fast-forwards.
+                  mergeBranch: goalBranch,
                   confine: true,
                   yolo: true,
                   egress: "host",
@@ -850,14 +850,14 @@ export const AutomodeSupervisorLive = Layer.effect(
                   workflowScript,
                   repo: goal.repo,
                   name: `Motoko Proposal - Verified (Automated) · ${goal.title}`,
-                  // Same integration-branch rails as the spawn path: startRef == mergeBranch
-                  // == the integration branch (or null). The leaf runs integrate:true.
+                  // Same branch rails as the spawn path: startRef == mergeBranch ==
+                  // the goal's branch. The leaf runs integrate:true.
                   // @effect-diagnostics-next-line preferSchemaOverJson:off
                   argsJson: JSON.stringify({
                     title: goal.title,
                     prompt: episodePrompt,
-                    startRef: state.policy.integrationBranch ?? null,
-                    mergeBranch: state.policy.integrationBranch ?? null,
+                    startRef: goalBranch,
+                    mergeBranch: goalBranch,
                     model: effectiveModel ?? null,
                   }),
                 })
@@ -895,6 +895,7 @@ export const AutomodeSupervisorLive = Layer.effect(
                 status: "running",
                 peerId: peer.id,
                 workflowId,
+                branch: goalBranch,
                 blockedReason: null,
                 updatedAt,
               }),

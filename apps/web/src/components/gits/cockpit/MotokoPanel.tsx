@@ -1,5 +1,4 @@
 import type {
-  DelamainPeer,
   GitsCapacitySnapshot,
   GitsCockpitProject,
   HermesChatResult,
@@ -242,7 +241,6 @@ export function motokoDecisionSummary(
   result: {
     decided: HermesProposalCard;
     draft: HermesExecutionDraft | null;
-    peer: DelamainPeer | null;
   },
 ): string {
   if (decision === "reject") {
@@ -251,14 +249,14 @@ export function motokoDecisionSummary(
   if (decision === "defer") {
     return `Deferred proposal "${title}".`;
   }
-  if (result.peer) {
-    return `Approved "${title}" and dispatched Delamain peer ${result.peer.name ?? result.peer.id} on ${result.draft?.repo ?? "the proposal repo"}.`;
-  }
   if (result.draft === null) {
     return `Approved "${title}" (status: ${result.decided.status}).`;
   }
   if (result.draft.status === "blocked") {
     return `Approved "${title}" but nothing was dispatched: ${result.draft.blockedReason ?? "the execution draft is blocked"}.`;
+  }
+  if (result.draft.kind === "delamain-peer") {
+    return `Approved "${title}" — automode picks it up as a goal on its own branch (held PR after review).`;
   }
   return `Approved "${title}" and created a ${result.draft.kind} handoff draft.`;
 }

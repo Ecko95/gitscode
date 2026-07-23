@@ -945,6 +945,12 @@ export const AutomodeGoal = Schema.Struct({
   // silently resets ALL persisted automode state to locked defaults). Legacy goals default
   // to "manual", the correct answer for every goal minted before origin existed.
   origin: AutomodeGoalOrigin.pipe(Schema.withDecodingDefault(Effect.succeed("manual"))),
+  // The branch this goal's work lands on, minted at dispatch: the shared integration
+  // branch when policy sets one, else a per-goal branch cut from the base ref.
+  // Decoding default is load-bearing — see origin above.
+  branch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type AutomodeGoal = typeof AutomodeGoal.Type;
 
@@ -1400,9 +1406,9 @@ export const HermesInspectGitsProposalInput = Schema.Struct({
   projectDir: PathString,
   prompt: Schema.optional(SummaryString),
   timeoutMs: Schema.optional(NonNegativeInt),
-  // Defaults to "read-only" (the cockpit propose button). The nightly sweep passes
-  // "worktree-spawn" so the card drafts as a delamain-peer instead of a verification
-  // draft — a read-only card can only ever become a verification draft (draftKindFor).
+  // Defaults to "worktree-spawn" so cards draft as delamain-peers (actionable, approval
+  // still required downstream) — a read-only card can only ever become a verification
+  // draft (draftKindFor). Pass "read-only" explicitly for inert informational cards.
   actionKind: Schema.optional(HermesProposalActionKind),
 });
 export type HermesInspectGitsProposalInput = typeof HermesInspectGitsProposalInput.Type;

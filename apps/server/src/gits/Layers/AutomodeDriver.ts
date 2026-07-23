@@ -268,10 +268,13 @@ export const AutomodeDriverLive = Layer.effect(
             const policy = snapshot.policy;
 
             // Fail closed: never land unverified work, and never land without a target.
-            if (policy.integrationBranch === null) {
+            // The branch is minted at dispatch; the policy fallback covers goals
+            // dispatched before per-goal branches existed.
+            const goalBranch = running.branch ?? policy.integrationBranch;
+            if (goalBranch === null) {
               yield* halt(
                 running,
-                `Halted: ${running.title} finished but no integration branch is configured.`,
+                `Halted: ${running.title} finished but has no branch to land on.`,
               );
               return;
             }
@@ -356,7 +359,7 @@ export const AutomodeDriverLive = Layer.effect(
             const reviewResult = yield* reviewPipeline
               .review({
                 worktree: slicePeer.worktreePath,
-                baseRef: policy.integrationBranch,
+                baseRef: goalBranch,
                 sliceId: running.id,
                 verificationCommands,
               })
@@ -383,7 +386,7 @@ export const AutomodeDriverLive = Layer.effect(
 
             const landResult = yield* landing.land_slice({
               repo: running.repo,
-              integrationBranch: policy.integrationBranch,
+              integrationBranch: goalBranch,
               baseRef: AUTOMODE_BASE_REF,
               sliceBranch: slicePeer.branch,
             });
@@ -424,6 +427,48 @@ export const AutomodeDriverLive = Layer.effect(
                   }),
                 ),
               );
+
+            // Goals landed on their own branch (not the run's shared integration branch —
+            // compare against the CURRENT policy so a mid-run integrationBranch change
+            // cannot strand the landed work) get a held PR each, opened right here — the
+            // run-level held-PR lifecycle below only serves shared-branch runs. Fail
+            // closed on BOTH channels: gh failures (auth, network, non-zero exit) arrive
+            // as Effect errors, not "rejected" values, and must halt just as loudly.
+            // ponytail: edge-triggered — a process death between the completeGoal commit
+            // and the PR open loses the PR silently (GitHub's PR list is the durable
+            // surface); upgrade to a maintainHeldPr-style per-goal reconcile if it bites.
+            if (goalBranch !== policy.integrationBranch) {
+              const prResult = yield* heldPr
+                .open_held_pr({
+                  repo: running.repo,
+                  integrationBranch: goalBranch,
+                  baseBranch: AUTOMODE_BASE_REF,
+                  title: `automode: ${running.title}`,
+                  body: `Autonomous slice (held for review, not auto-merged):\n\n- ${running.title} (episode ${running.episodeId})`,
+                })
+                .pipe(Effect.result);
+              if (Result.isFailure(prResult)) {
+                yield* halt(
+                  running,
+                  `Halted: ${running.title} landed but the held PR open errored — ${prResult.failure.message}`,
+                );
+                return;
+              }
+              if (prResult.success.status === "rejected") {
+                yield* halt(
+                  running,
+                  `Halted: ${running.title} landed but could not open held PR — ${prResult.success.reason}`,
+                );
+                return;
+              }
+              yield* notify({
+                subject: "GITS automode goal landed",
+                title: running.title,
+                goalId: running.id,
+                reason: "Landed on its own branch; the held PR awaits review.",
+                prUrl: prResult.success.url,
+              });
+            }
             yield* Effect.logInfo("gits.automode.driver.goal-landed", {
               goalId: running.id,
               peerId: peer.id,
@@ -477,7 +522,18 @@ export const AutomodeDriverLive = Layer.effect(
             return;
           }
         }
-        const result = yield* supervisor.dispatchGoal({ goalId: next.id });
+        // Fail closed: a dispatch that ERRORS (ensure/spawn) must halt, not fall through
+        // to the tick-level catch and retry every 5 s — each silent retry would burn a
+        // scheduler night-cap slot until the whole night is consumed.
+        const dispatched = yield* supervisor.dispatchGoal({ goalId: next.id }).pipe(Effect.result);
+        if (Result.isFailure(dispatched)) {
+          yield* halt(
+            next,
+            `Halted: dispatch of ${next.title} errored — ${dispatched.failure.message}`,
+          );
+          return;
+        }
+        const result = dispatched.success;
         if (result.peer === null) {
           yield* halt(
             next,

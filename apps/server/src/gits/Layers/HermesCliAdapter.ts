@@ -1928,7 +1928,10 @@ const makeInspectGitsAndPropose =
         title: summary.title,
         summary: summary.summary,
         detail,
-        actionKind: input.actionKind ?? "read-only",
+        // Actionable by default: draftKindFor keys on actionKind, and a read-only card
+        // can only ever draft as "verification", never a delamain peer — so inspect
+        // proposals default to worktree-spawn (approval is still required downstream).
+        actionKind: input.actionKind ?? "worktree-spawn",
         status: exec.exitCode === 0 ? "proposed" : "blocked",
         blockedReason: exec.exitCode === 0 ? null : "Hermes proposal command did not complete.",
         source: "hermes chat -q",

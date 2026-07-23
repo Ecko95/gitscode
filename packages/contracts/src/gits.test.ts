@@ -330,6 +330,17 @@ describe("AutomodeGoal", () => {
     const parsed = decodeAutomodeGoal({ ...legacyGoal, origin: "sweep" });
     expect(parsed.origin).toBe("sweep");
   });
+
+  it("defaults branch to null when decoding a legacy persisted goal without one", () => {
+    // Same persisted-state-wipe guard: goals dispatched before per-goal branches existed
+    // have no branch; the driver falls back to policy.integrationBranch for them.
+    expect(decodeAutomodeGoal(legacyGoal).branch).toBe(null);
+  });
+
+  it("keeps a provided branch", () => {
+    const parsed = decodeAutomodeGoal({ ...legacyGoal, branch: "automode/goal-f948a67a" });
+    expect(parsed.branch).toBe("automode/goal-f948a67a");
+  });
 });
 
 describe("Delamain workflow launch contracts", () => {

@@ -257,6 +257,7 @@ const defaultAutomodeGoal: AutomodeGoal = {
   rejectedAt: null,
   workflowId: null,
   origin: "manual",
+  branch: null,
 };
 const defaultAutomodeSnapshot: AutomodeSnapshot = {
   policy: {

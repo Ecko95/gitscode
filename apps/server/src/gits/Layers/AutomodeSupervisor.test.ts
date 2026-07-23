@@ -821,9 +821,9 @@ describe("AutomodeSupervisorLive", () => {
     );
   });
 
-  it.effect("dispatch without an integration branch skips ensure and spawns unpinned", () => {
+  it.effect("dispatch without an integration branch mints a per-goal branch and pins to it", () => {
     let spawnInput: DelamainSpawnPeerInput | null = null;
-    let ensureCalls = 0;
+    const ensured: AutomodeEnsureIntegrationBranchInput[] = [];
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       yield* supervisor.updatePolicy({
@@ -836,15 +836,21 @@ describe("AutomodeSupervisorLive", () => {
         requireApprovalForPeerSpawn: false,
       });
       const queued = yield* supervisor.enqueueGoal({
-        title: "Unpinned goal",
+        title: "Own-branch goal",
         repo: "/tmp/source-repo",
         prompt: "Run a safe task.",
       });
       const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
       assert.equal(result.peer?.id, peer.id);
-      assert.equal(ensureCalls, 0);
-      assert.equal(spawnInput?.startRef, undefined);
-      assert.equal(spawnInput?.mergeBranch, undefined);
+      // The full goal id (collision-free) and deterministic, so a re-approved goal
+      // resumes the same branch.
+      const branch = result.goal.branch;
+      assert.match(branch ?? "", /^automode\/goal-[0-9a-f-]{36}$/);
+      assert.deepEqual(ensured, [
+        { repo: "/tmp/source-repo", integrationBranch: branch, baseRef: "gits" },
+      ]);
+      assert.equal(spawnInput?.startRef, branch);
+      assert.equal(spawnInput?.mergeBranch, branch);
     }).pipe(
       Effect.provide(
         makeLayer({
@@ -852,8 +858,8 @@ describe("AutomodeSupervisorLive", () => {
           onSpawn: (input) => {
             spawnInput = input;
           },
-          onEnsure: () => {
-            ensureCalls += 1;
+          onEnsure: (input) => {
+            ensured.push(input);
           },
         }),
       ),

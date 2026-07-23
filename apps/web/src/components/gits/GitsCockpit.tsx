@@ -337,15 +337,14 @@ export function GitsCockpit() {
         decision: input.decision,
       });
       if (input.decision !== "approve" || decided.status !== "approved") {
-        return { decided, draft: null, peer: null };
+        return { decided, draft: null };
       }
-      // Approval means "go": draft the handoff and, for delamain work, dispatch the peer now.
+      // Approval means "go" through the automode rails: the server-side approve bridge
+      // enqueues delamain-peer drafts as automode goals (own branch, verify floor, held
+      // PR). Never spawn a raw peer here — an unpinned spawn would let delamain merge
+      // unreviewed work straight into the origin default branch.
       const draft = await client.hermes.draftFromProposal({ proposalId: input.proposalId });
-      if (draft.status !== "draft" || draft.kind !== "delamain-peer" || draft.repo === null) {
-        return { decided, draft, peer: null };
-      }
-      const peer = await client.delamain.spawnPeer({ repo: draft.repo, prompt: draft.prompt });
-      return { decided, draft, peer };
+      return { decided, draft };
     },
     onSuccess: async (result, input) => {
       appendMotokoTranscript(input.routeKey, {
@@ -354,11 +353,7 @@ export function GitsCockpit() {
         message: motokoDecisionSummary(input.decision, input.title, result),
         createdAt: new Date().toISOString(),
       });
-      await Promise.all([
-        hermesProposalsQuery.refetch(),
-        hermesQuery.refetch(),
-        ...(result.peer ? [delamainQuery.refetch()] : []),
-      ]);
+      await Promise.all([hermesProposalsQuery.refetch(), hermesQuery.refetch()]);
     },
     onError: (error, input) => {
       appendMotokoTranscript(input.routeKey, {
