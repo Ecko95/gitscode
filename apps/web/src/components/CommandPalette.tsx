@@ -12,6 +12,7 @@ import {
   type SourceControlOwnedRepository,
   type SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
+import { resolveRepositoryProfile } from "@t3tools/shared/repositoryProfiles";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -1171,6 +1172,13 @@ function OpenCommandPaletteDialog() {
 
       try {
         const projectId = newProjectId();
+        // Keep the new project in whichever sidebar tab it was added from: pin
+        // an override only when the path alone wouldn't resolve to that profile.
+        const selectedProfile = settings.sidebarRepositoryProfile;
+        const pathProfile = resolveRepositoryProfile({
+          workspaceRoot: cwd,
+          profiles: settings.repositoryProfiles,
+        });
         await api.orchestration.dispatchCommand({
           type: "project.create",
           commandId: newCommandId(),
@@ -1178,6 +1186,7 @@ function OpenCommandPaletteDialog() {
           title: inferProjectTitleFromPath(cwd),
           workspaceRoot: cwd,
           createWorkspaceRootIfMissing: true,
+          repositoryProfileOverride: pathProfile === selectedProfile ? null : selectedProfile,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: DEFAULT_MODEL,
@@ -1207,6 +1216,8 @@ function OpenCommandPaletteDialog() {
       projects,
       setOpen,
       settings.defaultThreadEnvMode,
+      settings.repositoryProfiles,
+      settings.sidebarRepositoryProfile,
       settings.sidebarThreadSortOrder,
       threads,
     ],

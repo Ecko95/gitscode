@@ -54,6 +54,41 @@ const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
+    slug: "claude-opus-5",
+    name: "Claude Opus 5",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        buildSelectOptionDescriptor({
+          id: "effort",
+          label: "Reasoning",
+          options: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High", isDefault: true },
+            { value: "xhigh", label: "Extra High" },
+            { value: "max", label: "Max" },
+            { value: "ultracode", label: "Ultracode" },
+            { value: "ultrathink", label: "Ultrathink" },
+          ],
+          promptInjectedValues: ["ultrathink"],
+        }),
+        buildBooleanOptionDescriptor({
+          id: "fastMode",
+          label: "Fast Mode",
+        }),
+        buildSelectOptionDescriptor({
+          id: "contextWindow",
+          label: "Context Window",
+          options: [
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
+          ],
+        }),
+      ],
+    }),
+  },
+  {
     slug: "claude-fable-5",
     name: "Claude Fable 5",
     isCustom: false,
@@ -299,7 +334,9 @@ function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   return BUILT_IN_MODELS.filter((model) => {
-    if (model.slug === "claude-fable-5") {
+    // ponytail: Opus 5 reuses the Fable 5 gate (same 5-family CLI era); give it
+    // its own minimum if a release turns out to draw the line elsewhere.
+    if (model.slug === "claude-opus-5" || model.slug === "claude-fable-5") {
       return supportsClaudeFable5(version);
     }
     if (model.slug === "claude-opus-4-8") {
@@ -370,6 +407,7 @@ export function normalizeClaudeCliEffort(
   }
   if (
     effort === "xhigh" &&
+    model !== "claude-opus-5" &&
     model !== "claude-fable-5" &&
     model !== "claude-opus-4-8" &&
     model !== "claude-sonnet-5"

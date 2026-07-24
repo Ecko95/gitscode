@@ -1387,6 +1387,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           );
           const fable5 = status.models.find((model) => model.slug === "claude-fable-5");
           assert.strictEqual(fable5?.name, "Claude Fable 5");
+          const opus5 = status.models.find((model) => model.slug === "claude-opus-5");
+          assert.strictEqual(opus5?.name, "Claude Opus 5");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

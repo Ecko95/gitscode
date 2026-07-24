@@ -42,6 +42,31 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("carries repositoryProfileOverride through project.create", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const readModel = createEmptyReadModel(now);
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-create-profile"),
+          projectId: asProjectId("project-profile"),
+          title: "Work repo",
+          workspaceRoot: "/tmp/bts-repos",
+          repositoryProfileOverride: "work",
+          createdAt: now,
+        },
+        readModel,
+      });
+
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(
+        (event.payload as { repositoryProfileOverride: unknown }).repositoryProfileOverride,
+      ).toBe("work");
+    }),
+  );
+
   it.effect("propagates scripts in project.meta.update payload", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";

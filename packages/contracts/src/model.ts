@@ -171,7 +171,10 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "5.6-terra": "gpt-5.6-terra",
   },
   [CLAUDE_DRIVER_KIND]: {
-    opus: "claude-opus-4-8",
+    opus: "claude-opus-5",
+    "opus-5": "claude-opus-5",
+    "claude-opus-5.0": "claude-opus-5",
+    "claude-opus-5-0": "claude-opus-5",
     "opus-4.8": "claude-opus-4-8",
     "claude-opus-4.8": "claude-opus-4-8",
     "opus-4.7": "claude-opus-4-7",
