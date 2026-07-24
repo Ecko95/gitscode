@@ -35,6 +35,7 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { resolveRepositoryProfile } from "@t3tools/shared/repositoryProfiles";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -1000,6 +1001,7 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightThreadKeysRef = useRef<Set<string>>(new Set());
+  const confirmedWorkPersonalDraftsRef = useRef<Set<string>>(new Set());
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -1212,7 +1214,6 @@ export default function ChatView(props: ChatViewProps) {
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
-
   useEffect(() => {
     if (routeKind !== "server") {
       return;
@@ -1620,6 +1621,17 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const repositoryProfiles =
+    serverConfig?.settings.repositoryProfiles ?? settings.repositoryProfiles;
+  const activeRepositoryProfile = useMemo(
+    () =>
+      resolveRepositoryProfile({
+        workspaceRoot: activeProject?.cwd,
+        repositoryProfileOverride: activeProject?.repositoryProfileOverride,
+        profiles: repositoryProfiles,
+      }),
+    [activeProject?.cwd, activeProject?.repositoryProfileOverride, repositoryProfiles],
+  );
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
@@ -3671,6 +3683,8 @@ export default function ChatView(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      accountRoute,
+      selectedInstanceDisplayName,
     } = sendCtx;
     const promptForSend = promptRef.current;
     const {
@@ -3768,6 +3782,13 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (!activeProject) return;
+    if (accountRoute.requiresExplicitSelection) {
+      setThreadError(
+        activeThread.id,
+        "Select an account in the provider/model picker, or configure this repository profile in Settings → Providers → Repository profiles.",
+      );
+      return;
+    }
     const isSendQueued =
       phase === "running" || isSendBusy || sendInFlightThreadKeysRef.current.has(threadKeyForSend);
     if (isSendQueued && isServerThread) {
@@ -3827,6 +3848,32 @@ export default function ChatView(props: ChatViewProps) {
     }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+    const confirmationKey = draftId ?? routeThreadKey;
+    if (
+      isFirstMessage &&
+      accountRoute.requiresWorkPersonalConfirmation &&
+      !confirmedWorkPersonalDraftsRef.current.has(confirmationKey)
+    ) {
+      const localApi = readLocalApi();
+      if (!localApi) {
+        setThreadError(
+          activeThread.id,
+          "Confirm the Personal account choice before starting this Work session.",
+        );
+        return;
+      }
+      const confirmed = await localApi.dialogs.confirm(
+        [
+          `${selectedInstanceDisplayName} is the Personal account for this Work repository.`,
+          "Starting this session will spend Personal usage.",
+          "Continue for this draft only?",
+        ].join("\n"),
+      );
+      if (!confirmed) {
+        return;
+      }
+      confirmedWorkPersonalDraftsRef.current.add(confirmationKey);
+    }
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeThreadBranch
@@ -4899,6 +4946,8 @@ export default function ChatView(props: ChatViewProps) {
                     providerStatuses={providerStatuses as ServerProvider[]}
                     activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
                     activeThreadModelSelection={activeThread?.modelSelection}
+                    repositoryProfile={activeRepositoryProfile}
+                    repositoryProfiles={repositoryProfiles}
                     activeThreadActivities={activeThread?.activities}
                     resolvedTheme={resolvedTheme}
                     settings={settings}

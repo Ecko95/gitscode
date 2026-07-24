@@ -255,6 +255,7 @@ async function mountPicker(props: {
   providers?: ReadonlyArray<ServerProvider>;
   settings?: UnifiedSettings;
   triggerVariant?: "ghost" | "outline";
+  showWorkPersonalWarning?: boolean;
 }) {
   const host = document.createElement("div");
   document.body.append(host);
@@ -277,6 +278,9 @@ async function mountPicker(props: {
       instanceEntries={instanceEntries}
       modelOptionsByInstance={modelOptionsByInstance}
       triggerVariant={props.triggerVariant}
+      {...(props.showWorkPersonalWarning
+        ? { showWorkPersonalWarning: props.showWorkPersonalWarning }
+        : {})}
       onInstanceModelChange={onInstanceModelChange}
     />,
     { container: host },
@@ -327,6 +331,58 @@ describe("ProviderModelPicker", () => {
   afterEach(async () => {
     document.body.innerHTML = "";
     await __resetLocalApiForTests();
+  });
+
+  it("shows the provider instance display name in the trigger", async () => {
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        ...buildCodexProvider([
+          {
+            slug: "gpt-personal",
+            name: "GPT Personal",
+            isCustom: false,
+            capabilities: createModelCapabilities({ optionDescriptors: [] }),
+          },
+        ]),
+        instanceId: ProviderInstanceId.make("codex-personal"),
+        displayName: "Codex Personal",
+      },
+    ];
+    const mounted = await mountPicker({
+      activeInstanceId: ProviderInstanceId.make("codex-personal"),
+      model: "gpt-personal",
+      lockedProvider: null,
+      providers,
+    });
+
+    try {
+      const trigger = document.querySelector<HTMLElement>(
+        '[data-chat-provider-model-picker="true"]',
+      );
+      expect(trigger?.textContent).toContain("Codex Personal");
+      expect(trigger?.textContent).toContain("GPT Personal");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a persistent warning badge when Work uses a Personal account", async () => {
+    const mounted = await mountPicker({
+      activeInstanceId: CODEX_INSTANCE_ID,
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      showWorkPersonalWarning: true,
+    });
+
+    try {
+      const warning = document.querySelector<HTMLElement>(
+        '[data-provider-account-warning="work-personal"]',
+      );
+      expect(warning).not.toBeNull();
+      expect(warning?.textContent).toContain("Personal on Work");
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("shows provider sidebar in unlocked mode", async () => {

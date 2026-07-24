@@ -38,7 +38,14 @@ import {
   type ComposerHistoryNavigation,
   replaceTextRange,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  readFileAsDataUrl,
+  type InteractiveSessionAccountRoute,
+  resolveInteractiveSessionAccountRoute,
+  resolveInteractiveSessionPreferredInstance,
+  threadHasStarted,
+} from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -107,7 +114,11 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
-import type { UnifiedSettings } from "@t3tools/contracts/settings";
+import type {
+  RepositoryProfile,
+  RepositoryProfilesSettings,
+  UnifiedSettings,
+} from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
@@ -428,6 +439,8 @@ export interface ChatComposerHandle {
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
+    accountRoute: InteractiveSessionAccountRoute;
+    selectedInstanceDisplayName: string;
   };
 }
 
@@ -499,6 +512,8 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
+  repositoryProfile: RepositoryProfile;
+  repositoryProfiles: RepositoryProfilesSettings;
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
@@ -603,6 +618,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerStatuses,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
+    repositoryProfile,
+    repositoryProfiles,
     activeThreadActivities,
     resolvedTheme,
     settings,
@@ -709,6 +726,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedProvider,
     providerInstanceEntries,
   ]);
+  const preferredInstanceId = useMemo(
+    () =>
+      resolveInteractiveSessionPreferredInstance({
+        isNewDraft: routeKind === "draft",
+        isFirstLaunch: !threadHasStarted(activeThread),
+        repositoryProfile,
+        driver: selectedProvider,
+        profiles: repositoryProfiles,
+        instanceEntries: providerInstanceEntries,
+      }),
+    [
+      activeThread,
+      providerInstanceEntries,
+      repositoryProfile,
+      repositoryProfiles,
+      routeKind,
+      selectedProvider,
+    ],
+  );
 
   // Resolve which configured instance the composer is currently targeting.
   // Priority:
@@ -716,14 +752,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   //      from the model picker (must win, otherwise the UI appears to
   //      ignore picker selections).
   //   2. Thread's persisted instance id (server-side saved selection).
-  //   3. Project default's instance id.
-  //   4. First enabled entry matching the current driver kind.
-  //   5. First enabled entry overall / default instance for the kind.
+  //   3. New draft's repository-profile mapping.
+  //   4. Project default's instance id.
+  //   5. First enabled entry matching the current driver kind.
+  //   6. First enabled entry overall / default instance for the kind.
   //
   const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
     const candidates: Array<string | null | undefined> = [
       composerDraft.activeProvider,
       activeThread?.session?.providerInstanceId,
+      preferredInstanceId,
       activeThreadModelSelection?.instanceId,
       activeProjectDefaultModelSelection?.instanceId,
     ];
@@ -772,6 +810,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
+    preferredInstanceId,
     selectedProvider,
   ]);
 
@@ -791,6 +830,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderEntry = useMemo(
     () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
     [providerInstanceEntries, selectedInstanceId],
+  );
+  const accountRoute = useMemo(
+    () =>
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: routeKind === "draft",
+        isFirstLaunch: !threadHasStarted(activeThread),
+        repositoryProfile,
+        driver: selectedProvider,
+        explicitInstanceId: composerDraft.activeProvider,
+        selectedInstanceId,
+        profiles: repositoryProfiles,
+        instanceEntries: providerInstanceEntries,
+      }),
+    [
+      composerDraft.activeProvider,
+      activeThread,
+      providerInstanceEntries,
+      repositoryProfile,
+      repositoryProfiles,
+      routeKind,
+      selectedInstanceId,
+      selectedProvider,
+    ],
   );
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
@@ -2098,6 +2160,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
+        accountRoute,
+        selectedInstanceDisplayName: selectedProviderEntry?.displayName ?? selectedInstanceId,
       }),
     }),
     [
@@ -2117,6 +2181,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      accountRoute,
+      selectedInstanceId,
+      selectedProviderEntry?.displayName,
     ],
   );
 
@@ -2508,6 +2575,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   instanceEntries={providerInstanceEntries}
                   keybindings={keybindings}
                   modelOptionsByInstance={modelOptionsByInstance}
+                  requiresExplicitSelection={accountRoute.requiresExplicitSelection}
+                  showWorkPersonalWarning={accountRoute.usesPersonalInstanceForWork}
                   terminalOpen={terminalOpen}
                   open={isComposerModelPickerOpen}
                   {...(composerProviderState.modelPickerIconClassName

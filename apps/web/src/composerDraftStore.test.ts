@@ -1514,7 +1514,7 @@ describe("composerDraftStore sticky composer settings", () => {
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("cursor");
   });
 
-  it("applies sticky activeProvider to new drafts", () => {
+  it("preserves sticky models without choosing a new draft's account", () => {
     const store = useComposerDraftStore.getState();
     const threadId = ThreadId.make("thread-sticky-active-provider");
     const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
@@ -1526,7 +1526,7 @@ describe("composerDraftStore sticky composer settings", () => {
       modelSelectionByProvider: {
         claudeAgent: modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"),
       },
-      activeProvider: "claudeAgent",
+      activeProvider: null,
     });
   });
 });

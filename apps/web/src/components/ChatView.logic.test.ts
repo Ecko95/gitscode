@@ -9,6 +9,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import type { RepositoryProfilesSettings } from "@t3tools/contracts/settings";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
@@ -23,10 +24,235 @@ import {
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   queuedMessageToComposerDraft,
+  resolveInteractiveSessionAccountRoute,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+
+const repositoryProfiles = {
+  workRoots: ["/work"],
+  providerInstances: {
+    personal: {
+      codex: ProviderInstanceId.make("codex-personal"),
+      cursor: ProviderInstanceId.make("cursor-personal"),
+      claudeAgent: ProviderInstanceId.make("claude-personal"),
+    },
+    work: {
+      codex: ProviderInstanceId.make("codex-work"),
+      cursor: ProviderInstanceId.make("cursor-work"),
+      claudeAgent: ProviderInstanceId.make("claude-personal"),
+    },
+  },
+} as const;
+
+const availableRepositoryProfileInstances = [
+  "codex-personal",
+  "codex-work",
+  "cursor-personal",
+  "cursor-work",
+  "claude-personal",
+].map((instanceId) => ({
+  instanceId: ProviderInstanceId.make(instanceId),
+  enabled: true,
+  isAvailable: true,
+}));
+
+describe("resolveInteractiveSessionAccountRoute", () => {
+  it("defaults a new Work draft to its configured Work instance", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: null,
+        selectedInstanceId: ProviderInstanceId.make("codex-work"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toEqual({
+      preferredInstanceId: ProviderInstanceId.make("codex-work"),
+      requiresExplicitSelection: false,
+      usesPersonalInstanceForWork: false,
+      requiresWorkPersonalConfirmation: false,
+    });
+  });
+
+  it("defaults a new Personal draft to its configured Personal instance", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "personal",
+        driver: ProviderDriverKind.make("cursor"),
+        explicitInstanceId: null,
+        selectedInstanceId: ProviderInstanceId.make("cursor-personal"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toEqual({
+      preferredInstanceId: ProviderInstanceId.make("cursor-personal"),
+      requiresExplicitSelection: false,
+      usesPersonalInstanceForWork: false,
+      requiresWorkPersonalConfirmation: false,
+    });
+  });
+
+  it("requires an explicit selection when the profile mapping is missing", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("opencode"),
+        explicitInstanceId: null,
+        selectedInstanceId: ProviderInstanceId.make("opencode"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toEqual({
+      preferredInstanceId: null,
+      requiresExplicitSelection: true,
+      usesPersonalInstanceForWork: false,
+      requiresWorkPersonalConfirmation: false,
+    });
+  });
+
+  it("lets an explicit picker choice win and warns before Work Codex uses Personal", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: ProviderInstanceId.make("codex-personal"),
+        selectedInstanceId: ProviderInstanceId.make("codex-personal"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toEqual({
+      preferredInstanceId: ProviderInstanceId.make("codex-work"),
+      requiresExplicitSelection: false,
+      usesPersonalInstanceForWork: true,
+      requiresWorkPersonalConfirmation: true,
+    });
+  });
+
+  it("warns before Work Cursor uses its configured Personal instance", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("cursor"),
+        explicitInstanceId: ProviderInstanceId.make("cursor-personal"),
+        selectedInstanceId: ProviderInstanceId.make("cursor-personal"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }).requiresWorkPersonalConfirmation,
+    ).toBe(true);
+  });
+
+  it("does not warn when Work Claude intentionally maps to Personal Claude", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("claudeAgent"),
+        explicitInstanceId: null,
+        selectedInstanceId: ProviderInstanceId.make("claude-personal"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }).usesPersonalInstanceForWork,
+    ).toBe(false);
+  });
+
+  it("never applies a changed profile default to an existing thread", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: false,
+        isFirstLaunch: false,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: null,
+        selectedInstanceId: ProviderInstanceId.make("codex-personal"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toMatchObject({
+      preferredInstanceId: null,
+      requiresExplicitSelection: false,
+    });
+  });
+
+  it("never applies a profile default to a draft that has already started", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: false,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: null,
+        selectedInstanceId: ProviderInstanceId.make("codex-personal"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toMatchObject({
+      preferredInstanceId: null,
+      requiresExplicitSelection: false,
+    });
+  });
+
+  it("warns when Work and Personal intentionally map to the same Codex instance", () => {
+    const sharedCodexInstanceId = ProviderInstanceId.make("codex-shared");
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: null,
+        selectedInstanceId: sharedCodexInstanceId,
+        profiles: {
+          ...repositoryProfiles,
+          providerInstances: {
+            ...repositoryProfiles.providerInstances,
+            personal: {
+              ...repositoryProfiles.providerInstances.personal,
+              codex: sharedCodexInstanceId,
+            },
+            work: {
+              ...repositoryProfiles.providerInstances.work,
+              codex: sharedCodexInstanceId,
+            },
+          },
+        } as RepositoryProfilesSettings,
+        instanceEntries: [{ instanceId: sharedCodexInstanceId, enabled: true, isAvailable: true }],
+      }).requiresWorkPersonalConfirmation,
+    ).toBe(true);
+  });
+
+  it("requires confirmation for the first launch of an empty server thread", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: false,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: ProviderInstanceId.make("codex-personal"),
+        selectedInstanceId: ProviderInstanceId.make("codex-personal"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toMatchObject({
+      preferredInstanceId: null,
+      requiresExplicitSelection: false,
+      requiresWorkPersonalConfirmation: true,
+    });
+  });
+});
 
 describe("queuedMessageToComposerDraft", () => {
   it("restores prompt, attachments, model, runtime, and interaction selections", () => {

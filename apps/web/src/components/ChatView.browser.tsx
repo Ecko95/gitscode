@@ -3019,6 +3019,128 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps a Work draft intact when Personal-account launch confirmation is cancelled", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const workInstanceId = ProviderInstanceId.make("codex-work");
+    useComposerDraftStore.setState({
+      stickyModelSelectionByProvider: {
+        [personalInstanceId]: createModelSelection(personalInstanceId, "gpt-personal"),
+      },
+      stickyActiveProvider: personalInstanceId,
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-work-profile-cancel-test" as MessageId,
+        targetText: "work profile cancel test",
+      }),
+      configureFixture: (nextFixture) => {
+        const buildProvider = (
+          instanceId: ProviderInstanceId,
+          displayName: string,
+          model: string,
+        ) => ({
+          ...nextFixture.serverConfig.providers[0]!,
+          instanceId,
+          displayName,
+          models: [
+            {
+              slug: model,
+              name: model === "gpt-work" ? "GPT Work" : "GPT Personal",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        });
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            buildProvider(workInstanceId, "Codex Work", "gpt-work"),
+            buildProvider(personalInstanceId, "Codex Personal", "gpt-personal"),
+          ],
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            repositoryProfiles: {
+              workRoots: ["/repo"],
+              providerInstances: {
+                personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+                work: { [ProviderDriverKind.make("codex")]: workInstanceId },
+              },
+            },
+          },
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByRole("button", { name: "work", exact: true }).click();
+      await page.getByTestId("new-thread-button").click();
+      const draftPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should change to a new Work draft.",
+      );
+      const draftId = draftIdFromPath(draftPath);
+
+      await vi.waitFor(() => {
+        expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Work");
+      });
+
+      findComposerProviderModelPicker()?.click();
+      const personalAccountButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            '[data-model-picker-provider="codex-personal"]',
+          ),
+        "Unable to find the Personal Codex account.",
+      );
+      personalAccountButton.click();
+      await page.getByText("GPT Personal", { exact: true }).click();
+
+      await vi.waitFor(() => {
+        expect(
+          document.querySelector('[data-provider-account-warning="work-personal"]'),
+        ).not.toBeNull();
+      });
+
+      useComposerDraftStore.getState().setPrompt(draftId, "Keep this complete draft");
+      await waitForLayout();
+      (await waitForSendButton()).click();
+
+      await vi.waitFor(() => {
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("Codex Personal"));
+      });
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        ),
+      ).toBe(false);
+      expect(useComposerDraftStore.getState().getComposerDraft(draftId)).toMatchObject({
+        prompt: "Keep this complete draft",
+        activeProvider: personalInstanceId,
+        modelSelectionByProvider: {
+          [personalInstanceId]: {
+            instanceId: personalInstanceId,
+            model: "gpt-personal",
+          },
+        },
+      });
+    } finally {
+      confirmSpy.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps new-worktree mode on empty server threads and bootstraps the first send", async () => {
     const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
     const mounted = await mountChatView({
@@ -4576,7 +4698,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("snapshots sticky codex settings into a new draft thread", async () => {
+  it("snapshots sticky codex settings without choosing the new draft's account", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
         [ProviderInstanceId.make("codex")]: createModelSelection(
@@ -4624,14 +4746,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
             options: expect.arrayContaining([{ id: "fastMode", value: true }]),
           },
         },
-        activeProvider: "codex",
+        activeProvider: null,
       });
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("hydrates the provider alongside a sticky claude model", async () => {
+  it("hydrates a sticky claude model without choosing the new draft's account", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
         [ProviderInstanceId.make("claudeAgent")]: createModelSelection(
@@ -4678,7 +4800,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             ],
           ),
         },
-        activeProvider: "claudeAgent",
+        activeProvider: null,
       });
     } finally {
       await mounted.cleanup();
@@ -4760,7 +4882,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             options: expect.arrayContaining([{ id: "fastMode", value: true }]),
           },
         },
-        activeProvider: "codex",
+        activeProvider: null,
       });
 
       useComposerDraftStore.getState().setModelSelection(

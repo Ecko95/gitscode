@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -40,6 +40,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   open?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
+  requiresExplicitSelection?: boolean;
+  showWorkPersonalWarning?: boolean;
   onOpenChange?: (open: boolean) => void;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
@@ -71,6 +73,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (entry) => activeEntry !== null && entry.driverKind === activeEntry.driverKind,
   ).length;
   const showInstanceBadge = Boolean(activeEntry?.accentColor) || duplicateDriverCount > 1;
+  const accountWarning = props.requiresExplicitSelection
+    ? { kind: "selection", label: "Select account" }
+    : props.showWorkPersonalWarning
+      ? { kind: "work-personal", label: "Personal on Work" }
+      : null;
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -141,14 +148,34 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 <span
                   className={cn(
                     "min-w-0 flex-1 overflow-hidden",
-                    triggerSubtitle
-                      ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1"
-                      : "truncate",
+                    activeEntry
+                      ? "relative truncate"
+                      : triggerSubtitle
+                        ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1"
+                        : "truncate",
                   )}
                 />
               }
             >
-              {triggerSubtitle ? (
+              {activeEntry ? (
+                <>
+                  <span aria-hidden="true" className="invisible">
+                    {triggerTitle}
+                  </span>
+                  <span className="absolute inset-0 truncate">
+                    <span
+                      data-provider-instance-label="true"
+                      className="font-medium text-foreground/80"
+                    >
+                      {activeEntry.displayName}
+                    </span>
+                    <span aria-hidden="true" className="opacity-60">
+                      {" · "}
+                    </span>
+                    {triggerSubtitle ? `${triggerSubtitle} · ${triggerTitle}` : triggerTitle}
+                  </span>
+                </>
+              ) : triggerSubtitle ? (
                 <>
                   <span className="min-w-0 truncate">{triggerSubtitle}</span>
                   <span aria-hidden="true" className="shrink-0 opacity-60">
@@ -160,8 +187,19 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 triggerTitle
               )}
             </TooltipTrigger>
-            <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+            <TooltipPopup side="top">
+              {activeEntry ? `${activeEntry.displayName} · ${triggerLabel}` : triggerLabel}
+            </TooltipPopup>
           </Tooltip>
+          {accountWarning ? (
+            <span
+              data-provider-account-warning={accountWarning.kind}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-700 dark:text-amber-300"
+            >
+              <TriangleAlertIcon aria-hidden="true" className="size-3" />
+              {accountWarning.label}
+            </span>
+          ) : null}
           <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
         </span>
       </PopoverTrigger>

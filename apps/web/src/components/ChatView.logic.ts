@@ -7,11 +7,14 @@ import {
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ScopedThreadRef,
   type ThreadForkedMode,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import type { RepositoryProfile, RepositoryProfilesSettings } from "@t3tools/contracts/settings";
+import { resolveRepositoryProviderInstance } from "@t3tools/shared/repositoryProfiles";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import {
   type ComposerImageAttachment,
@@ -33,6 +36,76 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const THREAD_FORK_MODE = "full" as const;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export interface InteractiveSessionAccountRoute {
+  readonly preferredInstanceId: ProviderInstanceId | null;
+  readonly requiresExplicitSelection: boolean;
+  readonly usesPersonalInstanceForWork: boolean;
+  readonly requiresWorkPersonalConfirmation: boolean;
+}
+
+export function resolveInteractiveSessionPreferredInstance(input: {
+  readonly isNewDraft: boolean;
+  readonly isFirstLaunch: boolean;
+  readonly repositoryProfile: RepositoryProfile;
+  readonly driver: ProviderDriverKind;
+  readonly profiles: RepositoryProfilesSettings;
+  readonly instanceEntries: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly enabled: boolean;
+    readonly isAvailable: boolean;
+  }>;
+}): ProviderInstanceId | null {
+  if (!input.isNewDraft || !input.isFirstLaunch) return null;
+  const configuredInstanceId = resolveRepositoryProviderInstance({
+    repositoryProfile: input.repositoryProfile,
+    driver: input.driver,
+    profiles: input.profiles,
+  });
+  if (!configuredInstanceId) return null;
+  return input.instanceEntries.some(
+    (entry) => entry.instanceId === configuredInstanceId && entry.enabled && entry.isAvailable,
+  )
+    ? configuredInstanceId
+    : null;
+}
+
+export function resolveInteractiveSessionAccountRoute(input: {
+  readonly isNewDraft: boolean;
+  readonly isFirstLaunch: boolean;
+  readonly repositoryProfile: RepositoryProfile;
+  readonly driver: ProviderDriverKind;
+  readonly explicitInstanceId: ProviderInstanceId | null | undefined;
+  readonly selectedInstanceId: ProviderInstanceId | null | undefined;
+  readonly profiles: RepositoryProfilesSettings;
+  readonly instanceEntries: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly enabled: boolean;
+    readonly isAvailable: boolean;
+  }>;
+}): InteractiveSessionAccountRoute {
+  const preferredInstanceId = resolveInteractiveSessionPreferredInstance(input);
+  const personalInstanceId = resolveRepositoryProviderInstance({
+    repositoryProfile: "personal",
+    driver: input.driver,
+    profiles: input.profiles,
+  });
+  const usesPersonalInstanceForWork = Boolean(
+    input.repositoryProfile === "work" &&
+    (input.driver === "codex" || input.driver === "cursor") &&
+    personalInstanceId &&
+    input.selectedInstanceId === personalInstanceId,
+  );
+
+  return {
+    preferredInstanceId,
+    requiresExplicitSelection: Boolean(
+      input.isNewDraft && input.isFirstLaunch && !input.explicitInstanceId && !preferredInstanceId,
+    ),
+    usesPersonalInstanceForWork,
+    requiresWorkPersonalConfirmation: input.isFirstLaunch && usesPersonalInstanceForWork,
+  };
+}
 
 export function queuedMessageToComposerDraft(message: QueuedComposerMessage) {
   const images = hydrateImagesFromPersisted(message.attachments);

@@ -2374,8 +2374,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           set((state) => {
             const stickyMap = state.stickyModelSelectionByProvider;
-            const stickyActiveProvider = state.stickyActiveProvider;
-            if (Object.keys(stickyMap).length === 0 && stickyActiveProvider === null) {
+            if (Object.keys(stickyMap).length === 0) {
               return state;
             }
             const existing = state.draftsByThreadKey[threadKey];
@@ -2394,16 +2393,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 };
               }
             }
-            if (
-              Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              base.activeProvider === stickyActiveProvider
-            ) {
+            if (Equal.equals(base.modelSelectionByProvider, nextMap)) {
               return state;
             }
             const nextDraft: ComposerThreadDraftState = {
               ...base,
               modelSelectionByProvider: nextMap,
-              activeProvider: stickyActiveProvider,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
