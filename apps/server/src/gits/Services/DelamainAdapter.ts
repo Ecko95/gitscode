@@ -29,6 +29,9 @@ import type {
   DelamainWorkflowRunResult,
 } from "@t3tools/contracts";
 
+export const ROUTED_DELAMAIN_WORKFLOW_BLOCKED_REASON =
+  "Routed Delamain workflows are unavailable until Delamain can enforce provider routing for every workflow leaf.";
+
 export interface DelamainAdapterShape {
   readonly listPeers: () => Effect.Effect<DelamainPeerListResult, DelamainAdapterError>;
   readonly getPeerStatus: (

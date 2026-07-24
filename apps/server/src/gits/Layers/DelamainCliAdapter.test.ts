@@ -234,38 +234,27 @@ describe("DelamainCliAdapter", () => {
     }).pipe(Effect.provide(makeTestLayer([personal, work])));
   });
 
-  it.effect("launches workflows with only the selected provider instance environment", () => {
+  it.effect("rejects routed Automode workflows before launching a subprocess", () => {
     const work = workerInstance({
       instanceId: "codex_work",
       driver: "codex",
       environment: { CODEX_HOME: "/accounts/work", OPENAI_ACCOUNT: "work" },
     });
     return Effect.gen(function* () {
-      runMock.mockImplementationOnce((input) => {
-        expect(input.extendEnv).toBe(false);
-        expect(input.env).toEqual({
-          CODEX_HOME: "/accounts/work",
-          OPENAI_ACCOUNT: "work",
-        });
-        return Effect.succeed({
-          stdout: JSON.stringify({ workflow_id: "wf-work", status: "running" }),
-          stderr: "",
-          code: ChildProcessSpawner.ExitCode(0),
-          timedOut: false,
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        });
-      });
-
       const adapter = yield* DelamainAdapter;
-      yield* adapter.runGoalWorkflow({
-        workflowScript: "/srv/delamain/workflows/automode-goal.ts",
-        repo: "/tmp/repo",
-        name: "Work workflow",
-        argsJson: '{"title":"Work"}',
-        engine: "codex",
-        providerInstanceId: ProviderInstanceId.make("codex_work"),
-      });
+      const error = yield* adapter
+        .runGoalWorkflow({
+          workflowScript: "/srv/delamain/workflows/automode-goal.ts",
+          repo: "/tmp/repo",
+          name: "Work workflow",
+          argsJson: '{"title":"Work"}',
+          engine: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("Routed Delamain workflows are unavailable");
+      expect(runMock).not.toHaveBeenCalled();
     }).pipe(Effect.provide(makeTestLayer([work])));
   });
 
@@ -413,11 +402,11 @@ describe("DelamainCliAdapter", () => {
     }).pipe(Effect.provide(makeTestLayer([work])));
   });
 
-  it.effect("rejects a workflow provider whose driver does not match the selected engine", () => {
-    const cursor = workerInstance({
-      instanceId: "cursor_work",
-      driver: "cursor",
-      environment: { CURSOR_ACCOUNT: "work" },
+  it.effect("rejects routed operator workflows even for an exact Codex instance", () => {
+    const work = workerInstance({
+      instanceId: "codex_work",
+      driver: "codex",
+      environment: { CODEX_HOME: "/accounts/work" },
     });
     return Effect.gen(function* () {
       const adapter = yield* DelamainAdapter;
@@ -426,16 +415,16 @@ describe("DelamainCliAdapter", () => {
           script: "/srv/delamain/workflows/automode-goal.ts",
           repo: "/tmp/repo",
           engine: "codex",
-          providerInstanceId: ProviderInstanceId.make("cursor_work"),
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
         })
         .pipe(Effect.flip);
 
-      expect(error.message).toContain("does not match requested engine 'codex'");
+      expect(error.message).toContain("Routed Delamain workflows are unavailable");
       expect(runMock).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(makeTestLayer([cursor])));
+    }).pipe(Effect.provide(makeTestLayer([work])));
   });
 
-  it.effect("rejects routed Cursor workflows until leaf-engine routing is supported", () => {
+  it.effect("rejects routed Cursor workflows without trusting the declarative engine", () => {
     const cursor = workerInstance({
       instanceId: "cursor_work",
       driver: "cursor",
@@ -452,7 +441,7 @@ describe("DelamainCliAdapter", () => {
         })
         .pipe(Effect.flip);
 
-      expect(error.message).toContain("Routed Delamain workflows currently support Codex only");
+      expect(error.message).toContain("Routed Delamain workflows are unavailable");
       expect(runMock).not.toHaveBeenCalled();
     }).pipe(Effect.provide(makeTestLayer([cursor])));
   });

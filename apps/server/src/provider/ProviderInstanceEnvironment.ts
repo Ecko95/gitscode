@@ -41,6 +41,17 @@ const ALLOWED_EXACT: ReadonlySet<string> = new Set([
   "CODEX_HOME",
 ]);
 
+// Windows treats these names case-insensitively, and user shells commonly expose
+// title-cased variants. Preserve the source spelling so the child receives exactly
+// what the host supplied. If a synthetic source contains duplicates, the last entry
+// wins in both spelling and value.
+const CASE_INSENSITIVE_SYSTEM_KEYS: ReadonlySet<string> = new Set([
+  "PATH",
+  "SYSTEMROOT",
+  "COMSPEC",
+  "USERPROFILE",
+]);
+
 /**
  * Env var prefixes: any key whose name starts with one of these passes through.
  * ponytail: prefix list — availability over purity for this pass; unknown
@@ -77,7 +88,18 @@ const ALLOWED_PREFIXES: ReadonlyArray<string> = [
  */
 export function buildChildEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
+  const systemKeySpellings = new Map<string, string>();
   for (const key of Object.keys(source)) {
+    const normalizedKey = key.toUpperCase();
+    if (CASE_INSENSITIVE_SYSTEM_KEYS.has(normalizedKey)) {
+      const previousSpelling = systemKeySpellings.get(normalizedKey);
+      if (previousSpelling !== undefined) {
+        delete out[previousSpelling];
+      }
+      out[key] = source[key];
+      systemKeySpellings.set(normalizedKey, key);
+      continue;
+    }
     if (ALLOWED_EXACT.has(key)) {
       out[key] = source[key];
       continue;

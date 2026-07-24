@@ -56,6 +56,7 @@ import type { ProviderInstanceEntry } from "~/providerInstances";
 import {
   manualDelamainEnginesForMode,
   manualDelamainPersonalWorkConfirmationMessage,
+  ROUTED_DELAMAIN_WORKFLOW_BLOCKED_MESSAGE,
   resolveManualDelamainLaunchRoute,
   startManualDelamainLaunch,
   type ManualDelamainEngine,
@@ -436,17 +437,22 @@ function LaunchDialog({
   const [args_json, set_args_json] = useState("");
   const [launch_error, set_launch_error] = useState<unknown>(null);
   const selectable_engines = manualDelamainEnginesForMode(mode);
-  const launch_engine = mode === "workflow" ? "codex" : engine;
-  const launch_route = useMemo(
-    () =>
-      resolveManualDelamainLaunchRoute({
-        repositoryProfile,
-        engine: launch_engine,
-        profiles: repositoryProfiles,
-        instanceEntries: providerInstanceEntries,
-      }),
-    [launch_engine, providerInstanceEntries, repositoryProfile, repositoryProfiles],
-  );
+  const launch_engine = engine;
+  const launch_route = useMemo(() => {
+    if (mode === "workflow") {
+      return {
+        providerInstanceId: null,
+        requiresWorkPersonalConfirmation: false,
+        error: ROUTED_DELAMAIN_WORKFLOW_BLOCKED_MESSAGE,
+      };
+    }
+    return resolveManualDelamainLaunchRoute({
+      repositoryProfile,
+      engine: launch_engine,
+      profiles: repositoryProfiles,
+      instanceEntries: providerInstanceEntries,
+    });
+  }, [launch_engine, mode, providerInstanceEntries, repositoryProfile, repositoryProfiles]);
   const selected_instance_label =
     providerInstanceEntries.find((entry) => entry.instanceId === launch_route.providerInstanceId)
       ?.displayName ?? launch_route.providerInstanceId;
@@ -600,7 +606,7 @@ function LaunchDialog({
               </div>
             ) : (
               <div className="rounded-md border border-border/50 bg-muted/40 px-2 py-1.5 font-mono text-[11px] text-muted-foreground/70">
-                {selectable_engines[0]}
+                Unavailable
               </div>
             )}
           </div>

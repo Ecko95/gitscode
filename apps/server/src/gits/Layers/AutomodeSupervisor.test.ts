@@ -20,7 +20,10 @@ import { ServerConfig } from "../../config.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
+import {
+  DelamainAdapter,
+  ROUTED_DELAMAIN_WORKFLOW_BLOCKED_REASON,
+} from "../Services/DelamainAdapter.ts";
 import {
   AutomodeLanding,
   type AutomodeEnsureIntegrationBranchInput,
@@ -1703,9 +1706,10 @@ describe("AutomodeSupervisorLive", () => {
     );
   });
 
-  it.effect("env set dispatches the goal as a labeled workflow run", () => {
-    let runInput: DelamainRunWorkflowInput | null = null;
+  it.effect("env set blocks deterministically without falling back to a peer", () => {
+    let workflowRan = false;
     let spawned = false;
+    let integrationBranchEnsured = false;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       yield* supervisor.updatePolicy({
@@ -1725,37 +1729,25 @@ describe("AutomodeSupervisorLive", () => {
         episodeId: "epi-wf",
       });
       const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+      assert.equal(workflowRan, false);
       assert.equal(spawned, false);
-      // The workflow run's id is tracked as the goal's peerId (reconcile treats it as a peer)
-      // AND recorded in workflowId (STOP/kill + landing take the workflow path).
-      assert.equal(dispatched.goal.workflowId, "wf-42");
-      assert.equal(dispatched.goal.peerId, "wf-42");
-      assert.equal(dispatched.goal.status, "running");
-      assert.equal(runInput?.workflowScript, "/srv/delamain/workflows/automode-goal.ts");
-      assert.equal(runInput?.repo, "/tmp/source-repo");
-      assert.equal(runInput?.providerInstanceId, "codex");
-      assert.equal(runInput?.name, "Motoko Proposal - Verified (Automated) · Workflow goal");
-      assert.equal(
-        runInput?.argsJson,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        JSON.stringify({
-          title: "Workflow goal",
-          prompt: "Episode: epi-wf\nRun a safe task.",
-          startRef: "auto/gits-self",
-          mergeBranch: "auto/gits-self",
-          model: "gpt-5.5",
-        }),
-      );
+      assert.equal(integrationBranchEnsured, false);
+      assert.equal(dispatched.goal.workflowId, null);
+      assert.equal(dispatched.goal.peerId, null);
+      assert.equal(dispatched.goal.status, "blocked");
+      assert.equal(dispatched.goal.blockedReason, ROUTED_DELAMAIN_WORKFLOW_BLOCKED_REASON);
     }).pipe(
       Effect.provide(
         makeLayer({
           budgetUsage: availableBudgetUsage,
-          workflowId: "wf-42",
-          onRunWorkflow: (input) => {
-            runInput = input;
+          onRunWorkflow: () => {
+            workflowRan = true;
           },
           onSpawn: () => {
             spawned = true;
+          },
+          onEnsure: () => {
+            integrationBranchEnsured = true;
           },
         }),
       ),
@@ -1791,19 +1783,22 @@ describe("AutomodeSupervisorLive", () => {
             prompt: "Run a safe task.",
           });
           const dispatched = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
-          assert.equal(dispatched.goal.workflowId, "wf-99");
+          assert.equal(dispatched.goal.workflowId, null);
           return dispatched.goal.id;
-        }).pipe(
-          Effect.provide(
-            makeLayer({ baseDir, budgetUsage: availableBudgetUsage, workflowId: "wf-99" }),
-          ),
-          withGoalWorkflowEnv("/srv/delamain/workflows/automode-goal.ts"),
-        );
+        }).pipe(Effect.provide(makeLayer({ baseDir, budgetUsage: availableBudgetUsage })));
 
-        // Push the persisted deadline into the past so a reboot enforces it immediately.
+        // Simulate a workflow-dispatched goal persisted by an older server, then push its
+        // deadline into the past so a reboot enforces it immediately.
         const raw = yield* fs.readFileString(statePath);
         // @effect-diagnostics-next-line preferSchemaOverJson:off
-        const persisted = JSON.parse(raw) as { runtimeDeadlines: Record<string, number> };
+        const persisted = JSON.parse(raw) as {
+          goals: Array<{ id: string; peerId: string | null; workflowId: string | null }>;
+          runtimeDeadlines: Record<string, number>;
+        };
+        const persistedGoal = persisted.goals.find((goal) => goal.id === goalId);
+        assert.ok(persistedGoal);
+        persistedGoal.peerId = "wf-99";
+        persistedGoal.workflowId = "wf-99";
         persisted.runtimeDeadlines[goalId] = -1;
         // @effect-diagnostics-next-line preferSchemaOverJson:off
         yield* fs.writeFileString(statePath, JSON.stringify(persisted));

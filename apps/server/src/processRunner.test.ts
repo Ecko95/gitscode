@@ -20,6 +20,7 @@ import {
   layer as ProcessRunnerLive,
   type ProcessRunInput,
 } from "./processRunner.ts";
+import { buildChildEnv } from "./provider/ProviderInstanceEnvironment.ts";
 import { RtkGateway, makeRtkGateway } from "./rtk/RtkGateway.ts";
 
 type ChildProcessCommand = {
@@ -145,17 +146,21 @@ describe("runProcess", () => {
   it.effect("can replace the ambient environment for isolated worker processes", () => {
     vi.stubEnv("GITS_PROCESS_RUNNER_AMBIENT_SENTINEL", "ambient-secret");
     const selectedPath = process.env.PATH ?? "";
+    const selectedEnv = buildChildEnv({
+      Path: selectedPath,
+      SystemRoot: "C:\\Windows",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      UserProfile: "C:\\Users\\worker",
+      OPENAI_WORKER_ACCOUNT: "work",
+      CODEX_HOME: "/accounts/work-codex",
+    });
     const input: ProcessRunInput = {
       command: process.execPath,
       args: [
         "-e",
-        "process.stdout.write([process.env.GITS_PROCESS_RUNNER_AMBIENT_SENTINEL ?? '', process.env.GITS_SELECTED_WORKER_ACCOUNT ?? '', process.env.CODEX_HOME ?? '', process.env.PATH ?? ''].join('|'))",
+        "process.stdout.write([process.env.GITS_PROCESS_RUNNER_AMBIENT_SENTINEL ?? '', process.env.OPENAI_WORKER_ACCOUNT ?? '', process.env.CODEX_HOME ?? '', process.env.Path ?? '', process.env.SystemRoot ?? '', process.env.ComSpec ?? '', process.env.UserProfile ?? ''].join('|'))",
       ],
-      env: {
-        PATH: selectedPath,
-        GITS_SELECTED_WORKER_ACCOUNT: "work",
-        CODEX_HOME: "/accounts/work-codex",
-      },
+      env: selectedEnv,
       extendEnv: false,
     };
 
@@ -163,7 +168,9 @@ describe("runProcess", () => {
       const runner = yield* ProcessRunner;
       const result = yield* runner.run(input);
 
-      expect(result.stdout).toBe(`|work|/accounts/work-codex|${selectedPath}`);
+      expect(result.stdout).toBe(
+        `|work|/accounts/work-codex|${selectedPath}|C:\\Windows|C:\\Windows\\System32\\cmd.exe|C:\\Users\\worker`,
+      );
     }).pipe(Effect.provide(ProcessRunnerLive.pipe(Layer.provide(NodeServices.layer))));
   });
 

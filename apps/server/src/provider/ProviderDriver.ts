@@ -71,8 +71,8 @@ export interface ProviderInstance {
   /**
    * Environment for a newly spawned repository worker; never serialized to clients.
    * A Delamain workflow has one process-wide environment but no per-leaf engine route.
-   * Routed workflows are therefore Codex-only and every leaf uses this same instance;
-   * mixed-engine or mixed-account workflows are not supported.
+   * Provider-routed workflows are rejected until Delamain can route every leaf;
+   * this environment is currently used only by direct repository-worker spawns.
    */
   readonly workerEnvironment?: Readonly<NodeJS.ProcessEnv> | undefined;
   readonly snapshot: ServerProviderShape;

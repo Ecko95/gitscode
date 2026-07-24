@@ -66,6 +66,37 @@ describe("buildChildEnv", () => {
     expect(child.GITS_RTK_REWRITE_TOOLS).toBe("1");
   });
 
+  it("matches Windows system vars case-insensitively and preserves their spelling", () => {
+    const child = buildChildEnv({
+      Path: "C:\\tools",
+      SystemRoot: "C:\\Windows",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      UserProfile: "C:\\Users\\worker",
+      RANDOM_SECRET: "excluded",
+    });
+
+    expect(child).toEqual({
+      Path: "C:\\tools",
+      SystemRoot: "C:\\Windows",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      UserProfile: "C:\\Users\\worker",
+    });
+  });
+
+  it("uses the last spelling and value for duplicate Windows system vars", () => {
+    const child = buildChildEnv({
+      PATH: "C:\\first",
+      Path: "C:\\second",
+      SYSTEMROOT: "C:\\FirstWindows",
+      SystemRoot: "C:\\SecondWindows",
+    });
+
+    expect(child).toEqual({
+      Path: "C:\\second",
+      SystemRoot: "C:\\SecondWindows",
+    });
+  });
+
   it("excludes unrelated credentials from child env", () => {
     const child = buildChildEnv(pollutedEnv);
     expect(child).not.toHaveProperty("SPLITWISE_API_KEY");

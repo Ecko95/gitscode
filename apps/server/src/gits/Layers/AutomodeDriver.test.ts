@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import {
@@ -122,6 +123,7 @@ const emptyList: Omit<DelamainPeerListResult, "peers"> = {
 };
 
 interface MakeLayerOptions {
+  readonly baseDir?: string;
   readonly review?: GitsReviewResult;
   readonly reviewError?: GitsReviewError;
   readonly onReview?: (input: GitsReviewInput) => void;
@@ -299,9 +301,10 @@ function makeLayer(
         return options?.notifyError === undefined ? Effect.void : Effect.fail(options.notifyError);
       }),
   });
-  const config = ServerConfig.layerTest(process.cwd(), {
-    prefix: "gits-automode-driver-test-",
-  }).pipe(Layer.provide(NodeServices.layer));
+  const config = ServerConfig.layerTest(
+    process.cwd(),
+    options?.baseDir ?? { prefix: "gits-automode-driver-test-" },
+  ).pipe(Layer.provide(NodeServices.layer));
   const supervisor = AutomodeSupervisorLive.pipe(
     Layer.provide(AutomodeSupervisorTestRoutingLayer),
     Layer.provide(delamain),
@@ -337,6 +340,30 @@ function armAutonomous(supervisor: AutomodeSupervisorShape) {
     requireApprovalForPeerSpawn: false,
     requireApprovalBeforeIntegrate: false,
     requireApprovalBeforeDestructiveAction: false,
+  });
+}
+
+function seedLegacyWorkflowGoal(baseDir: string, title: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const supervisor = yield* AutomodeSupervisor;
+    const driver = yield* AutomodeDriver;
+    yield* armAutonomous(supervisor);
+    yield* supervisor.enqueueGoal({ title, repo: "/tmp/source-repo", prompt: "x" });
+    yield* driver.tickOnce();
+
+    const statePath = `${baseDir}/userdata/gits/automode-state.json`;
+    const raw = yield* fs.readFileString(statePath);
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    const persisted = JSON.parse(raw) as {
+      goals: Array<{ title: string; peerId: string | null; workflowId: string | null }>;
+    };
+    const goal = persisted.goals.find((candidate) => candidate.title === title);
+    assert.ok(goal);
+    goal.peerId = "wf-run";
+    goal.workflowId = "wf-run";
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    yield* fs.writeFileString(statePath, JSON.stringify(persisted));
   });
 }
 
@@ -1199,86 +1226,69 @@ describe("AutomodeDriver", () => {
     );
   });
 
-  const withGoalWorkflowEnv =
-    (value: string) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.acquireUseRelease(
-        Effect.sync(() => {
-          const prev = process.env.GITS_AUTOMODE_GOAL_WORKFLOW;
-          process.env.GITS_AUTOMODE_GOAL_WORKFLOW = value;
-          return prev;
-        }),
-        () => effect,
-        (prev) =>
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env.GITS_AUTOMODE_GOAL_WORKFLOW;
-            else process.env.GITS_AUTOMODE_GOAL_WORKFLOW = prev;
-          }),
-      );
-
   it.effect(
-    "reconciles a workflow-dispatched goal against the workflow run id as the tracked peer",
+    "reconciles a legacy workflow goal against the workflow run id as the tracked peer",
     () => {
       const peerStatus = { current: "absent" as PeerStatus | "absent" };
       return Effect.gen(function* () {
-        const supervisor = yield* AutomodeSupervisor;
-        const driver = yield* AutomodeDriver;
-        yield* armAutonomous(supervisor);
-        yield* supervisor.enqueueGoal({ title: "WF", repo: "/tmp/source-repo", prompt: "x" });
-
-        yield* driver.tickOnce(); // dispatch via runGoalWorkflow
-        const dispatched = yield* supervisor.getSnapshot();
-        const goal = dispatched.goals.find((g) => g.title === "WF");
-        assert.equal(goal?.workflowId, "wf-run");
-        assert.equal(goal?.peerId, "wf-run"); // run id tracked as the peerId
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "gits-legacy-wf-driver-" });
+        yield* seedLegacyWorkflowGoal(baseDir, "WF").pipe(
+          Effect.provide(makeLayer(peerStatus, { baseDir })),
+        );
 
         // The run record surfaces in listPeers under that id → reconcile keeps it running,
         // it does NOT hit the vanished-peer halt path.
         peerStatus.current = "running";
-        yield* driver.tickOnce();
-        const after = yield* supervisor.getSnapshot();
+        const after = yield* Effect.gen(function* () {
+          const supervisor = yield* AutomodeSupervisor;
+          const driver = yield* AutomodeDriver;
+          yield* supervisor.updatePolicy({ killSwitchEnabled: false });
+          yield* driver.tickOnce();
+          return yield* supervisor.getSnapshot();
+        }).pipe(Effect.provide(makeLayer(peerStatus, { baseDir, runGoalWorkflowId: "wf-run" })));
         assert.equal(after.goals.find((g) => g.title === "WF")?.status, "running");
         assert.equal(after.driverHalted, false);
-      }).pipe(
-        Effect.provide(makeLayer(peerStatus, { runGoalWorkflowId: "wf-run" })),
-        withGoalWorkflowEnv("/srv/delamain/workflows/automode-goal.ts"),
-      );
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
-  it.effect("lands the leaf peer branch resolved from workflow.agentPeerIds", () => {
+  it.effect("lands a legacy workflow's leaf branch resolved from workflow.agentPeerIds", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
     let landInput: AutomodeLandSliceInput | null = null;
     let reviewWorktree: string | null = null;
     return Effect.gen(function* () {
-      const supervisor = yield* AutomodeSupervisor;
-      const driver = yield* AutomodeDriver;
-      yield* armAutonomous(supervisor);
-      yield* supervisor.enqueueGoal({ title: "WF land", repo: "/tmp/source-repo", prompt: "x" });
-
-      yield* driver.tickOnce(); // dispatch
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "gits-legacy-wf-land-" });
+      yield* seedLegacyWorkflowGoal(baseDir, "WF land").pipe(
+        Effect.provide(makeLayer(peerStatus, { baseDir })),
+      );
       peerStatus.current = "done"; // run record finished
-      yield* driver.tickOnce(); // resolve leaf → verify → land → complete
-
-      const snapshot = yield* supervisor.getSnapshot();
+      const snapshot = yield* Effect.gen(function* () {
+        const supervisor = yield* AutomodeSupervisor;
+        const driver = yield* AutomodeDriver;
+        yield* supervisor.updatePolicy({ killSwitchEnabled: false });
+        yield* driver.tickOnce(); // resolve leaf → verify → land → complete
+        return yield* supervisor.getSnapshot();
+      }).pipe(
+        Effect.provide(
+          makeLayer(peerStatus, {
+            baseDir,
+            runGoalWorkflowId: "wf-run",
+            workflowLeafIds: ["leaf-7"],
+            onLandSlice: (input) => {
+              landInput = input;
+            },
+            onReview: (input) => {
+              reviewWorktree = input.worktree;
+            },
+          }),
+        ),
+      );
       assert.equal(snapshot.goals.find((g) => g.title === "WF land")?.status, "completed");
       // Verify + land ran against the LEAF peer's worktree/branch, not the run record.
       assert.equal(landInput?.sliceBranch, "codex-peer/leaf-7");
       assert.equal(reviewWorktree, "/tmp/source-repo/.worktrees/leaf-7");
-    }).pipe(
-      Effect.provide(
-        makeLayer(peerStatus, {
-          runGoalWorkflowId: "wf-run",
-          workflowLeafIds: ["leaf-7"],
-          onLandSlice: (input) => {
-            landInput = input;
-          },
-          onReview: (input) => {
-            reviewWorktree = input.worktree;
-          },
-        }),
-      ),
-      withGoalWorkflowEnv("/srv/delamain/workflows/automode-goal.ts"),
-    );
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 });

@@ -142,6 +142,7 @@ import {
   executeManualDelamainLaunch,
   manualDelamainEnginesForMode,
   resolveManualDelamainLaunchRoute,
+  ROUTED_DELAMAIN_WORKFLOW_BLOCKED_MESSAGE,
   startManualDelamainLaunch,
 } from "./manualDelamainLaunch";
 
@@ -209,9 +210,13 @@ describe("manual Delamain account routing", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
-  it("offers only Codex for workflows until leaf-engine routing is supported", () => {
-    expect(manualDelamainEnginesForMode("workflow")).toEqual(["codex"]);
+  it("offers no routed workflow engine while leaf account routing is unenforceable", () => {
+    expect(manualDelamainEnginesForMode("workflow")).toEqual([]);
     expect(manualDelamainEnginesForMode("spawn")).toEqual(["codex", "cursor"]);
+  });
+
+  it("provides actionable copy for the blocked routed workflow", () => {
+    expect(ROUTED_DELAMAIN_WORKFLOW_BLOCKED_MESSAGE).toContain("Use Spawn peer instead");
   });
 
   it("reports manual launch promise rejection instead of leaving it unhandled", async () => {

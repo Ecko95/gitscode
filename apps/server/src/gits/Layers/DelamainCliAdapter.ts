@@ -28,7 +28,11 @@ import {
 } from "@t3tools/contracts";
 
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
-import { DelamainAdapter, type DelamainAdapterShape } from "../Services/DelamainAdapter.ts";
+import {
+  DelamainAdapter,
+  ROUTED_DELAMAIN_WORKFLOW_BLOCKED_REASON,
+  type DelamainAdapterShape,
+} from "../Services/DelamainAdapter.ts";
 import {
   ProcessOutputLimitError,
   ProcessReadError,
@@ -474,16 +478,15 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       if (providerInstanceId === undefined) return undefined;
+      // A workflow may launch heterogeneous leaves. Its declarative engine describes
+      // the parent only, so one process-wide account environment cannot safely route
+      // every leaf. Legacy callers without a provider id retain the ambient path.
+      if (launchKind === "workflow") {
+        return yield* toDelamainError(ROUTED_DELAMAIN_WORKFLOW_BLOCKED_REASON);
+      }
       if (requestedEngine === undefined || requestedEngine === "unknown") {
         return yield* toDelamainError(
           `Routed Delamain launch for provider instance '${providerInstanceId}' requires a concrete engine.`,
-        );
-      }
-      // `run-workflow` receives one process-wide environment but no leaf-engine route.
-      // Until Delamain can pin each leaf explicitly, only the known Codex workflow is safe.
-      if (launchKind === "workflow" && requestedEngine !== "codex") {
-        return yield* toDelamainError(
-          "Routed Delamain workflows currently support Codex only; per-leaf engine routing is unavailable.",
         );
       }
       const instance = yield* providerInstances.getInstance(providerInstanceId);

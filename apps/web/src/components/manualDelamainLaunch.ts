@@ -10,10 +10,13 @@ import type { ProviderInstanceEntry } from "~/providerInstances";
 
 export const DELAMAIN_SPAWN_ENGINES = ["codex", "cursor"] as const;
 // Delamain's workflow command has one parent environment and no per-leaf engine selector.
-// Keep routed workflows Codex-only until the protocol can pin every leaf explicitly.
-const DELAMAIN_WORKFLOW_ENGINES = ["codex"] as const;
+// Offer no routed workflow engine until the protocol can pin every leaf explicitly.
+const DELAMAIN_WORKFLOW_ENGINES: ReadonlyArray<ManualDelamainEngine> = [];
 export type ManualDelamainEngine = (typeof DELAMAIN_SPAWN_ENGINES)[number];
 export type ManualDelamainLaunchMode = "spawn" | "workflow";
+
+export const ROUTED_DELAMAIN_WORKFLOW_BLOCKED_MESSAGE =
+  "Repository-profile workflow launches are unavailable until Delamain can route every workflow leaf to the selected account. Use Spawn peer instead.";
 
 export function manualDelamainEnginesForMode(
   mode: ManualDelamainLaunchMode,
