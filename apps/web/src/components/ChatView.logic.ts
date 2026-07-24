@@ -44,6 +44,22 @@ export interface InteractiveSessionAccountRoute {
   readonly requiresWorkPersonalConfirmation: boolean;
 }
 
+function isSelectableProviderInstance(
+  instanceId: ProviderInstanceId | null | undefined,
+  instanceEntries: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly enabled: boolean;
+    readonly isAvailable: boolean;
+  }>,
+): boolean {
+  return Boolean(
+    instanceId &&
+    instanceEntries.some(
+      (entry) => entry.instanceId === instanceId && entry.enabled && entry.isAvailable,
+    ),
+  );
+}
+
 export function resolveInteractiveSessionPreferredInstance(input: {
   readonly isNewDraft: boolean;
   readonly isFirstLaunch: boolean;
@@ -63,9 +79,7 @@ export function resolveInteractiveSessionPreferredInstance(input: {
     profiles: input.profiles,
   });
   if (!configuredInstanceId) return null;
-  return input.instanceEntries.some(
-    (entry) => entry.instanceId === configuredInstanceId && entry.enabled && entry.isAvailable,
-  )
+  return isSelectableProviderInstance(configuredInstanceId, input.instanceEntries)
     ? configuredInstanceId
     : null;
 }
@@ -77,6 +91,7 @@ export function resolveInteractiveSessionAccountRoute(input: {
   readonly driver: ProviderDriverKind;
   readonly explicitInstanceId: ProviderInstanceId | null | undefined;
   readonly selectedInstanceId: ProviderInstanceId | null | undefined;
+  readonly preferredInstanceId?: ProviderInstanceId | null;
   readonly profiles: RepositoryProfilesSettings;
   readonly instanceEntries: ReadonlyArray<{
     readonly instanceId: ProviderInstanceId;
@@ -84,7 +99,16 @@ export function resolveInteractiveSessionAccountRoute(input: {
     readonly isAvailable: boolean;
   }>;
 }): InteractiveSessionAccountRoute {
-  const preferredInstanceId = resolveInteractiveSessionPreferredInstance(input);
+  const preferredInstanceId =
+    input.preferredInstanceId === undefined
+      ? resolveInteractiveSessionPreferredInstance(input)
+      : input.preferredInstanceId;
+  const hasExplicitInstance =
+    input.explicitInstanceId !== null && input.explicitInstanceId !== undefined;
+  const hasSelectableExplicitInstance = isSelectableProviderInstance(
+    input.explicitInstanceId,
+    input.instanceEntries,
+  );
   const personalInstanceId = resolveRepositoryProviderInstance({
     repositoryProfile: "personal",
     driver: input.driver,
@@ -100,7 +124,9 @@ export function resolveInteractiveSessionAccountRoute(input: {
   return {
     preferredInstanceId,
     requiresExplicitSelection: Boolean(
-      input.isNewDraft && input.isFirstLaunch && !input.explicitInstanceId && !preferredInstanceId,
+      input.isFirstLaunch &&
+      ((hasExplicitInstance && !hasSelectableExplicitInstance) ||
+        (input.isNewDraft && !hasExplicitInstance && !preferredInstanceId)),
     ),
     usesPersonalInstanceForWork,
     requiresWorkPersonalConfirmation: input.isFirstLaunch && usesPersonalInstanceForWork,

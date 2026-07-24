@@ -3141,6 +3141,232 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("blocks a first launch when the draft's explicit provider instance is stale", async () => {
+    const staleInstanceId = ProviderInstanceId.make("codex-stale");
+    const defaultInstanceId = ProviderInstanceId.make("codex");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-stale-provider-launch-test" as MessageId,
+        targetText: "stale provider launch test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            repositoryProfiles: {
+              workRoots: ["/repo"],
+              providerInstances: {
+                personal: { [ProviderDriverKind.make("codex")]: defaultInstanceId },
+                work: { [ProviderDriverKind.make("codex")]: defaultInstanceId },
+              },
+            },
+          },
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByRole("button", { name: "work", exact: true }).click();
+      await page.getByTestId("new-thread-button").click();
+      const draftPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should change to a new Work draft.",
+      );
+      const draftId = draftIdFromPath(draftPath);
+
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(draftId, createModelSelection(staleInstanceId, "gpt-stale"));
+      useComposerDraftStore.getState().setPrompt(draftId, "Do not dispatch this stale account");
+
+      await vi.waitFor(() => {
+        expect(
+          document.querySelector('[data-provider-account-warning="selection"]'),
+        ).not.toBeNull();
+      });
+
+      (await waitForSendButton()).click();
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain(
+          "Select an account in the provider/model picker",
+        );
+      });
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        ),
+      ).toBe(false);
+      expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+        "Do not dispatch this stale account",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the Work-to-Personal warning after launch when profile mappings change", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const workInstanceId = ProviderInstanceId.make("codex-work");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-pinned-personal-warning-test" as MessageId,
+        targetText: "pinned personal warning test",
+      }),
+      configureFixture: (nextFixture) => {
+        const buildProvider = (
+          instanceId: ProviderInstanceId,
+          displayName: string,
+          model: string,
+        ) => ({
+          ...nextFixture.serverConfig.providers[0]!,
+          instanceId,
+          displayName,
+          models: [
+            {
+              slug: model,
+              name: model === "gpt-work" ? "GPT Work" : "GPT Personal",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        });
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            buildProvider(workInstanceId, "Codex Work", "gpt-work"),
+            buildProvider(personalInstanceId, "Codex Personal", "gpt-personal"),
+          ],
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            repositoryProfiles: {
+              workRoots: ["/repo"],
+              providerInstances: {
+                personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+                work: { [ProviderDriverKind.make("codex")]: workInstanceId },
+              },
+            },
+          },
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByRole("button", { name: "work", exact: true }).click();
+      await page.getByTestId("new-thread-button").click();
+      const draftPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should change to a new Work draft.",
+      );
+      const draftId = draftIdFromPath(draftPath);
+      const promotedThreadId = draftThreadIdFor(draftId);
+
+      findComposerProviderModelPicker()?.click();
+      const personalAccountButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            '[data-model-picker-provider="codex-personal"]',
+          ),
+        "Unable to find the Personal Codex account.",
+      );
+      personalAccountButton.click();
+      await page.getByText("GPT Personal", { exact: true }).click();
+
+      useComposerDraftStore.getState().setPrompt(draftId, "Launch on Personal");
+      (await waitForSendButton()).click();
+
+      await vi.waitFor(() => {
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ),
+        ).toBe(true);
+      });
+
+      fixture.snapshot = addThreadToSnapshot(fixture.snapshot, promotedThreadId);
+      fixture.snapshot = {
+        ...fixture.snapshot,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === promotedThreadId
+            ? {
+                ...thread,
+                modelSelection: createModelSelection(personalInstanceId, "gpt-personal"),
+                session: thread.session
+                  ? { ...thread.session, providerInstanceId: personalInstanceId }
+                  : null,
+              }
+            : thread,
+        ),
+      };
+      sendShellThreadUpsert(promotedThreadId);
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(promotedThreadId),
+        "Launched draft should promote to its server thread route.",
+      );
+
+      fixture.serverConfig = {
+        ...fixture.serverConfig,
+        settings: {
+          ...fixture.serverConfig.settings,
+          repositoryProfiles: {
+            ...fixture.serverConfig.settings.repositoryProfiles,
+            providerInstances: {
+              personal: {},
+              work: { [ProviderDriverKind.make("codex")]: workInstanceId },
+            },
+          },
+        },
+      };
+      rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
+        version: 1,
+        type: "snapshot",
+        config: encodeServerConfig(fixture.serverConfig),
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          getServerConfig()?.settings.repositoryProfiles.providerInstances.personal[
+            ProviderDriverKind.make("codex")
+          ],
+        ).toBeUndefined();
+      });
+      expect(
+        document.querySelector('[data-provider-account-warning="work-personal"]'),
+      ).not.toBeNull();
+      expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Personal");
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      confirmSpy.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps new-worktree mode on empty server threads and bootstraps the first send", async () => {
     const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
     const mounted = await mountChatView({

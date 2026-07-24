@@ -514,6 +514,7 @@ export interface ChatComposerProps {
   activeThreadModelSelection: ModelSelection | null | undefined;
   repositoryProfile: RepositoryProfile;
   repositoryProfiles: RepositoryProfilesSettings;
+  showPinnedWorkPersonalWarning: boolean;
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
@@ -620,6 +621,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadModelSelection,
     repositoryProfile,
     repositoryProfiles,
+    showPinnedWorkPersonalWarning,
     activeThreadActivities,
     resolvedTheme,
     settings,
@@ -838,15 +840,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         isFirstLaunch: !threadHasStarted(activeThread),
         repositoryProfile,
         driver: selectedProvider,
-        explicitInstanceId: composerDraft.activeProvider,
+        explicitInstanceId:
+          composerDraft.activeProvider ??
+          (routeKind === "server"
+            ? (activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId)
+            : null),
         selectedInstanceId,
+        preferredInstanceId,
         profiles: repositoryProfiles,
         instanceEntries: providerInstanceEntries,
       }),
     [
       composerDraft.activeProvider,
       activeThread,
+      activeThreadModelSelection?.instanceId,
       providerInstanceEntries,
+      preferredInstanceId,
       repositoryProfile,
       repositoryProfiles,
       routeKind,
@@ -2576,7 +2585,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   keybindings={keybindings}
                   modelOptionsByInstance={modelOptionsByInstance}
                   requiresExplicitSelection={accountRoute.requiresExplicitSelection}
-                  showWorkPersonalWarning={accountRoute.usesPersonalInstanceForWork}
+                  showWorkPersonalWarning={
+                    accountRoute.usesPersonalInstanceForWork || showPinnedWorkPersonalWarning
+                  }
                   terminalOpen={terminalOpen}
                   open={isComposerModelPickerOpen}
                   {...(composerProviderState.modelPickerIconClassName

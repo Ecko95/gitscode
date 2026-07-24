@@ -92,6 +92,11 @@ import {
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
+  confirmWorkPersonalUsage,
+  pruneWorkPersonalUsageConfirmations,
+  useInteractiveSessionAccountState,
+} from "../interactiveSessionAccountState";
+import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
   resolvePlanFollowUpSubmission,
@@ -1001,7 +1006,6 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightThreadKeysRef = useRef<Set<string>>(new Set());
-  const confirmedWorkPersonalDraftsRef = useRef<Set<string>>(new Set());
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -1037,6 +1041,9 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [draftThreadsByThreadKey],
   );
+  useEffect(() => {
+    pruneWorkPersonalUsageConfirmations(new Set([...serverThreadKeys, ...draftThreadKeys]));
+  }, [draftThreadKeys, serverThreadKeys]);
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
   const mountedTerminalThreadRefs = useMemo(
     () =>
@@ -1112,6 +1119,9 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const workPersonalConfirmedByThreadKey = useInteractiveSessionAccountState(
+    (state) => state.workPersonalConfirmedByThreadKey,
+  );
 
   useEffect(() => {
     routeThreadKeyRef.current = routeThreadKey;
@@ -3848,11 +3858,11 @@ export default function ChatView(props: ChatViewProps) {
     }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const confirmationKey = draftId ?? routeThreadKey;
+    const confirmationKey = activeThreadKey ?? routeThreadKey;
     if (
       isFirstMessage &&
       accountRoute.requiresWorkPersonalConfirmation &&
-      !confirmedWorkPersonalDraftsRef.current.has(confirmationKey)
+      !workPersonalConfirmedByThreadKey[confirmationKey]
     ) {
       const localApi = readLocalApi();
       if (!localApi) {
@@ -3872,7 +3882,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!confirmed) {
         return;
       }
-      confirmedWorkPersonalDraftsRef.current.add(confirmationKey);
+      confirmWorkPersonalUsage(confirmationKey);
     }
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
@@ -4948,6 +4958,9 @@ export default function ChatView(props: ChatViewProps) {
                     activeThreadModelSelection={activeThread?.modelSelection}
                     repositoryProfile={activeRepositoryProfile}
                     repositoryProfiles={repositoryProfiles}
+                    showPinnedWorkPersonalWarning={Boolean(
+                      activeThreadKey && workPersonalConfirmedByThreadKey[activeThreadKey],
+                    )}
                     activeThreadActivities={activeThread?.activities}
                     resolvedTheme={resolvedTheme}
                     settings={settings}

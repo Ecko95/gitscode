@@ -119,6 +119,78 @@ describe("resolveInteractiveSessionAccountRoute", () => {
     });
   });
 
+  it.each([
+    {
+      label: "missing",
+      instanceEntries: availableRepositoryProfileInstances,
+    },
+    {
+      label: "disabled",
+      instanceEntries: [
+        ...availableRepositoryProfileInstances,
+        {
+          instanceId: ProviderInstanceId.make("codex-stale"),
+          enabled: false,
+          isAvailable: true,
+        },
+      ],
+    },
+    {
+      label: "runtime-unavailable",
+      instanceEntries: [
+        ...availableRepositoryProfileInstances,
+        {
+          instanceId: ProviderInstanceId.make("codex-stale"),
+          enabled: true,
+          isAvailable: false,
+        },
+      ],
+    },
+  ])("requires a new selection when an explicit instance is $label", ({ instanceEntries }) => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: ProviderInstanceId.make("codex-stale"),
+        selectedInstanceId: ProviderInstanceId.make("codex-work"),
+        profiles: repositoryProfiles,
+        instanceEntries,
+      }).requiresExplicitSelection,
+    ).toBe(true);
+  });
+
+  it("does not force a launched session to reselect a stale pinned instance", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: false,
+        isFirstLaunch: false,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: ProviderInstanceId.make("codex-stale"),
+        selectedInstanceId: ProviderInstanceId.make("codex-stale"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }).requiresExplicitSelection,
+    ).toBe(false);
+  });
+
+  it("requires an empty server thread to reselect a stale pinned instance before first launch", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: false,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: ProviderInstanceId.make("codex-stale"),
+        selectedInstanceId: ProviderInstanceId.make("codex-work"),
+        profiles: repositoryProfiles,
+        instanceEntries: availableRepositoryProfileInstances,
+      }).requiresExplicitSelection,
+    ).toBe(true);
+  });
+
   it("lets an explicit picker choice win and warns before Work Codex uses Personal", () => {
     expect(
       resolveInteractiveSessionAccountRoute({
