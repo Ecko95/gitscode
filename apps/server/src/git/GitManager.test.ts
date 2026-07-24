@@ -571,6 +571,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       execute,
+      listOwnedRepositories: () => Effect.die("unexpected GitHub repository list"),
       listOpenPullRequests: (input) =>
         execute({
           cwd: input.cwd,
