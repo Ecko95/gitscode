@@ -58,6 +58,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   }, [props.activeInstanceId, props.instanceEntries]);
 
   const activeInstanceId = props.activeInstanceId;
+  const activeInstanceLabel = activeEntry?.displayName ?? String(activeInstanceId);
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
   // If the current slug belongs to a different instance (for example after
   // a provider switch or disable), prefer the active instance's first
@@ -144,52 +145,27 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           ) : null}
           <Tooltip>
             <TooltipTrigger
-              render={
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 overflow-hidden",
-                    activeEntry
-                      ? "relative truncate"
-                      : triggerSubtitle
-                        ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1"
-                        : "truncate",
-                  )}
-                />
-              }
+              render={<span className="relative min-w-0 flex-1 overflow-hidden truncate" />}
             >
-              {activeEntry ? (
-                <>
-                  <span aria-hidden="true" className="invisible">
-                    {triggerTitle}
+              <>
+                <span aria-hidden="true" className="invisible">
+                  {triggerTitle}
+                </span>
+                <span className="absolute inset-0 truncate">
+                  <span
+                    data-provider-instance-label="true"
+                    className="font-medium text-foreground/80"
+                  >
+                    {activeInstanceLabel}
                   </span>
-                  <span className="absolute inset-0 truncate">
-                    <span
-                      data-provider-instance-label="true"
-                      className="font-medium text-foreground/80"
-                    >
-                      {activeEntry.displayName}
-                    </span>
-                    <span aria-hidden="true" className="opacity-60">
-                      {" · "}
-                    </span>
-                    {triggerSubtitle ? `${triggerSubtitle} · ${triggerTitle}` : triggerTitle}
+                  <span aria-hidden="true" className="opacity-60">
+                    {" · "}
                   </span>
-                </>
-              ) : triggerSubtitle ? (
-                <>
-                  <span className="min-w-0 truncate">{triggerSubtitle}</span>
-                  <span aria-hidden="true" className="shrink-0 opacity-60">
-                    ·
-                  </span>
-                  <span className="min-w-0 truncate">{triggerTitle}</span>
-                </>
-              ) : (
-                triggerTitle
-              )}
+                  {triggerSubtitle ? `${triggerSubtitle} · ${triggerTitle}` : triggerTitle}
+                </span>
+              </>
             </TooltipTrigger>
-            <TooltipPopup side="top">
-              {activeEntry ? `${activeEntry.displayName} · ${triggerLabel}` : triggerLabel}
-            </TooltipPopup>
+            <TooltipPopup side="top">{`${activeInstanceLabel} · ${triggerLabel}`}</TooltipPopup>
           </Tooltip>
           {accountWarning ? (
             <span

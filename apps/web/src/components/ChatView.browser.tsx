@@ -3489,6 +3489,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             (provider) => provider.instanceId === personalInstanceId,
           ),
         ).toBe(false);
+        expect(findComposerProviderModelPicker()?.textContent).toContain(personalInstanceId);
         expect(findComposerProviderModelPicker()?.textContent).toContain("gpt-personal");
         expect(findComposerProviderModelPicker()?.textContent).not.toContain("GPT Work");
       });

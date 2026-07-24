@@ -366,6 +366,26 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("shows the stable instance id when the active provider entry is missing", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const mounted = await mountPicker({
+      activeInstanceId: personalInstanceId,
+      model: "gpt-personal",
+      lockedProvider: null,
+      providers: TEST_PROVIDERS,
+    });
+
+    try {
+      const trigger = document.querySelector<HTMLElement>(
+        '[data-chat-provider-model-picker="true"]',
+      );
+      expect(trigger?.textContent).toContain(personalInstanceId);
+      expect(trigger?.textContent).toContain("gpt-personal");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows a persistent warning badge when Work uses a Personal account", async () => {
     const mounted = await mountPicker({
       activeInstanceId: CODEX_INSTANCE_ID,
