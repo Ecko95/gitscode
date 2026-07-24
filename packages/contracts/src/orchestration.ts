@@ -297,6 +297,7 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  workProviderInstanceId: Schema.optional(ProviderInstanceId),
   workPersonalFallbackInstanceId: Schema.NullOr(ProviderInstanceId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),

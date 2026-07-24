@@ -721,12 +721,12 @@ const make = Effect.gen(function* () {
       projects: project ? [project] : [],
     });
 
-    const resolveWorkPersonalFallbackInstanceId = Effect.fnUntraced(function* (
+    const resolveWorkRoute = Effect.fnUntraced(function* (
       providerInstanceId: NonNullable<OrchestrationSession["workPersonalFallbackInstanceId"]>,
       driver: ProviderDriverKind,
     ) {
       if (driver !== "codex" && driver !== "cursor") {
-        return null;
+        return { workProviderInstanceId: null, workPersonalFallbackInstanceId: null };
       }
       if (!project) {
         return yield* new ProviderAdapterRequestError({
@@ -739,7 +739,19 @@ const make = Effect.gen(function* () {
         thread.session?.providerInstanceId === providerInstanceId &&
         thread.session.workPersonalFallbackInstanceId === providerInstanceId
       ) {
-        return thread.session.workPersonalFallbackInstanceId;
+        return {
+          workProviderInstanceId: null,
+          workPersonalFallbackInstanceId: thread.session.workPersonalFallbackInstanceId,
+        };
+      }
+      if (
+        thread.session?.providerInstanceId === providerInstanceId &&
+        thread.session.workProviderInstanceId === providerInstanceId
+      ) {
+        return {
+          workProviderInstanceId: thread.session.workProviderInstanceId,
+          workPersonalFallbackInstanceId: null,
+        };
       }
 
       const { repositoryProfiles } = yield* serverSettingsService.getSettings;
@@ -749,7 +761,7 @@ const make = Effect.gen(function* () {
         profiles: repositoryProfiles,
       });
       if (repositoryProfile !== "work") {
-        return null;
+        return { workProviderInstanceId: null, workPersonalFallbackInstanceId: null };
       }
 
       const workInstanceId = resolveRepositoryProviderInstance({
@@ -770,10 +782,10 @@ const make = Effect.gen(function* () {
             detail: `Confirm the configured Personal account '${providerInstanceId}' before starting this Work session, then retry.`,
           });
         }
-        return providerInstanceId;
+        return { workProviderInstanceId: null, workPersonalFallbackInstanceId: providerInstanceId };
       }
       if (providerInstanceId === workInstanceId) {
-        return null;
+        return { workProviderInstanceId: providerInstanceId, workPersonalFallbackInstanceId: null };
       }
       return yield* new ProviderAdapterRequestError({
         provider: driver,
@@ -798,7 +810,10 @@ const make = Effect.gen(function* () {
 
     const bindSessionToThread = (
       session: ProviderSession,
-      workPersonalFallbackInstanceId: OrchestrationSession["workPersonalFallbackInstanceId"],
+      workRoute: {
+        readonly workProviderInstanceId: ProviderInstanceId | null;
+        readonly workPersonalFallbackInstanceId: OrchestrationSession["workPersonalFallbackInstanceId"];
+      },
     ) =>
       Effect.gen(function* () {
         if (session.providerInstanceId === undefined) {
@@ -815,7 +830,10 @@ const make = Effect.gen(function* () {
             status: mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
-            workPersonalFallbackInstanceId,
+            ...(workRoute.workProviderInstanceId !== null
+              ? { workProviderInstanceId: workRoute.workProviderInstanceId }
+              : {}),
+            workPersonalFallbackInstanceId: workRoute.workPersonalFallbackInstanceId,
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
@@ -845,10 +863,7 @@ const make = Effect.gen(function* () {
         preferredProvider === "claudeAgent" &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
-      const workPersonalFallbackInstanceId = yield* resolveWorkPersonalFallbackInstanceId(
-        desiredInstanceId,
-        preferredProvider,
-      );
+      const workRoute = yield* resolveWorkRoute(desiredInstanceId, preferredProvider);
 
       if (
         !runtimeModeChanged &&
@@ -858,10 +873,13 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelSelectionChange
       ) {
         if (
-          thread.session?.workPersonalFallbackInstanceId !== workPersonalFallbackInstanceId &&
+          (thread.session?.workProviderInstanceId !==
+            (workRoute.workProviderInstanceId ?? undefined) ||
+            thread.session?.workPersonalFallbackInstanceId !==
+              workRoute.workPersonalFallbackInstanceId) &&
           activeSession !== undefined
         ) {
-          yield* bindSessionToThread(activeSession, workPersonalFallbackInstanceId);
+          yield* bindSessionToThread(activeSession, workRoute);
         }
         return existingSessionThreadId;
       }
@@ -899,16 +917,13 @@ const make = Effect.gen(function* () {
         runtimeMode: restartedSession.runtimeMode,
         cwd: restartedSession.cwd,
       });
-      yield* bindSessionToThread(restartedSession, workPersonalFallbackInstanceId);
+      yield* bindSessionToThread(restartedSession, workRoute);
       return restartedSession.threadId;
     }
 
-    const workPersonalFallbackInstanceId = yield* resolveWorkPersonalFallbackInstanceId(
-      desiredInstanceId,
-      preferredProvider,
-    );
+    const workRoute = yield* resolveWorkRoute(desiredInstanceId, preferredProvider);
     const startedSession = yield* startProviderSession(undefined);
-    yield* bindSessionToThread(startedSession, workPersonalFallbackInstanceId);
+    yield* bindSessionToThread(startedSession, workRoute);
     return startedSession.threadId;
   });
 
@@ -1467,6 +1482,9 @@ const make = Effect.gen(function* () {
         providerName: thread.session?.providerName ?? null,
         ...(thread.session?.providerInstanceId !== undefined
           ? { providerInstanceId: thread.session.providerInstanceId }
+          : {}),
+        ...(thread.session?.workProviderInstanceId !== undefined
+          ? { workProviderInstanceId: thread.session.workProviderInstanceId }
           : {}),
         workPersonalFallbackInstanceId: thread.session?.workPersonalFallbackInstanceId ?? null,
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,

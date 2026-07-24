@@ -842,7 +842,90 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workProviderInstanceId).toBe(workInstanceId);
     expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBeNull();
+  });
+
+  it("keeps a proven Work session pinned after the configured Work instance changes", async () => {
+    const pinnedWorkInstanceId = ProviderInstanceId.make("codex-work-old");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: pinnedWorkInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: {
+            [ProviderDriverKind.make("codex")]: ProviderInstanceId.make("codex-personal"),
+          },
+          work: {
+            [ProviderDriverKind.make("codex")]: ProviderInstanceId.make("codex-work-new"),
+          },
+        },
+      },
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: pinnedWorkInstanceId,
+      status: "ready",
+      runtimeMode: "approval-required",
+      cwd: "/tmp/provider-project",
+      model: "gpt-5-codex",
+      threadId: ThreadId.make("thread-1"),
+      resumeCursor: { opaque: "pinned-work-session" },
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-pinned-work-session"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "ready",
+            providerName: ProviderDriverKind.make("codex"),
+            providerInstanceId: pinnedWorkInstanceId,
+            workProviderInstanceId: pinnedWorkInstanceId,
+            workPersonalFallbackInstanceId: null,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-pinned-work-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-pinned-work-turn"),
+            role: "user",
+            text: "continue on the pinned Work account",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession).toHaveBeenCalledTimes(0);
+    expect((await harness.readModel()).threads[0]?.session?.workProviderInstanceId).toBe(
+      pinnedWorkInstanceId,
+    );
   });
 
   it("allows a missing Work mapping with exact Personal fallback acknowledgement", async () => {

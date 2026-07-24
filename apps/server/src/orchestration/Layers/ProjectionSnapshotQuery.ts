@@ -128,10 +128,6 @@ const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
   threadCount: Schema.Number,
 });
-const WorkspaceRootLookupInput = Schema.Struct({
-  workspaceRoot: Schema.String,
-  windowsPath: Schema.Number,
-});
 const ProjectIdLookupInput = Schema.Struct({
   projectId: ProjectId,
 });
@@ -242,6 +238,9 @@ function mapSessionRow(
     status: row.status,
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
+    ...(row.workProviderInstanceId !== null
+      ? { workProviderInstanceId: row.workProviderInstanceId }
+      : {}),
     workPersonalFallbackInstanceId: row.workPersonalFallbackInstanceId,
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
@@ -589,6 +588,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          work_provider_instance_id AS "workProviderInstanceId",
           work_personal_fallback_instance_id AS "workPersonalFallbackInstanceId",
           provider_session_id AS "providerSessionId",
           provider_thread_id AS "providerThreadId",
@@ -611,6 +611,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.status,
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
+          sessions.work_provider_instance_id AS "workProviderInstanceId",
           sessions.work_personal_fallback_instance_id AS "workPersonalFallbackInstanceId",
           sessions.provider_session_id AS "providerSessionId",
           sessions.provider_thread_id AS "providerThreadId",
@@ -637,6 +638,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.status,
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
+          sessions.work_provider_instance_id AS "workProviderInstanceId",
           sessions.work_personal_fallback_instance_id AS "workPersonalFallbackInstanceId",
           sessions.provider_session_id AS "providerSessionId",
           sessions.provider_thread_id AS "providerThreadId",
@@ -770,35 +772,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
           (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
-      `,
-  });
-
-  const getActiveProjectRowByWorkspaceRoot = SqlSchema.findOneOption({
-    Request: WorkspaceRootLookupInput,
-    Result: ProjectionProjectLookupRowSchema,
-    execute: ({ workspaceRoot, windowsPath }) =>
-      sql`
-        SELECT
-          project_id AS "projectId",
-          title,
-          workspace_root AS "workspaceRoot",
-          repository_profile_override AS "repositoryProfileOverride",
-          default_model_selection_json AS "defaultModelSelection",
-          scripts_json AS "scripts",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
-        FROM projection_projects
-        WHERE (
-            (${windowsPath} = 0 AND workspace_root = ${workspaceRoot})
-            OR (
-              ${windowsPath} = 1
-              AND RTRIM(REPLACE(workspace_root, ${"\\"}, '/'), '/') = ${workspaceRoot} COLLATE NOCASE
-            )
-          )
-          AND deleted_at IS NULL
-        ORDER BY created_at ASC, project_id ASC
-        LIMIT 1
       `,
   });
 
@@ -1027,6 +1000,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          work_provider_instance_id AS "workProviderInstanceId",
           work_personal_fallback_instance_id AS "workPersonalFallbackInstanceId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
@@ -2002,19 +1976,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     );
 
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
-    (workspaceRoot) => {
-      const normalizedWorkspaceRoot = normalizePath(workspaceRoot);
-      return getActiveProjectRowByWorkspaceRoot({
-        workspaceRoot: normalizedWorkspaceRoot,
-        windowsPath:
-          /^[a-z]:\//.test(normalizedWorkspaceRoot) || normalizedWorkspaceRoot.startsWith("//")
-            ? 1
-            : 0,
-      }).pipe(
+    (workspaceRoot) =>
+      listProjectRows(undefined).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getActiveProjectByWorkspaceRoot:query",
-            "ProjectionSnapshotQuery.getActiveProjectByWorkspaceRoot:decodeRow",
+            "ProjectionSnapshotQuery.getActiveProjectByWorkspaceRoot:decodeRows",
+          ),
+        ),
+        Effect.map((rows) =>
+          Option.fromUndefinedOr(
+            rows.find(
+              (row) =>
+                row.deletedAt === null &&
+                normalizePath(row.workspaceRoot) === normalizePath(workspaceRoot),
+            ),
           ),
         ),
         Effect.flatMap((option) =>
@@ -2038,7 +2014,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
         ),
       );
-    };
 
   const getProjectShellById: ProjectionSnapshotQueryShape["getProjectShellById"] = (projectId) =>
     getActiveProjectRowById({ projectId }).pipe(

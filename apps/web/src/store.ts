@@ -160,6 +160,7 @@ function mapSession(session: OrchestrationSession): ThreadSession {
   return {
     provider: toLegacyProvider(session.providerName),
     providerInstanceId: session.providerInstanceId ?? undefined,
+    workProviderInstanceId: session.workProviderInstanceId ?? undefined,
     workPersonalFallbackInstanceId: session.workPersonalFallbackInstanceId,
     status: toLegacySessionStatus(session.status),
     orchestrationStatus: session.status,
@@ -398,6 +399,7 @@ function threadSessionsEqual(
   return (
     left.provider === right.provider &&
     left.providerInstanceId === right.providerInstanceId &&
+    left.workProviderInstanceId === right.workProviderInstanceId &&
     left.workPersonalFallbackInstanceId === right.workPersonalFallbackInstanceId &&
     left.status === right.status &&
     left.orchestrationStatus === right.orchestrationStatus &&

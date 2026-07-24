@@ -22,6 +22,7 @@ Before starting or binding a new provider session, `ProviderCommandReactor` inde
 - Other selected instances are rejected as mismatched.
 - A selected Personal instance without acknowledgement, an older client with no field, or a wrong-instance acknowledgement is rejected before `startSession` and before a fallback marker can be persisted.
 - An active same-instance session with the durable `workPersonalFallbackInstanceId` continues without repeated acknowledgement.
+- A configured Work launch records its own durable instance marker, so changing mappings or overrides does not invalidate the pinned session. Historical unmarked Personal sessions still cannot use this bypass.
 - The durable marker is written only for a server-validated acknowledged Personal fallback and is cleared by the existing instance-change lifecycle behavior.
 
 Provider rejection uses an actionable `ProviderAdapterRequestError` explaining that the Personal account must be confirmed. Existing turn-start recovery projects the error onto the thread and appends the standard provider failure activity; no provider process starts.

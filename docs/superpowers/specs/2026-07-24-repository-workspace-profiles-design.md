@@ -61,7 +61,7 @@ If the dedicated Personal Codex OAuth chain for the control plane is missing or 
 - Shared contracts define the two repository-profile values and the minimal routing settings shape.
 - Environment settings own normalized work roots and provider-instance mappings.
 - Project metadata owns only an optional repository-profile override.
-- Session state owns the resolved provider instance and the instance-specific acknowledged fallback warning.
+- Session state owns the resolved provider instance, configured-Work route provenance, and the instance-specific acknowledged fallback warning.
 - Client settings own the last selected sidebar profile because it is presentation state.
 
 One shared resolver computes effective repository profile and account routing for interactive sessions and automated workers. UI components display its result but do not reproduce routing rules.

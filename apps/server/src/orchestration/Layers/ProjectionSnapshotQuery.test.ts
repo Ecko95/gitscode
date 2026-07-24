@@ -646,9 +646,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       Effect.gen(function* () {
         const snapshotQuery = yield* ProjectionSnapshotQuery;
         const sql = yield* SqlClient.SqlClient;
-        // WorkspacePaths normalizes persisted roots on project create/update;
-        // Windows storage may still use native slashes and case.
-        const persistedWorkspaceRoot = "C:\\Work\\Repo";
+        // Historical rows may predate canonical project persistence.
+        const persistedWorkspaceRoot = "C:\\Work\\parent\\..\\Repo\\.";
 
         yield* sql`DELETE FROM projection_projects`;
         yield* sql`DELETE FROM projection_threads`;
@@ -659,6 +658,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           project_id,
           title,
           workspace_root,
+          repository_profile_override,
           default_model_selection_json,
           scripts_json,
           created_at,
@@ -670,6 +670,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'project-active',
             'Active Project',
             ${persistedWorkspaceRoot},
+            'personal',
             '{"provider":"codex","model":"gpt-5-codex"}',
             '[]',
             '2026-03-01T00:00:00.000Z',
@@ -677,9 +678,21 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             NULL
           ),
           (
+            'project-posix',
+            'POSIX Project',
+            '/srv/work/parent/../repo/.',
+            'work',
+            NULL,
+            '[]',
+            '2026-03-01T00:00:01.000Z',
+            '2026-03-01T00:00:02.000Z',
+            NULL
+          ),
+          (
             'project-deleted',
             'Deleted Project',
             '/tmp/deleted',
+            NULL,
             NULL,
             '[]',
             '2026-03-01T00:00:02.000Z',
@@ -754,7 +767,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
         const counts = yield* snapshotQuery.getCounts();
         assert.deepEqual(counts, {
-          projectCount: 2,
+          projectCount: 3,
           threadCount: 3,
         });
 
@@ -763,6 +776,15 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.equal(project._tag, "Some");
         if (project._tag === "Some") {
           assert.equal(project.value.id, asProjectId("project-active"));
+          assert.equal(project.value.repositoryProfileOverride, "personal");
+        }
+
+        const posixProject =
+          yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/srv/work/repo/");
+        assert.equal(posixProject._tag, "Some");
+        if (posixProject._tag === "Some") {
+          assert.equal(posixProject.value.id, asProjectId("project-posix"));
+          assert.equal(posixProject.value.repositoryProfileOverride, "work");
         }
 
         const missingProject = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/missing");

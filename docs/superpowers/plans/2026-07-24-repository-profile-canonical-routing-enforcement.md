@@ -22,6 +22,7 @@
 ### Task 1: Canonical Automode Repository Routing
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.test.ts`
 - Modify: `apps/server/src/gits/Layers/AutomodeSupervisor.ts`
 - Modify: `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`
@@ -29,6 +30,7 @@
 - Modify: `apps/server/src/orchestration/Services/ProjectionSnapshotQuery.ts`
 
 **Interfaces:**
+
 - Consumes: `normalizePath(value: string): string` from `@t3tools/shared/path`.
 - Produces: canonical `AutomodeGoal.repo` values and canonical-equivalent `getActiveProjectByWorkspaceRoot(workspaceRoot)` matching.
 
@@ -62,8 +64,7 @@ Import `normalizePath` in Automode and store `repo: normalizePath(input.repo)` d
 const normalizedRepo = normalizePath(repo);
 return policy.allowedRepos.some((allowedRepo) => {
   const normalizedAllowed = normalizePath(allowedRepo);
-  return normalizedRepo === normalizedAllowed ||
-    normalizedRepo.startsWith(`${normalizedAllowed}/`);
+  return normalizedRepo === normalizedAllowed || normalizedRepo.startsWith(`${normalizedAllowed}/`);
 });
 ```
 
@@ -76,12 +77,14 @@ Run the Step 2 command and then the complete two affected files without `-t`.
 ### Task 2: Backward-Compatible Acknowledgement Contract Flow
 
 **Files:**
+
 - Modify: `packages/contracts/src/orchestration.test.ts`
 - Modify: `packages/contracts/src/orchestration.ts`
 - Modify: `apps/server/src/orchestration/decider.projectScripts.test.ts`
 - Modify: `apps/server/src/orchestration/decider.ts`
 
 **Interfaces:**
+
 - Produces: optional `workPersonalFallbackAcknowledgedInstanceId?: ProviderInstanceId` on `ThreadTurnStartCommand`, `ClientThreadTurnStartCommand`, and `ThreadTurnStartRequestedPayload`.
 
 - [ ] **Step 1: Write failing schema and decider tests**
@@ -89,7 +92,7 @@ Run the Step 2 command and then the complete two affected files without `-t`.
 Decode old command/event payloads without the field and assert success. Decode/decide a command with the field and assert the requested event preserves it exactly.
 
 ```ts
-workPersonalFallbackAcknowledgedInstanceId: ProviderInstanceId.make("codex-personal")
+workPersonalFallbackAcknowledgedInstanceId: ProviderInstanceId.make("codex-personal");
 ```
 
 - [ ] **Step 2: Run the tests and verify RED**
@@ -116,10 +119,12 @@ Run both complete files without the name filter.
 ### Task 3: Enforce First Work-to-Personal Launch on the Server
 
 **Files:**
+
 - Modify: `apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts`
 - Modify: `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`
 
 **Interfaces:**
+
 - Consumes: optional event `workPersonalFallbackAcknowledgedInstanceId` and existing `OrchestrationSession.workPersonalFallbackInstanceId`.
 - Produces: validated route result `{ workPersonalFallbackInstanceId: ProviderInstanceId | null }` before `providerService.startSession`.
 
@@ -152,11 +157,14 @@ Thread the acknowledgement from `processTurnStartRequested` through `buildSendTu
 ```ts
 if (selectedInstanceId === personalInstanceId) {
   if (acknowledgedInstanceId !== selectedInstanceId) {
-    return yield* new ProviderAdapterRequestError({
-      provider: driver,
-      method: "thread.turn.start",
-      detail: "Confirm the configured Personal account before starting this Work session.",
-    });
+    return (
+      yield *
+      new ProviderAdapterRequestError({
+        provider: driver,
+        method: "thread.turn.start",
+        detail: "Confirm the configured Personal account before starting this Work session.",
+      })
+    );
   }
   return selectedInstanceId;
 }
@@ -171,10 +179,12 @@ Run the Step 2 command, then the complete reactor test file.
 ### Task 4: Send Acknowledgement Only After Chat Confirmation
 
 **Files:**
+
 - Modify: `apps/web/src/components/ChatView.browser.tsx`
 - Modify: `apps/web/src/components/ChatView.tsx`
 
 **Interfaces:**
+
 - Consumes: existing `accountRoute.requiresWorkPersonalConfirmation` and instance-specific ephemeral confirmation state.
 - Produces: optional `workPersonalFallbackAcknowledgedInstanceId` on the first `thread.turn.start` dispatch only after confirmation.
 
@@ -211,6 +221,7 @@ Run the Step 2 command and `src/components/ChatView.logic.test.ts`.
 ### Task 5: Consolidated Verification, Report, and Commit
 
 **Files:**
+
 - Modify: `.superpowers/sdd/final-fix-report.md` (ignored working report)
 
 - [ ] **Step 1: Run focused affected suites**

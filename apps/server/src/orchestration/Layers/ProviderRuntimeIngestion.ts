@@ -1329,6 +1329,11 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const providerInstanceId = event.providerInstanceId ?? thread.session?.providerInstanceId;
+      const currentWorkProviderInstanceId = thread.session?.workProviderInstanceId;
+      const workProviderInstanceId =
+        currentWorkProviderInstanceId === providerInstanceId
+          ? currentWorkProviderInstanceId
+          : undefined;
       const currentWorkPersonalFallbackInstanceId =
         thread.session?.workPersonalFallbackInstanceId ?? null;
       const workPersonalFallbackInstanceId =
@@ -1474,6 +1479,7 @@ const make = Effect.gen(function* () {
                 status,
                 providerName: event.provider,
                 ...(providerInstanceId !== undefined ? { providerInstanceId } : {}),
+                ...(workProviderInstanceId !== undefined ? { workProviderInstanceId } : {}),
                 workPersonalFallbackInstanceId,
                 runtimeMode: thread.session?.runtimeMode ?? "full-access",
                 activeTurnId: nextActiveTurnId,
@@ -1737,6 +1743,7 @@ const make = Effect.gen(function* () {
                 status: "error",
                 providerName: event.provider,
                 ...(providerInstanceId !== undefined ? { providerInstanceId } : {}),
+                ...(workProviderInstanceId !== undefined ? { workProviderInstanceId } : {}),
                 workPersonalFallbackInstanceId,
                 runtimeMode: thread.session?.runtimeMode ?? "full-access",
                 activeTurnId: eventTurnId ?? null,
