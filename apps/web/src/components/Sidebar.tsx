@@ -45,6 +45,7 @@ import {
   type DesktopUpdateState,
   type EnvironmentId,
   ProjectId,
+  type RepositoryProfile,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
   type ThreadEnvMode,
@@ -167,6 +168,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
+  filterSidebarProjectsByRepositoryProfile,
   getVisibleThreadsForProject,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -1511,6 +1513,36 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [memberThreadCountByPhysicalKey, removeProject],
   );
 
+  const updateProjectRepositoryProfile = useCallback(
+    async (
+      member: SidebarProjectGroupMember,
+      repositoryProfileOverride: RepositoryProfile | null,
+    ) => {
+      const api = readEnvironmentApi(member.environmentId);
+      if (!api) {
+        return;
+      }
+
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "project.meta.update",
+          commandId: newCommandId(),
+          projectId: member.id,
+          repositoryProfileOverride,
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update repository profile",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [],
+  );
+
   const openProjectActionsMenu = useCallback(
     (position: { x: number; y: number }) => {
       void (async () => {
@@ -1584,10 +1616,43 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        const makeRepositoryProfileChoices = (
+          member: SidebarProjectGroupMember,
+        ): ContextMenuItem<string>[] =>
+          (
+            [
+              ["automatic", "Automatic", null],
+              ["personal", "Personal", "personal"],
+              ["work", "Work", "work"],
+            ] as const
+          ).map(([id, label, value]) => {
+            const actionId = `repository-profile:${member.physicalProjectKey}:${id}`;
+            actionHandlers.set(actionId, () => updateProjectRepositoryProfile(member, value));
+            const currentValue = member.repositoryProfileOverride ?? null;
+            return {
+              id: actionId,
+              label: `${currentValue === value ? "✓ " : ""}${label}`,
+            };
+          });
+
+        const repositoryProfileItem: ContextMenuItem<string> = {
+          id: "repository-profile:submenu",
+          label: "Repository profile",
+          children:
+            project.memberProjects.length === 1
+              ? makeRepositoryProfileChoices(project.memberProjects[0]!)
+              : project.memberProjects.map((member) => ({
+                  id: `repository-profile:${member.physicalProjectKey}:submenu`,
+                  label: formatProjectMemberActionLabel(member, project.groupedProjectCount),
+                  children: makeRepositoryProfileChoices(member),
+                })),
+        };
+
         const clicked = await api.contextMenu.show(
           [
             buildTargetedItem("rename", "Rename project"),
             buildTargetedItem("grouping", "Project grouping…"),
+            repositoryProfileItem,
             buildTargetedItem("open-terminal", "Open in terminal"),
             buildTargetedItem("copy-path", "Copy Project Path"),
             buildTargetedItem("delete", "Remove project", {
@@ -1611,6 +1676,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      updateProjectRepositoryProfile,
     ],
   );
 
@@ -2743,6 +2809,7 @@ interface SidebarProjectsContentProps {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
   projectGroupingMode: SidebarProjectGroupingMode;
+  repositoryProfile: RepositoryProfile;
   threadPreviewCount: SidebarThreadPreviewCount;
   updateSettings: ReturnType<typeof useUpdateSettings>["updateSettings"];
   openAddProject: () => void;
@@ -2875,6 +2942,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectSortOrder,
     threadSortOrder,
     projectGroupingMode,
+    repositoryProfile,
     threadPreviewCount,
     updateSettings,
     openAddProject,
@@ -2925,6 +2993,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   const handleThreadPreviewCountChange = useCallback(
     (count: SidebarThreadPreviewCount) => {
       updateSettings({ sidebarThreadPreviewCount: count });
+    },
+    [updateSettings],
+  );
+  const handleRepositoryProfileChange = useCallback(
+    (profile: RepositoryProfile) => {
+      updateSettings({ sidebarRepositoryProfile: profile });
     },
     [updateSettings],
   );
@@ -2979,6 +3053,23 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       ) : null}
       <SidebarGroup className="px-2 py-2">
+        <div
+          role="group"
+          aria-label="Repository profile"
+          className="mb-2 grid grid-cols-2 rounded-md bg-muted/40 p-0.5"
+        >
+          {(["personal", "work"] as const).map((profile) => (
+            <button
+              key={profile}
+              type="button"
+              aria-pressed={repositoryProfile === profile}
+              className="rounded-sm px-2 py-1 text-[11px] capitalize text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs"
+              onClick={() => handleRepositoryProfileChange(profile)}
+            >
+              {profile}
+            </button>
+          ))}
+        </div>
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
             Projects
@@ -3088,7 +3179,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
         {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-            No projects yet
+            No {repositoryProfile} projects
           </div>
         )}
       </SidebarGroup>
@@ -3111,6 +3202,8 @@ export default function Sidebar() {
   const sidebarProjectGroupingMode = useSettings((s) => s.sidebarProjectGroupingMode);
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useSettings((s) => s.sidebarThreadPreviewCount);
+  const sidebarRepositoryProfile = useSettings((s) => s.sidebarRepositoryProfile);
+  const repositoryProfiles = useSettings((s) => s.repositoryProfiles);
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
@@ -3138,13 +3231,22 @@ export default function Sidebar() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
+  const visibleProjects = useMemo(
+    () =>
+      filterSidebarProjectsByRepositoryProfile(
+        projects,
+        sidebarRepositoryProfile,
+        repositoryProfiles,
+      ),
+    [projects, repositoryProfiles, sidebarRepositoryProfile],
+  );
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
-      items: projects,
+      items: visibleProjects,
       preferredIds: projectOrder,
       getId: getProjectOrderKey,
     });
-  }, [projectOrder, projects]);
+  }, [projectOrder, visibleProjects]);
 
   // Build a mapping from physical project key → logical project key for
   // cross-environment grouping.  Projects that share a repositoryIdentity
@@ -3219,10 +3321,12 @@ export default function Sidebar() {
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
     for (const thread of sidebarThreads) {
-      const physicalKey =
-        projectPhysicalKeyByScopedRef.get(
-          scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
-        ) ?? scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
+      const physicalKey = projectPhysicalKeyByScopedRef.get(
+        scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
+      );
+      if (!physicalKey) {
+        continue;
+      }
       const logicalKey = physicalToLogicalKey.get(physicalKey) ?? physicalKey;
       const existing = next.get(logicalKey);
       if (existing) {
@@ -3354,15 +3458,18 @@ export default function Sidebar() {
       ...project,
       id: project.projectKey,
     }));
-    const sortableThreads = visibleThreads.map((thread) => {
-      const physicalKey =
-        projectPhysicalKeyByScopedRef.get(
-          scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
-        ) ?? scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
-      return {
-        ...thread,
-        projectId: (physicalToLogicalKey.get(physicalKey) ?? physicalKey) as ProjectId,
-      };
+    const sortableThreads = visibleThreads.flatMap((thread) => {
+      const physicalKey = projectPhysicalKeyByScopedRef.get(
+        scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
+      );
+      return physicalKey
+        ? [
+            {
+              ...thread,
+              projectId: (physicalToLogicalKey.get(physicalKey) ?? physicalKey) as ProjectId,
+            },
+          ]
+        : [];
     });
     return sortProjectsForSidebar(
       sortableProjects,
@@ -3750,6 +3857,7 @@ export default function Sidebar() {
             projectSortOrder={sidebarProjectSortOrder}
             threadSortOrder={sidebarThreadSortOrder}
             projectGroupingMode={sidebarProjectGroupingMode}
+            repositoryProfile={sidebarRepositoryProfile}
             threadPreviewCount={sidebarThreadPreviewCount}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}
@@ -3776,7 +3884,7 @@ export default function Sidebar() {
             suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-            projectsLength={projects.length}
+            projectsLength={visibleProjects.length}
           />
 
           <SidebarSeparator />

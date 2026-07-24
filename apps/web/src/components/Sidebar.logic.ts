@@ -1,5 +1,11 @@
 import * as React from "react";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  RepositoryProfile,
+  RepositoryProfilesSettings,
+  SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
+import { resolveRepositoryProfile } from "@t3tools/shared/repositoryProfiles";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -24,6 +30,26 @@ type SidebarProject = {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+export function filterSidebarProjectsByRepositoryProfile<
+  TProject extends {
+    cwd: string;
+    repositoryProfileOverride?: RepositoryProfile | null | undefined;
+  },
+>(
+  projects: readonly TProject[],
+  selectedProfile: RepositoryProfile,
+  profiles: RepositoryProfilesSettings,
+): TProject[] {
+  return projects.filter(
+    (project) =>
+      resolveRepositoryProfile({
+        workspaceRoot: project.cwd,
+        repositoryProfileOverride: project.repositoryProfileOverride,
+        profiles,
+      }) === selectedProfile,
+  );
+}
 
 export interface ThreadStatusPill {
   label:

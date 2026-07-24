@@ -3,6 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   createThreadJumpHintVisibilityController,
+  filterSidebarProjectsByRepositoryProfile,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -21,6 +22,7 @@ import {
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
+import type { RepositoryProfilesSettings } from "@t3tools/contracts/settings";
 import {
   EnvironmentId,
   OrchestrationLatestTurn,
@@ -36,6 +38,58 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const repositoryProfiles = {
+  workRoots: ["/repos/work"],
+  providerInstances: { personal: {}, work: {} },
+} satisfies RepositoryProfilesSettings;
+
+describe("filterSidebarProjectsByRepositoryProfile", () => {
+  it("filters physical projects before grouped repositories can mix profiles", () => {
+    const projects = [
+      { id: "personal", cwd: "/repos/personal/app", logicalKey: "shared-repository" },
+      { id: "work", cwd: "/repos/work/app", logicalKey: "shared-repository" },
+    ];
+
+    expect(
+      filterSidebarProjectsByRepositoryProfile(projects, "personal", repositoryProfiles),
+    ).toEqual([projects[0]]);
+    expect(filterSidebarProjectsByRepositoryProfile(projects, "work", repositoryProfiles)).toEqual([
+      projects[1],
+    ]);
+  });
+
+  it("returns an empty list when the selected profile has no projects", () => {
+    expect(
+      filterSidebarProjectsByRepositoryProfile(
+        [{ id: "personal", cwd: "/repos/personal/app" }],
+        "work",
+        repositoryProfiles,
+      ),
+    ).toEqual([]);
+  });
+
+  it("honors explicit profile overrides", () => {
+    const projects = [
+      {
+        id: "personal-override",
+        cwd: "/repos/work/personal-app",
+        repositoryProfileOverride: "personal" as const,
+      },
+      {
+        id: "work-override",
+        cwd: "/repos/personal/work-app",
+        repositoryProfileOverride: "work" as const,
+      },
+    ];
+
+    expect(
+      filterSidebarProjectsByRepositoryProfile(projects, "personal", repositoryProfiles),
+    ).toEqual([projects[0]]);
+    expect(filterSidebarProjectsByRepositoryProfile(projects, "work", repositoryProfiles)).toEqual([
+      projects[1],
+    ]);
+  });
+});
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
