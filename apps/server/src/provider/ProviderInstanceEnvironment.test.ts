@@ -18,6 +18,27 @@ describe("mergeProviderInstanceEnvironment", () => {
       PATH: "/bin",
     });
   });
+
+  it("replaces a mixed-case base Windows system key with the explicit spelling", () => {
+    expect(
+      mergeProviderInstanceEnvironment(
+        [{ name: "PATH", value: "C:\\selected", sensitive: false }],
+        { Path: "C:\\ambient" },
+      ),
+    ).toEqual({ PATH: "C:\\selected" });
+  });
+
+  it("uses the last explicit spelling and value for duplicate Windows system keys", () => {
+    expect(
+      mergeProviderInstanceEnvironment(
+        [
+          { name: "PATH", value: "C:\\first", sensitive: false },
+          { name: "Path", value: "C:\\second", sensitive: false },
+        ],
+        { pAtH: "C:\\ambient" },
+      ),
+    ).toEqual({ Path: "C:\\second" });
+  });
 });
 
 describe("buildChildEnv", () => {
@@ -80,6 +101,18 @@ describe("buildChildEnv", () => {
       SystemRoot: "C:\\Windows",
       ComSpec: "C:\\Windows\\System32\\cmd.exe",
       UserProfile: "C:\\Users\\worker",
+    });
+  });
+
+  it("passes mixed-case Windows temp vars through", () => {
+    expect(
+      buildChildEnv({
+        Temp: "C:\\Users\\worker\\Temp",
+        Tmp: "C:\\Users\\worker\\Tmp",
+      }),
+    ).toEqual({
+      Temp: "C:\\Users\\worker\\Temp",
+      Tmp: "C:\\Users\\worker\\Tmp",
     });
   });
 

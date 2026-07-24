@@ -50,7 +50,26 @@ const CASE_INSENSITIVE_SYSTEM_KEYS: ReadonlySet<string> = new Set([
   "SYSTEMROOT",
   "COMSPEC",
   "USERPROFILE",
+  "TEMP",
+  "TMP",
 ]);
+
+function setEnvironmentVariable(
+  target: NodeJS.ProcessEnv,
+  systemKeySpellings: Map<string, string>,
+  key: string,
+  value: string | undefined,
+): void {
+  const normalizedKey = key.toUpperCase();
+  if (CASE_INSENSITIVE_SYSTEM_KEYS.has(normalizedKey)) {
+    const previousSpelling = systemKeySpellings.get(normalizedKey);
+    if (previousSpelling !== undefined) {
+      delete target[previousSpelling];
+    }
+    systemKeySpellings.set(normalizedKey, key);
+  }
+  target[key] = value;
+}
 
 /**
  * Env var prefixes: any key whose name starts with one of these passes through.
@@ -92,12 +111,7 @@ export function buildChildEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.P
   for (const key of Object.keys(source)) {
     const normalizedKey = key.toUpperCase();
     if (CASE_INSENSITIVE_SYSTEM_KEYS.has(normalizedKey)) {
-      const previousSpelling = systemKeySpellings.get(normalizedKey);
-      if (previousSpelling !== undefined) {
-        delete out[previousSpelling];
-      }
-      out[key] = source[key];
-      systemKeySpellings.set(normalizedKey, key);
+      setEnvironmentVariable(out, systemKeySpellings, key, source[key]);
       continue;
     }
     if (ALLOWED_EXACT.has(key)) {
@@ -123,9 +137,13 @@ export function mergeProviderInstanceEnvironment(
     return baseEnv;
   }
 
-  const next: NodeJS.ProcessEnv = { ...baseEnv };
+  const next: NodeJS.ProcessEnv = {};
+  const systemKeySpellings = new Map<string, string>();
+  for (const key of Object.keys(baseEnv)) {
+    setEnvironmentVariable(next, systemKeySpellings, key, baseEnv[key]);
+  }
   for (const variable of environment) {
-    next[variable.name] = variable.value;
+    setEnvironmentVariable(next, systemKeySpellings, variable.name, variable.value);
   }
   return next;
 }
