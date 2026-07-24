@@ -13,13 +13,27 @@ import {
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 
 describe("ClientSettings.automaticFollowUpSuggestions", () => {
   it("defaults on for legacy settings without the key", () => {
     expect(DEFAULT_CLIENT_SETTINGS.automaticFollowUpSuggestions).toBe(true);
-    expect(Schema.decodeUnknownSync(ClientSettingsSchema)({}).automaticFollowUpSuggestions).toBe(
-      true,
-    );
+    expect(decodeClientSettings({}).automaticFollowUpSuggestions).toBe(true);
+  });
+});
+
+describe("repository profile settings", () => {
+  it("defaults legacy client and server settings to Personal with no routes", () => {
+    const client = decodeClientSettings({});
+    const server = decodeServerSettings({});
+
+    expect(DEFAULT_CLIENT_SETTINGS.sidebarRepositoryProfile).toBe("personal");
+    expect(client.sidebarRepositoryProfile).toBe("personal");
+    expect(DEFAULT_SERVER_SETTINGS.repositoryProfiles).toEqual({
+      workRoots: [],
+      providerInstances: { personal: {}, work: {} },
+    });
+    expect(server.repositoryProfiles).toEqual(DEFAULT_SERVER_SETTINGS.repositoryProfiles);
   });
 });
 

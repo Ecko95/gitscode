@@ -42,6 +42,13 @@ describe("path helpers", () => {
   it("checks path containment at segment boundaries", () => {
     expect(isPathWithin("/work/repo", "/work")).toBe(true);
     expect(isPathWithin("/workshop/repo", "/work")).toBe(false);
+    expect(isPathWithin("/work/../personal/repo", "/work")).toBe(false);
     expect(isPathWithin("/work/repo", "")).toBe(false);
+  });
+
+  it("lexically resolves dot segments while preserving path roots", () => {
+    expect(normalizePath("/work/../personal/repo")).toBe("/personal/repo");
+    expect(normalizePath("C:\\Work\\..\\Personal\\repo")).toBe("c:/personal/repo");
+    expect(normalizePath("\\\\server\\share\\work\\..\\personal")).toBe("//server/share/personal");
   });
 });

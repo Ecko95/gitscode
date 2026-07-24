@@ -24,12 +24,34 @@ export function isExplicitRelativePath(value: string): boolean {
 export function normalizePath(value: string): string {
   const slashNormalized = value.trim().replaceAll("\\", "/");
   const isUnc = slashNormalized.startsWith("//");
-  const prefix = isUnc ? "//" : "";
-  const collapsed = `${prefix}${slashNormalized.slice(isUnc ? 2 : 0).replace(/\/+/g, "/")}`;
-  const withoutTrailingSlash = collapsed.replace(/(?<!^)\/$/, "");
-  return isWindowsAbsolutePath(value) || isUnc
-    ? withoutTrailingSlash.toLowerCase()
-    : withoutTrailingSlash;
+  const isDrive = /^[a-zA-Z]:\//.test(slashNormalized);
+  const isAbsolute = isUnc || isDrive || slashNormalized.startsWith("/");
+  const rawSegments = slashNormalized.split("/");
+  const rootSegments = isUnc ? rawSegments.slice(2, 4) : [];
+  const segments = rawSegments.slice(isUnc ? 4 : isDrive ? 1 : isAbsolute ? 1 : 0);
+  const normalizedSegments: Array<string> = [];
+
+  for (const segment of segments) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (normalizedSegments.length > 0 && normalizedSegments.at(-1) !== "..") {
+        normalizedSegments.pop();
+      } else if (!isAbsolute) {
+        normalizedSegments.push(segment);
+      }
+      continue;
+    }
+    normalizedSegments.push(segment);
+  }
+
+  const path = isUnc
+    ? `//${rootSegments.join("/")}${normalizedSegments.length ? `/${normalizedSegments.join("/")}` : ""}`
+    : isDrive
+      ? `${slashNormalized.slice(0, 2)}/${normalizedSegments.join("/")}`
+      : isAbsolute
+        ? `/${normalizedSegments.join("/")}`
+        : normalizedSegments.join("/") || (slashNormalized ? "." : "");
+  return isWindowsAbsolutePath(value) || isUnc ? path.toLowerCase() : path;
 }
 
 export function isPathWithin(path: string, root: string): boolean {
