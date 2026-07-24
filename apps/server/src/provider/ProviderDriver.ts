@@ -68,6 +68,12 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
+  /**
+   * Environment for a newly spawned repository worker; never serialized to clients.
+   * A Delamain workflow has one process-wide environment, so every leaf in one workflow
+   * must use this same provider instance; mixed-account workflows are not supported.
+   */
+  readonly workerEnvironment?: Readonly<NodeJS.ProcessEnv> | undefined;
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGenerationShape;

@@ -1,16 +1,23 @@
 import type {
+  DelamainPeer,
   GitsCodexMcpAuthStartResult,
   GitsMcpServerItem,
   HermesCommandResult,
   HermesScheduleKind,
   OpenGsdCommandResult,
 } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { resolveRepositoryProfile } from "@t3tools/shared/repositoryProfiles";
 import { useMutation } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { readLocalApi } from "../../localApi";
+import { useSavedEnvironmentRuntimeStore } from "../../environments/runtime";
 import { cn } from "../../lib/utils";
+import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { useServerConfig } from "../../rpc/serverState";
+import { executeManualDelamainLaunch, resolveManualDelamainLaunchRoute } from "../DelamainSidebar";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset, SidebarTrigger } from "../ui/sidebar";
@@ -129,6 +136,39 @@ export function GitsCockpit() {
     logQuery,
     inboxQuery,
   } = useGitsCockpitQueries({ activeTab, selectedProjectRoot, selectedPeerId, mcpAuthSession });
+  const primaryServerConfig = useServerConfig();
+  const savedEnvironmentServerConfig = useSavedEnvironmentRuntimeStore((state) =>
+    targetEnvironmentId ? (state.byId[targetEnvironmentId]?.serverConfig ?? null) : null,
+  );
+  const targetServerConfig =
+    primaryServerConfig?.environment.environmentId === targetEnvironmentId
+      ? primaryServerConfig
+      : savedEnvironmentServerConfig;
+  const repositoryProfiles =
+    targetServerConfig?.settings.repositoryProfiles ?? DEFAULT_SERVER_SETTINGS.repositoryProfiles;
+  const providerInstanceEntries = useMemo(
+    () => deriveProviderInstanceEntries(targetServerConfig?.providers ?? []),
+    [targetServerConfig?.providers],
+  );
+  const spawnEngine = "codex" as const;
+  const spawnRepositoryProfile = useMemo(
+    () =>
+      resolveRepositoryProfile({
+        workspaceRoot: spawnRepo,
+        profiles: repositoryProfiles,
+      }),
+    [repositoryProfiles, spawnRepo],
+  );
+  const spawnRoute = useMemo(
+    () =>
+      resolveManualDelamainLaunchRoute({
+        repositoryProfile: spawnRepositoryProfile,
+        engine: spawnEngine,
+        profiles: repositoryProfiles,
+        instanceEntries: providerInstanceEntries,
+      }),
+    [providerInstanceEntries, repositoryProfiles, spawnEngine, spawnRepositoryProfile],
+  );
 
   const {
     devSessionStateByCommandId,
@@ -386,13 +426,39 @@ export function GitsCockpit() {
     },
   });
   const spawnMutation = useMutation({
-    mutationFn: async () =>
-      readGitsClient().delamain.spawnPeer({
-        repo: spawnRepo.trim(),
-        prompt: spawnPrompt.trim(),
-        ...(spawnName.trim().length > 0 ? { name: spawnName.trim() } : {}),
-      }),
+    mutationFn: async () => {
+      const result: { peer: DelamainPeer | null } = { peer: null };
+      await executeManualDelamainLaunch({
+        route: spawnRoute,
+        confirm: async () => {
+          const localApi = readLocalApi();
+          if (!localApi) return false;
+          const label =
+            providerInstanceEntries.find(
+              (entry) => entry.instanceId === spawnRoute.providerInstanceId,
+            )?.displayName ?? spawnRoute.providerInstanceId;
+          return localApi.dialogs.confirm(
+            [
+              `${label ?? spawnEngine} is the Personal account for this Work repository.`,
+              "Starting this worker will spend Personal usage.",
+              "Continue for this launch only?",
+            ].join("\n"),
+          );
+        },
+        launch: async (providerInstanceId) => {
+          result.peer = await readGitsClient().delamain.spawnPeer({
+            repo: spawnRepo.trim(),
+            prompt: spawnPrompt.trim(),
+            engine: spawnEngine,
+            providerInstanceId,
+            ...(spawnName.trim().length > 0 ? { name: spawnName.trim() } : {}),
+          });
+        },
+      });
+      return result.peer;
+    },
     onSuccess: async (peer) => {
+      if (!peer) return;
       setSelectedPeerId(peer.id);
       setSpawnPrompt("");
       await delamainQuery.refetch();

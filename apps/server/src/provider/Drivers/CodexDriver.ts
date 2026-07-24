@@ -119,6 +119,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const gitShimManager = yield* GitShimManager;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
+      const workerEnvironment = {
+        ...processEnv,
+        CODEX_HOME: homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath,
+      };
       const continuationIdentity = codexContinuationIdentity(homeLayout);
       const stampIdentity = withInstanceIdentity({
         instanceId,
@@ -207,6 +211,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         displayName,
         accentColor,
         enabled,
+        workerEnvironment,
         snapshot,
         adapter,
         textGeneration,

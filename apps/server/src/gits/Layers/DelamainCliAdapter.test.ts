@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vitest";
 
+import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
+import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { makeHermesEnv } from "./HermesCliAdapter.ts";
 import {
   ProcessOutputLimitError,
   ProcessRunner,
@@ -21,12 +26,51 @@ const ProcessRunnerTest = Layer.succeed(
   }),
 );
 
-const TestLayer = Layer.effect(DelamainAdapter, makeDelamainCliAdapter).pipe(
-  Layer.provide(ProcessRunnerTest),
-);
+function workerInstance(input: {
+  readonly instanceId: string;
+  readonly driver: "codex" | "cursor";
+  readonly enabled?: boolean;
+  readonly environment: NodeJS.ProcessEnv;
+}): ProviderInstance {
+  return {
+    instanceId: ProviderInstanceId.make(input.instanceId),
+    driverKind: ProviderDriverKind.make(input.driver),
+    continuationIdentity: {
+      driverKind: ProviderDriverKind.make(input.driver),
+      continuationKey: `${input.driver}:instance:${input.instanceId}`,
+    },
+    displayName: input.instanceId,
+    enabled: input.enabled ?? true,
+    workerEnvironment: input.environment,
+    snapshot: {} as ProviderInstance["snapshot"],
+    adapter: {} as ProviderInstance["adapter"],
+    textGeneration: {} as ProviderInstance["textGeneration"],
+  };
+}
+
+function makeTestLayer(instances: ReadonlyArray<ProviderInstance> = []) {
+  const byId = new Map(instances.map((instance) => [instance.instanceId, instance]));
+  const RegistryTest = Layer.succeed(
+    ProviderInstanceRegistry,
+    ProviderInstanceRegistry.of({
+      getInstance: (instanceId) => Effect.succeed(byId.get(instanceId)),
+      listInstances: Effect.succeed(instances),
+      listUnavailable: Effect.succeed([]),
+      streamChanges: Stream.empty,
+      subscribeChanges: Effect.die("unused in Delamain adapter tests"),
+    }),
+  );
+  return Layer.effect(DelamainAdapter, makeDelamainCliAdapter).pipe(
+    Layer.provide(ProcessRunnerTest),
+    Layer.provide(RegistryTest),
+  );
+}
+
+const TestLayer = makeTestLayer();
 
 afterEach(() => {
   runMock.mockReset();
+  vi.unstubAllEnvs();
 });
 
 describe("DelamainCliAdapter", () => {
@@ -150,6 +194,218 @@ describe("DelamainCliAdapter", () => {
       expect(peer.id).toBe("peer-x");
     }).pipe(Effect.provide(TestLayer)),
   );
+
+  it.effect("launches spawn with only the selected provider instance environment", () => {
+    const personal = workerInstance({
+      instanceId: "codex_personal",
+      driver: "codex",
+      environment: { CODEX_HOME: "/accounts/personal", OPENAI_ACCOUNT: "personal" },
+    });
+    const work = workerInstance({
+      instanceId: "codex_work",
+      driver: "codex",
+      environment: { CODEX_HOME: "/accounts/work", OPENAI_ACCOUNT: "work" },
+    });
+    return Effect.gen(function* () {
+      runMock.mockImplementationOnce((input) => {
+        expect(input.env).toEqual({
+          CODEX_HOME: "/accounts/work",
+          OPENAI_ACCOUNT: "work",
+        });
+        return Effect.succeed({
+          stdout: JSON.stringify({ id: "peer-work", status: "running", engine: "codex" }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+      });
+
+      const adapter = yield* DelamainAdapter;
+      yield* adapter.spawnPeer({
+        repo: "/tmp/repo",
+        prompt: "do work",
+        engine: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex_work"),
+      });
+    }).pipe(Effect.provide(makeTestLayer([personal, work])));
+  });
+
+  it.effect("launches workflows with only the selected provider instance environment", () => {
+    const work = workerInstance({
+      instanceId: "codex_work",
+      driver: "codex",
+      environment: { CODEX_HOME: "/accounts/work", OPENAI_ACCOUNT: "work" },
+    });
+    return Effect.gen(function* () {
+      runMock.mockImplementationOnce((input) => {
+        expect(input.env).toEqual({
+          CODEX_HOME: "/accounts/work",
+          OPENAI_ACCOUNT: "work",
+        });
+        return Effect.succeed({
+          stdout: JSON.stringify({ workflow_id: "wf-work", status: "running" }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+      });
+
+      const adapter = yield* DelamainAdapter;
+      yield* adapter.runGoalWorkflow({
+        workflowScript: "/srv/delamain/workflows/automode-goal.ts",
+        repo: "/tmp/repo",
+        name: "Work workflow",
+        argsJson: '{"title":"Work"}',
+        engine: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex_work"),
+      });
+    }).pipe(Effect.provide(makeTestLayer([work])));
+  });
+
+  it.effect("keeps Hermes OAuth isolation outside repository worker routing", () => {
+    vi.stubEnv("CODEX_HOME", "/accounts/personal-codex");
+    const work = workerInstance({
+      instanceId: "codex_work",
+      driver: "codex",
+      environment: { CODEX_HOME: "/accounts/work-codex" },
+    });
+    return Effect.gen(function* () {
+      runMock.mockImplementationOnce((input) => {
+        expect(input.env?.CODEX_HOME).toBe("/accounts/work-codex");
+        return Effect.succeed({
+          stdout: JSON.stringify({ id: "peer-work", status: "running", engine: "codex" }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+      });
+
+      const adapter = yield* DelamainAdapter;
+      yield* adapter.spawnPeer({
+        repo: "/tmp/work/repo",
+        prompt: "do work",
+        engine: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex_work"),
+      });
+
+      const hermesEnvironment = makeHermesEnv("/accounts/personal-hermes");
+      expect(hermesEnvironment.HERMES_HOME).toBe("/accounts/personal-hermes");
+      expect(hermesEnvironment.CODEX_HOME).toBe("/accounts/personal-codex");
+      expect(process.env.CODEX_HOME).toBe("/accounts/personal-codex");
+    }).pipe(Effect.provide(makeTestLayer([work])));
+  });
+
+  it.effect("rejects a missing selected provider instance before launching", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          stdout: JSON.stringify({ id: "wrong", status: "running", engine: "codex" }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .spawnPeer({
+          repo: "/tmp/repo",
+          prompt: "do work",
+          engine: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_missing"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("codex_missing");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("rejects a provider instance whose driver does not match the requested engine", () => {
+    const cursor = workerInstance({
+      instanceId: "cursor_work",
+      driver: "cursor",
+      environment: { CURSOR_ACCOUNT: "work" },
+    });
+    return Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          stdout: JSON.stringify({ id: "wrong", status: "running", engine: "codex" }),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .spawnPeer({
+          repo: "/tmp/repo",
+          prompt: "do work",
+          engine: "codex",
+          providerInstanceId: ProviderInstanceId.make("cursor_work"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("does not match requested engine 'codex'");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(makeTestLayer([cursor])));
+  });
+
+  it.effect("rejects a workflow provider whose driver does not match the selected engine", () => {
+    const cursor = workerInstance({
+      instanceId: "cursor_work",
+      driver: "cursor",
+      environment: { CURSOR_ACCOUNT: "work" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .runWorkflow({
+          script: "/srv/delamain/workflows/automode-goal.ts",
+          repo: "/tmp/repo",
+          engine: "codex",
+          providerInstanceId: ProviderInstanceId.make("cursor_work"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("does not match requested engine 'codex'");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(makeTestLayer([cursor])));
+  });
+
+  it.effect("rejects a disabled selected provider instance before launching", () => {
+    const disabled = workerInstance({
+      instanceId: "codex_work",
+      driver: "codex",
+      enabled: false,
+      environment: { CODEX_HOME: "/accounts/work" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .spawnPeer({
+          repo: "/tmp/repo",
+          prompt: "do work",
+          engine: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("disabled");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(makeTestLayer([disabled])));
+  });
 
   it.effect("shells the pinned `run-workflow --detach` argv and parses workflow_id", () =>
     Effect.gen(function* () {

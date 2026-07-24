@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type EnvironmentId } from "@t3tools/contracts";
 
 // The web vitest suite runs under the `node` environment (no jsdom).
 // We render with renderToStaticMarkup matching the other component tests.
@@ -137,16 +137,91 @@ describe("parse_log_text", () => {
 
 // --- Tests: DelamainSidebar rendering ---
 
-import DelamainSidebar from "./DelamainSidebar";
+import DelamainSidebar, {
+  executeManualDelamainLaunch,
+  resolveManualDelamainLaunchRoute,
+} from "./DelamainSidebar";
+
+describe("manual Delamain account routing", () => {
+  const codexDriver = ProviderDriverKind.make("codex");
+  const personalId = ProviderInstanceId.make("codex_personal");
+  const workId = ProviderInstanceId.make("codex_work");
+
+  it("resolves the selected engine through the repository profile mapping", () => {
+    const route = resolveManualDelamainLaunchRoute({
+      repositoryProfile: "work",
+      engine: "codex",
+      profiles: {
+        workRoots: ["/srv/work"],
+        providerInstances: {
+          personal: { [codexDriver]: personalId },
+          work: { [codexDriver]: workId },
+        },
+      },
+      instanceEntries: [
+        { instanceId: personalId, driverKind: codexDriver, enabled: true, isAvailable: true },
+        { instanceId: workId, driverKind: codexDriver, enabled: true, isAvailable: true },
+      ],
+    });
+
+    expect(route).toEqual({
+      providerInstanceId: workId,
+      requiresWorkPersonalConfirmation: false,
+      error: null,
+    });
+  });
+
+  it("requires confirmation when a Work route uses the Personal instance", () => {
+    const route = resolveManualDelamainLaunchRoute({
+      repositoryProfile: "work",
+      engine: "codex",
+      profiles: {
+        workRoots: ["/srv/work"],
+        providerInstances: {
+          personal: { [codexDriver]: personalId },
+          work: { [codexDriver]: personalId },
+        },
+      },
+      instanceEntries: [
+        { instanceId: personalId, driverKind: codexDriver, enabled: true, isAvailable: true },
+      ],
+    });
+
+    expect(route.requiresWorkPersonalConfirmation).toBe(true);
+  });
+
+  it("does not launch when Work-to-Personal confirmation is cancelled", async () => {
+    const launch = vi.fn(async () => undefined);
+    const launched = await executeManualDelamainLaunch({
+      route: {
+        providerInstanceId: personalId,
+        requiresWorkPersonalConfirmation: true,
+        error: null,
+      },
+      confirm: async () => false,
+      launch,
+    });
+
+    expect(launched).toBe(false);
+    expect(launch).not.toHaveBeenCalled();
+  });
+});
 
 describe("DelamainSidebar", () => {
   const env_id = "env-test" as EnvironmentId;
+  const repositoryProfiles = {
+    workRoots: [],
+    providerInstances: { personal: {}, work: {} },
+  } as const;
 
   it("renders the empty-state when no peers match", () => {
     const markup = renderToStaticMarkup(
       <DelamainSidebar
         environmentId={env_id}
         projectRepoRoot="/home/user/myrepo"
+        repositoryProfile="personal"
+        repositoryProfiles={repositoryProfiles}
+        providerInstanceEntries={[]}
         onClose={() => undefined}
       />,
     );
@@ -158,6 +233,9 @@ describe("DelamainSidebar", () => {
       <DelamainSidebar
         environmentId={env_id}
         projectRepoRoot={undefined}
+        repositoryProfile="personal"
+        repositoryProfiles={repositoryProfiles}
+        providerInstanceEntries={[]}
         onClose={() => undefined}
       />,
     );
@@ -166,7 +244,14 @@ describe("DelamainSidebar", () => {
 
   it("renders close button with accessible label", () => {
     const markup = renderToStaticMarkup(
-      <DelamainSidebar environmentId={env_id} projectRepoRoot="/repo" onClose={() => undefined} />,
+      <DelamainSidebar
+        environmentId={env_id}
+        projectRepoRoot="/repo"
+        repositoryProfile="personal"
+        repositoryProfiles={repositoryProfiles}
+        providerInstanceEntries={[]}
+        onClose={() => undefined}
+      />,
     );
     expect(markup).toContain("Close delamain sidebar");
   });

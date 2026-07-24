@@ -129,6 +129,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
           driver: codexDriverKind,
           displayName: "Codex (personal)",
           enabled: false,
+          environment: [{ name: "T3_PROVIDER_ACCOUNT", value: "personal", sensitive: false }],
           config: makeCodexConfig({
             binaryPath: "/opt/codex-personal/bin/codex",
             homePath: "/home/julius/.codex_personal",
@@ -139,6 +140,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
           driver: codexDriverKind,
           displayName: "Codex (work)",
           enabled: false,
+          environment: [{ name: "T3_PROVIDER_ACCOUNT", value: "work", sensitive: false }],
           config: makeCodexConfig({
             binaryPath: "/opt/codex-work/bin/codex",
             homePath: "/home/julius/.codex",
@@ -169,6 +171,10 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(personal!.adapter).not.toBe(work!.adapter);
       expect(personal!.textGeneration).not.toBe(work!.textGeneration);
       expect(personal!.snapshot).not.toBe(work!.snapshot);
+      expect(personal!.workerEnvironment?.T3_PROVIDER_ACCOUNT).toBe("personal");
+      expect(personal!.workerEnvironment?.CODEX_HOME).toBe("/home/julius/.codex_personal");
+      expect(work!.workerEnvironment?.T3_PROVIDER_ACCOUNT).toBe("work");
+      expect(work!.workerEnvironment?.CODEX_HOME).toBe("/home/julius/.codex");
 
       // Snapshots identify themselves by instanceId + driver — this is
       // what makes per-instance routing distinguishable downstream.
@@ -289,6 +295,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           driver: cursorDriverKind,
           displayName: "Cursor",
           enabled: false,
+          environment: [{ name: "CURSOR_ACCOUNT", value: "work", sensitive: false }],
           config: makeCursorConfig({}),
         },
         [openCodeId]: {
@@ -329,6 +336,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
+      expect(cursor?.workerEnvironment?.CURSOR_ACCOUNT).toBe("work");
       expect(openCode?.displayName).toBe("OpenCode");
 
       // Every instance owns its own set of closures — no sharing across

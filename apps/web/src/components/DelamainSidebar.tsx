@@ -1,5 +1,12 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type RepositoryProfile,
+  type RepositoryProfilesSettings,
+} from "@t3tools/contracts";
+import { resolveRepositoryProviderInstance } from "@t3tools/shared/repositoryProfiles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -46,6 +53,8 @@ import {
   sortDelamainPeers,
 } from "~/delamainPeers";
 import { readGitsEnvironmentClient } from "~/gitsClient";
+import { readLocalApi } from "~/localApi";
+import type { ProviderInstanceEntry } from "~/providerInstances";
 import type { DelamainPeer, ParsedLogEvent } from "@t3tools/contracts";
 import { Input } from "./ui/input";
 
@@ -391,6 +400,69 @@ const DEFAULT_WORKFLOW_SCRIPT = "/srv/gits/repos/delamain/workflows/automode-goa
 // are operator-selectable here. ("pi" is not in the contract's DelamainEngine literals.)
 const SPAWN_ENGINES = ["codex", "cursor"] as const;
 
+export interface ManualDelamainLaunchRoute {
+  readonly providerInstanceId: ProviderInstanceId | null;
+  readonly requiresWorkPersonalConfirmation: boolean;
+  readonly error: string | null;
+}
+
+export function resolveManualDelamainLaunchRoute(input: {
+  readonly repositoryProfile: RepositoryProfile;
+  readonly engine: (typeof SPAWN_ENGINES)[number];
+  readonly profiles: RepositoryProfilesSettings;
+  readonly instanceEntries: ReadonlyArray<
+    Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "enabled" | "isAvailable">
+  >;
+}): ManualDelamainLaunchRoute {
+  const driver = ProviderDriverKind.make(input.engine);
+  const providerInstanceId = resolveRepositoryProviderInstance({
+    repositoryProfile: input.repositoryProfile,
+    driver,
+    profiles: input.profiles,
+  });
+  if (providerInstanceId === null) {
+    return {
+      providerInstanceId: null,
+      requiresWorkPersonalConfirmation: false,
+      error: `No ${input.engine} account is mapped for this ${input.repositoryProfile} repository.`,
+    };
+  }
+  const instance = input.instanceEntries.find((entry) => entry.instanceId === providerInstanceId);
+  if (!instance || !instance.enabled || !instance.isAvailable || instance.driverKind !== driver) {
+    return {
+      providerInstanceId: null,
+      requiresWorkPersonalConfirmation: false,
+      error: `Mapped ${input.engine} account '${providerInstanceId}' is unavailable.`,
+    };
+  }
+  const personalInstanceId = resolveRepositoryProviderInstance({
+    repositoryProfile: "personal",
+    driver,
+    profiles: input.profiles,
+  });
+  return {
+    providerInstanceId,
+    requiresWorkPersonalConfirmation:
+      input.repositoryProfile === "work" && personalInstanceId === providerInstanceId,
+    error: null,
+  };
+}
+
+export async function executeManualDelamainLaunch(input: {
+  readonly route: ManualDelamainLaunchRoute;
+  readonly confirm: () => Promise<boolean>;
+  readonly launch: (providerInstanceId: ProviderInstanceId) => Promise<void>;
+}): Promise<boolean> {
+  if (input.route.error || input.route.providerInstanceId === null) {
+    throw new Error(input.route.error ?? "No provider account is selected for this launch.");
+  }
+  if (input.route.requiresWorkPersonalConfirmation && !(await input.confirm())) {
+    return false;
+  }
+  await input.launch(input.route.providerInstanceId);
+  return true;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error.";
 }
@@ -400,11 +472,17 @@ function LaunchDialog({
   onOpenChange,
   environmentId,
   repo,
+  repositoryProfile,
+  repositoryProfiles,
+  providerInstanceEntries,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   environmentId: EnvironmentId;
   repo: string;
+  repositoryProfile: RepositoryProfile;
+  repositoryProfiles: RepositoryProfilesSettings;
+  providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
 }) {
   const queryClient = useQueryClient();
   const [mode, set_mode] = useState<"spawn" | "workflow">("spawn");
@@ -418,6 +496,19 @@ function LaunchDialog({
   const [script, set_script] = useState(DEFAULT_WORKFLOW_SCRIPT);
   const [wf_name, set_wf_name] = useState("");
   const [args_json, set_args_json] = useState("");
+  const launch_route = useMemo(
+    () =>
+      resolveManualDelamainLaunchRoute({
+        repositoryProfile,
+        engine,
+        profiles: repositoryProfiles,
+        instanceEntries: providerInstanceEntries,
+      }),
+    [engine, providerInstanceEntries, repositoryProfile, repositoryProfiles],
+  );
+  const selected_instance_label =
+    providerInstanceEntries.find((entry) => entry.instanceId === launch_route.providerInstanceId)
+      ?.displayName ?? launch_route.providerInstanceId;
 
   // Client-side JSON validation — inline error, blocks submit before we ever shell the CLI.
   const args_json_error = useMemo(() => {
@@ -432,13 +523,14 @@ function LaunchDialog({
   }, [args_json]);
 
   const spawn_mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (providerInstanceId: ProviderInstanceId) => {
       const client = readGitsEnvironmentClient(environmentId);
       if (!client) throw new Error("No environment client");
       return client.delamain.spawnPeer({
         repo,
         prompt: prompt.trim(),
         engine,
+        providerInstanceId,
         ...(spawn_name.trim() ? { name: spawn_name.trim() } : {}),
       });
     },
@@ -450,13 +542,15 @@ function LaunchDialog({
   });
 
   const workflow_mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (providerInstanceId: ProviderInstanceId) => {
       const client = readGitsEnvironmentClient(environmentId);
       if (!client) throw new Error("No environment client");
       const trimmedArgs = args_json.trim();
       return client.delamain.workflow.run({
         script: script.trim(),
         repo,
+        engine,
+        providerInstanceId,
         ...(wf_name.trim() ? { name: wf_name.trim() } : {}),
         ...(trimmedArgs ? { argsJson: trimmedArgs } : {}),
       });
@@ -464,6 +558,32 @@ function LaunchDialog({
   });
 
   const pending = spawn_mutation.isPending || workflow_mutation.isPending;
+
+  const confirm_personal_work_usage = useCallback(async () => {
+    const localApi = readLocalApi();
+    if (!localApi) return false;
+    return localApi.dialogs.confirm(
+      [
+        `${selected_instance_label ?? engine} is the Personal account for this Work repository.`,
+        "Starting this worker will spend Personal usage.",
+        "Continue for this launch only?",
+      ].join("\n"),
+    );
+  }, [engine, selected_instance_label]);
+
+  const launch = useCallback(() => {
+    void executeManualDelamainLaunch({
+      route: launch_route,
+      confirm: confirm_personal_work_usage,
+      launch: async (providerInstanceId) => {
+        if (mode === "spawn") {
+          await spawn_mutation.mutateAsync(providerInstanceId);
+        } else {
+          await workflow_mutation.mutateAsync(providerInstanceId);
+        }
+      },
+    });
+  }, [confirm_personal_work_usage, launch_route, mode, spawn_mutation, workflow_mutation]);
 
   const reset_and_close = useCallback(
     (next: boolean) => {
@@ -478,8 +598,9 @@ function LaunchDialog({
     [pending, spawn_mutation, workflow_mutation, onOpenChange],
   );
 
-  const can_spawn = prompt.trim().length > 0 && !pending;
-  const can_run = script.trim().length > 0 && args_json_error === null && !pending;
+  const can_spawn = prompt.trim().length > 0 && launch_route.error === null && !pending;
+  const can_run =
+    script.trim().length > 0 && args_json_error === null && launch_route.error === null && !pending;
 
   return (
     <Dialog open={open} onOpenChange={reset_and_close}>
@@ -518,6 +639,27 @@ function LaunchDialog({
             </div>
           </div>
 
+          <div className="grid gap-1">
+            <label className="text-[11px] font-medium text-muted-foreground/70">Engine</label>
+            <div className="flex gap-1.5">
+              {SPAWN_ENGINES.map((eng) => (
+                <Button
+                  key={eng}
+                  size="sm"
+                  variant={engine === eng ? "default" : "outline"}
+                  onClick={() => set_engine(eng)}
+                  type="button"
+                  disabled={pending}
+                >
+                  {eng}
+                </Button>
+              ))}
+            </div>
+          </div>
+          {launch_route.error ? (
+            <p className="text-[11px] text-destructive/70">{launch_route.error}</p>
+          ) : null}
+
           {mode === "spawn" ? (
             <>
               <div className="grid gap-1">
@@ -542,23 +684,6 @@ function LaunchDialog({
                   disabled={pending}
                   className="text-[11px]"
                 />
-              </div>
-              <div className="grid gap-1">
-                <label className="text-[11px] font-medium text-muted-foreground/70">Engine</label>
-                <div className="flex gap-1.5">
-                  {SPAWN_ENGINES.map((eng) => (
-                    <Button
-                      key={eng}
-                      size="sm"
-                      variant={engine === eng ? "default" : "outline"}
-                      onClick={() => set_engine(eng)}
-                      type="button"
-                      disabled={pending}
-                    >
-                      {eng}
-                    </Button>
-                  ))}
-                </div>
               </div>
               {spawn_mutation.isError ? (
                 <p className="text-[11px] text-destructive/70">
@@ -636,21 +761,11 @@ function LaunchDialog({
         </DialogPanel>
         <DialogFooter>
           {mode === "spawn" ? (
-            <Button
-              onClick={() => spawn_mutation.mutate()}
-              disabled={!can_spawn}
-              type="button"
-              size="sm"
-            >
+            <Button onClick={launch} disabled={!can_spawn} type="button" size="sm">
               {spawn_mutation.isPending ? "Spawning…" : "Spawn peer"}
             </Button>
           ) : (
-            <Button
-              onClick={() => workflow_mutation.mutate()}
-              disabled={!can_run}
-              type="button"
-              size="sm"
-            >
+            <Button onClick={launch} disabled={!can_run} type="button" size="sm">
               {workflow_mutation.isPending ? "Starting…" : "Run workflow"}
             </Button>
           )}
@@ -847,6 +962,9 @@ function PeerCard({
 interface DelamainSidebarProps {
   environmentId: EnvironmentId;
   projectRepoRoot: string | undefined;
+  repositoryProfile: RepositoryProfile;
+  repositoryProfiles: RepositoryProfilesSettings;
+  providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   mode?: "sheet" | "sidebar";
   onClose: () => void;
 }
@@ -854,6 +972,9 @@ interface DelamainSidebarProps {
 const DelamainSidebar = memo(function DelamainSidebar({
   environmentId,
   projectRepoRoot,
+  repositoryProfile,
+  repositoryProfiles,
+  providerInstanceEntries,
   mode = "sidebar",
   onClose,
 }: DelamainSidebarProps) {
@@ -1024,6 +1145,9 @@ const DelamainSidebar = memo(function DelamainSidebar({
           onOpenChange={set_launch_open}
           environmentId={environmentId}
           repo={projectRepoRoot}
+          repositoryProfile={repositoryProfile}
+          repositoryProfiles={repositoryProfiles}
+          providerInstanceEntries={providerInstanceEntries}
         />
       ) : null}
     </div>

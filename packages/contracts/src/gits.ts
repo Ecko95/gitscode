@@ -649,6 +649,8 @@ export const DelamainRunWorkflowInput = Schema.Struct({
   repo: PathString,
   name: TrimmedNonEmptyString,
   argsJson: TrimmedNonEmptyString,
+  engine: Schema.optional(DelamainEngine),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
 });
 export type DelamainRunWorkflowInput = typeof DelamainRunWorkflowInput.Type;
 
@@ -664,8 +666,10 @@ export type DelamainRunWorkflowResult = typeof DelamainRunWorkflowResult.Type;
 export const DelamainWorkflowRunInput = Schema.Struct({
   script: PathString,
   repo: PathString,
+  engine: Schema.optional(DelamainEngine),
   name: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   argsJson: Schema.optional(Schema.NullOr(SummaryString)),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
 });
 export type DelamainWorkflowRunInput = typeof DelamainWorkflowRunInput.Type;
 
@@ -680,6 +684,7 @@ export type DelamainWorkflowRunResult = typeof DelamainWorkflowRunResult.Type;
 export const DelamainSpawnPeerInput = Schema.Struct({
   repo: PathString,
   prompt: SummaryString,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
   name: Schema.optional(TrimmedNonEmptyString),
   startRef: Schema.optional(TrimmedNonEmptyString),
   mergeBranch: Schema.optional(TrimmedNonEmptyString),

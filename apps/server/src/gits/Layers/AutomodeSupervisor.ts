@@ -26,10 +26,18 @@ import {
   type AutomodeStopAllResult,
   type DelamainPeer,
   type PeerStatus,
+  ProviderDriverKind,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
+import {
+  resolveRepositoryProfile,
+  resolveRepositoryProviderInstance,
+} from "@t3tools/shared/repositoryProfiles";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
+import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AUTOMODE_BASE_REF, AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import {
@@ -56,6 +64,7 @@ const ACTIVE_PEER_STATUSES = new Set<PeerStatus>(["pending", "running", "blocked
 const INTEGRATION_PATTERN = /\b(merge|admin-merge|integrate|pull request|pr)\b/i;
 const DESTRUCTIVE_PATTERN = /\b(reset --hard|rm -rf|delete|destroy|drop|truncate|force push)\b/i;
 const AUTOMODE_STATE_FILE_NAME = "automode-state.json";
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
 const PersistedAutomodeState = Schema.Struct({
   version: Schema.Literal(1),
@@ -455,6 +464,8 @@ export const AutomodeSupervisorLive = Layer.effect(
     const landing = yield* AutomodeLanding;
     const usageMeter = yield* AutomodeUsageMeter;
     const config = yield* ServerConfig;
+    const serverSettings = yield* ServerSettingsService;
+    const providerInstances = yield* ProviderInstanceRegistry;
     const fs = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const initializedAt = yield* nowIso;
@@ -493,6 +504,49 @@ export const AutomodeSupervisorLive = Layer.effect(
     // Cheap policy read (stateRef only) so the driver can gate on mode/kill-switch
     // without paying for the peer-list + budget IO that getSnapshot performs.
     const getPolicy = () => Ref.get(stateRef).pipe(Effect.map((state) => state.policy));
+
+    const resolveWorkerRoute = (repo: string) =>
+      Effect.gen(function* () {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError((cause) =>
+            toAutomodeError("Failed to resolve Automode repository worker routing.", cause),
+          ),
+        );
+        const repositoryProfile = resolveRepositoryProfile({
+          workspaceRoot: repo,
+          profiles: settings.repositoryProfiles,
+        });
+        const providerInstanceId = resolveRepositoryProviderInstance({
+          repositoryProfile,
+          driver: CODEX_DRIVER,
+          profiles: settings.repositoryProfiles,
+        });
+        if (providerInstanceId === null) {
+          return {
+            providerInstanceId: null,
+            blockedReason: `${repositoryProfile === "work" ? "Work" : "Personal"} repository has no Codex provider instance mapping.`,
+          };
+        }
+        const instance = yield* providerInstances.getInstance(providerInstanceId);
+        if (
+          !instance ||
+          !instance.enabled ||
+          instance.driverKind !== CODEX_DRIVER ||
+          instance.workerEnvironment === undefined
+        ) {
+          return {
+            providerInstanceId: null,
+            blockedReason: `Mapped Codex provider instance '${providerInstanceId}' is unavailable.`,
+          };
+        }
+        return {
+          providerInstanceId,
+          blockedReason: null,
+        } satisfies {
+          readonly providerInstanceId: ProviderInstanceId;
+          readonly blockedReason: null;
+        };
+      });
 
     const commitState = (updater: (state: AutomodeState) => AutomodeState) =>
       writeSemaphore.withPermits(1)(
@@ -738,7 +792,7 @@ export const AutomodeSupervisorLive = Layer.effect(
           const effectiveModel = goal.model ?? state.policy.defaultModel;
           const activePeers = yield* readActivePeerCount;
           const budgetUsage = yield* readBudgetUsage;
-          const blockedReason = evaluatePolicyGate(state.policy, {
+          const policyBlockedReason = evaluatePolicyGate(state.policy, {
             repo: goal.repo,
             model: effectiveModel,
             prompt: goal.prompt,
@@ -746,6 +800,8 @@ export const AutomodeSupervisorLive = Layer.effect(
             activePeers,
             budgetUsage,
           }).blockedReason;
+          const workerRoute = yield* resolveWorkerRoute(goal.repo);
+          const blockedReason = policyBlockedReason ?? workerRoute.blockedReason;
 
           if (blockedReason !== null) {
             const updatedAt = yield* nowIso;
@@ -804,6 +860,11 @@ export const AutomodeSupervisorLive = Layer.effect(
             } satisfies AutomodeDispatchResult;
           }
 
+          const providerInstanceId = workerRoute.providerInstanceId;
+          if (providerInstanceId === null) {
+            return yield* toAutomodeError("Automode worker route was not resolved.");
+          }
+
           // The peer spawns from (startRef) and syncs against (mergeBranch) the goal's
           // branch, so it must exist on origin before delamain touches it — first dispatch
           // against a fresh branch would otherwise fail at spawn/integration. Same baseRef
@@ -827,6 +888,8 @@ export const AutomodeSupervisorLive = Layer.effect(
                 .spawnPeer({
                   repo: goal.repo,
                   prompt: episodePrompt,
+                  engine: "codex",
+                  providerInstanceId,
                   name: goal.title,
                   ...(effectiveModel ? { model: effectiveModel } : {}),
                   startRef: goalBranch,
@@ -849,6 +912,8 @@ export const AutomodeSupervisorLive = Layer.effect(
                 .runGoalWorkflow({
                   workflowScript,
                   repo: goal.repo,
+                  engine: "codex",
+                  providerInstanceId,
                   name: `Motoko Proposal - Verified (Automated) · ${goal.title}`,
                   // Same branch rails as the spawn path: startRef == mergeBranch ==
                   // the goal's branch. The leaf runs integrate:true.

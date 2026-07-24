@@ -24,8 +24,10 @@ import {
   type DelamainWorkflowKillResult,
   type DelamainWorkflowRunResult,
   type PeerStatus,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 
+import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { DelamainAdapter, type DelamainAdapterShape } from "../Services/DelamainAdapter.ts";
 import {
   ProcessOutputLimitError,
@@ -141,6 +143,7 @@ function execDelamain(
   options?: {
     readonly timeoutMs?: number | undefined;
     readonly outputMode?: "error" | "truncate" | undefined;
+    readonly environment?: NodeJS.ProcessEnv | undefined;
   },
 ) {
   const binaryPath = resolveBinaryPath();
@@ -152,6 +155,7 @@ function execDelamain(
       maxOutputBytes: MAX_OUTPUT_BYTES,
       outputMode: options?.outputMode ?? "error",
       truncatedMarker: options?.outputMode === "truncate" ? OUTPUT_TRUNCATED_MARKER : "",
+      env: options?.environment,
       shell: process.platform === "win32",
     })
     .pipe(
@@ -198,8 +202,9 @@ function runJson<T>(
   processRunner: ProcessRunner["Service"],
   operation: string,
   args: ReadonlyArray<string>,
+  environment?: NodeJS.ProcessEnv,
 ) {
-  return execDelamain(processRunner, args).pipe(
+  return execDelamain(processRunner, args, { environment }).pipe(
     Effect.flatMap((result) => parseJson<T>(operation, result.stdout)),
   );
 }
@@ -459,6 +464,41 @@ function normalizeSendResult(value: unknown): DelamainSendMessageResult {
 
 export const makeDelamainCliAdapter = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner;
+  const providerInstances = yield* ProviderInstanceRegistry;
+
+  const resolveLaunchEnvironment = (
+    providerInstanceId: ProviderInstanceId | undefined,
+    requestedEngine?: DelamainEngine | undefined,
+  ) =>
+    Effect.gen(function* () {
+      if (providerInstanceId === undefined) return undefined;
+      const instance = yield* providerInstances.getInstance(providerInstanceId);
+      if (!instance) {
+        return yield* toDelamainError(
+          `Provider instance '${providerInstanceId}' is unavailable for Delamain launch.`,
+        );
+      }
+      if (!instance.enabled) {
+        return yield* toDelamainError(
+          `Provider instance '${providerInstanceId}' is disabled for Delamain launch.`,
+        );
+      }
+      if (
+        requestedEngine !== undefined &&
+        requestedEngine !== "unknown" &&
+        instance.driverKind !== requestedEngine
+      ) {
+        return yield* toDelamainError(
+          `Provider instance '${providerInstanceId}' driver '${instance.driverKind}' does not match requested engine '${requestedEngine}'.`,
+        );
+      }
+      if (instance.workerEnvironment === undefined) {
+        return yield* toDelamainError(
+          `Provider instance '${providerInstanceId}' does not support Delamain worker launches.`,
+        );
+      }
+      return { ...instance.workerEnvironment };
+    });
 
   const adapter: DelamainAdapterShape = {
     listPeers: () =>
@@ -507,18 +547,31 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
       );
     },
     spawnPeer: (input) =>
-      runJson<unknown>(processRunner, "spawn", spawnArgs(input)).pipe(Effect.map(normalizePeer)),
+      Effect.gen(function* () {
+        const environment = yield* resolveLaunchEnvironment(input.providerInstanceId, input.engine);
+        return yield* runJson<unknown>(processRunner, "spawn", spawnArgs(input), environment).pipe(
+          Effect.map(normalizePeer),
+        );
+      }),
     runGoalWorkflow: (input) =>
-      runJson<unknown>(processRunner, "run-workflow", runWorkflowArgs(input)).pipe(
-        Effect.flatMap((value) => {
-          const workflowId = nullableString(
-            rawRecord(value).workflow_id ?? rawRecord(value).workflowId,
-          );
-          return workflowId === null
-            ? Effect.fail(toDelamainError("Delamain run-workflow did not return a workflow_id."))
-            : Effect.succeed({ workflowId } satisfies DelamainRunWorkflowResult);
-        }),
-      ),
+      Effect.gen(function* () {
+        const environment = yield* resolveLaunchEnvironment(input.providerInstanceId, input.engine);
+        return yield* runJson<unknown>(
+          processRunner,
+          "run-workflow",
+          runWorkflowArgs(input),
+          environment,
+        ).pipe(
+          Effect.flatMap((value) => {
+            const workflowId = nullableString(
+              rawRecord(value).workflow_id ?? rawRecord(value).workflowId,
+            );
+            return workflowId === null
+              ? Effect.fail(toDelamainError("Delamain run-workflow did not return a workflow_id."))
+              : Effect.succeed({ workflowId } satisfies DelamainRunWorkflowResult);
+          }),
+        );
+      }),
     killPeer: (input) =>
       runJson<unknown>(processRunner, "kill", [
         "kill",
@@ -593,10 +646,12 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
             catch: (cause) => toDelamainError("run-workflow argsJson is not valid JSON.", cause),
           });
         }
+        const environment = yield* resolveLaunchEnvironment(input.providerInstanceId, input.engine);
         const value = yield* runJson<unknown>(
           processRunner,
           "run-workflow",
           workflowRunArgs(input),
+          environment,
         );
         const record = rawRecord(value);
         const workflowId = nullableString(record.workflow_id ?? record.workflowId);

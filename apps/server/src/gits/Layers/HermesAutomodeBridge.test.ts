@@ -18,6 +18,7 @@ import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
+import { AutomodeSupervisorTestRoutingLayer } from "./AutomodeSupervisor.testHelpers.ts";
 import { decideProposalWithAutomodeBridge } from "./HermesAutomodeBridge.ts";
 
 const peer: DelamainPeer = {
@@ -63,6 +64,7 @@ const availableBudgetUsage: AutomodeBudgetUsage = {
 
 function makeSupervisorLayer(options?: { readonly onSpawn?: () => void }) {
   return AutomodeSupervisorLive.pipe(
+    Layer.provide(AutomodeSupervisorTestRoutingLayer),
     Layer.provide(
       Layer.mock(DelamainAdapter)({
         listPeers: () => Effect.succeed(emptyPeerList),

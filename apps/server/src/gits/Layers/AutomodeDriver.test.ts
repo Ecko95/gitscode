@@ -50,6 +50,7 @@ import {
   type AutomodeEpisode,
 } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
+import { AutomodeSupervisorTestRoutingLayer } from "./AutomodeSupervisor.testHelpers.ts";
 import { AutomodeDriverLive } from "./AutomodeDriver.ts";
 
 function makeReview(
@@ -302,6 +303,7 @@ function makeLayer(
     prefix: "gits-automode-driver-test-",
   }).pipe(Layer.provide(NodeServices.layer));
   const supervisor = AutomodeSupervisorLive.pipe(
+    Layer.provide(AutomodeSupervisorTestRoutingLayer),
     Layer.provide(delamain),
     Layer.provide(landing),
     Layer.provide(usage),

@@ -310,8 +310,20 @@ const AutomodeUsageMeterLayerLive = AutomodeUsageMeterLive.pipe(
 
 const AutomodeLandingLayerLive = AutomodeLandingLive.pipe(Layer.provide(GitVcsDriver.layer));
 
+const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(ProviderEventLoggersLive),
+  Layer.provideMerge(Layer.merge(OpenCodeRuntimeLive, GitShimManagerLive)),
+  Layer.provideMerge(ServerSettingsLive),
+  Layer.provide(PtyAdapterLive),
+);
+
+const DelamainAdapterLayerLive = DelamainCliAdapterLive.pipe(
+  Layer.provide(ProviderInstanceRegistryLayerLive),
+);
+
 const AutomodeSupervisorLayerLive = AutomodeSupervisorLive.pipe(
-  Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(DelamainAdapterLayerLive),
+  Layer.provide(ProviderInstanceRegistryLayerLive),
   Layer.provide(AutomodeLandingLayerLive),
   Layer.provide(AutomodeUsageMeterLayerLive),
 );
@@ -343,7 +355,7 @@ const AutomodeTelegramDigestLayerLive = AutomodeTelegramDigestLive.pipe(
 
 const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
   Layer.provide(GitsCapacityMonitorLive),
-  Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(DelamainAdapterLayerLive),
   Layer.provide(OpenGsdCliAdapterLive),
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(HermesTelegramNotifierLive),
@@ -357,7 +369,7 @@ const AutomodeProposalSweepLayerLive = AutomodeProposalSweepLive.pipe(
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(GitsSlotSchedulerLayerLive),
-  Layer.provide(DelamainCliAdapterLive),
+  Layer.provide(DelamainAdapterLayerLive),
   Layer.provide(AutomodeLandingLayerLive),
   Layer.provide(AutomodeHeldPrLayerLive),
   Layer.provide(AutomodeEpisodeLedgerLayerLive),
@@ -371,13 +383,6 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
       Layer.provide(GitsConfinedVerifyAdapterLive),
     ),
   ),
-);
-
-const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
-  Layer.provideMerge(ProviderEventLoggersLive),
-  Layer.provideMerge(Layer.merge(OpenCodeRuntimeLive, GitShimManagerLive)),
-  Layer.provideMerge(ServerSettingsLive),
-  Layer.provide(PtyAdapterLive),
 );
 
 const GitsMcpInventoryResolverLayerLive = GitsMcpInventoryResolverLive.pipe(
@@ -400,7 +405,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitsSkillInventoryResolverLive),
   Layer.provideMerge(GitsMcpInventoryResolverLayerLive),
   Layer.provideMerge(CodexMcpAuthLayerLive),
-  Layer.provideMerge(DelamainCliAdapterLive),
+  Layer.provideMerge(DelamainAdapterLayerLive),
   Layer.provideMerge(OpenGsdCliAdapterLive),
   Layer.provideMerge(GitsPlanningScannerLive),
   Layer.provideMerge(HermesAdapterLayerLive),

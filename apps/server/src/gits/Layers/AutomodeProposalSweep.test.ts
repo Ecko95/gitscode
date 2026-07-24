@@ -24,6 +24,7 @@ import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { AutomodeProposalSweepLive } from "./AutomodeProposalSweep.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
+import { AutomodeSupervisorTestRoutingLayer } from "./AutomodeSupervisor.testHelpers.ts";
 
 const REPO = "/tmp/sweep-repo";
 const OTHER_REPO = "/tmp/sweep-repo-2";
@@ -107,6 +108,7 @@ interface HermesOptions {
 
 function makeLayer(hermesOptions: HermesOptions = {}) {
   const supervisor = AutomodeSupervisorLive.pipe(
+    Layer.provide(AutomodeSupervisorTestRoutingLayer),
     Layer.provide(
       Layer.mock(DelamainAdapter)({
         listPeers: () => Effect.succeed(emptyPeerList),

@@ -146,6 +146,7 @@ import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import { deriveProviderInstanceEntries } from "../providerInstances";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   readUsageSummary,
@@ -1631,6 +1632,10 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const delamainProviderInstanceEntries = useMemo(
+    () => deriveProviderInstanceEntries(providerStatuses),
+    [providerStatuses],
+  );
   const repositoryProfiles =
     serverConfig?.settings.repositoryProfiles ?? settings.repositoryProfiles;
   const activeRepositoryProfile = useMemo(
@@ -5067,6 +5072,9 @@ export default function ChatView(props: ChatViewProps) {
             <DelamainSidebar
               environmentId={environmentId}
               projectRepoRoot={activeProjectCwd ?? undefined}
+              repositoryProfile={activeRepositoryProfile}
+              repositoryProfiles={repositoryProfiles}
+              providerInstanceEntries={delamainProviderInstanceEntries}
               mode="sidebar"
               onClose={closeDelamainSidebar}
             />
@@ -5127,6 +5135,9 @@ export default function ChatView(props: ChatViewProps) {
             <DelamainSidebar
               environmentId={environmentId}
               projectRepoRoot={activeProjectCwd ?? undefined}
+              repositoryProfile={activeRepositoryProfile}
+              repositoryProfiles={repositoryProfiles}
+              providerInstanceEntries={delamainProviderInstanceEntries}
               mode="sheet"
               onClose={closeDelamainSidebar}
             />

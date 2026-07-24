@@ -12,9 +12,14 @@ import type {
   DelamainRunWorkflowInput,
   DelamainSendMessageInput,
   DelamainSpawnPeerInput,
+  RepositoryProfilesSettings,
 } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
+import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import {
   AutomodeLanding,
@@ -73,6 +78,33 @@ const availableBudgetUsage: AutomodeBudgetUsage = {
   note: null,
 };
 
+const codexDriver = ProviderDriverKind.make("codex");
+const defaultCodexInstanceId = ProviderInstanceId.make("codex");
+const defaultRepositoryProfiles: RepositoryProfilesSettings = {
+  workRoots: [],
+  providerInstances: {
+    personal: { [codexDriver]: defaultCodexInstanceId },
+    work: {},
+  },
+};
+
+function automodeWorkerInstance(instanceId: string): ProviderInstance {
+  return {
+    instanceId: ProviderInstanceId.make(instanceId),
+    driverKind: codexDriver,
+    continuationIdentity: {
+      driverKind: codexDriver,
+      continuationKey: `codex:instance:${instanceId}`,
+    },
+    displayName: instanceId,
+    enabled: true,
+    workerEnvironment: { CODEX_HOME: `/accounts/${instanceId}` },
+    snapshot: {} as ProviderInstance["snapshot"],
+    adapter: {} as ProviderInstance["adapter"],
+    textGeneration: {} as ProviderInstance["textGeneration"],
+  };
+}
+
 function makeLayer(options?: {
   readonly peers?: ReadonlyArray<DelamainPeer>;
   readonly budgetUsage?: AutomodeBudgetUsage;
@@ -84,7 +116,15 @@ function makeLayer(options?: {
   readonly onWorkflowKill?: () => void;
   readonly onEnsure?: (input: AutomodeEnsureIntegrationBranchInput) => void;
   readonly baseDir?: string;
+  readonly repositoryProfiles?: RepositoryProfilesSettings;
+  readonly availableProviderInstanceIds?: ReadonlyArray<string>;
 }) {
+  const availableInstances = (
+    options?.availableProviderInstanceIds ?? [defaultCodexInstanceId]
+  ).map(automodeWorkerInstance);
+  const instancesById = new Map(
+    availableInstances.map((instance) => [instance.instanceId, instance]),
+  );
   return AutomodeSupervisorLive.pipe(
     Layer.provide(
       Layer.mock(DelamainAdapter)({
@@ -144,6 +184,16 @@ function makeLayer(options?: {
         process.cwd(),
         options?.baseDir ?? { prefix: "gits-automode-supervisor-test-" },
       ).pipe(Layer.provide(NodeServices.layer)),
+    ),
+    Layer.provideMerge(
+      ServerSettingsService.layerTest({
+        repositoryProfiles: options?.repositoryProfiles ?? defaultRepositoryProfiles,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ProviderInstanceRegistry)({
+        getInstance: (instanceId) => Effect.succeed(instancesById.get(instanceId)),
+      }),
     ),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -248,7 +298,7 @@ describe("AutomodeSupervisorLive", () => {
   );
 
   it.effect("spawns through Delamain when autonomous policy passes", () => {
-    let spawnedRepo: string | null = null;
+    let spawnInput: DelamainSpawnPeerInput | null = null;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       yield* supervisor.updatePolicy({
@@ -272,13 +322,141 @@ describe("AutomodeSupervisorLive", () => {
 
       assert.equal(result.peer?.id, peer.id);
       assert.equal(result.goal.peerId, peer.id);
-      assert.equal(spawnedRepo, "/tmp/source-repo");
+      assert.equal(spawnInput?.repo, "/tmp/source-repo");
+      assert.equal(spawnInput?.providerInstanceId, "codex");
     }).pipe(
       Effect.provide(
         makeLayer({
           budgetUsage: availableBudgetUsage,
           onSpawn: (input) => {
-            spawnedRepo = input.repo;
+            spawnInput = input;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("routes a Work repository goal to its configured Codex instance", () => {
+    let spawnInput: DelamainSpawnPeerInput | null = null;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/work/repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Work goal",
+        repo: "/tmp/work/repo",
+        prompt: "Run a safe task.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.peer?.id, peer.id);
+      assert.equal(spawnInput?.providerInstanceId, "codex_work");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          repositoryProfiles: {
+            workRoots: ["/tmp/work"],
+            providerInstances: {
+              personal: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
+              work: { [codexDriver]: ProviderInstanceId.make("codex_work") },
+            },
+          },
+          availableProviderInstanceIds: ["codex_work"],
+          onSpawn: (input) => {
+            spawnInput = input;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("blocks a Work repository goal when its Codex mapping is missing", () => {
+    let spawnCount = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/work/repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Unmapped Work goal",
+        repo: "/tmp/work/repo",
+        prompt: "Run a safe task.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.peer, null);
+      assert.match(result.blockedReason ?? "", /Work.*Codex.*mapping/i);
+      assert.equal(spawnCount, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          repositoryProfiles: {
+            workRoots: ["/tmp/work"],
+            providerInstances: {
+              personal: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
+              work: {},
+            },
+          },
+          onSpawn: () => {
+            spawnCount += 1;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("blocks a Work repository goal when its mapped Codex instance is unavailable", () => {
+    let spawnCount = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/work/repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Unavailable Work goal",
+        repo: "/tmp/work/repo",
+        prompt: "Run a safe task.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.peer, null);
+      assert.match(result.blockedReason ?? "", /codex_work.*unavailable/i);
+      assert.equal(spawnCount, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          repositoryProfiles: {
+            workRoots: ["/tmp/work"],
+            providerInstances: {
+              personal: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
+              work: { [codexDriver]: ProviderInstanceId.make("codex_work") },
+            },
+          },
+          availableProviderInstanceIds: [],
+          onSpawn: () => {
+            spawnCount += 1;
           },
         }),
       ),
@@ -1533,6 +1711,7 @@ describe("AutomodeSupervisorLive", () => {
       assert.equal(dispatched.goal.status, "running");
       assert.equal(runInput?.workflowScript, "/srv/delamain/workflows/automode-goal.ts");
       assert.equal(runInput?.repo, "/tmp/source-repo");
+      assert.equal(runInput?.providerInstanceId, "codex");
       assert.equal(runInput?.name, "Motoko Proposal - Verified (Automated) · Workflow goal");
       assert.equal(
         runInput?.argsJson,
