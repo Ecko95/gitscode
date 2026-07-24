@@ -34,7 +34,7 @@
 - Consumes: `normalizePath(value: string): string` from `@t3tools/shared/path`.
 - Produces: canonical `AutomodeGoal.repo` values and canonical-equivalent `getActiveProjectByWorkspaceRoot(workspaceRoot)` matching.
 
-- [ ] **Step 1: Write failing equivalent-path override tests**
+- [x] **Step 1: Write failing equivalent-path override tests**
 
 Add one Personal override case and one Work override case whose goal and persisted project roots differ across trailing separators, slash styles, dot segments, and Windows case. Assert the canonical goal repo is persisted and passed to integration/spawn.
 
@@ -46,7 +46,7 @@ assert.equal(spawnInput?.providerInstanceId, "codex_personal");
 
 Add a projection-query test that persists `C:\\Work\\repo\\.\\` and looks it up as `c:/work/repo/`, expecting the active project.
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -56,7 +56,7 @@ rtk bun --filter t3 test -- src/gits/Layers/AutomodeSupervisor.test.ts src/orche
 
 Expected: override tests route without the persisted override and/or projection lookup returns `Option.none()` because raw equality is still used.
 
-- [ ] **Step 3: Implement minimal canonicalization**
+- [x] **Step 3: Implement minimal canonicalization**
 
 Import `normalizePath` in Automode and store `repo: normalizePath(input.repo)` during enqueue. Normalize allowlist roots inside `repoAllowed` before containment checks. Reuse `listProjectRows`, filter active rows, and select the first row whose `normalizePath(row.workspaceRoot)` equals the normalized lookup. Update the service comment from “exact” to “canonical-equivalent”.
 
@@ -68,7 +68,7 @@ return policy.allowedRepos.some((allowedRepo) => {
 });
 ```
 
-- [ ] **Step 4: Run canonical routing tests and verify GREEN**
+- [x] **Step 4: Run canonical routing tests and verify GREEN**
 
 Run the Step 2 command and then the complete two affected files without `-t`.
 
@@ -87,7 +87,7 @@ Run the Step 2 command and then the complete two affected files without `-t`.
 
 - Produces: optional `workPersonalFallbackAcknowledgedInstanceId?: ProviderInstanceId` on `ThreadTurnStartCommand`, `ClientThreadTurnStartCommand`, and `ThreadTurnStartRequestedPayload`.
 
-- [ ] **Step 1: Write failing schema and decider tests**
+- [x] **Step 1: Write failing schema and decider tests**
 
 Decode old command/event payloads without the field and assert success. Decode/decide a command with the field and assert the requested event preserves it exactly.
 
@@ -95,7 +95,7 @@ Decode old command/event payloads without the field and assert success. Decode/d
 workPersonalFallbackAcknowledgedInstanceId: ProviderInstanceId.make("codex-personal");
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -106,11 +106,11 @@ rtk bun --filter t3 test -- src/orchestration/decider.projectScripts.test.ts -t 
 
 Expected: the new property is absent from decoded/decided output.
 
-- [ ] **Step 3: Add the optional schemas and event copy**
+- [x] **Step 3: Add the optional schemas and event copy**
 
 Use `Schema.optional(ProviderInstanceId)` in both command schemas and the requested-event payload. In the decider, conditionally copy the property exactly as done for `modelSelection` and `titleSeed`.
 
-- [ ] **Step 4: Run affected contract/decider files and verify GREEN**
+- [x] **Step 4: Run affected contract/decider files and verify GREEN**
 
 Run both complete files without the name filter.
 
@@ -128,7 +128,7 @@ Run both complete files without the name filter.
 - Consumes: optional event `workPersonalFallbackAcknowledgedInstanceId` and existing `OrchestrationSession.workPersonalFallbackInstanceId`.
 - Produces: validated route result `{ workPersonalFallbackInstanceId: ProviderInstanceId | null }` before `providerService.startSession`.
 
-- [ ] **Step 1: Write failing reactor tests**
+- [x] **Step 1: Write failing reactor tests**
 
 Add focused tests for:
 
@@ -140,7 +140,7 @@ Add focused tests for:
 - other mismatched instance: failure and zero provider starts;
 - same-instance active session plus durable marker: subsequent turn succeeds without acknowledgement and does not restart.
 
-- [ ] **Step 2: Run focused reactor tests and verify RED**
+- [x] **Step 2: Run focused reactor tests and verify RED**
 
 Run:
 
@@ -150,7 +150,7 @@ rtk bun --filter t3 test -- src/orchestration/Layers/ProviderCommandReactor.test
 
 Expected: unacknowledged/wrong/mismatched cases start a provider, and valid acknowledgement is not yet available to validation.
 
-- [ ] **Step 3: Implement the server validation gate**
+- [x] **Step 3: Implement the server validation gate**
 
 Thread the acknowledgement from `processTurnStartRequested` through `buildSendTurnRequestForThread` into `ensureSessionForThread`. Before any `startSession`, resolve effective project profile and Work/Personal mappings for Codex/Cursor. Return null marker for a configured Work instance; return the selected instance marker only for an exact configured Personal acknowledgement; reject missing/wrong acknowledgement and unrelated instances with `ProviderAdapterRequestError`. Preserve the durable marker bypass only when active session instance and marker both equal the selected instance.
 
@@ -170,7 +170,7 @@ if (selectedInstanceId === personalInstanceId) {
 }
 ```
 
-- [ ] **Step 4: Run the focused tests and full reactor file to verify GREEN**
+- [x] **Step 4: Run the focused tests and full reactor file to verify GREEN**
 
 Run the Step 2 command, then the complete reactor test file.
 
@@ -188,11 +188,11 @@ Run the Step 2 command, then the complete reactor test file.
 - Consumes: existing `accountRoute.requiresWorkPersonalConfirmation` and instance-specific ephemeral confirmation state.
 - Produces: optional `workPersonalFallbackAcknowledgedInstanceId` on the first `thread.turn.start` dispatch only after confirmation.
 
-- [ ] **Step 1: Write failing browser tests**
+- [x] **Step 1: Write failing browser tests**
 
 Extend the successful Work-to-Personal launch test to assert the exact selected instance is present on the turn-start request. Keep/extend cancellation coverage to assert no turn-start request exists and the full draft remains unchanged.
 
-- [ ] **Step 2: Run browser tests and verify RED**
+- [x] **Step 2: Run browser tests and verify RED**
 
 Run:
 
@@ -202,7 +202,7 @@ rtk bun --filter '@t3tools/web' test:browser -- src/components/ChatView.browser.
 
 Expected: successful launch request lacks the acknowledgement property; cancellation remains green.
 
-- [ ] **Step 3: Add the conditional dispatch property**
+- [x] **Step 3: Add the conditional dispatch property**
 
 Track a local boolean/instance value through the confirmation branch so the same callback invocation can include the acknowledgement immediately after confirmation. Include it only for the first message when the confirmed instance equals the selected instance.
 
@@ -212,7 +212,7 @@ Track a local boolean/instance value through the confirmation branch so the same
   : {})
 ```
 
-- [ ] **Step 4: Run the focused browser tests and Chat logic tests to verify GREEN**
+- [x] **Step 4: Run the focused browser tests and Chat logic tests to verify GREEN**
 
 Run the Step 2 command and `src/components/ChatView.logic.test.ts`.
 
@@ -224,11 +224,11 @@ Run the Step 2 command and `src/components/ChatView.logic.test.ts`.
 
 - Modify: `.superpowers/sdd/final-fix-report.md` (ignored working report)
 
-- [ ] **Step 1: Run focused affected suites**
+- [x] **Step 1: Run focused affected suites**
 
 Run complete affected contracts, Automode, projection query, decider, reactor, Chat browser, Chat logic, and store files. Do not run the full suite.
 
-- [ ] **Step 2: Run mandatory gates**
+- [x] **Step 2: Run mandatory gates**
 
 ```bash
 rtk bun fmt
@@ -239,10 +239,10 @@ rtk git diff --check
 
 Expected: all exit zero; lint may report the repository’s existing warnings but no errors.
 
-- [ ] **Step 3: Self-review the production diff**
+- [x] **Step 3: Self-review the production diff**
 
 Verify provider start is unreachable before route validation, old payloads decode, canonical goal roots flow to every downstream operation, and no native mobile file changed.
 
-- [ ] **Step 4: Commit and append the report**
+- [x] **Step 4: Commit the verified fixes and record evidence in the tracked plans**
 
 Stage the verified changes, run `rtk git diff --cached --check`, commit with a focused message, and append the final SHA plus RED/GREEN and verification evidence to `.superpowers/sdd/final-fix-report.md`.

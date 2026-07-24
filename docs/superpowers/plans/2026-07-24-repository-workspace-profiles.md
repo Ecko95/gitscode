@@ -151,11 +151,11 @@
 - [x] Correct the design wording to reflect the existing dedicated Hermes OAuth chain: it is authenticated as Personal and is independent of provider-instance mappings.
 - [x] Check every approved requirement against the implementation and mark all plan boxes accurately.
 - [x] Scan changed files for placeholders with `rtk rg -n "TODO|FIXME|placeholder|not implemented" <changed-files>` and remove accidental incompleteness.
-- [ ] Invoke `superpowers:requesting-code-review`, run the required reviewer, and fix all valid findings.
-- [ ] Invoke `superpowers:verification-before-completion`.
-- [ ] Run `rtk bun fmt`.
-- [ ] Run `rtk bun lint`.
-- [ ] Run `rtk bun typecheck`.
-- [ ] Run `rtk bun run test`.
-- [ ] Run `rtk git status --short`, inspect the final diff, and confirm no native mobile files changed (otherwise also run `rtk bun lint:mobile`).
-- [ ] Commit any verification fixes and mark the goal complete only after every required check is green.
+- [x] Complete independent code review and fix all valid findings (direct workflow used per user instruction not to use Superpowers).
+- [x] Complete the requirement-by-requirement audit directly from branch evidence.
+- [x] Run `rtk bun fmt`.
+- [x] Run `rtk bun lint`.
+- [x] Run `rtk bun typecheck`.
+- [x] Run `rtk bun run test`.
+- [x] Run `rtk git status --short`, inspect the final diff, and confirm no native mobile files changed (otherwise also run `rtk bun lint:mobile`).
+- [x] Commit verification fixes and mark the goal complete only after every required check is green.
