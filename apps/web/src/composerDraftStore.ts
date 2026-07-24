@@ -888,6 +888,11 @@ export function deriveEffectiveComposerModelState(input: {
   selectedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  /**
+   * Persisted selection for started work. When it matches the selected
+   * instance, preserve its model even if that provider snapshot disappears.
+   */
+  pinnedModelSelection?: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const baseModelCandidate =
@@ -922,20 +927,27 @@ export function deriveEffectiveComposerModelState(input: {
   const activeSelectionInstanceId = instanceSelection
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
     : ProviderInstanceId.make(input.selectedProvider);
-  const selectedModel = activeSelection?.model
-    ? (resolveAppModelSelectionForInstance(
-        activeSelectionInstanceId,
-        input.settings,
-        input.providers,
-        activeSelection.model,
-      ) ??
-      resolveAppModelSelection(
-        input.selectedProvider,
-        input.settings,
-        input.providers,
-        activeSelection.model,
-      ))
-    : baseModel;
+  const pinnedSelection =
+    input.pinnedModelSelection?.instanceId === input.selectedInstanceId &&
+    !input.providers.some((provider) => provider.instanceId === input.selectedInstanceId)
+      ? input.pinnedModelSelection
+      : null;
+  const selectedModel = pinnedSelection
+    ? (instanceSelection ?? pinnedSelection).model
+    : activeSelection?.model
+      ? (resolveAppModelSelectionForInstance(
+          activeSelectionInstanceId,
+          input.settings,
+          input.providers,
+          activeSelection.model,
+        ) ??
+        resolveAppModelSelection(
+          input.selectedProvider,
+          input.settings,
+          input.providers,
+          activeSelection.model,
+        ))
+      : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
     providerSelectionsFromModelSelection(input.threadModelSelection) ??
@@ -3139,6 +3151,7 @@ export function useEffectiveComposerModelState(input: {
   selectedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  pinnedModelSelection?: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
@@ -3152,6 +3165,7 @@ export function useEffectiveComposerModelState(input: {
         selectedInstanceId: input.selectedInstanceId,
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
+        pinnedModelSelection: input.pinnedModelSelection,
         settings: input.settings,
       }),
     [
@@ -3159,6 +3173,7 @@ export function useEffectiveComposerModelState(input: {
       input.providers,
       input.settings,
       input.projectModelSelection,
+      input.pinnedModelSelection,
       input.selectedInstanceId,
       input.selectedProvider,
       input.threadModelSelection,

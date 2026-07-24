@@ -832,6 +832,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedInstanceId,
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
+    pinnedModelSelection: startedThreadInstanceId ? activeThreadModelSelection : null,
     settings,
   });
 

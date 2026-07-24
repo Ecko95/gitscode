@@ -3321,7 +3321,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("keeps the Work-to-Personal warning after launch when profile mappings change", async () => {
+  it("keeps the Work-to-Personal warning and model when mappings and provider disappear", async () => {
     const personalInstanceId = ProviderInstanceId.make("codex-personal");
     const workInstanceId = ProviderInstanceId.make("codex-work");
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -3395,16 +3395,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const draftId = draftIdFromPath(draftPath);
       const promotedThreadId = draftThreadIdFor(draftId);
 
-      findComposerProviderModelPicker()?.click();
-      const personalAccountButton = await waitForElement(
-        () =>
-          document.querySelector<HTMLButtonElement>(
-            '[data-model-picker-provider="codex-personal"]',
-          ),
-        "Unable to find the Personal Codex account.",
-      );
-      personalAccountButton.click();
-      await page.getByText("GPT Personal", { exact: true }).click();
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(draftId, createModelSelection(personalInstanceId, "gpt-personal"));
+      await vi.waitFor(() => {
+        expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Personal");
+        expect(findComposerProviderModelPicker()?.textContent).toContain("GPT Personal");
+      });
 
       useComposerDraftStore.getState().setPrompt(draftId, "Launch on Personal");
       (await waitForSendButton()).click();
@@ -3476,10 +3473,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       fixture.serverConfig = {
         ...fixture.serverConfig,
-        providers: fixture.serverConfig.providers.map((provider) =>
-          provider.instanceId === personalInstanceId
-            ? Object.assign({}, provider, { enabled: false })
-            : provider,
+        providers: fixture.serverConfig.providers.filter(
+          (provider) => provider.instanceId !== personalInstanceId,
         ),
       };
       rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
@@ -3490,11 +3485,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(() => {
         expect(
-          getServerConfig()?.providers.find(
+          getServerConfig()?.providers.some(
             (provider) => provider.instanceId === personalInstanceId,
-          )?.enabled,
+          ),
         ).toBe(false);
-        expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Personal");
+        expect(findComposerProviderModelPicker()?.textContent).toContain("gpt-personal");
+        expect(findComposerProviderModelPicker()?.textContent).not.toContain("GPT Work");
       });
 
       const turnStartsBeforeContinue = wsRequests.filter(
@@ -3512,9 +3508,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
           (request) =>
             request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
             request.type === "thread.turn.start",
-        ) as Array<{ modelSelection?: { instanceId?: string } }>;
+        ) as Array<{ modelSelection?: { instanceId?: string; model?: string } }>;
         expect(turnStarts).toHaveLength(turnStartsBeforeContinue + 1);
-        expect(turnStarts.at(-1)?.modelSelection?.instanceId).toBe(personalInstanceId);
+        expect(turnStarts.at(-1)?.modelSelection).toMatchObject({
+          instanceId: personalInstanceId,
+          model: "gpt-personal",
+        });
       });
     } finally {
       confirmSpy.mockRestore();

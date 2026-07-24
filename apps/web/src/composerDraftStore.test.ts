@@ -15,7 +15,9 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 
 // The composer draft's `modelSelectionByProvider` and
@@ -60,6 +62,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -135,6 +138,58 @@ function resetComposerDraftStore() {
     stickyActiveProvider: null,
   });
 }
+
+function makeProvider(
+  instanceId: ProviderInstanceId,
+  displayName: string,
+  model: string,
+): ServerProvider {
+  return {
+    instanceId,
+    driver: CODEX_DRIVER,
+    displayName,
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: model,
+        name: model,
+        isCustom: false,
+        capabilities: {},
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  };
+}
+
+describe("deriveEffectiveComposerModelState", () => {
+  it("preserves a pinned thread's instance and model after its provider snapshot is removed", () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const workInstanceId = ProviderInstanceId.make("codex-work");
+    const pinnedSelection = createModelSelection(personalInstanceId, "gpt-personal");
+
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [makeProvider(workInstanceId, "Codex Work", "gpt-work")],
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: personalInstanceId,
+      threadModelSelection: pinnedSelection,
+      projectModelSelection: createModelSelection(workInstanceId, "gpt-work"),
+      pinnedModelSelection: pinnedSelection,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(createModelSelection(personalInstanceId, state.selectedModel)).toMatchObject({
+      instanceId: personalInstanceId,
+      model: "gpt-personal",
+    });
+  });
+});
 
 describe("composerDraftStore sent message history", () => {
   const threadRef = scopeThreadRef(
