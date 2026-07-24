@@ -3862,7 +3862,7 @@ export default function ChatView(props: ChatViewProps) {
     if (
       isFirstMessage &&
       accountRoute.requiresWorkPersonalConfirmation &&
-      !workPersonalConfirmedByThreadKey[confirmationKey]
+      workPersonalConfirmedByThreadKey[confirmationKey] !== ctxSelectedModelSelection.instanceId
     ) {
       const localApi = readLocalApi();
       if (!localApi) {
@@ -3882,7 +3882,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!confirmed) {
         return;
       }
-      confirmWorkPersonalUsage(confirmationKey);
+      confirmWorkPersonalUsage(confirmationKey, ctxSelectedModelSelection.instanceId);
     }
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
@@ -4958,9 +4958,11 @@ export default function ChatView(props: ChatViewProps) {
                     activeThreadModelSelection={activeThread?.modelSelection}
                     repositoryProfile={activeRepositoryProfile}
                     repositoryProfiles={repositoryProfiles}
-                    showPinnedWorkPersonalWarning={Boolean(
-                      activeThreadKey && workPersonalConfirmedByThreadKey[activeThreadKey],
-                    )}
+                    pinnedWorkPersonalInstanceId={
+                      activeThreadKey
+                        ? (workPersonalConfirmedByThreadKey[activeThreadKey] ?? null)
+                        : null
+                    }
                     activeThreadActivities={activeThread?.activities}
                     resolvedTheme={resolvedTheme}
                     settings={settings}

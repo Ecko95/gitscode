@@ -514,7 +514,7 @@ export interface ChatComposerProps {
   activeThreadModelSelection: ModelSelection | null | undefined;
   repositoryProfile: RepositoryProfile;
   repositoryProfiles: RepositoryProfilesSettings;
-  showPinnedWorkPersonalWarning: boolean;
+  pinnedWorkPersonalInstanceId: ProviderInstanceId | null;
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
@@ -621,7 +621,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadModelSelection,
     repositoryProfile,
     repositoryProfiles,
-    showPinnedWorkPersonalWarning,
+    pinnedWorkPersonalInstanceId,
     activeThreadActivities,
     resolvedTheme,
     settings,
@@ -750,16 +750,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   // Resolve which configured instance the composer is currently targeting.
   // Priority:
-  //   1. The composer draft's `activeProvider` — the user's unsaved pick
+  //   1. A started thread's persisted session/model instance. Started work
+  //      stays pinned even if the instance becomes unavailable or disabled.
+  //   2. The composer draft's `activeProvider` — the user's unsaved pick
   //      from the model picker (must win, otherwise the UI appears to
   //      ignore picker selections).
-  //   2. Thread's persisted instance id (server-side saved selection).
-  //   3. New draft's repository-profile mapping.
-  //   4. Project default's instance id.
-  //   5. First enabled entry matching the current driver kind.
-  //   6. First enabled entry overall / default instance for the kind.
+  //   3. Thread's persisted instance id (server-side saved selection).
+  //   4. New draft's repository-profile mapping.
+  //   5. Project default's instance id.
+  //   6. First enabled entry matching the current driver kind.
+  //   7. First enabled entry overall / default instance for the kind.
   //
+  const startedThreadInstanceId = threadHasStarted(activeThread)
+    ? (activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId ?? null)
+    : null;
   const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
+    if (startedThreadInstanceId) {
+      return ProviderInstanceId.make(startedThreadInstanceId);
+    }
     const candidates: Array<string | null | undefined> = [
       composerDraft.activeProvider,
       activeThread?.session?.providerInstanceId,
@@ -814,6 +822,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerInstanceEntries,
     preferredInstanceId,
     selectedProvider,
+    startedThreadInstanceId,
   ]);
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
@@ -2586,7 +2595,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   modelOptionsByInstance={modelOptionsByInstance}
                   requiresExplicitSelection={accountRoute.requiresExplicitSelection}
                   showWorkPersonalWarning={
-                    accountRoute.usesPersonalInstanceForWork || showPinnedWorkPersonalWarning
+                    accountRoute.usesPersonalInstanceForWork ||
+                    pinnedWorkPersonalInstanceId === selectedInstanceId
                   }
                   terminalOpen={terminalOpen}
                   open={isComposerModelPickerOpen}

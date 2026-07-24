@@ -3141,6 +3141,110 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("clears a confirmed Personal warning after a failed launch switches to Work", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const workInstanceId = ProviderInstanceId.make("codex-work");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-work-profile-failed-launch-test" as MessageId,
+        targetText: "work profile failed launch test",
+      }),
+      configureFixture: (nextFixture) => {
+        const buildProvider = (
+          instanceId: ProviderInstanceId,
+          displayName: string,
+          model: string,
+        ) => ({
+          ...nextFixture.serverConfig.providers[0]!,
+          instanceId,
+          displayName,
+          models: [
+            {
+              slug: model,
+              name: model === "gpt-work" ? "GPT Work" : "GPT Personal",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        });
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            buildProvider(workInstanceId, "Codex Work", "gpt-work"),
+            buildProvider(personalInstanceId, "Codex Personal", "gpt-personal"),
+          ],
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            repositoryProfiles: {
+              workRoots: ["/repo"],
+              providerInstances: {
+                personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+                work: { [ProviderDriverKind.make("codex")]: workInstanceId },
+              },
+            },
+          },
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          if (body.type === "thread.turn.start") {
+            throw new Error("Forced launch failure after account confirmation");
+          }
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByRole("button", { name: "work", exact: true }).click();
+      await page.getByTestId("new-thread-button").click();
+      const draftPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should change to a new Work draft.",
+      );
+      const draftId = draftIdFromPath(draftPath);
+
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(draftId, createModelSelection(personalInstanceId, "gpt-personal"));
+
+      await vi.waitFor(() => {
+        expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Personal");
+        expect(
+          document.querySelector('[data-provider-account-warning="work-personal"]'),
+        ).not.toBeNull();
+      });
+
+      useComposerDraftStore.getState().setPrompt(draftId, "Fail after confirming Personal");
+      await waitForLayout();
+      (await waitForSendButton()).click();
+
+      await vi.waitFor(() => {
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(document.body.textContent).toContain("Failed to send message.");
+      });
+
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(draftId, createModelSelection(workInstanceId, "gpt-work"));
+
+      await vi.waitFor(() => {
+        expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Work");
+        expect(
+          document.querySelector('[data-provider-account-warning="work-personal"]'),
+        ).toBeNull();
+      });
+    } finally {
+      confirmSpy.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
   it("blocks a first launch when the draft's explicit provider instance is stale", async () => {
     const staleInstanceId = ProviderInstanceId.make("codex-stale");
     const defaultInstanceId = ProviderInstanceId.make("codex");
@@ -3221,12 +3325,20 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const personalInstanceId = ProviderInstanceId.make("codex-personal");
     const workInstanceId = ProviderInstanceId.make("codex-work");
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-pinned-personal-warning-test" as MessageId,
+      targetText: "pinned personal warning test",
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-pinned-personal-warning-test" as MessageId,
-        targetText: "pinned personal warning test",
-      }),
+      snapshot: {
+        ...baseSnapshot,
+        projects: baseSnapshot.projects.map((project) =>
+          Object.assign({}, project, {
+            defaultModelSelection: createModelSelection(workInstanceId, "gpt-work"),
+          }),
+        ),
+      },
       configureFixture: (nextFixture) => {
         const buildProvider = (
           instanceId: ProviderInstanceId,
@@ -3361,6 +3473,49 @@ describe("ChatView timeline estimator parity (full app)", () => {
       ).not.toBeNull();
       expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Personal");
       expect(confirmSpy).toHaveBeenCalledTimes(1);
+
+      fixture.serverConfig = {
+        ...fixture.serverConfig,
+        providers: fixture.serverConfig.providers.map((provider) =>
+          provider.instanceId === personalInstanceId
+            ? Object.assign({}, provider, { enabled: false })
+            : provider,
+        ),
+      };
+      rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
+        version: 1,
+        type: "snapshot",
+        config: encodeServerConfig(fixture.serverConfig),
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          getServerConfig()?.providers.find(
+            (provider) => provider.instanceId === personalInstanceId,
+          )?.enabled,
+        ).toBe(false);
+        expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Personal");
+      });
+
+      const turnStartsBeforeContinue = wsRequests.filter(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          request.type === "thread.turn.start",
+      ).length;
+      useComposerDraftStore
+        .getState()
+        .setPrompt(threadRefFor(promotedThreadId), "Continue on pinned Personal");
+      (await waitForSendButton()).click();
+
+      await vi.waitFor(() => {
+        const turnStarts = wsRequests.filter(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        ) as Array<{ modelSelection?: { instanceId?: string } }>;
+        expect(turnStarts).toHaveLength(turnStartsBeforeContinue + 1);
+        expect(turnStarts.at(-1)?.modelSelection?.instanceId).toBe(personalInstanceId);
+      });
     } finally {
       confirmSpy.mockRestore();
       await mounted.cleanup();
