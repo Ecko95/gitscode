@@ -8,6 +8,7 @@ import {
   type OrchestrationMessage,
   type OrchestrationEvent,
   ProviderDriverKind,
+  type ProviderInstanceId,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
@@ -616,6 +617,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
+      readonly workPersonalFallbackAcknowledgedInstanceId?: ProviderInstanceId;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -723,11 +725,21 @@ const make = Effect.gen(function* () {
       providerInstanceId: NonNullable<OrchestrationSession["workPersonalFallbackInstanceId"]>,
       driver: ProviderDriverKind,
     ) {
-      if (thread.session?.providerInstanceId === providerInstanceId) {
-        return thread.session.workPersonalFallbackInstanceId;
-      }
-      if (!project || (driver !== "codex" && driver !== "cursor")) {
+      if (driver !== "codex" && driver !== "cursor") {
         return null;
+      }
+      if (!project) {
+        return yield* new ProviderAdapterRequestError({
+          provider: driver,
+          method: "thread.turn.start",
+          detail: `Thread '${threadId}' cannot resolve its repository project before provider launch.`,
+        });
+      }
+      if (
+        thread.session?.providerInstanceId === providerInstanceId &&
+        thread.session.workPersonalFallbackInstanceId === providerInstanceId
+      ) {
+        return thread.session.workPersonalFallbackInstanceId;
       }
 
       const { repositoryProfiles } = yield* serverSettingsService.getSettings;
@@ -740,12 +752,34 @@ const make = Effect.gen(function* () {
         return null;
       }
 
+      const workInstanceId = resolveRepositoryProviderInstance({
+        repositoryProfile: "work",
+        driver,
+        profiles: repositoryProfiles,
+      });
       const personalInstanceId = resolveRepositoryProviderInstance({
         repositoryProfile: "personal",
         driver,
         profiles: repositoryProfiles,
       });
-      return providerInstanceId === personalInstanceId ? providerInstanceId : null;
+      if (providerInstanceId === personalInstanceId) {
+        if (options?.workPersonalFallbackAcknowledgedInstanceId !== providerInstanceId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: driver,
+            method: "thread.turn.start",
+            detail: `Confirm the configured Personal account '${providerInstanceId}' before starting this Work session, then retry.`,
+          });
+        }
+        return providerInstanceId;
+      }
+      if (providerInstanceId === workInstanceId) {
+        return null;
+      }
+      return yield* new ProviderAdapterRequestError({
+        provider: driver,
+        method: "thread.turn.start",
+        detail: `Requested provider instance '${providerInstanceId}' is not configured as the Work or Personal ${driver} account for this Work repository.`,
+      });
     });
 
     const startProviderSession = (input?: {
@@ -811,6 +845,10 @@ const make = Effect.gen(function* () {
         preferredProvider === "claudeAgent" &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
+      const workPersonalFallbackInstanceId = yield* resolveWorkPersonalFallbackInstanceId(
+        desiredInstanceId,
+        preferredProvider,
+      );
 
       if (
         !runtimeModeChanged &&
@@ -819,6 +857,12 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
+        if (
+          thread.session?.workPersonalFallbackInstanceId !== workPersonalFallbackInstanceId &&
+          activeSession !== undefined
+        ) {
+          yield* bindSessionToThread(activeSession, workPersonalFallbackInstanceId);
+        }
         return existingSessionThreadId;
       }
 
@@ -844,10 +888,6 @@ const make = Effect.gen(function* () {
         shouldRestartForModelSelectionChange,
         hasResumeCursor: resumeCursor !== undefined,
       });
-      const workPersonalFallbackInstanceId = yield* resolveWorkPersonalFallbackInstanceId(
-        desiredInstanceId,
-        preferredProvider,
-      );
       const restartedSession = yield* startProviderSession(
         resumeCursor !== undefined ? { resumeCursor } : undefined,
       );
@@ -973,6 +1013,7 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
+    readonly workPersonalFallbackAcknowledgedInstanceId?: ProviderInstanceId;
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
   }) {
@@ -982,11 +1023,15 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(
-      input.threadId,
-      input.createdAt,
-      input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
-    );
+    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      ...(input.workPersonalFallbackAcknowledgedInstanceId !== undefined
+        ? {
+            workPersonalFallbackAcknowledgedInstanceId:
+              input.workPersonalFallbackAcknowledgedInstanceId,
+          }
+        : {}),
+    });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
@@ -1264,6 +1309,12 @@ const make = Effect.gen(function* () {
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
+        : {}),
+      ...(event.payload.workPersonalFallbackAcknowledgedInstanceId !== undefined
+        ? {
+            workPersonalFallbackAcknowledgedInstanceId:
+              event.payload.workPersonalFallbackAcknowledgedInstanceId,
+          }
         : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,

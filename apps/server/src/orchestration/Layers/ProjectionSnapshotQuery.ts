@@ -27,6 +27,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { normalizePath } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -129,6 +130,7 @@ const ProjectionCountsRowSchema = Schema.Struct({
 });
 const WorkspaceRootLookupInput = Schema.Struct({
   workspaceRoot: Schema.String,
+  windowsPath: Schema.Number,
 });
 const ProjectIdLookupInput = Schema.Struct({
   projectId: ProjectId,
@@ -774,7 +776,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getActiveProjectRowByWorkspaceRoot = SqlSchema.findOneOption({
     Request: WorkspaceRootLookupInput,
     Result: ProjectionProjectLookupRowSchema,
-    execute: ({ workspaceRoot }) =>
+    execute: ({ workspaceRoot, windowsPath }) =>
       sql`
         SELECT
           project_id AS "projectId",
@@ -787,7 +789,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
         FROM projection_projects
-        WHERE workspace_root = ${workspaceRoot}
+        WHERE (
+            (${windowsPath} = 0 AND workspace_root = ${workspaceRoot})
+            OR (
+              ${windowsPath} = 1
+              AND RTRIM(REPLACE(workspace_root, ${"\\"}, '/'), '/') = ${workspaceRoot} COLLATE NOCASE
+            )
+          )
           AND deleted_at IS NULL
         ORDER BY created_at ASC, project_id ASC
         LIMIT 1
@@ -1994,8 +2002,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     );
 
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
-    (workspaceRoot) =>
-      getActiveProjectRowByWorkspaceRoot({ workspaceRoot }).pipe(
+    (workspaceRoot) => {
+      const normalizedWorkspaceRoot = normalizePath(workspaceRoot);
+      return getActiveProjectRowByWorkspaceRoot({
+        workspaceRoot: normalizedWorkspaceRoot,
+        windowsPath:
+          /^[a-z]:\//.test(normalizedWorkspaceRoot) || normalizedWorkspaceRoot.startsWith("//")
+            ? 1
+            : 0,
+      }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getActiveProjectByWorkspaceRoot:query",
@@ -2023,6 +2038,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
         ),
       );
+    };
 
   const getProjectShellById: ProjectionSnapshotQueryShape["getProjectShellById"] = (projectId) =>
     getActiveProjectRowById({ projectId }).pipe(

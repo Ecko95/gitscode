@@ -30,6 +30,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import { isPathWithin, normalizePath } from "@t3tools/shared/path";
 import {
   resolveRepositoryProfile,
   resolveRepositoryProviderInstance,
@@ -254,10 +255,7 @@ export function repoAllowed(policy: AutomodePolicy, repo: string): boolean {
     return false;
   }
 
-  return policy.allowedRepos.some((allowedRepo) => {
-    const normalizedAllowed = allowedRepo.endsWith("/") ? allowedRepo : `${allowedRepo}/`;
-    return repo === allowedRepo || repo.startsWith(normalizedAllowed);
-  });
+  return policy.allowedRepos.some((allowedRepo) => isPathWithin(repo, allowedRepo));
 }
 
 function modelAllowed(policy: AutomodePolicy, model: string | null): boolean {
@@ -694,7 +692,7 @@ export const AutomodeSupervisorLive = Layer.effect(
             origin: input.origin ?? "manual",
             title: input.title,
             prompt: input.prompt,
-            repo: input.repo,
+            repo: normalizePath(input.repo),
             model: input.model ?? null,
             status: "queued",
             peerId: null,

@@ -31,6 +31,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
@@ -438,6 +439,9 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
+    const runtimeWithSql = runtime as unknown as {
+      readonly runPromise: <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) => Promise<A>;
+    };
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
@@ -513,6 +517,13 @@ describe("ProviderCommandReactor", () => {
       listPeers,
       readInbox,
       runtimeSessions,
+      deleteProjectProjection: () =>
+        runtimeWithSql.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`DELETE FROM projection_projects WHERE project_id = 'project-1'`;
+          }),
+        ),
       stateDir,
       drain,
     };
@@ -589,6 +600,7 @@ describe("ProviderCommandReactor", () => {
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
           createdAt: now,
         },
         "server",
@@ -631,6 +643,7 @@ describe("ProviderCommandReactor", () => {
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
           createdAt: now,
         },
         "server",
@@ -641,6 +654,459 @@ describe("ProviderCommandReactor", () => {
       const readModel = await harness.readModel();
       return readModel.threads[0]?.session?.workPersonalFallbackInstanceId === personalInstanceId;
     });
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBe(personalInstanceId);
+  });
+
+  it("rejects an older-client first Work-to-Personal launch before provider start", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: { [ProviderDriverKind.make("codex")]: ProviderInstanceId.make("codex-work") },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-work-personal-no-ack"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-work-personal-no-ack"),
+            role: "user",
+            text: "older client omitted acknowledgement",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      if (harness.startSession.mock.calls.length > 0) return true;
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads[0]?.activities.some(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ) ?? false
+      );
+    });
+
+    expect(harness.startSession).toHaveBeenCalledTimes(0);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(0);
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId ?? null).toBeNull();
+    expect(
+      readModel.threads[0]?.activities.find(
+        (activity) => activity.kind === "provider.turn.start.failed",
+      ),
+    ).toMatchObject({
+      payload: {
+        detail: expect.stringContaining("Confirm the configured Personal account"),
+      },
+    });
+  });
+
+  it("fails closed before provider start when the thread project is unavailable", async () => {
+    const harness = await createHarness();
+    await harness.deleteProjectProjection();
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-missing-project-route"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-missing-project-route"),
+            role: "user",
+            text: "do not start without repository routing context",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      if (harness.startSession.mock.calls.length > 0) return true;
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads[0]?.activities.some(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ) ?? false
+      );
+    });
+
+    expect(harness.startSession).toHaveBeenCalledTimes(0);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(0);
+  });
+
+  it("rejects a wrong Work-to-Personal fallback acknowledgement before provider start", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const workInstanceId = ProviderInstanceId.make("codex-work");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: { [ProviderDriverKind.make("codex")]: workInstanceId },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-work-personal-wrong-ack"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-work-personal-wrong-ack"),
+            role: "user",
+            text: "wrong account acknowledgement",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: workInstanceId,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      if (harness.startSession.mock.calls.length > 0) return true;
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads[0]?.activities.some(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ) ?? false
+      );
+    });
+
+    expect(harness.startSession).toHaveBeenCalledTimes(0);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(0);
+  });
+
+  it("allows a configured Work instance without fallback acknowledgement", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const workInstanceId = ProviderInstanceId.make("codex-work");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: workInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: { [ProviderDriverKind.make("codex")]: workInstanceId },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-configured-work-no-ack"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-configured-work-no-ack"),
+            role: "user",
+            text: "use configured Work account",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBeNull();
+  });
+
+  it("allows a missing Work mapping with exact Personal fallback acknowledgement", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: {},
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-missing-work-valid-ack"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-missing-work-valid-ack"),
+            role: "user",
+            text: "use acknowledged Personal fallback",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBe(personalInstanceId);
+  });
+
+  it("rejects a Work instance that is neither configured Work nor Personal", async () => {
+    const selectedInstanceId = ProviderInstanceId.make("codex-other");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: selectedInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: {
+            [ProviderDriverKind.make("codex")]: ProviderInstanceId.make("codex-personal"),
+          },
+          work: { [ProviderDriverKind.make("codex")]: ProviderInstanceId.make("codex-work") },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-work-mismatched-instance"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-work-mismatched-instance"),
+            role: "user",
+            text: "do not launch an unrelated account",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: selectedInstanceId,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      if (harness.startSession.mock.calls.length > 0) return true;
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads[0]?.activities.some(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ) ?? false
+      );
+    });
+
+    expect(harness.startSession).toHaveBeenCalledTimes(0);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(0);
+  });
+
+  it("requires acknowledgement for an active unmarked Personal fallback and persists a valid acknowledgement", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: {},
+        },
+      },
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: personalInstanceId,
+      status: "ready",
+      runtimeMode: "approval-required",
+      cwd: "/tmp/provider-project",
+      model: "gpt-5-codex",
+      threadId: ThreadId.make("thread-1"),
+      resumeCursor: { opaque: "historical-personal-session" },
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-active-unmarked-personal-session"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "ready",
+            providerName: ProviderDriverKind.make("codex"),
+            providerInstanceId: personalInstanceId,
+            workPersonalFallbackInstanceId: null,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        },
+        "server",
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-active-unmarked-personal-no-ack"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-active-unmarked-personal-no-ack"),
+            role: "user",
+            text: "historical client omitted acknowledgement",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        "server",
+      ),
+    );
+    await waitFor(async () => {
+      if (harness.sendTurn.mock.calls.length > 0) return true;
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads[0]?.activities.some(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ) ?? false
+      );
+    });
+
+    expect(harness.startSession).toHaveBeenCalledTimes(0);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(0);
+    expect(
+      (await harness.readModel()).threads[0]?.session?.workPersonalFallbackInstanceId,
+    ).toBeNull();
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-active-unmarked-personal-valid-ack"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-active-unmarked-personal-valid-ack"),
+            role: "user",
+            text: "confirm the historical Personal session",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession).toHaveBeenCalledTimes(0);
+    expect((await harness.readModel()).threads[0]?.session?.workPersonalFallbackInstanceId).toBe(
+      personalInstanceId,
+    );
+  });
+
+  it("reuses a durable fallback marker without repeated acknowledgement", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: {},
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-durable-fallback-first"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-durable-fallback-first"),
+            role: "user",
+            text: "first acknowledged turn",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-durable-fallback-second"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-durable-fallback-second"),
+            role: "user",
+            text: "continue without repeated acknowledgement",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
     const readModel = await harness.readModel();
     expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBe(personalInstanceId);
   });
@@ -713,6 +1179,7 @@ describe("ProviderCommandReactor", () => {
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
+          workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
           createdAt: now,
         },
         "server",

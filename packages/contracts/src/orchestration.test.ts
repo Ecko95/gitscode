@@ -219,6 +219,29 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.modelSelection, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+    assert.strictEqual(parsed.workPersonalFallbackAcknowledgedInstanceId, undefined);
+  }),
+);
+
+it.effect("preserves a Work-to-Personal fallback acknowledgement in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-fallback-ack",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-fallback-ack",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      workPersonalFallbackAcknowledgedInstanceId: "codex-personal",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(
+      parsed.workPersonalFallbackAcknowledgedInstanceId,
+      ProviderInstanceId.make("codex-personal"),
+    );
   }),
 );
 
@@ -549,6 +572,24 @@ it.effect(
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
+      assert.strictEqual(parsed.workPersonalFallbackAcknowledgedInstanceId, undefined);
+    }),
+);
+
+it.effect(
+  "preserves a Work-to-Personal fallback acknowledgement in thread.turn-start-requested",
+  () =>
+    Effect.gen(function* () {
+      const parsed = yield* decodeThreadTurnStartRequestedPayload({
+        threadId: "thread-1",
+        messageId: "msg-fallback-ack",
+        workPersonalFallbackAcknowledgedInstanceId: "codex-personal",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      assert.strictEqual(
+        parsed.workPersonalFallbackAcknowledgedInstanceId,
+        ProviderInstanceId.make("codex-personal"),
+      );
     }),
 );
 

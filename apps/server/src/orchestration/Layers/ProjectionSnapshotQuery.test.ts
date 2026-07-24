@@ -641,11 +641,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
   );
 
   it.effect(
-    "reads targeted project, thread, and count queries without hydrating the full snapshot",
+    "reads targeted canonical-equivalent project, thread, and count queries without hydrating the full snapshot",
     () =>
       Effect.gen(function* () {
         const snapshotQuery = yield* ProjectionSnapshotQuery;
         const sql = yield* SqlClient.SqlClient;
+        // WorkspacePaths normalizes persisted roots on project create/update;
+        // Windows storage may still use native slashes and case.
+        const persistedWorkspaceRoot = "C:\\Work\\Repo";
 
         yield* sql`DELETE FROM projection_projects`;
         yield* sql`DELETE FROM projection_threads`;
@@ -666,7 +669,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (
             'project-active',
             'Active Project',
-            '/tmp/workspace',
+            ${persistedWorkspaceRoot},
             '{"provider":"codex","model":"gpt-5-codex"}',
             '[]',
             '2026-03-01T00:00:00.000Z',
@@ -755,7 +758,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           threadCount: 3,
         });
 
-        const project = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/workspace");
+        const project =
+          yield* snapshotQuery.getActiveProjectByWorkspaceRoot("c:/work/parent/../repo/");
         assert.equal(project._tag, "Some");
         if (project._tag === "Some") {
           assert.equal(project.value.id, asProjectId("project-active"));

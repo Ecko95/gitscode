@@ -22,6 +22,7 @@ import {
   ProviderInstanceId,
   ServerSettingsError,
 } from "@t3tools/contracts";
+import { normalizePath } from "@t3tools/shared/path";
 
 import { ServerConfig } from "../../config.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
@@ -148,7 +149,8 @@ function makeLayer(options?: {
       Layer.mock(ProjectionSnapshotQuery)({
         getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
           Effect.succeed(
-            options?.activeProject?.workspaceRoot === workspaceRoot
+            options?.activeProject &&
+              normalizePath(options.activeProject.workspaceRoot) === normalizePath(workspaceRoot)
               ? Option.some(options.activeProject)
               : Option.none(),
           ),
@@ -440,38 +442,40 @@ describe("AutomodeSupervisorLive", () => {
     );
   });
 
-  it.effect("routes a Work-root project through its explicit Personal override", () => {
+  it.effect("routes an equivalent Windows Work-root spelling through its Personal override", () => {
     let spawnInput: DelamainSpawnPeerInput | null = null;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       yield* supervisor.updatePolicy({
         mode: "autonomous",
         killSwitchEnabled: false,
-        allowedRepos: ["/tmp/work/repo"],
+        allowedRepos: ["C:\\WORK\\repo\\"],
         maxBudgetUsd: 10,
         maxRuntimeMinutes: null,
         requireApprovalForPeerSpawn: false,
       });
       const queued = yield* supervisor.enqueueGoal({
         title: "Personal override",
-        repo: "/tmp/work/repo",
+        repo: "c:/work/parent/../repo/",
         prompt: "Run a safe task.",
       });
 
       const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
 
+      assert.equal(queued.goals[0]?.repo, "c:/work/repo");
       assert.equal(result.peer?.id, peer.id);
+      assert.equal(spawnInput?.repo, "c:/work/repo");
       assert.equal(spawnInput?.providerInstanceId, "codex_personal");
     }).pipe(
       Effect.provide(
         makeLayer({
           budgetUsage: availableBudgetUsage,
           activeProject: activeProject({
-            workspaceRoot: "/tmp/work/repo",
+            workspaceRoot: "C:\\Work\\repo\\.\\",
             repositoryProfileOverride: "personal",
           }),
           repositoryProfiles: {
-            workRoots: ["/tmp/work"],
+            workRoots: ["C:\\Work"],
             providerInstances: {
               personal: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
               work: { [codexDriver]: ProviderInstanceId.make("codex_work") },
@@ -486,7 +490,7 @@ describe("AutomodeSupervisorLive", () => {
     );
   });
 
-  it.effect("routes a Personal-root project through its explicit Work override", () => {
+  it.effect("routes an equivalent POSIX Personal-root spelling through its Work override", () => {
     let spawnInput: DelamainSpawnPeerInput | null = null;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
@@ -500,20 +504,22 @@ describe("AutomodeSupervisorLive", () => {
       });
       const queued = yield* supervisor.enqueueGoal({
         title: "Work override",
-        repo: "/tmp/personal/repo",
+        repo: "/tmp/personal/parent/../repo/",
         prompt: "Run a safe task.",
       });
 
       const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
 
+      assert.equal(queued.goals[0]?.repo, "/tmp/personal/repo");
       assert.equal(result.peer?.id, peer.id);
+      assert.equal(spawnInput?.repo, "/tmp/personal/repo");
       assert.equal(spawnInput?.providerInstanceId, "codex_work");
     }).pipe(
       Effect.provide(
         makeLayer({
           budgetUsage: availableBudgetUsage,
           activeProject: activeProject({
-            workspaceRoot: "/tmp/personal/repo",
+            workspaceRoot: "/tmp/personal/repo/./",
             repositoryProfileOverride: "work",
           }),
           repositoryProfiles: {

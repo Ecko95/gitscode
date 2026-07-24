@@ -142,7 +142,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
-  it.effect("emits user message and turn-start-requested events for thread.turn.start", () =>
+  it.effect("copies fallback acknowledgement into the turn-start-requested event", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
       const initial = createEmptyReadModel(now);
@@ -211,6 +211,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
             { id: "reasoningEffort", value: "high" },
             { id: "fastMode", value: true },
           ]),
+          workPersonalFallbackAcknowledgedInstanceId: ProviderInstanceId.make("codex-personal"),
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
           createdAt: now,
@@ -236,6 +237,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           { id: "fastMode", value: true },
         ]),
         runtimeMode: "approval-required",
+        workPersonalFallbackAcknowledgedInstanceId: ProviderInstanceId.make("codex-personal"),
       });
     }),
   );

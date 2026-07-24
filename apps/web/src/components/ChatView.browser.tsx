@@ -3147,7 +3147,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("clears a confirmed Personal warning after a failed launch switches to Work", async () => {
+  it("reuses a confirmed Personal acknowledgement after provider launch fails", async () => {
     const personalInstanceId = ProviderInstanceId.make("codex-personal");
     const workInstanceId = ProviderInstanceId.make("codex-work");
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -3195,9 +3195,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       },
       resolveRpc: (body) => {
         if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
-          if (body.type === "thread.turn.start") {
-            throw new Error("Forced launch failure after account confirmation");
-          }
           return { sequence: fixture.snapshot.snapshotSequence + 1 };
         }
         return undefined;
@@ -3214,6 +3211,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Route should change to a new Work draft.",
       );
       const draftId = draftIdFromPath(draftPath);
+      const promotedThreadId = draftThreadIdFor(draftId);
 
       useComposerDraftStore
         .getState()
@@ -3232,19 +3230,63 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(() => {
         expect(confirmSpy).toHaveBeenCalledTimes(1);
-        expect(document.body.textContent).toContain("Failed to send message.");
+        expect(
+          wsRequests.filter(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ),
+        ).toHaveLength(1);
       });
+      expect(
+        useInteractiveSessionAccountState.getState().workPersonalConfirmedByThreadKey[
+          threadKeyFor(promotedThreadId)
+        ],
+      ).toBe(personalInstanceId);
+
+      fixture.snapshot = addThreadToSnapshot(fixture.snapshot, promotedThreadId);
+      fixture.snapshot = {
+        ...fixture.snapshot,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === promotedThreadId
+            ? {
+                ...thread,
+                modelSelection: createModelSelection(personalInstanceId, "gpt-personal"),
+                messages: [
+                  createUserMessage({
+                    id: "message-failed-personal-launch" as MessageId,
+                    text: "Fail after confirming Personal",
+                    offsetSeconds: 1,
+                  }),
+                ],
+                session: null,
+              }
+            : thread,
+        ),
+      };
+      sendShellThreadUpsert(promotedThreadId, { session: null });
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(promotedThreadId),
+        "Failed provider launch should retain the promoted server thread.",
+      );
 
       useComposerDraftStore
         .getState()
-        .setModelSelection(draftId, createModelSelection(workInstanceId, "gpt-work"));
-
+        .setPrompt(threadRefFor(promotedThreadId), "Retry confirmed Personal launch");
+      (await waitForSendButton()).click();
       await vi.waitFor(() => {
-        expect(findComposerProviderModelPicker()?.textContent).toContain("Codex Work");
-        expect(
-          document.querySelector('[data-provider-account-warning="work-personal"]'),
-        ).toBeNull();
+        const turnStarts = wsRequests.filter(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        );
+        expect(turnStarts).toHaveLength(2);
+        expect(turnStarts.at(-1)).toMatchObject({
+          workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
+        });
       });
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
     } finally {
       confirmSpy.mockRestore();
       await mounted.cleanup();
@@ -3327,7 +3369,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("keeps the Work-to-Personal warning and model when mappings and provider disappear", async () => {
+  it("acknowledges Work-to-Personal usage and keeps the warning and model when mappings disappear", async () => {
     const personalInstanceId = ProviderInstanceId.make("codex-personal");
     const workInstanceId = ProviderInstanceId.make("codex-work");
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -3421,6 +3463,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
               request.type === "thread.turn.start",
           ),
         ).toBe(true);
+      });
+      expect(
+        wsRequests.find(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        ),
+      ).toMatchObject({
+        workPersonalFallbackAcknowledgedInstanceId: personalInstanceId,
       });
 
       fixture.snapshot = addThreadToSnapshot(fixture.snapshot, promotedThreadId);

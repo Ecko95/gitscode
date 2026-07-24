@@ -35,7 +35,10 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { resolveRepositoryProfile } from "@t3tools/shared/repositoryProfiles";
+import {
+  resolveRepositoryProfile,
+  resolveRepositoryProviderInstance,
+} from "@t3tools/shared/repositoryProfiles";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -3860,11 +3863,25 @@ export default function ChatView(props: ChatViewProps) {
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const confirmationKey = activeThreadKey ?? routeThreadKey;
-    if (
-      isFirstMessage &&
-      accountRoute.requiresWorkPersonalConfirmation &&
-      workPersonalConfirmedByThreadKey[confirmationKey] !== ctxSelectedModelSelection.instanceId
-    ) {
+    const configuredPersonalInstanceId = resolveRepositoryProviderInstance({
+      repositoryProfile: "personal",
+      driver: ctxSelectedProvider,
+      profiles: repositoryProfiles,
+    });
+    const hasConfirmedSelectedInstance =
+      workPersonalConfirmedByThreadKey[confirmationKey] === ctxSelectedModelSelection.instanceId;
+    const requiresWorkPersonalAcknowledgement =
+      activeThread.session?.workPersonalFallbackInstanceId !==
+        ctxSelectedModelSelection.instanceId &&
+      (hasConfirmedSelectedInstance ||
+        (activeRepositoryProfile === "work" &&
+          (ctxSelectedProvider === "codex" || ctxSelectedProvider === "cursor") &&
+          configuredPersonalInstanceId === ctxSelectedModelSelection.instanceId));
+    let workPersonalFallbackAcknowledgedInstanceId =
+      requiresWorkPersonalAcknowledgement && hasConfirmedSelectedInstance
+        ? ctxSelectedModelSelection.instanceId
+        : null;
+    if (requiresWorkPersonalAcknowledgement && !hasConfirmedSelectedInstance) {
       const localApi = readLocalApi();
       if (!localApi) {
         setThreadError(
@@ -3884,6 +3901,7 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       confirmWorkPersonalUsage(confirmationKey, ctxSelectedModelSelection.instanceId);
+      workPersonalFallbackAcknowledgedInstanceId = ctxSelectedModelSelection.instanceId;
     }
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
@@ -4063,6 +4081,9 @@ export default function ChatView(props: ChatViewProps) {
         titleSeed: title,
         runtimeMode,
         interactionMode,
+        ...(workPersonalFallbackAcknowledgedInstanceId
+          ? { workPersonalFallbackAcknowledgedInstanceId }
+          : {}),
         ...(bootstrap ? { bootstrap } : {}),
         createdAt: messageCreatedAt,
       });

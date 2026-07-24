@@ -118,7 +118,7 @@ export interface ProjectionSnapshotQueryShape {
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
 
   /**
-   * Read the active project for an exact workspace root match.
+   * Read the active project for a canonical-equivalent workspace root match.
    */
   readonly getActiveProjectByWorkspaceRoot: (
     workspaceRoot: string,
