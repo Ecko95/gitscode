@@ -27,6 +27,7 @@ const BASE_SNAPSHOT: OrchestrationShellSnapshot = {
       title: "Project",
       workspaceRoot: "/repo",
       repositoryIdentity: null,
+      repositoryProfileOverride: null,
       defaultModelSelection: null,
       scripts: [],
       createdAt: "2026-04-01T00:00:00.000Z",

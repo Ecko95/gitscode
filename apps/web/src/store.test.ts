@@ -613,6 +613,7 @@ describe("incremental orchestration updates", () => {
         projectId: recreatedProjectId,
         title: "Project Recreated",
         workspaceRoot: "/tmp/project",
+        repositoryProfileOverride: "work",
         defaultModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: DEFAULT_MODEL,
@@ -628,6 +629,10 @@ describe("incremental orchestration updates", () => {
     expect(projectsOf(next)[0]?.id).toBe(recreatedProjectId);
     expect(projectsOf(next)[0]?.cwd).toBe("/tmp/project");
     expect(projectsOf(next)[0]?.name).toBe("Project Recreated");
+    expect(
+      (projectsOf(next)[0] as { repositoryProfileOverride?: "personal" | "work" | null })
+        ?.repositoryProfileOverride,
+    ).toBe("work");
     expect(localEnvironmentStateOf(next).projectIds).toEqual([recreatedProjectId]);
     expect(localEnvironmentStateOf(next).projectById[originalProjectId]).toBeUndefined();
     expect(localEnvironmentStateOf(next).projectById[recreatedProjectId]?.id).toBe(

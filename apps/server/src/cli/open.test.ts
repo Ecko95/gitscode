@@ -20,6 +20,7 @@ const snapshotWithProject = (workspaceRoot: string): OrchestrationReadModel => (
       id: ProjectId.make("11111111-1111-4111-8111-111111111111"),
       title: "existing",
       workspaceRoot,
+      repositoryProfileOverride: null,
       defaultModelSelection: null,
       scripts: [],
       createdAt: "2024-01-01T00:00:00.000Z",

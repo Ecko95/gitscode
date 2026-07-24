@@ -22,6 +22,7 @@ import {
   WorktreePath,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import type { RepositoryProfile } from "./settings.ts";
 import {
   PlanBlockId,
   PlanComment,
@@ -31,6 +32,12 @@ import {
   PlanContent,
   PlanContentPatch,
 } from "./visualPlan.ts";
+
+// Runtime-importing settings here would create settings -> orchestration -> settings.
+const RepositoryProfileOverride = Schema.Literals([
+  "personal",
+  "work",
+]) satisfies Schema.Schema<RepositoryProfile>;
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -213,6 +220,9 @@ export const OrchestrationProject = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  repositoryProfileOverride: Schema.NullOr(RepositoryProfileOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
@@ -399,6 +409,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  repositoryProfileOverride: Schema.NullOr(RepositoryProfileOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
@@ -508,6 +521,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  repositoryProfileOverride: Schema.optional(Schema.NullOr(RepositoryProfileOverride)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
@@ -1027,6 +1041,9 @@ export const ProjectCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  repositoryProfileOverride: Schema.NullOr(RepositoryProfileOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
@@ -1038,6 +1055,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  repositoryProfileOverride: Schema.optional(Schema.NullOr(RepositoryProfileOverride)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,

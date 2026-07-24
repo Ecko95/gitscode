@@ -376,6 +376,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             id: projectId,
             title: "Fork Decider Project",
             workspaceRoot: "/tmp/project-fork-decider",
+            repositoryProfileOverride: null,
             defaultModelSelection: {
               instanceId: ProviderInstanceId.make("claudeAgent"),
               model: "claude-sonnet-4-6",
@@ -3231,6 +3232,63 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           defaultModelSelection: '{"instanceId":"codex","model":"gpt-5"}',
         },
       ]);
+    }),
+  );
+
+  it.effect("projects persist repository profile overrides across unrelated metadata updates", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project-profile-override");
+
+      yield* engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-profile-create"),
+          projectId,
+          title: "Profile Project",
+          workspaceRoot: "/tmp/project-profile",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      );
+
+      const update = (commandId: string, repositoryProfileOverride: "personal" | "work" | null) =>
+        engine.dispatch(
+          {
+            type: "project.meta.update",
+            commandId: CommandId.make(commandId),
+            projectId,
+            repositoryProfileOverride,
+          },
+          "server",
+        );
+      const readOverride = Effect.gen(function* () {
+        const rows = yield* sql<{ readonly repositoryProfileOverride: string | null }>`
+          SELECT repository_profile_override AS "repositoryProfileOverride"
+          FROM projection_projects
+          WHERE project_id = ${projectId}
+        `;
+        return rows[0]?.repositoryProfileOverride;
+      });
+
+      yield* update("cmd-profile-personal", "personal");
+      yield* engine.dispatch(
+        {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-profile-rename"),
+          projectId,
+          title: "Renamed Profile Project",
+        },
+        "server",
+      );
+      assert.equal(yield* readOverride, "personal");
+
+      yield* update("cmd-profile-work", "work");
+      assert.equal(yield* readOverride, "work");
+
+      yield* update("cmd-profile-clear", null);
+      assert.equal(yield* readOverride, null);
     }),
   );
 });

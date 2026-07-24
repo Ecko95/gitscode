@@ -39,6 +39,100 @@ function makeEvent(input: {
 }
 
 describe("orchestration projector", () => {
+  it("projects and preserves repository profile overrides", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "project.created",
+          aggregateKind: "project",
+          aggregateId: "project-profile",
+          occurredAt: now,
+          commandId: "cmd-project-create",
+          payload: {
+            projectId: "project-profile",
+            title: "Profile",
+            workspaceRoot: "/tmp/profile",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    expect(created.projects[0]?.repositoryProfileOverride).toBeNull();
+
+    let model = created;
+    for (const [sequence, repositoryProfileOverride] of [
+      [2, "personal"],
+      [3, "work"],
+    ] as const) {
+      model = await Effect.runPromise(
+        projectEvent(
+          model,
+          makeEvent({
+            sequence,
+            type: "project.meta-updated",
+            aggregateKind: "project",
+            aggregateId: "project-profile",
+            occurredAt: now,
+            commandId: `cmd-project-profile-${sequence}`,
+            payload: {
+              projectId: "project-profile",
+              repositoryProfileOverride,
+              updatedAt: now,
+            },
+          }),
+        ),
+      );
+      expect(model.projects[0]?.repositoryProfileOverride).toBe(repositoryProfileOverride);
+    }
+
+    const unrelatedUpdate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 4,
+          type: "project.meta-updated",
+          aggregateKind: "project",
+          aggregateId: "project-profile",
+          occurredAt: now,
+          commandId: "cmd-project-title",
+          payload: {
+            projectId: "project-profile",
+            title: "Renamed",
+            repositoryIdentity: null,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    expect(unrelatedUpdate.projects[0]?.repositoryProfileOverride).toBe("work");
+
+    const cleared = await Effect.runPromise(
+      projectEvent(
+        unrelatedUpdate,
+        makeEvent({
+          sequence: 5,
+          type: "project.meta-updated",
+          aggregateKind: "project",
+          aggregateId: "project-profile",
+          occurredAt: now,
+          commandId: "cmd-project-profile-clear",
+          payload: {
+            projectId: "project-profile",
+            repositoryProfileOverride: null,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    expect(cleared.projects[0]?.repositoryProfileOverride).toBeNull();
+  });
+
   it("applies thread.created events", async () => {
     const now = "2026-01-01T00:00:00.000Z";
     const model = createEmptyReadModel(now);

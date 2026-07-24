@@ -38,6 +38,7 @@ const seedReadModel = Effect.gen(function* () {
       projectId: asProjectId("project-delete"),
       title: "Project Delete",
       workspaceRoot: "/tmp/project-delete",
+      repositoryProfileOverride: null,
       defaultModelSelection: null,
       scripts: [],
       createdAt: now,

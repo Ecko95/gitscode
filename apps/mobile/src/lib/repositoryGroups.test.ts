@@ -20,6 +20,7 @@ function makeProject(
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
     ...input,
+    repositoryProfileOverride: input.repositoryProfileOverride ?? null,
   };
 }
 

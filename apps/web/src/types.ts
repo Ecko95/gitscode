@@ -5,6 +5,7 @@ import type {
   OrchestrationVisualPlan,
   OrchestrationProposedPlanId,
   RepositoryIdentity,
+  RepositoryProfile,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
@@ -89,6 +90,7 @@ export interface Project {
   name: string;
   cwd: string;
   repositoryIdentity?: RepositoryIdentity | null;
+  repositoryProfileOverride?: RepositoryProfile | null;
   defaultModelSelection: ModelSelection | null;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;

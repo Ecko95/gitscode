@@ -61,6 +61,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-scripts"),
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
+          repositoryProfileOverride: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -94,6 +95,53 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("propagates repository profile override set, change, and clear", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const readModel = yield* projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-profile-create"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-profile"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-profile-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-profile-create"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-profile"),
+          title: "Profile",
+          workspaceRoot: "/tmp/profile",
+          repositoryProfileOverride: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      for (const repositoryProfileOverride of ["personal", "work", null] as const) {
+        const result = yield* decideOrchestrationCommand({
+          command: {
+            type: "project.meta.update",
+            commandId: CommandId.make(`cmd-project-profile-${repositoryProfileOverride}`),
+            projectId: asProjectId("project-profile"),
+            repositoryProfileOverride,
+          },
+          readModel,
+        });
+        const event = Array.isArray(result) ? result[0] : result;
+
+        expect(event.type).toBe("project.meta-updated");
+        expect(
+          (event.payload as { repositoryProfileOverride?: "personal" | "work" | null })
+            .repositoryProfileOverride,
+        ).toBe(repositoryProfileOverride);
+      }
+    }),
+  );
+
   it.effect("emits user message and turn-start-requested events for thread.turn.start", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
@@ -113,6 +161,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          repositoryProfileOverride: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -210,6 +259,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-deleted-turn"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          repositoryProfileOverride: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -305,6 +355,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          repositoryProfileOverride: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -383,6 +434,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          repositoryProfileOverride: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,

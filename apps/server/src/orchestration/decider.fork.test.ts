@@ -84,6 +84,7 @@ function readModel(sourceThread: OrchestrationThread): OrchestrationReadModel {
         id: PROJECT_ID,
         title: "Project",
         workspaceRoot: "/tmp/project-fork",
+        repositoryProfileOverride: null,
         defaultModelSelection: sourceThread.modelSelection,
         scripts: [],
         createdAt: NOW,

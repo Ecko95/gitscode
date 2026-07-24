@@ -167,7 +167,7 @@ layer("AllMigrations.fixture", (it) => {
       const episodeColNames = new Set(episodeCols.map((c) => c.name));
       assert.ok(episodeColNames.has("episode_id"), "automode_episodes.episode_id missing");
 
-      // projection_projects: default_model_selection_json (added by 016)
+      // projection_projects: default_model_selection_json (016), repository profile override (037)
       const projCols = yield* sql<{
         readonly name: string;
       }>`PRAGMA table_info(projection_projects)`;
@@ -175,6 +175,10 @@ layer("AllMigrations.fixture", (it) => {
       assert.ok(
         projColNames.has("default_model_selection_json"),
         "projection_projects.default_model_selection_json missing",
+      );
+      assert.ok(
+        projColNames.has("repository_profile_override"),
+        "projection_projects.repository_profile_override missing",
       );
 
       // auth_sessions: client_label, client_device_type (added by 021), last_connected_at (022)
@@ -200,8 +204,11 @@ layer("AllMigrations.fixture", (it) => {
       const projects = yield* sql<{
         readonly projectId: string;
         readonly defaultModelSelection: string | null;
+        readonly repositoryProfileOverride: string | null;
       }>`
-				SELECT project_id AS "projectId", default_model_selection_json AS "defaultModelSelection"
+				SELECT project_id AS "projectId",
+          default_model_selection_json AS "defaultModelSelection",
+          repository_profile_override AS "repositoryProfileOverride"
 				FROM projection_projects
 				ORDER BY project_id
 			`;
@@ -211,6 +218,7 @@ layer("AllMigrations.fixture", (it) => {
 
       const projA = projects.find((p) => p.projectId === "proj-a")!;
       assert.ok(projA, "proj-a missing");
+      assert.strictEqual(projA.repositoryProfileOverride, null);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.deepStrictEqual(JSON.parse(projA.defaultModelSelection!), {
         provider: "claudeAgent",
