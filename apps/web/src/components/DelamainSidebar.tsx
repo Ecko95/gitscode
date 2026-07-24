@@ -1,12 +1,10 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import {
-  ProviderDriverKind,
   type EnvironmentId,
   type ProviderInstanceId,
   type RepositoryProfile,
   type RepositoryProfilesSettings,
 } from "@t3tools/contracts";
-import { resolveRepositoryProviderInstance } from "@t3tools/shared/repositoryProfiles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -55,6 +53,13 @@ import {
 import { readGitsEnvironmentClient } from "~/gitsClient";
 import { readLocalApi } from "~/localApi";
 import type { ProviderInstanceEntry } from "~/providerInstances";
+import {
+  manualDelamainEnginesForMode,
+  manualDelamainPersonalWorkConfirmationMessage,
+  resolveManualDelamainLaunchRoute,
+  startManualDelamainLaunch,
+  type ManualDelamainEngine,
+} from "./manualDelamainLaunch";
 import type { DelamainPeer, ParsedLogEvent } from "@t3tools/contracts";
 import { Input } from "./ui/input";
 
@@ -396,73 +401,6 @@ function IntegrateDialog({
 // ponytail: plain default path. A workflow-script registry (list + pick) is the upgrade
 // path when there is more than one script worth launching from the UI.
 const DEFAULT_WORKFLOW_SCRIPT = "/srv/gits/repos/delamain/workflows/automode-goal.ts";
-// spawnPeer's contract engine values are codex/cursor/unknown — only the two real engines
-// are operator-selectable here. ("pi" is not in the contract's DelamainEngine literals.)
-const SPAWN_ENGINES = ["codex", "cursor"] as const;
-
-export interface ManualDelamainLaunchRoute {
-  readonly providerInstanceId: ProviderInstanceId | null;
-  readonly requiresWorkPersonalConfirmation: boolean;
-  readonly error: string | null;
-}
-
-export function resolveManualDelamainLaunchRoute(input: {
-  readonly repositoryProfile: RepositoryProfile;
-  readonly engine: (typeof SPAWN_ENGINES)[number];
-  readonly profiles: RepositoryProfilesSettings;
-  readonly instanceEntries: ReadonlyArray<
-    Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "enabled" | "isAvailable">
-  >;
-}): ManualDelamainLaunchRoute {
-  const driver = ProviderDriverKind.make(input.engine);
-  const providerInstanceId = resolveRepositoryProviderInstance({
-    repositoryProfile: input.repositoryProfile,
-    driver,
-    profiles: input.profiles,
-  });
-  if (providerInstanceId === null) {
-    return {
-      providerInstanceId: null,
-      requiresWorkPersonalConfirmation: false,
-      error: `No ${input.engine} account is mapped for this ${input.repositoryProfile} repository.`,
-    };
-  }
-  const instance = input.instanceEntries.find((entry) => entry.instanceId === providerInstanceId);
-  if (!instance || !instance.enabled || !instance.isAvailable || instance.driverKind !== driver) {
-    return {
-      providerInstanceId: null,
-      requiresWorkPersonalConfirmation: false,
-      error: `Mapped ${input.engine} account '${providerInstanceId}' is unavailable.`,
-    };
-  }
-  const personalInstanceId = resolveRepositoryProviderInstance({
-    repositoryProfile: "personal",
-    driver,
-    profiles: input.profiles,
-  });
-  return {
-    providerInstanceId,
-    requiresWorkPersonalConfirmation:
-      input.repositoryProfile === "work" && personalInstanceId === providerInstanceId,
-    error: null,
-  };
-}
-
-export async function executeManualDelamainLaunch(input: {
-  readonly route: ManualDelamainLaunchRoute;
-  readonly confirm: () => Promise<boolean>;
-  readonly launch: (providerInstanceId: ProviderInstanceId) => Promise<void>;
-}): Promise<boolean> {
-  if (input.route.error || input.route.providerInstanceId === null) {
-    throw new Error(input.route.error ?? "No provider account is selected for this launch.");
-  }
-  if (input.route.requiresWorkPersonalConfirmation && !(await input.confirm())) {
-    return false;
-  }
-  await input.launch(input.route.providerInstanceId);
-  return true;
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error.";
 }
@@ -490,21 +428,24 @@ function LaunchDialog({
   // Spawn-peer form.
   const [prompt, set_prompt] = useState("");
   const [spawn_name, set_spawn_name] = useState("");
-  const [engine, set_engine] = useState<(typeof SPAWN_ENGINES)[number]>("codex");
+  const [engine, set_engine] = useState<ManualDelamainEngine>("codex");
 
   // Run-workflow form.
   const [script, set_script] = useState(DEFAULT_WORKFLOW_SCRIPT);
   const [wf_name, set_wf_name] = useState("");
   const [args_json, set_args_json] = useState("");
+  const [launch_error, set_launch_error] = useState<unknown>(null);
+  const selectable_engines = manualDelamainEnginesForMode(mode);
+  const launch_engine = mode === "workflow" ? "codex" : engine;
   const launch_route = useMemo(
     () =>
       resolveManualDelamainLaunchRoute({
         repositoryProfile,
-        engine,
+        engine: launch_engine,
         profiles: repositoryProfiles,
         instanceEntries: providerInstanceEntries,
       }),
-    [engine, providerInstanceEntries, repositoryProfile, repositoryProfiles],
+    [launch_engine, providerInstanceEntries, repositoryProfile, repositoryProfiles],
   );
   const selected_instance_label =
     providerInstanceEntries.find((entry) => entry.instanceId === launch_route.providerInstanceId)
@@ -529,7 +470,7 @@ function LaunchDialog({
       return client.delamain.spawnPeer({
         repo,
         prompt: prompt.trim(),
-        engine,
+        engine: launch_engine,
         providerInstanceId,
         ...(spawn_name.trim() ? { name: spawn_name.trim() } : {}),
       });
@@ -549,7 +490,7 @@ function LaunchDialog({
       return client.delamain.workflow.run({
         script: script.trim(),
         repo,
-        engine,
+        engine: "codex",
         providerInstanceId,
         ...(wf_name.trim() ? { name: wf_name.trim() } : {}),
         ...(trimmedArgs ? { argsJson: trimmedArgs } : {}),
@@ -563,26 +504,26 @@ function LaunchDialog({
     const localApi = readLocalApi();
     if (!localApi) return false;
     return localApi.dialogs.confirm(
-      [
-        `${selected_instance_label ?? engine} is the Personal account for this Work repository.`,
-        "Starting this worker will spend Personal usage.",
-        "Continue for this launch only?",
-      ].join("\n"),
+      manualDelamainPersonalWorkConfirmationMessage(selected_instance_label ?? launch_engine),
     );
-  }, [engine, selected_instance_label]);
+  }, [launch_engine, selected_instance_label]);
 
   const launch = useCallback(() => {
-    void executeManualDelamainLaunch({
-      route: launch_route,
-      confirm: confirm_personal_work_usage,
-      launch: async (providerInstanceId) => {
-        if (mode === "spawn") {
-          await spawn_mutation.mutateAsync(providerInstanceId);
-        } else {
-          await workflow_mutation.mutateAsync(providerInstanceId);
-        }
+    set_launch_error(null);
+    startManualDelamainLaunch(
+      {
+        route: launch_route,
+        confirm: confirm_personal_work_usage,
+        launch: async (providerInstanceId) => {
+          if (mode === "spawn") {
+            await spawn_mutation.mutateAsync(providerInstanceId);
+          } else {
+            await workflow_mutation.mutateAsync(providerInstanceId);
+          }
+        },
       },
-    });
+      set_launch_error,
+    );
   }, [confirm_personal_work_usage, launch_route, mode, spawn_mutation, workflow_mutation]);
 
   const reset_and_close = useCallback(
@@ -590,6 +531,7 @@ function LaunchDialog({
       if (!next && !pending) {
         spawn_mutation.reset();
         workflow_mutation.reset();
+        set_launch_error(null);
         onOpenChange(false);
       } else if (next) {
         onOpenChange(true);
@@ -641,23 +583,32 @@ function LaunchDialog({
 
           <div className="grid gap-1">
             <label className="text-[11px] font-medium text-muted-foreground/70">Engine</label>
-            <div className="flex gap-1.5">
-              {SPAWN_ENGINES.map((eng) => (
-                <Button
-                  key={eng}
-                  size="sm"
-                  variant={engine === eng ? "default" : "outline"}
-                  onClick={() => set_engine(eng)}
-                  type="button"
-                  disabled={pending}
-                >
-                  {eng}
-                </Button>
-              ))}
-            </div>
+            {mode === "spawn" ? (
+              <div className="flex gap-1.5">
+                {selectable_engines.map((eng) => (
+                  <Button
+                    key={eng}
+                    size="sm"
+                    variant={engine === eng ? "default" : "outline"}
+                    onClick={() => set_engine(eng)}
+                    type="button"
+                    disabled={pending}
+                  >
+                    {eng}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md border border-border/50 bg-muted/40 px-2 py-1.5 font-mono text-[11px] text-muted-foreground/70">
+                {selectable_engines[0]}
+              </div>
+            )}
           </div>
           {launch_route.error ? (
             <p className="text-[11px] text-destructive/70">{launch_route.error}</p>
+          ) : null}
+          {launch_error !== null && !spawn_mutation.isError && !workflow_mutation.isError ? (
+            <p className="text-[11px] text-destructive/70">{errorMessage(launch_error)}</p>
           ) : null}
 
           {mode === "spawn" ? (

@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -8,6 +9,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { afterEach, vi } from "vitest";
 
 import {
   isWindowsCommandNotFound,
@@ -91,6 +93,10 @@ const runWithLayer = (layer: Layer.Layer<ProcessRunner>) => (input: ProcessRunIn
     Effect.provide(layer),
   );
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("runProcess", () => {
   it.effect("collects stdout through an injected ChildProcessSpawner", () =>
     Effect.gen(function* () {
@@ -134,6 +140,31 @@ describe("runProcess", () => {
 
       expect(result.stdout).toBe("service ok");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("can replace the ambient environment for isolated worker processes", () => {
+    vi.stubEnv("GITS_PROCESS_RUNNER_AMBIENT_SENTINEL", "ambient-secret");
+    const selectedPath = process.env.PATH ?? "";
+    const input: ProcessRunInput = {
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.stdout.write([process.env.GITS_PROCESS_RUNNER_AMBIENT_SENTINEL ?? '', process.env.GITS_SELECTED_WORKER_ACCOUNT ?? '', process.env.CODEX_HOME ?? '', process.env.PATH ?? ''].join('|'))",
+      ],
+      env: {
+        PATH: selectedPath,
+        GITS_SELECTED_WORKER_ACCOUNT: "work",
+        CODEX_HOME: "/accounts/work-codex",
+      },
+      extendEnv: false,
+    };
+
+    return Effect.gen(function* () {
+      const runner = yield* ProcessRunner;
+      const result = yield* runner.run(input);
+
+      expect(result.stdout).toBe(`|work|/accounts/work-codex|${selectedPath}`);
+    }).pipe(Effect.provide(ProcessRunnerLive.pipe(Layer.provide(NodeServices.layer))));
   });
 
   it.effect("fails when output exceeds max buffer in default mode", () =>

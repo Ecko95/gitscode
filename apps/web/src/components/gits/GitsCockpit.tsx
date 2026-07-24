@@ -17,7 +17,11 @@ import { useSavedEnvironmentRuntimeStore } from "../../environments/runtime";
 import { cn } from "../../lib/utils";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { useServerConfig } from "../../rpc/serverState";
-import { executeManualDelamainLaunch, resolveManualDelamainLaunchRoute } from "../DelamainSidebar";
+import {
+  executeManualDelamainLaunch,
+  manualDelamainPersonalWorkConfirmationMessage,
+  resolveManualDelamainLaunchRoute,
+} from "../manualDelamainLaunch";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset, SidebarTrigger } from "../ui/sidebar";
@@ -438,11 +442,7 @@ export function GitsCockpit() {
               (entry) => entry.instanceId === spawnRoute.providerInstanceId,
             )?.displayName ?? spawnRoute.providerInstanceId;
           return localApi.dialogs.confirm(
-            [
-              `${label ?? spawnEngine} is the Personal account for this Work repository.`,
-              "Starting this worker will spend Personal usage.",
-              "Continue for this launch only?",
-            ].join("\n"),
+            manualDelamainPersonalWorkConfirmationMessage(label ?? spawnEngine),
           );
         },
         launch: async (providerInstanceId) => {

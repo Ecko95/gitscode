@@ -14,7 +14,7 @@ import type {
   DelamainSpawnPeerInput,
   RepositoryProfilesSettings,
 } from "@t3tools/contracts";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ServerSettingsError } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
@@ -118,6 +118,7 @@ function makeLayer(options?: {
   readonly baseDir?: string;
   readonly repositoryProfiles?: RepositoryProfilesSettings;
   readonly availableProviderInstanceIds?: ReadonlyArray<string>;
+  readonly settingsError?: ServerSettingsError;
 }) {
   const availableInstances = (
     options?.availableProviderInstanceIds ?? [defaultCodexInstanceId]
@@ -125,6 +126,11 @@ function makeLayer(options?: {
   const instancesById = new Map(
     availableInstances.map((instance) => [instance.instanceId, instance]),
   );
+  const settingsLayer = options?.settingsError
+    ? Layer.mock(ServerSettingsService)({ getSettings: Effect.fail(options.settingsError) })
+    : ServerSettingsService.layerTest({
+        repositoryProfiles: options?.repositoryProfiles ?? defaultRepositoryProfiles,
+      });
   return AutomodeSupervisorLive.pipe(
     Layer.provide(
       Layer.mock(DelamainAdapter)({
@@ -185,11 +191,7 @@ function makeLayer(options?: {
         options?.baseDir ?? { prefix: "gits-automode-supervisor-test-" },
       ).pipe(Layer.provide(NodeServices.layer)),
     ),
-    Layer.provideMerge(
-      ServerSettingsService.layerTest({
-        repositoryProfiles: options?.repositoryProfiles ?? defaultRepositoryProfiles,
-      }),
-    ),
+    Layer.provideMerge(settingsLayer),
     Layer.provideMerge(
       Layer.mock(ProviderInstanceRegistry)({
         getInstance: (instanceId) => Effect.succeed(instancesById.get(instanceId)),
@@ -229,6 +231,26 @@ describe("AutomodeSupervisorLive", () => {
       assert.equal(result.goal.status, "blocked");
     }).pipe(Effect.provide(makeLayer())),
   );
+
+  it.effect("returns deterministic kill-switch denial without reading failed settings", () => {
+    const settingsError = new ServerSettingsError({
+      settingsPath: "/tmp/settings.json",
+      detail: "unreadable",
+    });
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Blocked before routing",
+        repo: "/tmp/source-repo",
+        prompt: "Run a safe task.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.blockedReason, "Kill switch is enabled.");
+      assert.equal(result.goal.status, "blocked");
+    }).pipe(Effect.provide(makeLayer({ settingsError })));
+  });
 
   it.effect("requires approval in supervised mode before spawning", () => {
     let spawnCount = 0;

@@ -27,6 +27,8 @@ export interface ProcessRunInput {
   readonly spawnCwd?: string | undefined;
   readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
+  /** Merge `env` over the ambient process environment. Defaults to true for compatibility. */
+  readonly extendEnv?: boolean | undefined;
   readonly stdin?: string | undefined;
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
@@ -257,7 +259,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         ...(input.env !== undefined
           ? {
               env: input.env,
-              extendEnv: true,
+              extendEnv: input.extendEnv ?? true,
             }
           : {}),
         ...(input.shell !== undefined ? { shell: input.shell } : {}),

@@ -162,6 +162,7 @@ describe("DelamainCliAdapter", () => {
   it.effect("forwards confine/egress/yolo flags to `delamain spawn`", () =>
     Effect.gen(function* () {
       runMock.mockImplementationOnce((input) => {
+        expect(input.extendEnv).toBeUndefined();
         expect(input.command).toBe("delamain");
         expect(input.args).toEqual([
           "spawn",
@@ -208,6 +209,7 @@ describe("DelamainCliAdapter", () => {
     });
     return Effect.gen(function* () {
       runMock.mockImplementationOnce((input) => {
+        expect(input.extendEnv).toBe(false);
         expect(input.env).toEqual({
           CODEX_HOME: "/accounts/work",
           OPENAI_ACCOUNT: "work",
@@ -240,6 +242,7 @@ describe("DelamainCliAdapter", () => {
     });
     return Effect.gen(function* () {
       runMock.mockImplementationOnce((input) => {
+        expect(input.extendEnv).toBe(false);
         expect(input.env).toEqual({
           CODEX_HOME: "/accounts/work",
           OPENAI_ACCOUNT: "work",
@@ -268,6 +271,8 @@ describe("DelamainCliAdapter", () => {
 
   it.effect("keeps Hermes OAuth isolation outside repository worker routing", () => {
     vi.stubEnv("CODEX_HOME", "/accounts/personal-codex");
+    vi.stubEnv("HERMES_HOME", "/accounts/personal-hermes");
+    vi.stubEnv("GITS_AMBIENT_CONTROL_PLANE_SECRET", "personal-only");
     const work = workerInstance({
       instanceId: "codex_work",
       driver: "codex",
@@ -275,7 +280,10 @@ describe("DelamainCliAdapter", () => {
     });
     return Effect.gen(function* () {
       runMock.mockImplementationOnce((input) => {
+        expect(input.extendEnv).toBe(false);
         expect(input.env?.CODEX_HOME).toBe("/accounts/work-codex");
+        expect(input.env?.HERMES_HOME).toBeUndefined();
+        expect(input.env?.GITS_AMBIENT_CONTROL_PLANE_SECRET).toBeUndefined();
         return Effect.succeed({
           stdout: JSON.stringify({ id: "peer-work", status: "running", engine: "codex" }),
           stderr: "",
@@ -362,6 +370,49 @@ describe("DelamainCliAdapter", () => {
     }).pipe(Effect.provide(makeTestLayer([cursor])));
   });
 
+  it.effect("rejects a routed provider instance when engine is omitted", () => {
+    const work = workerInstance({
+      instanceId: "codex_work",
+      driver: "codex",
+      environment: { CODEX_HOME: "/accounts/work" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .spawnPeer({
+          repo: "/tmp/repo",
+          prompt: "do work",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("requires a concrete engine");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(makeTestLayer([work])));
+  });
+
+  it.effect("rejects a routed provider instance when engine is unknown", () => {
+    const work = workerInstance({
+      instanceId: "codex_work",
+      driver: "codex",
+      environment: { CODEX_HOME: "/accounts/work" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .spawnPeer({
+          repo: "/tmp/repo",
+          prompt: "do work",
+          engine: "unknown",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("requires a concrete engine");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(makeTestLayer([work])));
+  });
+
   it.effect("rejects a workflow provider whose driver does not match the selected engine", () => {
     const cursor = workerInstance({
       instanceId: "cursor_work",
@@ -380,6 +431,28 @@ describe("DelamainCliAdapter", () => {
         .pipe(Effect.flip);
 
       expect(error.message).toContain("does not match requested engine 'codex'");
+      expect(runMock).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(makeTestLayer([cursor])));
+  });
+
+  it.effect("rejects routed Cursor workflows until leaf-engine routing is supported", () => {
+    const cursor = workerInstance({
+      instanceId: "cursor_work",
+      driver: "cursor",
+      environment: { CURSOR_ACCOUNT: "work" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* DelamainAdapter;
+      const error = yield* adapter
+        .runWorkflow({
+          script: "/srv/delamain/workflows/automode-goal.ts",
+          repo: "/tmp/repo",
+          engine: "cursor",
+          providerInstanceId: ProviderInstanceId.make("cursor_work"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("Routed Delamain workflows currently support Codex only");
       expect(runMock).not.toHaveBeenCalled();
     }).pipe(Effect.provide(makeTestLayer([cursor])));
   });

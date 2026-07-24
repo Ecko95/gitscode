@@ -137,10 +137,13 @@ describe("parse_log_text", () => {
 
 // --- Tests: DelamainSidebar rendering ---
 
-import DelamainSidebar, {
+import DelamainSidebar from "./DelamainSidebar";
+import {
   executeManualDelamainLaunch,
+  manualDelamainEnginesForMode,
   resolveManualDelamainLaunchRoute,
-} from "./DelamainSidebar";
+  startManualDelamainLaunch,
+} from "./manualDelamainLaunch";
 
 describe("manual Delamain account routing", () => {
   const codexDriver = ProviderDriverKind.make("codex");
@@ -204,6 +207,31 @@ describe("manual Delamain account routing", () => {
 
     expect(launched).toBe(false);
     expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("offers only Codex for workflows until leaf-engine routing is supported", () => {
+    expect(manualDelamainEnginesForMode("workflow")).toEqual(["codex"]);
+    expect(manualDelamainEnginesForMode("spawn")).toEqual(["codex", "cursor"]);
+  });
+
+  it("reports manual launch promise rejection instead of leaving it unhandled", async () => {
+    const failure = new Error("dialog failed");
+    const onError = vi.fn();
+
+    startManualDelamainLaunch(
+      {
+        route: {
+          providerInstanceId: personalId,
+          requiresWorkPersonalConfirmation: false,
+          error: null,
+        },
+        confirm: async () => true,
+        launch: async () => Promise.reject(failure),
+      },
+      onError,
+    );
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
   });
 });
 

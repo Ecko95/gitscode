@@ -800,7 +800,10 @@ export const AutomodeSupervisorLive = Layer.effect(
             activePeers,
             budgetUsage,
           }).blockedReason;
-          const workerRoute = yield* resolveWorkerRoute(goal.repo);
+          const workerRoute =
+            policyBlockedReason === null
+              ? yield* resolveWorkerRoute(goal.repo)
+              : { providerInstanceId: null, blockedReason: null };
           const blockedReason = policyBlockedReason ?? workerRoute.blockedReason;
 
           if (blockedReason !== null) {

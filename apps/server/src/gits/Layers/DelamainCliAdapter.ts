@@ -156,6 +156,7 @@ function execDelamain(
       outputMode: options?.outputMode ?? "error",
       truncatedMarker: options?.outputMode === "truncate" ? OUTPUT_TRUNCATED_MARKER : "",
       env: options?.environment,
+      extendEnv: options?.environment === undefined ? undefined : false,
       shell: process.platform === "win32",
     })
     .pipe(
@@ -469,9 +470,22 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
   const resolveLaunchEnvironment = (
     providerInstanceId: ProviderInstanceId | undefined,
     requestedEngine?: DelamainEngine | undefined,
+    launchKind: "peer" | "workflow" = "peer",
   ) =>
     Effect.gen(function* () {
       if (providerInstanceId === undefined) return undefined;
+      if (requestedEngine === undefined || requestedEngine === "unknown") {
+        return yield* toDelamainError(
+          `Routed Delamain launch for provider instance '${providerInstanceId}' requires a concrete engine.`,
+        );
+      }
+      // `run-workflow` receives one process-wide environment but no leaf-engine route.
+      // Until Delamain can pin each leaf explicitly, only the known Codex workflow is safe.
+      if (launchKind === "workflow" && requestedEngine !== "codex") {
+        return yield* toDelamainError(
+          "Routed Delamain workflows currently support Codex only; per-leaf engine routing is unavailable.",
+        );
+      }
       const instance = yield* providerInstances.getInstance(providerInstanceId);
       if (!instance) {
         return yield* toDelamainError(
@@ -483,11 +497,7 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
           `Provider instance '${providerInstanceId}' is disabled for Delamain launch.`,
         );
       }
-      if (
-        requestedEngine !== undefined &&
-        requestedEngine !== "unknown" &&
-        instance.driverKind !== requestedEngine
-      ) {
+      if (instance.driverKind !== requestedEngine) {
         return yield* toDelamainError(
           `Provider instance '${providerInstanceId}' driver '${instance.driverKind}' does not match requested engine '${requestedEngine}'.`,
         );
@@ -555,7 +565,11 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
       }),
     runGoalWorkflow: (input) =>
       Effect.gen(function* () {
-        const environment = yield* resolveLaunchEnvironment(input.providerInstanceId, input.engine);
+        const environment = yield* resolveLaunchEnvironment(
+          input.providerInstanceId,
+          input.engine,
+          "workflow",
+        );
         return yield* runJson<unknown>(
           processRunner,
           "run-workflow",
@@ -646,7 +660,11 @@ export const makeDelamainCliAdapter = Effect.gen(function* () {
             catch: (cause) => toDelamainError("run-workflow argsJson is not valid JSON.", cause),
           });
         }
-        const environment = yield* resolveLaunchEnvironment(input.providerInstanceId, input.engine);
+        const environment = yield* resolveLaunchEnvironment(
+          input.providerInstanceId,
+          input.engine,
+          "workflow",
+        );
         const value = yield* runJson<unknown>(
           processRunner,
           "run-workflow",

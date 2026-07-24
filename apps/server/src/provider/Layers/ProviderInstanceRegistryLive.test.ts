@@ -172,6 +172,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(personal!.textGeneration).not.toBe(work!.textGeneration);
       expect(personal!.snapshot).not.toBe(work!.snapshot);
       expect(personal!.workerEnvironment?.T3_PROVIDER_ACCOUNT).toBe("personal");
+      expect(personal!.workerEnvironment?.PATH).toBe(process.env.PATH);
       expect(personal!.workerEnvironment?.CODEX_HOME).toBe("/home/julius/.codex_personal");
       expect(work!.workerEnvironment?.T3_PROVIDER_ACCOUNT).toBe("work");
       expect(work!.workerEnvironment?.CODEX_HOME).toBe("/home/julius/.codex");
