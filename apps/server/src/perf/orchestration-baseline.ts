@@ -401,6 +401,7 @@ async function runSession(
               status: "running",
               providerName: "codex",
               providerInstanceId: ProviderInstanceId.make("codex"),
+              workPersonalFallbackInstanceId: null,
               runtimeMode: "approval-required",
               activeTurnId: turnId,
               lastError: null,

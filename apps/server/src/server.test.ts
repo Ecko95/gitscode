@@ -4694,6 +4694,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.gitsDelamainSpawnPeer]({
             repo: "/tmp/source-repo",
             prompt: "spawn task",
+            engine: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
           }),
         ),
       );
@@ -4772,6 +4774,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             script: "/srv/delamain/workflows/automode-goal.ts",
             repo: "/tmp/source-repo",
             name: "Nightly sweep",
+            engine: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
           }),
         ),
       );
@@ -4783,6 +4787,82 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         repo: "/tmp/source-repo",
         name: "Nightly sweep",
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects unrouted public Delamain launches before calling the adapter", () =>
+    Effect.gen(function* () {
+      let adapterCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          delamainAdapter: {
+            spawnPeer: () =>
+              Effect.sync(() => {
+                adapterCalls += 1;
+                return defaultDelamainPeer;
+              }),
+            runWorkflow: () =>
+              Effect.sync(() => {
+                adapterCalls += 1;
+                return { workflowId: "wf-unrouted", status: "running" };
+              }),
+          },
+          automodeSupervisor: {
+            getSnapshot: () =>
+              Effect.succeed({
+                ...defaultAutomodeSnapshot,
+                policy: { ...defaultAutomodeSnapshot.policy, killSwitchEnabled: false },
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const results = yield* Effect.all([
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.gitsDelamainSpawnPeer]({
+              repo: "/tmp/source-repo",
+              prompt: "missing account",
+              engine: "codex",
+            }),
+          ).pipe(Effect.result),
+        ),
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.gitsDelamainSpawnPeer]({
+              repo: "/tmp/source-repo",
+              prompt: "missing engine",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            }),
+          ).pipe(Effect.result),
+        ),
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.gitsDelamainRunWorkflow]({
+              script: "/srv/delamain/workflows/automode-goal.ts",
+              repo: "/tmp/source-repo",
+              engine: "codex",
+            }),
+          ).pipe(Effect.result),
+        ),
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.gitsDelamainRunWorkflow]({
+              script: "/srv/delamain/workflows/automode-goal.ts",
+              repo: "/tmp/source-repo",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            }),
+          ).pipe(Effect.result),
+        ),
+      ]);
+
+      for (const result of results) {
+        assertTrue(result._tag === "Failure");
+        assertTrue(result.failure._tag === "DelamainAdapterError");
+        assert.match(result.failure.message, /engine.*providerInstanceId/i);
+      }
+      assert.equal(adapterCalls, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4808,6 +4888,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.gitsDelamainSpawnPeer]({
             repo: "/tmp/source-repo",
             prompt: "spawn task",
+            engine: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
           }),
         ).pipe(Effect.result),
       );
@@ -6141,6 +6223,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       threadId,
                       status: "ready",
                       providerName: "claudeAgent",
+                      workPersonalFallbackInstanceId: null,
                       runtimeMode: "full-access",
                       activeTurnId: null,
                       lastError: null,
@@ -6219,6 +6302,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                           threadId,
                           status: "ready",
                           providerName: "claudeAgent",
+                          workPersonalFallbackInstanceId: null,
                           runtimeMode: "full-access",
                           activeTurnId: null,
                           lastError: null,
@@ -6343,6 +6427,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                         threadId,
                         status: "stopped",
                         providerName: "claudeAgent",
+                        workPersonalFallbackInstanceId: null,
                         runtimeMode: "full-access",
                         activeTurnId: null,
                         lastError: null,
@@ -6416,6 +6501,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       threadId,
                       status: "ready",
                       providerName: "claudeAgent",
+                      workPersonalFallbackInstanceId: null,
                       runtimeMode: "full-access",
                       activeTurnId: null,
                       lastError: null,
@@ -6488,6 +6574,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       threadId,
                       status: "ready",
                       providerName: "claudeAgent",
+                      workPersonalFallbackInstanceId: null,
                       runtimeMode: "full-access",
                       activeTurnId: null,
                       lastError: null,

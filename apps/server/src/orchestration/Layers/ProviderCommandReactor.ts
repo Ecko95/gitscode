@@ -17,6 +17,10 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import {
+  resolveRepositoryProfile,
+  resolveRepositoryProviderInstance,
+} from "@t3tools/shared/repositoryProfiles";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -715,6 +719,35 @@ const make = Effect.gen(function* () {
       projects: project ? [project] : [],
     });
 
+    const resolveWorkPersonalFallbackInstanceId = Effect.fnUntraced(function* (
+      providerInstanceId: NonNullable<OrchestrationSession["workPersonalFallbackInstanceId"]>,
+      driver: ProviderDriverKind,
+    ) {
+      if (thread.session?.providerInstanceId === providerInstanceId) {
+        return thread.session.workPersonalFallbackInstanceId;
+      }
+      if (!project || (driver !== "codex" && driver !== "cursor")) {
+        return null;
+      }
+
+      const { repositoryProfiles } = yield* serverSettingsService.getSettings;
+      const repositoryProfile = resolveRepositoryProfile({
+        workspaceRoot: project.workspaceRoot,
+        repositoryProfileOverride: project.repositoryProfileOverride,
+        profiles: repositoryProfiles,
+      });
+      if (repositoryProfile !== "work") {
+        return null;
+      }
+
+      const personalInstanceId = resolveRepositoryProviderInstance({
+        repositoryProfile: "personal",
+        driver,
+        profiles: repositoryProfiles,
+      });
+      return providerInstanceId === personalInstanceId ? providerInstanceId : null;
+    });
+
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
@@ -729,7 +762,10 @@ const make = Effect.gen(function* () {
         runtimeMode: desiredRuntimeMode,
       });
 
-    const bindSessionToThread = (session: ProviderSession) =>
+    const bindSessionToThread = (
+      session: ProviderSession,
+      workPersonalFallbackInstanceId: OrchestrationSession["workPersonalFallbackInstanceId"],
+    ) =>
       Effect.gen(function* () {
         if (session.providerInstanceId === undefined) {
           return yield* new ProviderAdapterRequestError({
@@ -745,6 +781,7 @@ const make = Effect.gen(function* () {
             status: mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
+            workPersonalFallbackInstanceId,
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
@@ -807,6 +844,10 @@ const make = Effect.gen(function* () {
         shouldRestartForModelSelectionChange,
         hasResumeCursor: resumeCursor !== undefined,
       });
+      const workPersonalFallbackInstanceId = yield* resolveWorkPersonalFallbackInstanceId(
+        desiredInstanceId,
+        preferredProvider,
+      );
       const restartedSession = yield* startProviderSession(
         resumeCursor !== undefined ? { resumeCursor } : undefined,
       );
@@ -818,12 +859,16 @@ const make = Effect.gen(function* () {
         runtimeMode: restartedSession.runtimeMode,
         cwd: restartedSession.cwd,
       });
-      yield* bindSessionToThread(restartedSession);
+      yield* bindSessionToThread(restartedSession, workPersonalFallbackInstanceId);
       return restartedSession.threadId;
     }
 
+    const workPersonalFallbackInstanceId = yield* resolveWorkPersonalFallbackInstanceId(
+      desiredInstanceId,
+      preferredProvider,
+    );
     const startedSession = yield* startProviderSession(undefined);
-    yield* bindSessionToThread(startedSession);
+    yield* bindSessionToThread(startedSession, workPersonalFallbackInstanceId);
     return startedSession.threadId;
   });
 
@@ -1372,6 +1417,7 @@ const make = Effect.gen(function* () {
         ...(thread.session?.providerInstanceId !== undefined
           ? { providerInstanceId: thread.session.providerInstanceId }
           : {}),
+        workPersonalFallbackInstanceId: thread.session?.workPersonalFallbackInstanceId ?? null,
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
         lastError: thread.session?.lastError ?? null,
@@ -1394,6 +1440,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         status: input.status,
         providerName: null,
+        workPersonalFallbackInstanceId: null,
         runtimeMode: input.runtimeMode,
         activeTurnId: null,
         lastError: input.lastError,

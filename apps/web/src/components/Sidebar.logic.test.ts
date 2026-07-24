@@ -39,6 +39,7 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 const repositoryProfiles = {
   workRoots: ["/repos/work"],
   providerInstances: { personal: {}, work: {} },
@@ -82,6 +83,58 @@ describe("filterSidebarProjectsByRepositoryProfile", () => {
     expect(result.snapshots[0]?.projectKey).toBe(repositoryIdentity.canonicalKey);
     expect(result.snapshots[0]?.memberProjects.map((member) => member.id)).toEqual([
       workProject.id,
+    ]);
+  });
+
+  it("classifies each grouped physical project with its owning environment settings", () => {
+    const repositoryIdentity = {
+      canonicalKey: "github.com/example/cross-environment",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/cross-environment.git",
+      },
+    };
+    const localProject = makeProject({
+      id: ProjectId.make("local-work"),
+      environmentId: localEnvironmentId,
+      cwd: "/repos/shared/app",
+      repositoryIdentity,
+    });
+    const remoteProject = makeProject({
+      id: ProjectId.make("remote-personal"),
+      environmentId: remoteEnvironmentId,
+      cwd: "/repos/shared/app",
+      repositoryIdentity,
+    });
+    const result = buildSidebarProjectsForRepositoryProfile({
+      projects: [localProject, remoteProject],
+      selectedProfile: "work",
+      profiles: {
+        workRoots: ["/repos/shared"],
+        providerInstances: { personal: {}, work: {} },
+      },
+      resolveProfilesForEnvironment: (environmentId) =>
+        environmentId === localEnvironmentId
+          ? {
+              workRoots: ["/repos/shared"],
+              providerInstances: { personal: {}, work: {} },
+            }
+          : {
+              workRoots: ["/different/root"],
+              providerInstances: { personal: {}, work: {} },
+            },
+      settings: {
+        sidebarProjectGroupingMode: "repository",
+        sidebarProjectGroupingOverrides: {},
+      },
+      primaryEnvironmentId: localEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(result.projects).toEqual([localProject]);
+    expect(result.snapshots[0]?.memberProjects.map((member) => member.id)).toEqual([
+      localProject.id,
     ]);
   });
 

@@ -50,6 +50,15 @@ describe("repository profiles", () => {
     expect(resolveRepositoryProfile({ workspaceRoot: "c:\\work\\App", profiles })).toBe("work");
   });
 
+  it("ignores non-absolute Work roots", () => {
+    expect(
+      resolveRepositoryProfile({
+        workspaceRoot: "c:/repo",
+        profiles: { ...profiles, workRoots: ["c:", "repo", "~/work"] },
+      }),
+    ).toBe("personal");
+  });
+
   it("uses an explicit repository profile over path classification", () => {
     expect(
       resolveRepositoryProfile({
@@ -95,16 +104,5 @@ describe("repository profiles", () => {
         profiles,
       }),
     ).toBe("claude-personal");
-  });
-
-  it("always routes control-plane Codex to the Personal instance", () => {
-    expect(
-      resolveRepositoryProviderInstance({
-        repositoryProfile: "work",
-        driver: ProviderDriverKind.make("codex"),
-        profiles,
-        controlPlane: true,
-      }),
-    ).toBe("codex-personal");
   });
 });

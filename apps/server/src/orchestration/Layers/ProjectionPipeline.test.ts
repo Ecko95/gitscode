@@ -188,6 +188,51 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("persists the Work-to-Personal fallback marker from session events", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-work-personal-fallback");
+      const now = "2026-01-01T01:00:00.000Z";
+
+      const event = yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-work-personal-fallback"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-work-personal-fallback"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-work-personal-fallback"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex-personal"),
+            workPersonalFallbackInstanceId: ProviderInstanceId.make("codex-personal"),
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      });
+
+      yield* projectionPipeline.projectEvent(event);
+
+      const rows = yield* sql<{ readonly workPersonalFallbackInstanceId: string | null }>`
+        SELECT work_personal_fallback_instance_id AS "workPersonalFallbackInstanceId"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(rows, [{ workPersonalFallbackInstanceId: "codex-personal" }]);
+    }),
+  );
+
   it.effect("bootstraps provider message anchors and fork parentage", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -2554,6 +2599,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             threadId,
             status: "running",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: turnId,
             lastError: null,
@@ -2966,6 +3012,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
             threadId,
             status: "running",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: turnId,
             lastError: null,
@@ -3077,6 +3124,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-turn
               threadId,
               status: "error",
               providerName: "codex",
+              workPersonalFallbackInstanceId: null,
               runtimeMode: "full-access",
               activeTurnId: turnId,
               lastError: "provider failed before output",

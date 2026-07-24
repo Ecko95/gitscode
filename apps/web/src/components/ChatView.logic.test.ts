@@ -54,6 +54,13 @@ const availableRepositoryProfileInstances = [
   "claude-personal",
 ].map((instanceId) => ({
   instanceId: ProviderInstanceId.make(instanceId),
+  driverKind: ProviderDriverKind.make(
+    instanceId.startsWith("cursor")
+      ? "cursor"
+      : instanceId.startsWith("claude")
+        ? "claudeAgent"
+        : "codex",
+  ),
   enabled: true,
   isAvailable: true,
 }));
@@ -119,6 +126,33 @@ describe("resolveInteractiveSessionAccountRoute", () => {
     });
   });
 
+  it("requires selection when a configured mapping points at another driver", () => {
+    expect(
+      resolveInteractiveSessionAccountRoute({
+        isNewDraft: true,
+        isFirstLaunch: true,
+        repositoryProfile: "work",
+        driver: ProviderDriverKind.make("codex"),
+        explicitInstanceId: null,
+        selectedInstanceId: ProviderInstanceId.make("cursor-work"),
+        profiles: {
+          ...repositoryProfiles,
+          providerInstances: {
+            ...repositoryProfiles.providerInstances,
+            work: {
+              ...repositoryProfiles.providerInstances.work,
+              [ProviderDriverKind.make("codex")]: ProviderInstanceId.make("cursor-work"),
+            },
+          },
+        },
+        instanceEntries: availableRepositoryProfileInstances,
+      }),
+    ).toMatchObject({
+      preferredInstanceId: null,
+      requiresExplicitSelection: true,
+    });
+  });
+
   it.each([
     {
       label: "missing",
@@ -130,6 +164,7 @@ describe("resolveInteractiveSessionAccountRoute", () => {
         ...availableRepositoryProfileInstances,
         {
           instanceId: ProviderInstanceId.make("codex-stale"),
+          driverKind: ProviderDriverKind.make("codex"),
           enabled: false,
           isAvailable: true,
         },
@@ -141,6 +176,7 @@ describe("resolveInteractiveSessionAccountRoute", () => {
         ...availableRepositoryProfileInstances,
         {
           instanceId: ProviderInstanceId.make("codex-stale"),
+          driverKind: ProviderDriverKind.make("codex"),
           enabled: true,
           isAvailable: false,
         },
@@ -301,7 +337,14 @@ describe("resolveInteractiveSessionAccountRoute", () => {
             },
           },
         } as RepositoryProfilesSettings,
-        instanceEntries: [{ instanceId: sharedCodexInstanceId, enabled: true, isAvailable: true }],
+        instanceEntries: [
+          {
+            instanceId: sharedCodexInstanceId,
+            driverKind: ProviderDriverKind.make("codex"),
+            enabled: true,
+            isAvailable: true,
+          },
+        ],
       }).requiresWorkPersonalConfirmation,
     ).toBe(true);
   });

@@ -644,17 +644,9 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
-  repositoryProfiles: Schema.optionalKey(
-    Schema.Struct({
-      workRoots: Schema.optionalKey(Schema.Array(TrimmedString)),
-      providerInstances: Schema.optionalKey(
-        Schema.Struct({
-          personal: Schema.optionalKey(Schema.Record(ProviderDriverKind, ProviderInstanceId)),
-          work: Schema.optionalKey(Schema.Record(ProviderDriverKind, ProviderInstanceId)),
-        }),
-      ),
-    }),
-  ),
+  // Whole-map replacement, matching providerInstances. The settings UI sends
+  // the complete value so removed driver mappings cannot survive a deep merge.
+  repositoryProfiles: Schema.optionalKey(RepositoryProfilesSettings),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

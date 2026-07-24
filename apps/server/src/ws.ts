@@ -448,6 +448,21 @@ const makeWsRpcLayer = (
                 : action,
           ),
         );
+      const requireRoutedDelamainLaunch = <
+        A extends {
+          readonly engine?: unknown;
+          readonly providerInstanceId?: unknown;
+        },
+      >(
+        input: A,
+      ): Effect.Effect<A, DelamainAdapterError> =>
+        input.engine !== undefined && input.providerInstanceId !== undefined
+          ? Effect.succeed(input)
+          : Effect.fail(
+              new DelamainAdapterError({
+                message: "Public Delamain launches require both engine and providerInstanceId.",
+              }),
+            );
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
       const critSidecarManager = yield* CritSidecarManager;
@@ -2056,7 +2071,11 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitsDelamainSpawnPeer]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsDelamainSpawnPeer,
-            withKillSwitchGuard(delamainAdapter.spawnPeer(input)),
+            requireRoutedDelamainLaunch(input).pipe(
+              Effect.flatMap((routedInput) =>
+                withKillSwitchGuard(delamainAdapter.spawnPeer(routedInput)),
+              ),
+            ),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsDelamainKillPeer]: (input) =>
@@ -2097,7 +2116,11 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitsDelamainRunWorkflow]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsDelamainRunWorkflow,
-            withKillSwitchGuard(delamainAdapter.runWorkflow(input)),
+            requireRoutedDelamainLaunch(input).pipe(
+              Effect.flatMap((routedInput) =>
+                withKillSwitchGuard(delamainAdapter.runWorkflow(routedInput)),
+              ),
+            ),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsDelamainReadInbox]: (input) =>

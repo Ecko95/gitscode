@@ -42,6 +42,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
+  DEFAULT_SERVER_SETTINGS,
   type DesktopUpdateState,
   type EnvironmentId,
   ProjectId,
@@ -3244,6 +3245,11 @@ export default function Sidebar() {
         projects: allOrderedProjects,
         selectedProfile: sidebarRepositoryProfile,
         profiles: repositoryProfiles,
+        resolveProfilesForEnvironment: (environmentId) =>
+          environmentId === primaryEnvironmentId
+            ? repositoryProfiles
+            : (savedEnvironmentRuntimeById[environmentId]?.serverConfig?.settings
+                .repositoryProfiles ?? DEFAULT_SERVER_SETTINGS.repositoryProfiles),
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => {

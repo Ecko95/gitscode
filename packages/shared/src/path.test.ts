@@ -23,6 +23,7 @@ describe("path helpers", () => {
   it("detects windows absolute paths", () => {
     expect(isWindowsAbsolutePath("C:\\repo")).toBe(true);
     expect(isWindowsAbsolutePath("\\\\server\\share\\repo")).toBe(true);
+    expect(isWindowsAbsolutePath("C:")).toBe(false);
     expect(isWindowsAbsolutePath("./repo")).toBe(false);
   });
 

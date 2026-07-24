@@ -10,7 +10,11 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vitest";
 
-import { AcpSessionRuntime, type AcpSessionRequestLogEvent } from "./AcpSessionRuntime.ts";
+import {
+  AcpSessionRuntime,
+  buildAcpSpawnEnvironment,
+  type AcpSessionRequestLogEvent,
+} from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +22,16 @@ const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts")
 const bunExe = "bun";
 
 describe("AcpSessionRuntime", () => {
+  it("merges the final ACP spawn environment with Windows key semantics", () => {
+    expect(
+      buildAcpSpawnEnvironment(
+        { OpenAI_Api_Key: "selected" },
+        { OPENAI_API_KEY: "ambient", PATH: "C:\\tools" },
+        "win32",
+      ),
+    ).toEqual({ OpenAI_Api_Key: "selected", PATH: "C:\\tools" });
+  });
+
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
     const requestEvents: Array<AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {

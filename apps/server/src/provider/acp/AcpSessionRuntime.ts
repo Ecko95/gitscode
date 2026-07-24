@@ -14,7 +14,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
-import { buildChildEnv } from "../ProviderInstanceEnvironment.ts";
+import { buildChildEnv, mergeProcessEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -63,6 +63,14 @@ export interface AcpSessionRuntimeOptions {
     readonly logOutgoing?: boolean;
     readonly logger?: (event: EffectAcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
   };
+}
+
+export function buildAcpSpawnEnvironment(
+  environment: NodeJS.ProcessEnv,
+  baseEnvironment: NodeJS.ProcessEnv = buildChildEnv(),
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  return mergeProcessEnvironment(environment, baseEnvironment, { platform });
 }
 
 export interface AcpSessionRequestLogEvent {
@@ -212,7 +220,7 @@ const makeAcpSessionRuntime = (
         ChildProcess.make(options.spawn.command, [...options.spawn.args], {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           // ponytail: W5.2b — use allowlisted base instead of raw process.env
-          ...(options.spawn.env ? { env: { ...buildChildEnv(), ...options.spawn.env } } : {}),
+          ...(options.spawn.env ? { env: buildAcpSpawnEnvironment(options.spawn.env) } : {}),
           shell: process.platform === "win32",
         }),
       )

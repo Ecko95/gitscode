@@ -141,6 +141,7 @@ import DelamainSidebar from "./DelamainSidebar";
 import {
   executeManualDelamainLaunch,
   manualDelamainEnginesForMode,
+  resolveManualDelamainRepositoryProfile,
   resolveManualDelamainLaunchRoute,
   ROUTED_DELAMAIN_WORKFLOW_BLOCKED_MESSAGE,
   startManualDelamainLaunch,
@@ -150,6 +151,51 @@ describe("manual Delamain account routing", () => {
   const codexDriver = ProviderDriverKind.make("codex");
   const personalId = ProviderInstanceId.make("codex_personal");
   const workId = ProviderInstanceId.make("codex_work");
+
+  it("uses an owning project Personal override ahead of a Work root", () => {
+    expect(
+      resolveManualDelamainRepositoryProfile({
+        workspaceRoot: "/srv/work/repo",
+        environmentId: "environment-work" as EnvironmentId,
+        profiles: {
+          workRoots: ["/srv/work"],
+          providerInstances: { personal: {}, work: {} },
+        },
+        projects: [
+          {
+            environmentId: "environment-work" as EnvironmentId,
+            cwd: "/srv/work/repo",
+            repositoryProfileOverride: "personal",
+          },
+        ],
+      }),
+    ).toBe("personal");
+  });
+
+  it("uses only the target environment project Work override", () => {
+    expect(
+      resolveManualDelamainRepositoryProfile({
+        workspaceRoot: "C:\\repos\\app\\",
+        environmentId: "environment-target" as EnvironmentId,
+        profiles: {
+          workRoots: [],
+          providerInstances: { personal: {}, work: {} },
+        },
+        projects: [
+          {
+            environmentId: "environment-other" as EnvironmentId,
+            cwd: "c:/repos/app",
+            repositoryProfileOverride: "personal",
+          },
+          {
+            environmentId: "environment-target" as EnvironmentId,
+            cwd: "c:/repos/app",
+            repositoryProfileOverride: "work",
+          },
+        ],
+      }),
+    ).toBe("work");
+  });
 
   it("resolves the selected engine through the repository profile mapping", () => {
     const route = resolveManualDelamainLaunchRoute({
@@ -192,6 +238,31 @@ describe("manual Delamain account routing", () => {
     });
 
     expect(route.requiresWorkPersonalConfirmation).toBe(true);
+  });
+
+  it("lets a manual Work launch select a compatible Personal instance for this launch", () => {
+    const route = resolveManualDelamainLaunchRoute({
+      repositoryProfile: "work",
+      engine: "codex",
+      selectedProviderInstanceId: personalId,
+      profiles: {
+        workRoots: ["/srv/work"],
+        providerInstances: {
+          personal: { [codexDriver]: personalId },
+          work: { [codexDriver]: workId },
+        },
+      },
+      instanceEntries: [
+        { instanceId: personalId, driverKind: codexDriver, enabled: true, isAvailable: true },
+        { instanceId: workId, driverKind: codexDriver, enabled: true, isAvailable: true },
+      ],
+    });
+
+    expect(route).toEqual({
+      providerInstanceId: personalId,
+      requiresWorkPersonalConfirmation: true,
+      error: null,
+    });
   });
 
   it("does not launch when Work-to-Personal confirmation is cancelled", async () => {

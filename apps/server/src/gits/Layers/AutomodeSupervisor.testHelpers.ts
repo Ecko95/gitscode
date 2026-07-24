@@ -1,9 +1,11 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
 const codexDriver = ProviderDriverKind.make("codex");
@@ -23,7 +25,7 @@ const codexInstance = {
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;
 
-export const AutomodeSupervisorTestRoutingLayer = Layer.merge(
+export const AutomodeSupervisorTestRoutingLayer = Layer.mergeAll(
   ServerSettingsService.layerTest({
     repositoryProfiles: {
       workRoots: [],
@@ -36,5 +38,8 @@ export const AutomodeSupervisorTestRoutingLayer = Layer.merge(
   Layer.mock(ProviderInstanceRegistry)({
     getInstance: (instanceId) =>
       Effect.succeed(instanceId === codexInstanceId ? codexInstance : undefined),
+  }),
+  Layer.mock(ProjectionSnapshotQuery)({
+    getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
   }),
 );

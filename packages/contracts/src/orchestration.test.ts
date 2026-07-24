@@ -616,6 +616,45 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.workPersonalFallbackInstanceId, null);
+  }),
+);
+
+it.effect("decodes a thread session event with its Work-to-Personal fallback marker", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 42,
+      eventId: "evt-session-fallback",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.session-set",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-session-fallback",
+      causationEventId: null,
+      correlationId: "cmd-session-fallback",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        session: {
+          threadId: "thread-1",
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: "codex-personal",
+          workPersonalFallbackInstanceId: "codex-personal",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    });
+    if (parsed.type !== "thread.session-set") {
+      assert.fail(`Expected thread.session-set event, received ${parsed.type}.`);
+    }
+    assert.strictEqual(
+      parsed.payload.session.workPersonalFallbackInstanceId,
+      ProviderInstanceId.make("codex-personal"),
+    );
   }),
 );
 

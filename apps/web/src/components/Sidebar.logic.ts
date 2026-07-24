@@ -40,27 +40,38 @@ export type ThreadTraversalDirection = "previous" | "next";
 export function filterSidebarProjectsByRepositoryProfile<
   TProject extends {
     cwd: string;
+    environmentId?: EnvironmentId | undefined;
     repositoryProfileOverride?: RepositoryProfile | null | undefined;
   },
 >(
   projects: readonly TProject[],
   selectedProfile: RepositoryProfile,
   profiles: RepositoryProfilesSettings,
+  resolveProfilesForEnvironment?:
+    | ((environmentId: EnvironmentId) => RepositoryProfilesSettings)
+    | undefined,
 ): TProject[] {
-  return projects.filter(
-    (project) =>
+  return projects.filter((project) => {
+    const projectProfiles = project.environmentId
+      ? (resolveProfilesForEnvironment?.(project.environmentId) ?? profiles)
+      : profiles;
+    return (
       resolveRepositoryProfile({
         workspaceRoot: project.cwd,
         repositoryProfileOverride: project.repositoryProfileOverride,
-        profiles,
-      }) === selectedProfile,
-  );
+        profiles: projectProfiles,
+      }) === selectedProfile
+    );
+  });
 }
 
 export function buildSidebarProjectsForRepositoryProfile(input: {
   projects: readonly Project[];
   selectedProfile: RepositoryProfile;
   profiles: RepositoryProfilesSettings;
+  resolveProfilesForEnvironment?:
+    | ((environmentId: EnvironmentId) => RepositoryProfilesSettings)
+    | undefined;
   settings: ProjectGroupingSettings;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
@@ -69,6 +80,7 @@ export function buildSidebarProjectsForRepositoryProfile(input: {
     input.projects,
     input.selectedProfile,
     input.profiles,
+    input.resolveProfilesForEnvironment,
   );
   return {
     projects,

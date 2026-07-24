@@ -67,6 +67,7 @@ function makeReadModel(
       readonly threadId: ThreadId;
       readonly status: "starting" | "running" | "ready" | "interrupted" | "stopped" | "error";
       readonly providerName: "codex" | "claudeAgent";
+      readonly workPersonalFallbackInstanceId: ProviderInstanceId | null;
       readonly runtimeMode: "approval-required" | "full-access" | "auto-accept-edits";
       readonly activeTurnId: TurnId | null;
       readonly lastError: string | null;
@@ -236,6 +237,7 @@ describe("ProviderSessionReaper", () => {
             threadId,
             status: "ready",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -284,6 +286,7 @@ describe("ProviderSessionReaper", () => {
             threadId,
             status: "running",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: turnId,
             lastError: null,
@@ -331,6 +334,7 @@ describe("ProviderSessionReaper", () => {
             threadId,
             status: "ready",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -378,6 +382,7 @@ describe("ProviderSessionReaper", () => {
             threadId: threadId,
             status: "stopped",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -426,6 +431,7 @@ describe("ProviderSessionReaper", () => {
             threadId: failedThreadId,
             status: "ready",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -438,6 +444,7 @@ describe("ProviderSessionReaper", () => {
             threadId: reapedThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -512,6 +519,7 @@ describe("ProviderSessionReaper", () => {
             threadId: defectThreadId,
             status: "ready",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -524,6 +532,7 @@ describe("ProviderSessionReaper", () => {
             threadId: reapedThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,

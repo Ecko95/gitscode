@@ -41,32 +41,20 @@ const ALLOWED_EXACT: ReadonlySet<string> = new Set([
   "CODEX_HOME",
 ]);
 
-// Windows treats these names case-insensitively, and user shells commonly expose
-// title-cased variants. Preserve the source spelling so the child receives exactly
-// what the host supplied. If a synthetic source contains duplicates, the last entry
-// wins in both spelling and value.
-const CASE_INSENSITIVE_SYSTEM_KEYS: ReadonlySet<string> = new Set([
-  "PATH",
-  "SYSTEMROOT",
-  "COMSPEC",
-  "USERPROFILE",
-  "TEMP",
-  "TMP",
-]);
-
 function setEnvironmentVariable(
   target: NodeJS.ProcessEnv,
-  systemKeySpellings: Map<string, string>,
+  keySpellings: Map<string, string>,
   key: string,
   value: string | undefined,
+  caseInsensitive: boolean,
 ): void {
-  const normalizedKey = key.toUpperCase();
-  if (CASE_INSENSITIVE_SYSTEM_KEYS.has(normalizedKey)) {
-    const previousSpelling = systemKeySpellings.get(normalizedKey);
+  if (caseInsensitive) {
+    const normalizedKey = key.toUpperCase();
+    const previousSpelling = keySpellings.get(normalizedKey);
     if (previousSpelling !== undefined) {
       delete target[previousSpelling];
     }
-    systemKeySpellings.set(normalizedKey, key);
+    keySpellings.set(normalizedKey, key);
   }
   target[key] = value;
 }
@@ -105,22 +93,22 @@ const ALLOWED_PREFIXES: ReadonlyArray<string> = [
  *
  * ponytail: O(|source|) linear scan; server process.env is typically <100 keys.
  */
-export function buildChildEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function buildChildEnv(
+  source: NodeJS.ProcessEnv = process.env,
+  options?: { readonly platform?: NodeJS.Platform },
+): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
-  const systemKeySpellings = new Map<string, string>();
+  const keySpellings = new Map<string, string>();
+  const caseInsensitive = (options?.platform ?? process.platform) === "win32";
   for (const key of Object.keys(source)) {
-    const normalizedKey = key.toUpperCase();
-    if (CASE_INSENSITIVE_SYSTEM_KEYS.has(normalizedKey)) {
-      setEnvironmentVariable(out, systemKeySpellings, key, source[key]);
-      continue;
-    }
-    if (ALLOWED_EXACT.has(key)) {
-      out[key] = source[key];
+    const matchKey = caseInsensitive ? key.toUpperCase() : key;
+    if (ALLOWED_EXACT.has(matchKey)) {
+      setEnvironmentVariable(out, keySpellings, key, source[key], caseInsensitive);
       continue;
     }
     for (const prefix of ALLOWED_PREFIXES) {
-      if (key.startsWith(prefix)) {
-        out[key] = source[key];
+      if (matchKey.startsWith(prefix)) {
+        setEnvironmentVariable(out, keySpellings, key, source[key], caseInsensitive);
         break;
       }
     }
@@ -132,18 +120,40 @@ export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
   // ponytail: W5.2b — default is now allowlisted, not raw process.env
   baseEnv: NodeJS.ProcessEnv = buildChildEnv(),
+  options?: { readonly platform?: NodeJS.Platform },
 ): NodeJS.ProcessEnv {
-  if (!environment || environment.length === 0) {
-    return baseEnv;
-  }
+  return mergeEnvironmentEntries(
+    (environment ?? []).map((variable) => [variable.name, variable.value] as const),
+    baseEnv,
+    options?.platform,
+  );
+}
 
+export function mergeProcessEnvironment(
+  environment: NodeJS.ProcessEnv,
+  baseEnv: NodeJS.ProcessEnv = buildChildEnv(),
+  options?: { readonly platform?: NodeJS.Platform },
+): NodeJS.ProcessEnv {
+  return mergeEnvironmentEntries(
+    Object.keys(environment).map((key) => [key, environment[key]] as const),
+    baseEnv,
+    options?.platform,
+  );
+}
+
+function mergeEnvironmentEntries(
+  environment: ReadonlyArray<readonly [string, string | undefined]>,
+  baseEnv: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform | undefined,
+): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = {};
-  const systemKeySpellings = new Map<string, string>();
+  const keySpellings = new Map<string, string>();
+  const caseInsensitive = (platform ?? process.platform) === "win32";
   for (const key of Object.keys(baseEnv)) {
-    setEnvironmentVariable(next, systemKeySpellings, key, baseEnv[key]);
+    setEnvironmentVariable(next, keySpellings, key, baseEnv[key], caseInsensitive);
   }
-  for (const variable of environment) {
-    setEnvironmentVariable(next, systemKeySpellings, variable.name, variable.value);
+  for (const [key, value] of environment) {
+    setEnvironmentVariable(next, keySpellings, key, value, caseInsensitive);
   }
   return next;
 }

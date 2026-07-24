@@ -10,6 +10,7 @@ import {
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
+  type RepositoryProfilesSettings,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -156,6 +157,8 @@ describe("ProviderCommandReactor", () => {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly repositoryProfiles?: RepositoryProfilesSettings;
+    readonly repositoryProfileOverride?: "personal" | "work" | null;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -354,7 +357,13 @@ describe("ProviderCommandReactor", () => {
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
         const driverKind = ProviderDriverKind.make(
-          raw.startsWith("claude") ? "claudeAgent" : raw.startsWith("codex") ? "codex" : raw,
+          raw.startsWith("claude")
+            ? "claudeAgent"
+            : raw.startsWith("codex")
+              ? "codex"
+              : raw.startsWith("cursor")
+                ? "cursor"
+                : raw,
         );
         return Effect.succeed({
           instanceId,
@@ -419,7 +428,11 @@ describe("ProviderCommandReactor", () => {
           generateThreadForkSummary,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest(
+          input?.repositoryProfiles ? { repositoryProfiles: input.repositoryProfiles } : {},
+        ),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
@@ -450,6 +463,19 @@ describe("ProviderCommandReactor", () => {
         "server",
       ),
     );
+    if (input?.repositoryProfileOverride !== undefined) {
+      await Effect.runPromise(
+        engine.dispatch(
+          {
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-project-profile-update"),
+            projectId: asProjectId("project-1"),
+            repositoryProfileOverride: input.repositoryProfileOverride,
+          },
+          "server",
+        ),
+      );
+    }
     await Effect.runPromise(
       engine.dispatch(
         {
@@ -532,6 +558,189 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("persists a Work Codex session's selected Personal instance on first binding", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+        },
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-work-personal-codex"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-work-personal-codex"),
+            role: "user",
+            text: "use the confirmed Personal account",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads[0]?.session !== null;
+    });
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBe(personalInstanceId);
+  });
+
+  it("persists a Work-root Cursor session's selected Personal instance", async () => {
+    const personalInstanceId = ProviderInstanceId.make("cursor-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "cursor-model" },
+      repositoryProfiles: {
+        workRoots: ["/tmp"],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("cursor")]: personalInstanceId },
+          work: { [ProviderDriverKind.make("cursor")]: personalInstanceId },
+        },
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-work-personal-cursor"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-work-personal-cursor"),
+            role: "user",
+            text: "use the confirmed Personal account",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads[0]?.session?.workPersonalFallbackInstanceId === personalInstanceId;
+    });
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBe(personalInstanceId);
+  });
+
+  it("lets a Personal project override suppress a Work-root fallback marker", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "personal",
+      repositoryProfiles: {
+        workRoots: ["/tmp"],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+        },
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-personal-override"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-personal-override"),
+            role: "user",
+            text: "stay Personal",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        "server",
+      ),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBeNull();
+  });
+
+  it("preserves the fallback marker when stopping a bound session", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({
+      threadModelSelection: { instanceId: personalInstanceId, model: "gpt-5-codex" },
+      repositoryProfileOverride: "work",
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+          work: { [ProviderDriverKind.make("codex")]: personalInstanceId },
+        },
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-fallback-before-stop"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-fallback-before-stop"),
+            role: "user",
+            text: "start",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        "server",
+      ),
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads[0]?.session?.workPersonalFallbackInstanceId === personalInstanceId;
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch(
+        {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-fallback-stop"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        "server",
+      ),
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads[0]?.session?.status === "stopped";
+    });
+
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.session?.workPersonalFallbackInstanceId).toBe(personalInstanceId);
   });
 
   it("seeds a Claude fork cursor on the new thread runtime binding", async () => {
@@ -744,6 +953,7 @@ describe("ProviderCommandReactor", () => {
             status: "running",
             providerName: ProviderDriverKind.make("codex"),
             providerInstanceId: codexInstanceId,
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: asTurnId("codex-turn-1"),
             lastError: null,
@@ -1997,6 +2207,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -2199,6 +2410,7 @@ describe("ProviderCommandReactor", () => {
             status: "stopped",
             providerName: "codex",
             providerInstanceId: ProviderInstanceId.make("codex"),
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,
@@ -2270,6 +2482,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -2314,6 +2527,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,
@@ -2375,6 +2589,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,
@@ -2452,6 +2667,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,
@@ -2499,6 +2715,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,
@@ -2559,6 +2776,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,
@@ -2663,6 +2881,7 @@ describe("ProviderCommandReactor", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,
@@ -2773,6 +2992,7 @@ describe("ProviderCommandReactor", () => {
             status: "ready",
             providerName: "codex",
             providerInstanceId: ProviderInstanceId.make("codex_work"),
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             lastError: null,

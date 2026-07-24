@@ -222,6 +222,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
           threadId: THREAD_ID,
           status: "ready",
           providerName: "codex",
+          workPersonalFallbackInstanceId: null,
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,

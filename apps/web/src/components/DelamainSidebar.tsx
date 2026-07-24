@@ -63,6 +63,7 @@ import {
 } from "./manualDelamainLaunch";
 import type { DelamainPeer, ParsedLogEvent } from "@t3tools/contracts";
 import { Input } from "./ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 
 // --- Transcript renderer ---
 
@@ -402,6 +403,7 @@ function IntegrateDialog({
 // ponytail: plain default path. A workflow-script registry (list + pick) is the upgrade
 // path when there is more than one script worth launching from the UI.
 const DEFAULT_WORKFLOW_SCRIPT = "/srv/gits/repos/delamain/workflows/automode-goal.ts";
+const PROFILE_DEFAULT_ACCOUNT = "__profile_default__";
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error.";
 }
@@ -430,6 +432,8 @@ function LaunchDialog({
   const [prompt, set_prompt] = useState("");
   const [spawn_name, set_spawn_name] = useState("");
   const [engine, set_engine] = useState<ManualDelamainEngine>("codex");
+  const [selected_provider_instance_id, set_selected_provider_instance_id] =
+    useState<ProviderInstanceId | null>(null);
 
   // Run-workflow form.
   const [script, set_script] = useState(DEFAULT_WORKFLOW_SCRIPT);
@@ -449,10 +453,25 @@ function LaunchDialog({
     return resolveManualDelamainLaunchRoute({
       repositoryProfile,
       engine: launch_engine,
+      selectedProviderInstanceId: selected_provider_instance_id,
       profiles: repositoryProfiles,
       instanceEntries: providerInstanceEntries,
     });
-  }, [launch_engine, mode, providerInstanceEntries, repositoryProfile, repositoryProfiles]);
+  }, [
+    launch_engine,
+    mode,
+    providerInstanceEntries,
+    repositoryProfile,
+    repositoryProfiles,
+    selected_provider_instance_id,
+  ]);
+  const compatible_instances = useMemo(
+    () =>
+      providerInstanceEntries.filter(
+        (entry) => entry.driverKind === launch_engine && entry.enabled && entry.isAvailable,
+      ),
+    [launch_engine, providerInstanceEntries],
+  );
   const selected_instance_label =
     providerInstanceEntries.find((entry) => entry.instanceId === launch_route.providerInstanceId)
       ?.displayName ?? launch_route.providerInstanceId;
@@ -538,6 +557,7 @@ function LaunchDialog({
         spawn_mutation.reset();
         workflow_mutation.reset();
         set_launch_error(null);
+        set_selected_provider_instance_id(null);
         onOpenChange(false);
       } else if (next) {
         onOpenChange(true);
@@ -596,7 +616,10 @@ function LaunchDialog({
                     key={eng}
                     size="sm"
                     variant={engine === eng ? "default" : "outline"}
-                    onClick={() => set_engine(eng)}
+                    onClick={() => {
+                      set_engine(eng);
+                      set_selected_provider_instance_id(null);
+                    }}
                     type="button"
                     disabled={pending}
                   >
@@ -610,6 +633,35 @@ function LaunchDialog({
               </div>
             )}
           </div>
+          {mode === "spawn" ? (
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium text-muted-foreground/70">Account</span>
+              <Select
+                value={selected_provider_instance_id ?? PROFILE_DEFAULT_ACCOUNT}
+                onValueChange={(value) =>
+                  set_selected_provider_instance_id(
+                    value === PROFILE_DEFAULT_ACCOUNT ? null : (value as ProviderInstanceId),
+                  )
+                }
+              >
+                <SelectTrigger aria-label="Provider account" className="w-full">
+                  <SelectValue>
+                    {selected_provider_instance_id
+                      ? (selected_instance_label ?? selected_provider_instance_id)
+                      : `Profile default · ${selected_instance_label ?? "Not configured"}`}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup alignItemWithTrigger={false}>
+                  <SelectItem value={PROFILE_DEFAULT_ACCOUNT}>Profile default</SelectItem>
+                  {compatible_instances.map((entry) => (
+                    <SelectItem key={entry.instanceId} value={entry.instanceId}>
+                      {entry.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </label>
+          ) : null}
           {launch_route.error ? (
             <p className="text-[11px] text-destructive/70">{launch_route.error}</p>
           ) : null}

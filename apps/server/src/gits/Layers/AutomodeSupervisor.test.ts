@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
 import type {
@@ -12,13 +13,20 @@ import type {
   DelamainRunWorkflowInput,
   DelamainSendMessageInput,
   DelamainSpawnPeerInput,
+  OrchestrationProject,
   RepositoryProfilesSettings,
 } from "@t3tools/contracts";
-import { ProviderDriverKind, ProviderInstanceId, ServerSettingsError } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   DelamainAdapter,
@@ -122,6 +130,7 @@ function makeLayer(options?: {
   readonly repositoryProfiles?: RepositoryProfilesSettings;
   readonly availableProviderInstanceIds?: ReadonlyArray<string>;
   readonly settingsError?: ServerSettingsError;
+  readonly activeProject?: OrchestrationProject | null;
 }) {
   const availableInstances = (
     options?.availableProviderInstanceIds ?? [defaultCodexInstanceId]
@@ -135,6 +144,16 @@ function makeLayer(options?: {
         repositoryProfiles: options?.repositoryProfiles ?? defaultRepositoryProfiles,
       });
   return AutomodeSupervisorLive.pipe(
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery)({
+        getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+          Effect.succeed(
+            options?.activeProject?.workspaceRoot === workspaceRoot
+              ? Option.some(options.activeProject)
+              : Option.none(),
+          ),
+      }),
+    ),
     Layer.provide(
       Layer.mock(DelamainAdapter)({
         listPeers: () =>
@@ -202,6 +221,24 @@ function makeLayer(options?: {
     ),
     Layer.provideMerge(NodeServices.layer),
   );
+}
+
+function activeProject(input: {
+  readonly workspaceRoot: string;
+  readonly repositoryProfileOverride: "personal" | "work";
+}): OrchestrationProject {
+  return {
+    id: ProjectId.make(`project-${input.repositoryProfileOverride}`),
+    title: "Routed project",
+    workspaceRoot: input.workspaceRoot,
+    repositoryIdentity: null,
+    repositoryProfileOverride: input.repositoryProfileOverride,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    deletedAt: null,
+  };
 }
 
 describe("AutomodeSupervisorLive", () => {
@@ -397,6 +434,141 @@ describe("AutomodeSupervisorLive", () => {
           availableProviderInstanceIds: ["codex_work"],
           onSpawn: (input) => {
             spawnInput = input;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("routes a Work-root project through its explicit Personal override", () => {
+    let spawnInput: DelamainSpawnPeerInput | null = null;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/work/repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Personal override",
+        repo: "/tmp/work/repo",
+        prompt: "Run a safe task.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.peer?.id, peer.id);
+      assert.equal(spawnInput?.providerInstanceId, "codex_personal");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          activeProject: activeProject({
+            workspaceRoot: "/tmp/work/repo",
+            repositoryProfileOverride: "personal",
+          }),
+          repositoryProfiles: {
+            workRoots: ["/tmp/work"],
+            providerInstances: {
+              personal: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
+              work: { [codexDriver]: ProviderInstanceId.make("codex_work") },
+            },
+          },
+          availableProviderInstanceIds: ["codex_personal", "codex_work"],
+          onSpawn: (input) => {
+            spawnInput = input;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("routes a Personal-root project through its explicit Work override", () => {
+    let spawnInput: DelamainSpawnPeerInput | null = null;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/personal/repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Work override",
+        repo: "/tmp/personal/repo",
+        prompt: "Run a safe task.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.peer?.id, peer.id);
+      assert.equal(spawnInput?.providerInstanceId, "codex_work");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          activeProject: activeProject({
+            workspaceRoot: "/tmp/personal/repo",
+            repositoryProfileOverride: "work",
+          }),
+          repositoryProfiles: {
+            workRoots: ["/tmp/work"],
+            providerInstances: {
+              personal: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
+              work: { [codexDriver]: ProviderInstanceId.make("codex_work") },
+            },
+          },
+          availableProviderInstanceIds: ["codex_personal", "codex_work"],
+          onSpawn: (input) => {
+            spawnInput = input;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("blocks Automode when a Work mapping is the configured Personal instance", () => {
+    let spawnCount = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* supervisor.updatePolicy({
+        mode: "autonomous",
+        killSwitchEnabled: false,
+        allowedRepos: ["/tmp/work/repo"],
+        maxBudgetUsd: 10,
+        maxRuntimeMinutes: null,
+        requireApprovalForPeerSpawn: false,
+      });
+      const queued = yield* supervisor.enqueueGoal({
+        title: "Unsafe fallback",
+        repo: "/tmp/work/repo",
+        prompt: "Run a safe task.",
+      });
+
+      const result = yield* supervisor.dispatchGoal({ goalId: queued.goals[0]!.id });
+
+      assert.equal(result.peer, null);
+      assert.match(result.blockedReason ?? "", /Personal.*Automode.*confirm/i);
+      assert.equal(spawnCount, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          budgetUsage: availableBudgetUsage,
+          repositoryProfiles: {
+            workRoots: ["/tmp/work"],
+            providerInstances: {
+              personal: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
+              work: { [codexDriver]: ProviderInstanceId.make("codex_personal") },
+            },
+          },
+          availableProviderInstanceIds: ["codex_personal"],
+          onSpawn: () => {
+            spawnCount += 1;
           },
         }),
       ),

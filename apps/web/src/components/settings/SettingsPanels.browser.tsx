@@ -1195,6 +1195,96 @@ describe("GeneralSettingsPanel observability", () => {
       .toHaveTextContent("Not configured");
   });
 
+  it("keeps invalid Work roots editable and explains how to fix them", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        repositoryProfiles: {
+          workRoots: ["relative/root", "/srv/work"],
+          providerInstances: { personal: {}, work: {} },
+        },
+      },
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect
+      .element(page.getByLabelText("Work repository roots"))
+      .toHaveValue("relative/root\n/srv/work");
+    await expect.element(page.getByText(/relative\/root.*absolute path/i)).toBeInTheDocument();
+  });
+
+  it("refreshes an untouched Work roots field from a new server snapshot", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        repositoryProfiles: {
+          workRoots: ["/srv/old"],
+          providerInstances: { personal: {}, work: {} },
+        },
+      },
+    });
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+    const input = page.getByLabelText("Work repository roots");
+    await expect.element(input).toHaveValue("/srv/old");
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        repositoryProfiles: {
+          workRoots: ["/srv/new"],
+          providerInstances: { personal: {}, work: {} },
+        },
+      },
+    });
+
+    await expect.element(input).toHaveValue("/srv/new");
+  });
+
+  it("does not overwrite an in-progress Work roots edit on a server refresh", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        repositoryProfiles: {
+          workRoots: ["/srv/old"],
+          providerInstances: { personal: {}, work: {} },
+        },
+      },
+    });
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+    const input = page.getByLabelText("Work repository roots");
+    await input.fill("/srv/draft");
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        repositoryProfiles: {
+          workRoots: ["/srv/remote"],
+          providerInstances: { personal: {}, work: {} },
+        },
+      },
+    });
+
+    await expect.element(input).toHaveValue("/srv/draft");
+  });
+
   it("runs one-click provider updates from the provider card", async () => {
     const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockResolvedValue({
       providers: [createOutdatedProvider("codex")],

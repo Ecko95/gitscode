@@ -93,7 +93,6 @@ import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeS
 import { useUiStateStore } from "../uiStateStore";
 import {
   confirmWorkPersonalUsage,
-  pruneWorkPersonalUsageConfirmations,
   useInteractiveSessionAccountState,
 } from "../interactiveSessionAccountState";
 import {
@@ -1042,9 +1041,6 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [draftThreadsByThreadKey],
   );
-  useEffect(() => {
-    pruneWorkPersonalUsageConfirmations(new Set([...serverThreadKeys, ...draftThreadKeys]));
-  }, [draftThreadKeys, serverThreadKeys]);
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
   const mountedTerminalThreadRefs = useMemo(
     () =>
@@ -4964,9 +4960,11 @@ export default function ChatView(props: ChatViewProps) {
                     repositoryProfile={activeRepositoryProfile}
                     repositoryProfiles={repositoryProfiles}
                     pinnedWorkPersonalInstanceId={
-                      activeThreadKey
-                        ? (workPersonalConfirmedByThreadKey[activeThreadKey] ?? null)
-                        : null
+                      activeThread?.session
+                        ? (activeThread.session.workPersonalFallbackInstanceId ?? null)
+                        : activeThreadKey
+                          ? (workPersonalConfirmedByThreadKey[activeThreadKey] ?? null)
+                          : null
                     }
                     activeThreadActivities={activeThread?.activities}
                     resolvedTheme={resolvedTheme}

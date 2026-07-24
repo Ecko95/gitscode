@@ -366,6 +366,7 @@ describe("createThreadDetailManager", () => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: TurnId.make("turn-1"),
             lastError: null,

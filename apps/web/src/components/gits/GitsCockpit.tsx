@@ -5,21 +5,25 @@ import type {
   HermesCommandResult,
   HermesScheduleKind,
   OpenGsdCommandResult,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { resolveRepositoryProfile } from "@t3tools/shared/repositoryProfiles";
 import { useMutation } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { readLocalApi } from "../../localApi";
 import { useSavedEnvironmentRuntimeStore } from "../../environments/runtime";
 import { cn } from "../../lib/utils";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { selectProjectsAcrossEnvironments, useStore } from "../../store";
 import { useServerConfig } from "../../rpc/serverState";
 import {
   executeManualDelamainLaunch,
   manualDelamainPersonalWorkConfirmationMessage,
+  resolveManualDelamainRepositoryProfile,
   resolveManualDelamainLaunchRoute,
 } from "../manualDelamainLaunch";
 import { Button } from "../ui/button";
@@ -71,6 +75,9 @@ export function GitsCockpit() {
   const [spawnRepo, setSpawnRepo] = useState("");
   const [spawnName, setSpawnName] = useState("");
   const [spawnPrompt, setSpawnPrompt] = useState("");
+  const [spawnProviderInstanceId, setSpawnProviderInstanceId] = useState<ProviderInstanceId | null>(
+    null,
+  );
   const [replyText, setReplyText] = useState("");
   const [selectedProjectRoot, setSelectedProjectRoot] = useState("");
   const [mcpAuthSession, setMcpAuthSession] = useState<{
@@ -154,24 +161,43 @@ export function GitsCockpit() {
     () => deriveProviderInstanceEntries(targetServerConfig?.providers ?? []),
     [targetServerConfig?.providers],
   );
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const spawnEngine = "codex" as const;
   const spawnRepositoryProfile = useMemo(
     () =>
-      resolveRepositoryProfile({
-        workspaceRoot: spawnRepo,
-        profiles: repositoryProfiles,
-      }),
-    [repositoryProfiles, spawnRepo],
+      targetEnvironmentId
+        ? resolveManualDelamainRepositoryProfile({
+            workspaceRoot: spawnRepo,
+            environmentId: targetEnvironmentId,
+            profiles: repositoryProfiles,
+            projects,
+          })
+        : resolveRepositoryProfile({ workspaceRoot: spawnRepo, profiles: repositoryProfiles }),
+    [projects, repositoryProfiles, spawnRepo, targetEnvironmentId],
   );
   const spawnRoute = useMemo(
     () =>
       resolveManualDelamainLaunchRoute({
         repositoryProfile: spawnRepositoryProfile,
         engine: spawnEngine,
+        selectedProviderInstanceId: spawnProviderInstanceId,
         profiles: repositoryProfiles,
         instanceEntries: providerInstanceEntries,
       }),
-    [providerInstanceEntries, repositoryProfiles, spawnEngine, spawnRepositoryProfile],
+    [
+      providerInstanceEntries,
+      repositoryProfiles,
+      spawnEngine,
+      spawnProviderInstanceId,
+      spawnRepositoryProfile,
+    ],
+  );
+  const spawnProviderOptions = useMemo(
+    () =>
+      providerInstanceEntries
+        .filter((entry) => entry.driverKind === spawnEngine && entry.enabled && entry.isAvailable)
+        .map((entry) => ({ instanceId: entry.instanceId, label: entry.displayName })),
+    [providerInstanceEntries, spawnEngine],
   );
 
   const {
@@ -461,6 +487,7 @@ export function GitsCockpit() {
       if (!peer) return;
       setSelectedPeerId(peer.id);
       setSpawnPrompt("");
+      setSpawnProviderInstanceId(null);
       await delamainQuery.refetch();
     },
   });
@@ -960,6 +987,8 @@ export function GitsCockpit() {
                     spawnRepo,
                     spawnName,
                     spawnPrompt,
+                    spawnProviderInstanceId: spawnRoute.providerInstanceId,
+                    spawnProviderOptions,
                     replyText,
                     actionPending,
                     killSwitchEnabled: automodeQuery.data?.policy.killSwitchEnabled ?? false,
@@ -968,6 +997,7 @@ export function GitsCockpit() {
                     onSpawnRepoChange: setSpawnRepo,
                     onSpawnNameChange: setSpawnName,
                     onSpawnPromptChange: setSpawnPrompt,
+                    onSpawnProviderInstanceChange: setSpawnProviderInstanceId,
                     onReplyTextChange: setReplyText,
                     onSpawn: () => void spawnMutation.mutate(),
                     onReply: () => void replyMutation.mutate(),

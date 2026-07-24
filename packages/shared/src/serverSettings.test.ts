@@ -194,4 +194,34 @@ describe("serverSettings helpers", () => {
       config: { homePath: "~/.codex" },
     });
   });
+
+  it("replaces repository profile mappings so removed keys stay removed", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const cursor = ProviderDriverKind.make("cursor");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      repositoryProfiles: {
+        workRoots: ["/srv/work"],
+        providerInstances: {
+          personal: {},
+          work: {
+            [codex]: ProviderInstanceId.make("codex_work"),
+            [cursor]: ProviderInstanceId.make("cursor_work"),
+          },
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        repositoryProfiles: {
+          workRoots: ["/srv/work"],
+          providerInstances: {
+            personal: {},
+            work: { [cursor]: ProviderInstanceId.make("cursor_work") },
+          },
+        },
+      }).repositoryProfiles.providerInstances.work,
+    ).toEqual({ cursor: "cursor_work" });
+  });
 });

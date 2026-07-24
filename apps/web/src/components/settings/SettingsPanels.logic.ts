@@ -7,8 +7,9 @@ import type {
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { isAbsolutePath } from "@t3tools/shared/path";
 
-export function parseWorkRoots(input: string): ReadonlyArray<string> {
+function workRootLines(input: string): ReadonlyArray<string> {
   return [
     ...new Set(
       input
@@ -17,6 +18,14 @@ export function parseWorkRoots(input: string): ReadonlyArray<string> {
         .filter(Boolean),
     ),
   ];
+}
+
+export function parseWorkRoots(input: string): ReadonlyArray<string> {
+  return workRootLines(input).filter(isAbsolutePath);
+}
+
+export function findInvalidWorkRoots(input: string): ReadonlyArray<string> {
+  return workRootLines(input).filter((root) => !isAbsolutePath(root));
 }
 
 export function buildRepositoryProfileMappingPatch(input: {

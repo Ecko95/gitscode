@@ -50,6 +50,7 @@ import Migration0034 from "./Migrations/034_ConversationTreeAnchors.ts";
 import Migration0035 from "./Migrations/035_WebPushSubscriptions.ts";
 import Migration0036 from "./Migrations/036_AutomodeEpisodeId.ts";
 import Migration0037 from "./Migrations/037_RepositoryProfileOverride.ts";
+import Migration0038 from "./Migrations/038_ProjectionThreadSessionWorkPersonalFallback.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -99,6 +100,7 @@ export const migrationEntries = [
   [35, "WebPushSubscriptions", Migration0035],
   [36, "AutomodeEpisodeId", Migration0036],
   [37, "RepositoryProfileOverride", Migration0037],
+  [38, "ProjectionThreadSessionWorkPersonalFallback", Migration0038],
 ] as const;
 
 /**

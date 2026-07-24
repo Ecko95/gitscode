@@ -322,6 +322,7 @@ const DelamainAdapterLayerLive = DelamainCliAdapterLive.pipe(
 );
 
 const AutomodeSupervisorLayerLive = AutomodeSupervisorLive.pipe(
+  Layer.provide(OrchestrationLayerLive),
   Layer.provide(DelamainAdapterLayerLive),
   Layer.provide(ProviderInstanceRegistryLayerLive),
   Layer.provide(AutomodeLandingLayerLive),

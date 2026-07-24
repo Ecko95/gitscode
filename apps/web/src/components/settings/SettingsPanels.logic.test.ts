@@ -19,6 +19,14 @@ describe("parseWorkRoots", () => {
       "/srv/personal",
     ]);
   });
+
+  it("keeps only absolute POSIX, Windows, and UNC roots", () => {
+    expect(
+      parseWorkRoots(
+        ["/srv/work", "C:\\Work", "\\\\server\\share", "c:", "relative", "~/work"].join("\n"),
+      ),
+    ).toEqual(["/srv/work", "C:\\Work", "\\\\server\\share"]);
+  });
 });
 
 describe("buildRepositoryProfileMappingPatch", () => {

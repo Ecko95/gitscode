@@ -62,6 +62,30 @@ layer("AllMigrations.fixture", (it) => {
 						('t-codex',  'proj-b', 'Codex thread',  'gpt-5.4',          NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default')
 				`;
 
+        yield* sql`
+          INSERT INTO projection_thread_sessions (
+            thread_id,
+            status,
+            provider_name,
+            provider_session_id,
+            provider_thread_id,
+            runtime_mode,
+            active_turn_id,
+            last_error,
+            updated_at
+          ) VALUES (
+            't-codex',
+            'ready',
+            'codex',
+            'legacy-session',
+            'legacy-thread',
+            'full-access',
+            NULL,
+            NULL,
+            '2026-01-01T00:00:00.000Z'
+          )
+        `;
+
         // orchestration event with legacy modelOptions object shape (pre-016)
         yield* sql`
 					INSERT INTO orchestration_events (
@@ -188,7 +212,7 @@ layer("AllMigrations.fixture", (it) => {
         assert.ok(sessionColNames.has(col), `auth_sessions.${col} missing`);
       }
 
-      // projection_thread_sessions: provider_instance_id (added by 028)
+      // projection_thread_sessions: provider routing columns (added by 028 and 038)
       const threadSessionCols = yield* sql<{
         readonly name: string;
       }>`PRAGMA table_info(projection_thread_sessions)`;
@@ -197,6 +221,18 @@ layer("AllMigrations.fixture", (it) => {
         threadSessionColNames.has("provider_instance_id"),
         "projection_thread_sessions.provider_instance_id missing",
       );
+      assert.ok(
+        threadSessionColNames.has("work_personal_fallback_instance_id"),
+        "projection_thread_sessions.work_personal_fallback_instance_id missing",
+      );
+      const legacySessionRows = yield* sql<{
+        readonly workPersonalFallbackInstanceId: string | null;
+      }>`
+        SELECT work_personal_fallback_instance_id AS "workPersonalFallbackInstanceId"
+        FROM projection_thread_sessions
+        WHERE thread_id = 't-codex'
+      `;
+      assert.deepStrictEqual(legacySessionRows, [{ workPersonalFallbackInstanceId: null }]);
 
       // ── Assertion 4: seeded project rows survived + model selection canonicalized ──
       // Migration 016 converts default_model → default_model_selection_json

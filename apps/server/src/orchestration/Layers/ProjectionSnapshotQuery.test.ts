@@ -205,6 +205,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           thread_id,
           status,
           provider_name,
+          provider_instance_id,
+          work_personal_fallback_instance_id,
           provider_session_id,
           provider_thread_id,
           runtime_mode,
@@ -216,6 +218,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-1',
           'running',
           'codex',
+          'codex-personal',
+          'codex-personal',
           'provider-session-1',
           'provider-thread-1',
           'approval-required',
@@ -386,6 +390,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex-personal"),
+            workPersonalFallbackInstanceId: ProviderInstanceId.make("codex-personal"),
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -454,6 +460,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex-personal"),
+            workPersonalFallbackInstanceId: ProviderInstanceId.make("codex-personal"),
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -588,6 +596,31 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 4, '2026-04-06T00:00:07.000Z')
       `;
 
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_instance_id,
+          work_personal_fallback_instance_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES (
+          'thread-archived',
+          'ready',
+          'cursor',
+          'cursor-personal',
+          'cursor-personal',
+          'full-access',
+          NULL,
+          NULL,
+          '2026-04-06T00:00:07.000Z'
+        )
+      `;
+
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.deepEqual(
         shellSnapshot.threads.map((thread) => thread.id),
@@ -600,6 +633,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+      assert.equal(
+        archivedShellSnapshot.threads[0]?.session?.workPersonalFallbackInstanceId,
+        ProviderInstanceId.make("cursor-personal"),
+      );
     }),
   );
 

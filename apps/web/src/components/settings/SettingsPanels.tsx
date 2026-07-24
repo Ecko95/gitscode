@@ -1,7 +1,7 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
@@ -84,6 +84,7 @@ import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   buildRepositoryProfileMappingPatch,
   buildProviderInstanceUpdatePatch,
+  findInvalidWorkRoots,
   formatDiagnosticsDescription,
   parseWorkRoots,
 } from "./SettingsPanels.logic";
@@ -1244,6 +1245,20 @@ export function ProviderSettingsPanel() {
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
   const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
+  const [workRootsInput, setWorkRootsInput] = useState(() =>
+    settings.repositoryProfiles.workRoots.join("\n"),
+  );
+  const workRootsDirtyRef = useRef(false);
+  const settingsWorkRootsInput = settings.repositoryProfiles.workRoots.join("\n");
+  const previousSettingsWorkRootsInputRef = useRef(settingsWorkRootsInput);
+  useEffect(() => {
+    if (settingsWorkRootsInput === previousSettingsWorkRootsInputRef.current) return;
+    previousSettingsWorkRootsInputRef.current = settingsWorkRootsInput;
+    if (!workRootsDirtyRef.current) {
+      setWorkRootsInput(settingsWorkRootsInput);
+    }
+  }, [settingsWorkRootsInput]);
+  const invalidWorkRoots = useMemo(() => findInvalidWorkRoots(workRootsInput), [workRootsInput]);
   const refreshingRef = useRef(false);
   const providerAuthActions = useMemo<ProviderAuthActions | undefined>(() => {
     if (!primaryEnvironmentId) return undefined;
@@ -1527,15 +1542,29 @@ export function ProviderSettingsPanel() {
         <SettingsRow
           title="Work roots"
           description="One parent folder per line. Repositories inside these folders use the Work profile."
+          status={
+            invalidWorkRoots.length > 0 ? (
+              <span id="work-roots-error" role="status" className="text-destructive">
+                Ignored {invalidWorkRoots.join(", ")}. Use an absolute path such as /srv/work,
+                C:\Work, or \\server\share.
+              </span>
+            ) : null
+          }
           control={
             <Textarea
-              key={settings.repositoryProfiles.workRoots.join("\n")}
               size="sm"
               className="w-full sm:w-80"
-              defaultValue={settings.repositoryProfiles.workRoots.join("\n")}
+              value={workRootsInput}
               placeholder="/path/to/work"
               aria-label="Work repository roots"
+              aria-invalid={invalidWorkRoots.length > 0}
+              aria-describedby={invalidWorkRoots.length > 0 ? "work-roots-error" : undefined}
+              onChange={(event) => {
+                workRootsDirtyRef.current = true;
+                setWorkRootsInput(event.currentTarget.value);
+              }}
               onBlur={(event) => {
+                workRootsDirtyRef.current = false;
                 updateSettings({
                   repositoryProfiles: {
                     ...settings.repositoryProfiles,

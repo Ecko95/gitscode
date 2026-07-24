@@ -36,6 +36,7 @@ import { render } from "vitest-browser-react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
+import { useInteractiveSessionAccountState } from "../interactiveSessionAccountState";
 import {
   __resetEnvironmentApiOverridesForTests,
   __setEnvironmentApiOverrideForTests,
@@ -412,6 +413,7 @@ function createSnapshotForTargetUser(options: {
           threadId: THREAD_ID,
           status: options.sessionStatus ?? "ready",
           providerName: "codex",
+          workPersonalFallbackInstanceId: null,
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
@@ -479,6 +481,7 @@ function addThreadToSnapshot(
           threadId,
           status: "ready",
           providerName: "codex",
+          workPersonalFallbackInstanceId: null,
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
@@ -645,6 +648,7 @@ async function startPromotedServerThreadViaDomainEvent(threadId: ThreadId): Prom
     threadId,
     status: "running",
     providerName: "codex",
+    workPersonalFallbackInstanceId: null,
     runtimeMode: "full-access",
     activeTurnId: `turn-${threadId}` as TurnId,
     lastError: null,
@@ -814,6 +818,7 @@ function createSnapshotWithSecondaryProject(options?: {
             threadId: "thread-secondary-project" as ThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -847,6 +852,7 @@ function createSnapshotWithSecondaryProject(options?: {
             threadId: ARCHIVED_SECONDARY_THREAD_ID,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -3426,7 +3432,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
                 ...thread,
                 modelSelection: createModelSelection(personalInstanceId, "gpt-personal"),
                 session: thread.session
-                  ? { ...thread.session, providerInstanceId: personalInstanceId }
+                  ? {
+                      ...thread.session,
+                      providerInstanceId: personalInstanceId,
+                      workPersonalFallbackInstanceId: personalInstanceId,
+                    }
                   : null,
               }
             : thread,
@@ -3518,6 +3528,44 @@ describe("ChatView timeline estimator parity (full app)", () => {
       });
     } finally {
       confirmSpy.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores the Work-to-Personal warning from a persisted session snapshot", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-persisted-personal-warning-test" as MessageId,
+      targetText: "persisted personal warning test",
+    });
+    useInteractiveSessionAccountState.setState({ workPersonalConfirmedByThreadKey: {} });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) =>
+          Object.assign({}, thread, {
+            modelSelection: createModelSelection(personalInstanceId, "gpt-personal"),
+            session: thread.session
+              ? {
+                  ...thread.session,
+                  providerInstanceId: personalInstanceId,
+                  workPersonalFallbackInstanceId: personalInstanceId,
+                }
+              : null,
+          }),
+        ),
+      },
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(findComposerProviderModelPicker()?.textContent).toContain(personalInstanceId);
+        expect(
+          document.querySelector('[data-provider-account-warning="work-personal"]'),
+        ).not.toBeNull();
+      });
+    } finally {
       await mounted.cleanup();
     }
   });

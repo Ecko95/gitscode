@@ -24,6 +24,7 @@ describe("mergeProviderInstanceEnvironment", () => {
       mergeProviderInstanceEnvironment(
         [{ name: "PATH", value: "C:\\selected", sensitive: false }],
         { Path: "C:\\ambient" },
+        { platform: "win32" },
       ),
     ).toEqual({ PATH: "C:\\selected" });
   });
@@ -36,8 +37,29 @@ describe("mergeProviderInstanceEnvironment", () => {
           { name: "Path", value: "C:\\second", sensitive: false },
         ],
         { pAtH: "C:\\ambient" },
+        { platform: "win32" },
       ),
     ).toEqual({ Path: "C:\\second" });
+  });
+
+  it("overrides every environment key case-insensitively on Windows", () => {
+    expect(
+      mergeProviderInstanceEnvironment(
+        [{ name: "OpenAI_Api_Key", value: "selected", sensitive: true }],
+        { OPENAI_API_KEY: "ambient" },
+        { platform: "win32" },
+      ),
+    ).toEqual({ OpenAI_Api_Key: "selected" });
+  });
+
+  it("preserves case-distinct environment keys on Linux", () => {
+    expect(
+      mergeProviderInstanceEnvironment(
+        [{ name: "OpenAI_Api_Key", value: "selected", sensitive: true }],
+        { OPENAI_API_KEY: "ambient" },
+        { platform: "linux" },
+      ),
+    ).toEqual({ OPENAI_API_KEY: "ambient", OpenAI_Api_Key: "selected" });
   });
 });
 
@@ -88,13 +110,16 @@ describe("buildChildEnv", () => {
   });
 
   it("matches Windows system vars case-insensitively and preserves their spelling", () => {
-    const child = buildChildEnv({
-      Path: "C:\\tools",
-      SystemRoot: "C:\\Windows",
-      ComSpec: "C:\\Windows\\System32\\cmd.exe",
-      UserProfile: "C:\\Users\\worker",
-      RANDOM_SECRET: "excluded",
-    });
+    const child = buildChildEnv(
+      {
+        Path: "C:\\tools",
+        SystemRoot: "C:\\Windows",
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+        UserProfile: "C:\\Users\\worker",
+        RANDOM_SECRET: "excluded",
+      },
+      { platform: "win32" },
+    );
 
     expect(child).toEqual({
       Path: "C:\\tools",
@@ -106,10 +131,13 @@ describe("buildChildEnv", () => {
 
   it("passes mixed-case Windows temp vars through", () => {
     expect(
-      buildChildEnv({
-        Temp: "C:\\Users\\worker\\Temp",
-        Tmp: "C:\\Users\\worker\\Tmp",
-      }),
+      buildChildEnv(
+        {
+          Temp: "C:\\Users\\worker\\Temp",
+          Tmp: "C:\\Users\\worker\\Tmp",
+        },
+        { platform: "win32" },
+      ),
     ).toEqual({
       Temp: "C:\\Users\\worker\\Temp",
       Tmp: "C:\\Users\\worker\\Tmp",
@@ -117,12 +145,15 @@ describe("buildChildEnv", () => {
   });
 
   it("uses the last spelling and value for duplicate Windows system vars", () => {
-    const child = buildChildEnv({
-      PATH: "C:\\first",
-      Path: "C:\\second",
-      SYSTEMROOT: "C:\\FirstWindows",
-      SystemRoot: "C:\\SecondWindows",
-    });
+    const child = buildChildEnv(
+      {
+        PATH: "C:\\first",
+        Path: "C:\\second",
+        SYSTEMROOT: "C:\\FirstWindows",
+        SystemRoot: "C:\\SecondWindows",
+      },
+      { platform: "win32" },
+    );
 
     expect(child).toEqual({
       Path: "C:\\second",

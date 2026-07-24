@@ -1,4 +1,9 @@
-import type { DelamainInboxResult, DelamainPeer, DelamainPeerListResult } from "@t3tools/contracts";
+import type {
+  DelamainInboxResult,
+  DelamainPeer,
+  DelamainPeerListResult,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import {
   BotIcon,
   CircleStopIcon,
@@ -31,6 +36,8 @@ export function PeerFleetPanel({
   spawnRepo,
   spawnName,
   spawnPrompt,
+  spawnProviderInstanceId,
+  spawnProviderOptions,
   replyText,
   actionPending,
   onRefresh,
@@ -38,6 +45,7 @@ export function PeerFleetPanel({
   onSpawnRepoChange,
   onSpawnNameChange,
   onSpawnPromptChange,
+  onSpawnProviderInstanceChange,
   onReplyTextChange,
   onSpawn,
   onReply,
@@ -57,6 +65,11 @@ export function PeerFleetPanel({
   spawnRepo: string;
   spawnName: string;
   spawnPrompt: string;
+  spawnProviderInstanceId: ProviderInstanceId | null;
+  spawnProviderOptions: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly label: string;
+  }>;
   replyText: string;
   actionPending: boolean;
   onRefresh: () => void;
@@ -64,6 +77,7 @@ export function PeerFleetPanel({
   onSpawnRepoChange: (value: string) => void;
   onSpawnNameChange: (value: string) => void;
   onSpawnPromptChange: (value: string) => void;
+  onSpawnProviderInstanceChange: (value: ProviderInstanceId | null) => void;
   onReplyTextChange: (value: string) => void;
   onSpawn: () => void;
   onReply: () => void;
@@ -85,6 +99,7 @@ export function PeerFleetPanel({
     supported.has("spawn") &&
     spawnRepo.trim().length > 0 &&
     spawnPrompt.trim().length > 0 &&
+    spawnProviderInstanceId !== null &&
     !killSwitchEnabled;
   const canReply =
     supported.has("reply") &&
@@ -191,6 +206,28 @@ export function PeerFleetPanel({
                 className="min-h-20 text-xs"
                 onChange={(event) => onSpawnPromptChange(event.currentTarget.value)}
               />
+              <label className="grid gap-1 text-[11px] text-muted-foreground">
+                Account
+                <select
+                  aria-label="Provider account"
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                  value={spawnProviderInstanceId ?? ""}
+                  onChange={(event) =>
+                    onSpawnProviderInstanceChange(
+                      event.currentTarget.value
+                        ? (event.currentTarget.value as ProviderInstanceId)
+                        : null,
+                    )
+                  }
+                >
+                  <option value="">Select account</option>
+                  {spawnProviderOptions.map((option) => (
+                    <option key={option.instanceId} value={option.instanceId}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="flex justify-end">
                 <Button size="sm" onClick={onSpawn} disabled={!canSpawn || actionPending}>
                   <BotIcon className="size-3.5" />

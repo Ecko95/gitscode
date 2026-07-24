@@ -20,14 +20,3 @@ export function confirmWorkPersonalUsage(threadKey: string, instanceId: Provider
     };
   });
 }
-
-export function pruneWorkPersonalUsageConfirmations(existingThreadKeys: ReadonlySet<string>): void {
-  useInteractiveSessionAccountState.setState((state) => {
-    const entries = Object.entries(state.workPersonalConfirmedByThreadKey);
-    const retainedEntries = entries.filter(([threadKey]) => existingThreadKeys.has(threadKey));
-    if (retainedEntries.length === entries.length) return state;
-    return {
-      workPersonalConfirmedByThreadKey: Object.fromEntries(retainedEntries),
-    };
-  });
-}

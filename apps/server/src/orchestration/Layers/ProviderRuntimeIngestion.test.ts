@@ -222,7 +222,10 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    workPersonalFallbackInstanceId?: ProviderInstanceId;
+  }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     fs.mkdirSync(path.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
@@ -304,6 +307,10 @@ describe("ProviderRuntimeIngestion", () => {
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "codex",
+            ...(options?.workPersonalFallbackInstanceId
+              ? { providerInstanceId: options.workPersonalFallbackInstanceId }
+              : {}),
+            workPersonalFallbackInstanceId: options?.workPersonalFallbackInstanceId ?? null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             updatedAt: createdAt,
@@ -372,6 +379,41 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("preserves the Work-to-Personal fallback marker across runtime status updates", async () => {
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const harness = await createHarness({ workPersonalFallbackInstanceId: personalInstanceId });
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-with-fallback"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-fallback"),
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running",
+    );
+    expect(thread.session?.workPersonalFallbackInstanceId).toBe(personalInstanceId);
+
+    harness.emit({
+      type: "session.started",
+      eventId: asEventId("evt-session-started-with-work-instance"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex-work"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+
+    const switchedThread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.providerInstanceId === ProviderInstanceId.make("codex-work"),
+    );
+    expect(switchedThread.session?.workPersonalFallbackInstanceId).toBeNull();
   });
 
   it("maps user-stop turn completion into ready session state without error", async () => {
@@ -575,6 +617,7 @@ describe("ProviderRuntimeIngestion", () => {
             threadId: ThreadId.make("thread-1"),
             status: "ready",
             providerName: "claudeAgent",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             updatedAt: seededAt,
@@ -1074,6 +1117,7 @@ describe("ProviderRuntimeIngestion", () => {
             threadId: sourceThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             updatedAt: createdAt,
@@ -1115,6 +1159,7 @@ describe("ProviderRuntimeIngestion", () => {
             threadId: targetThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             updatedAt: createdAt,
@@ -1276,6 +1321,7 @@ describe("ProviderRuntimeIngestion", () => {
             threadId: sourceThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             updatedAt: createdAt,
@@ -1438,6 +1484,7 @@ describe("ProviderRuntimeIngestion", () => {
             threadId: sourceThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             updatedAt: createdAt,
@@ -1479,6 +1526,7 @@ describe("ProviderRuntimeIngestion", () => {
             threadId: targetThreadId,
             status: "ready",
             providerName: "codex",
+            workPersonalFallbackInstanceId: null,
             runtimeMode: "approval-required",
             activeTurnId: null,
             updatedAt: createdAt,

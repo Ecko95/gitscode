@@ -46,8 +46,10 @@ export interface InteractiveSessionAccountRoute {
 
 function isSelectableProviderInstance(
   instanceId: ProviderInstanceId | null | undefined,
+  driver: ProviderDriverKind,
   instanceEntries: ReadonlyArray<{
     readonly instanceId: ProviderInstanceId;
+    readonly driverKind: ProviderDriverKind;
     readonly enabled: boolean;
     readonly isAvailable: boolean;
   }>,
@@ -55,7 +57,11 @@ function isSelectableProviderInstance(
   return Boolean(
     instanceId &&
     instanceEntries.some(
-      (entry) => entry.instanceId === instanceId && entry.enabled && entry.isAvailable,
+      (entry) =>
+        entry.instanceId === instanceId &&
+        entry.driverKind === driver &&
+        entry.enabled &&
+        entry.isAvailable,
     ),
   );
 }
@@ -68,6 +74,7 @@ export function resolveInteractiveSessionPreferredInstance(input: {
   readonly profiles: RepositoryProfilesSettings;
   readonly instanceEntries: ReadonlyArray<{
     readonly instanceId: ProviderInstanceId;
+    readonly driverKind: ProviderDriverKind;
     readonly enabled: boolean;
     readonly isAvailable: boolean;
   }>;
@@ -79,7 +86,7 @@ export function resolveInteractiveSessionPreferredInstance(input: {
     profiles: input.profiles,
   });
   if (!configuredInstanceId) return null;
-  return isSelectableProviderInstance(configuredInstanceId, input.instanceEntries)
+  return isSelectableProviderInstance(configuredInstanceId, input.driver, input.instanceEntries)
     ? configuredInstanceId
     : null;
 }
@@ -95,6 +102,7 @@ export function resolveInteractiveSessionAccountRoute(input: {
   readonly profiles: RepositoryProfilesSettings;
   readonly instanceEntries: ReadonlyArray<{
     readonly instanceId: ProviderInstanceId;
+    readonly driverKind: ProviderDriverKind;
     readonly enabled: boolean;
     readonly isAvailable: boolean;
   }>;
@@ -107,6 +115,7 @@ export function resolveInteractiveSessionAccountRoute(input: {
     input.explicitInstanceId !== null && input.explicitInstanceId !== undefined;
   const hasSelectableExplicitInstance = isSelectableProviderInstance(
     input.explicitInstanceId,
+    input.driver,
     input.instanceEntries,
   );
   const personalInstanceId = resolveRepositoryProviderInstance({

@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -37,6 +38,7 @@ import {
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   DelamainAdapter,
@@ -439,6 +441,7 @@ export const AutomodeSupervisorLive = Layer.effect(
     const config = yield* ServerConfig;
     const serverSettings = yield* ServerSettingsService;
     const providerInstances = yield* ProviderInstanceRegistry;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const fs = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const initializedAt = yield* nowIso;
@@ -485,8 +488,18 @@ export const AutomodeSupervisorLive = Layer.effect(
             toAutomodeError("Failed to resolve Automode repository worker routing.", cause),
           ),
         );
+        const project = yield* projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(repo)
+          .pipe(
+            Effect.mapError((cause) =>
+              toAutomodeError("Failed to resolve Automode project metadata.", cause),
+            ),
+          );
         const repositoryProfile = resolveRepositoryProfile({
           workspaceRoot: repo,
+          repositoryProfileOverride: Option.isSome(project)
+            ? project.value.repositoryProfileOverride
+            : null,
           profiles: settings.repositoryProfiles,
         });
         const providerInstanceId = resolveRepositoryProviderInstance({
@@ -498,6 +511,18 @@ export const AutomodeSupervisorLive = Layer.effect(
           return {
             providerInstanceId: null,
             blockedReason: `${repositoryProfile === "work" ? "Work" : "Personal"} repository has no Codex provider instance mapping.`,
+          };
+        }
+        const personalInstanceId = resolveRepositoryProviderInstance({
+          repositoryProfile: "personal",
+          driver: CODEX_DRIVER,
+          profiles: settings.repositoryProfiles,
+        });
+        if (repositoryProfile === "work" && providerInstanceId === personalInstanceId) {
+          return {
+            providerInstanceId: null,
+            blockedReason:
+              "Work repository Codex mapping uses the configured Personal instance; Automode cannot confirm Personal usage.",
           };
         }
         const instance = yield* providerInstances.getInstance(providerInstanceId);

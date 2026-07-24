@@ -172,6 +172,7 @@ export interface SidebarThreadSummary {
 export interface ThreadSession {
   provider: ProviderDriverKind;
   providerInstanceId?: ProviderInstanceId | undefined;
+  workPersonalFallbackInstanceId?: ProviderInstanceId | null | undefined;
   status: SessionPhase | "error" | "closed";
   activeTurnId?: TurnId | undefined;
   createdAt: string;

@@ -295,6 +295,60 @@ describe("environment state removal", () => {
 });
 
 describe("thread detail removal", () => {
+  it("updates session routing fields when the remaining session snapshot is unchanged", () => {
+    const threadId = ThreadId.make("thread-session-routing");
+    const projectId = ProjectId.make("project-session-routing");
+    const personalId = ProviderInstanceId.make("codex-personal");
+    const workId = ProviderInstanceId.make("codex-work");
+    const makeDetail = (
+      providerInstanceId: ReturnType<typeof ProviderInstanceId.make>,
+      workPersonalFallbackInstanceId: ReturnType<typeof ProviderInstanceId.make> | null,
+    ) =>
+      decodeThread({
+        id: threadId,
+        projectId,
+        title: "Session routing",
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: "2026-07-24T00:00:00.000Z",
+        updatedAt: "2026-07-24T00:00:00.000Z",
+        archivedAt: null,
+        deletedAt: null,
+        messages: [],
+        proposedPlans: [],
+        visualPlans: [],
+        activities: [],
+        checkpoints: [],
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId,
+          workPersonalFallbackInstanceId,
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-07-24T00:00:00.000Z",
+        },
+      });
+    const initial = syncServerThreadDetail(
+      makeEmptyState(),
+      makeDetail(personalId, personalId),
+      localEnvironmentId,
+    );
+
+    const updated = syncServerThreadDetail(initial, makeDetail(workId, null), localEnvironmentId);
+
+    expect(localEnvironmentStateOf(updated).threadSessionById[threadId]).toMatchObject({
+      providerInstanceId: workId,
+      workPersonalFallbackInstanceId: null,
+    });
+  });
+
   it("releases detail payload maps without removing shell or sidebar state", () => {
     const thread = makeThread({
       messages: [
@@ -854,6 +908,8 @@ describe("incremental orchestration updates", () => {
               threadId: thread.id,
               status: "running",
               providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex-personal"),
+              workPersonalFallbackInstanceId: ProviderInstanceId.make("codex-personal"),
               runtimeMode: "full-access",
               activeTurnId: TurnId.make("turn-1"),
               lastError: null,
@@ -881,6 +937,10 @@ describe("incremental orchestration updates", () => {
     );
 
     expect(threadsOf(next)[0]?.session?.status).toBe("running");
+    expect(threadsOf(next)[0]?.session).toMatchObject({
+      providerInstanceId: "codex-personal",
+      workPersonalFallbackInstanceId: "codex-personal",
+    });
     expect(threadsOf(next)[0]?.latestTurn?.state).toBe("completed");
     expect(threadsOf(next)[0]?.messages).toHaveLength(1);
   });
@@ -1138,6 +1198,7 @@ describe("incremental orchestration updates", () => {
           threadId: thread.id,
           status: "running",
           providerName: "codex",
+          workPersonalFallbackInstanceId: null,
           runtimeMode: "full-access",
           activeTurnId: TurnId.make("turn-3"),
           lastError: null,

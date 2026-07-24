@@ -326,6 +326,7 @@ function makeThreadShellSnapshot(params: {
               threadId: params.threadId,
               status: params.sessionStatus,
               providerName: "codex",
+              workPersonalFallbackInstanceId: null,
               runtimeMode: "full-access",
               activeTurnId: params.sessionStatus === "running" ? turnId : null,
               lastError: null,

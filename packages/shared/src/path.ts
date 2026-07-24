@@ -7,7 +7,12 @@ export function isUncPath(value: string): boolean {
 }
 
 export function isWindowsAbsolutePath(value: string): boolean {
-  return isUncPath(value) || isWindowsDrivePath(value);
+  const trimmed = value.trim();
+  return /^[/\\]{2}[^/\\]+[/\\]+[^/\\]+/.test(trimmed) || /^[a-zA-Z]:[/\\]/.test(trimmed);
+}
+
+export function isAbsolutePath(value: string): boolean {
+  return value.trim().startsWith("/") || isWindowsAbsolutePath(value);
 }
 
 export function isExplicitRelativePath(value: string): boolean {

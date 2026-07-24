@@ -1,10 +1,15 @@
 import {
+  type EnvironmentId,
   ProviderDriverKind,
   type ProviderInstanceId,
   type RepositoryProfile,
   type RepositoryProfilesSettings,
 } from "@t3tools/contracts";
-import { resolveRepositoryProviderInstance } from "@t3tools/shared/repositoryProfiles";
+import { normalizePath } from "@t3tools/shared/path";
+import {
+  resolveRepositoryProfile,
+  resolveRepositoryProviderInstance,
+} from "@t3tools/shared/repositoryProfiles";
 
 import type { ProviderInstanceEntry } from "~/providerInstances";
 
@@ -30,20 +35,46 @@ export interface ManualDelamainLaunchRoute {
   readonly error: string | null;
 }
 
+export function resolveManualDelamainRepositoryProfile(input: {
+  readonly workspaceRoot: string;
+  readonly environmentId: EnvironmentId;
+  readonly profiles: RepositoryProfilesSettings;
+  readonly projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string;
+    readonly repositoryProfileOverride?: RepositoryProfile | null | undefined;
+  }>;
+}): RepositoryProfile {
+  const normalizedRoot = normalizePath(input.workspaceRoot);
+  const project = input.projects.find(
+    (candidate) =>
+      candidate.environmentId === input.environmentId &&
+      normalizePath(candidate.cwd) === normalizedRoot,
+  );
+  return resolveRepositoryProfile({
+    workspaceRoot: input.workspaceRoot,
+    repositoryProfileOverride: project?.repositoryProfileOverride,
+    profiles: input.profiles,
+  });
+}
+
 export function resolveManualDelamainLaunchRoute(input: {
   readonly repositoryProfile: RepositoryProfile;
   readonly engine: ManualDelamainEngine;
+  readonly selectedProviderInstanceId?: ProviderInstanceId | null | undefined;
   readonly profiles: RepositoryProfilesSettings;
   readonly instanceEntries: ReadonlyArray<
     Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "enabled" | "isAvailable">
   >;
 }): ManualDelamainLaunchRoute {
   const driver = ProviderDriverKind.make(input.engine);
-  const providerInstanceId = resolveRepositoryProviderInstance({
-    repositoryProfile: input.repositoryProfile,
-    driver,
-    profiles: input.profiles,
-  });
+  const providerInstanceId =
+    input.selectedProviderInstanceId ??
+    resolveRepositoryProviderInstance({
+      repositoryProfile: input.repositoryProfile,
+      driver,
+      profiles: input.profiles,
+    });
   if (providerInstanceId === null) {
     return {
       providerInstanceId: null,

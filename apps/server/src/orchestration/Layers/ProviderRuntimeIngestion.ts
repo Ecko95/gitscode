@@ -1328,6 +1328,13 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+      const providerInstanceId = event.providerInstanceId ?? thread.session?.providerInstanceId;
+      const currentWorkPersonalFallbackInstanceId =
+        thread.session?.workPersonalFallbackInstanceId ?? null;
+      const workPersonalFallbackInstanceId =
+        currentWorkPersonalFallbackInstanceId === providerInstanceId
+          ? currentWorkPersonalFallbackInstanceId
+          : null;
 
       // ingestion only reads the current turn's messages and the thread's
       // proposed plans — fetch just those (memoized per event) instead of
@@ -1466,9 +1473,8 @@ const make = Effect.gen(function* () {
                 threadId: thread.id,
                 status,
                 providerName: event.provider,
-                ...(event.providerInstanceId !== undefined
-                  ? { providerInstanceId: event.providerInstanceId }
-                  : {}),
+                ...(providerInstanceId !== undefined ? { providerInstanceId } : {}),
+                workPersonalFallbackInstanceId,
                 runtimeMode: thread.session?.runtimeMode ?? "full-access",
                 activeTurnId: nextActiveTurnId,
                 lastError,
@@ -1730,9 +1736,8 @@ const make = Effect.gen(function* () {
                 threadId: thread.id,
                 status: "error",
                 providerName: event.provider,
-                ...(event.providerInstanceId !== undefined
-                  ? { providerInstanceId: event.providerInstanceId }
-                  : {}),
+                ...(providerInstanceId !== undefined ? { providerInstanceId } : {}),
+                workPersonalFallbackInstanceId,
                 runtimeMode: thread.session?.runtimeMode ?? "full-access",
                 activeTurnId: eventTurnId ?? null,
                 lastError: runtimeErrorMessage,
