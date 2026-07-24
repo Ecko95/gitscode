@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  isPathWithin,
   isExplicitRelativePath,
   isUncPath,
+  normalizePath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
 } from "./path.ts";
@@ -30,5 +32,16 @@ describe("path helpers", () => {
     expect(isExplicitRelativePath("./repo")).toBe(true);
     expect(isExplicitRelativePath("..\\repo")).toBe(true);
     expect(isExplicitRelativePath("~/repo")).toBe(false);
+  });
+
+  it("normalizes separators and Windows path casing", () => {
+    expect(normalizePath("C:\\Work\\repo\\")).toBe("c:/work/repo");
+    expect(normalizePath("/work//repo/")).toBe("/work/repo");
+  });
+
+  it("checks path containment at segment boundaries", () => {
+    expect(isPathWithin("/work/repo", "/work")).toBe(true);
+    expect(isPathWithin("/workshop/repo", "/work")).toBe(false);
+    expect(isPathWithin("/work/repo", "")).toBe(false);
   });
 });

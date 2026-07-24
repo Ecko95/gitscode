@@ -20,3 +20,26 @@ export function isExplicitRelativePath(value: string): boolean {
     value.startsWith("..\\")
   );
 }
+
+export function normalizePath(value: string): string {
+  const slashNormalized = value.trim().replaceAll("\\", "/");
+  const isUnc = slashNormalized.startsWith("//");
+  const prefix = isUnc ? "//" : "";
+  const collapsed = `${prefix}${slashNormalized.slice(isUnc ? 2 : 0).replace(/\/+/g, "/")}`;
+  const withoutTrailingSlash = collapsed.replace(/(?<!^)\/$/, "");
+  return isWindowsAbsolutePath(value) || isUnc
+    ? withoutTrailingSlash.toLowerCase()
+    : withoutTrailingSlash;
+}
+
+export function isPathWithin(path: string, root: string): boolean {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(root);
+  if (!normalizedRoot) {
+    return false;
+  }
+  return (
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`)
+  );
+}

@@ -5,7 +5,38 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
-import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceConfig,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
+
+export const RepositoryProfile = Schema.Literals(["personal", "work"]);
+export type RepositoryProfile = typeof RepositoryProfile.Type;
+
+export const ClientSelectedRepositoryProfile = RepositoryProfile.pipe(
+  Schema.withDecodingDefault(Effect.succeed("personal" as const satisfies RepositoryProfile)),
+);
+export type ClientSelectedRepositoryProfile = typeof ClientSelectedRepositoryProfile.Type;
+
+export const RepositoryProfileProviderInstanceMappings = Schema.Record(
+  ProviderDriverKind,
+  ProviderInstanceId,
+).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type RepositoryProfileProviderInstanceMappings =
+  typeof RepositoryProfileProviderInstanceMappings.Type;
+
+export const RepositoryProfileProviderInstances = Schema.Struct({
+  personal: RepositoryProfileProviderInstanceMappings,
+  work: RepositoryProfileProviderInstanceMappings,
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type RepositoryProfileProviderInstances = typeof RepositoryProfileProviderInstances.Type;
+
+export const RepositoryProfilesSettings = Schema.Struct({
+  workRoots: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  providerInstances: RepositoryProfileProviderInstances,
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type RepositoryProfilesSettings = typeof RepositoryProfilesSettings.Type;
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -97,6 +128,7 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
+  sidebarRepositoryProfile: ClientSelectedRepositoryProfile,
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -501,6 +533,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  repositoryProfiles: RepositoryProfilesSettings,
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Voice transcription is server-authoritative: the Whisper API key lives on
   // the server (routed through ServerSecretStore) and is redacted before the
@@ -611,6 +644,17 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  repositoryProfiles: Schema.optionalKey(
+    Schema.Struct({
+      workRoots: Schema.optionalKey(Schema.Array(TrimmedString)),
+      providerInstances: Schema.optionalKey(
+        Schema.Struct({
+          personal: Schema.optionalKey(Schema.Record(ProviderDriverKind, ProviderInstanceId)),
+          work: Schema.optionalKey(Schema.Record(ProviderDriverKind, ProviderInstanceId)),
+        }),
+      ),
+    }),
+  ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
@@ -650,6 +694,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
+  sidebarRepositoryProfile: Schema.optionalKey(RepositoryProfile),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   automaticFollowUpSuggestions: Schema.optionalKey(Schema.Boolean),
 });

@@ -99,6 +99,10 @@
       "types": "./src/path.ts",
       "import": "./src/path.ts"
     },
+    "./repositoryProfiles": {
+      "types": "./src/repositoryProfiles.ts",
+      "import": "./src/repositoryProfiles.ts"
+    },
     "./keybindings": {
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
