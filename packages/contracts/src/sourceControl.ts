@@ -87,6 +87,28 @@ export const SourceControlRepositoryInfo = Schema.Struct({
 });
 export type SourceControlRepositoryInfo = typeof SourceControlRepositoryInfo.Type;
 
+export const SourceControlOwnedRepository = Schema.Struct({
+  ...SourceControlRepositoryInfo.fields,
+  description: Schema.NullOr(Schema.String),
+  isPrivate: Schema.Boolean,
+  updatedAt: Schema.String,
+});
+export type SourceControlOwnedRepository = typeof SourceControlOwnedRepository.Type;
+
+export const SourceControlListOwnedRepositoriesInput = Schema.Struct({
+  provider: Schema.Literal("github"),
+  repositoryProfile: Schema.Literals(["personal", "work"]),
+});
+export type SourceControlListOwnedRepositoriesInput =
+  typeof SourceControlListOwnedRepositoriesInput.Type;
+
+export const SourceControlListOwnedRepositoriesResult = Schema.Struct({
+  owner: TrimmedNonEmptyString,
+  repositories: Schema.Array(SourceControlOwnedRepository),
+});
+export type SourceControlListOwnedRepositoriesResult =
+  typeof SourceControlListOwnedRepositoriesResult.Type;
+
 export const SourceControlRepositoryLookupInput = Schema.Struct({
   provider: SourceControlProviderKind,
   repository: TrimmedNonEmptyString,

@@ -45,11 +45,18 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
+export interface GitHubOwnedRepository extends GitHubRepositoryCloneUrls {
+  readonly description: string | null;
+  readonly isPrivate: boolean;
+  readonly updatedAt: string;
+}
+
 export interface GitHubCliShape {
   readonly execute: (input: {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
+    readonly env?: NodeJS.ProcessEnv;
   }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
   readonly listOpenPullRequests: (input: {
@@ -74,6 +81,14 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly repository: string;
   }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+  readonly listOwnedRepositories: (input: {
+    readonly cwd: string;
+    readonly env?: NodeJS.ProcessEnv;
+  }) => Effect.Effect<
+    { readonly owner: string; readonly repositories: ReadonlyArray<GitHubOwnedRepository> },
+    GitHubCliError
+  >;
 
   readonly createRepository: (input: {
     readonly cwd: string;
@@ -169,6 +184,15 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   sshUrl: TrimmedNonEmptyString,
 });
 
+const RawGitHubOwnedRepositoriesSchema = Schema.Array(
+  Schema.Struct({
+    ...RawGitHubRepositoryCloneUrlsSchema.fields,
+    description: Schema.NullOr(Schema.String),
+    isPrivate: Schema.Boolean,
+    updatedAt: Schema.String,
+  }),
+);
+
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGitHubRepositoryCloneUrlsSchema>,
 ): GitHubRepositoryCloneUrls {
@@ -223,7 +247,8 @@ function decodeGitHubJson<S extends Schema.Top>(
     | "listOpenPullRequests"
     | "getPullRequest"
     | "getPullRequestChecks"
-    | "getRepositoryCloneUrls",
+    | "getRepositoryCloneUrls"
+    | "listOwnedRepositories",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -249,6 +274,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(input.env ? { env: input.env } : {}),
       })
       .pipe(Effect.mapError((error) => normalizeGitHubCliError("execute", error)));
 
@@ -367,6 +393,41 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    listOwnedRepositories: (input) =>
+      Effect.gen(function* () {
+        const owner = yield* execute({
+          cwd: input.cwd,
+          args: ["api", "user", "--jq", ".login"],
+          ...(input.env ? { env: input.env } : {}),
+        }).pipe(Effect.map((result) => result.stdout.trim()));
+        if (!owner) {
+          return yield* new GitHubCliError({
+            operation: "listOwnedRepositories",
+            detail: "GitHub CLI did not return the authenticated account name.",
+          });
+        }
+        const raw = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "repo",
+            "list",
+            owner,
+            "--source",
+            "--limit",
+            "1000",
+            "--json",
+            "nameWithOwner,url,sshUrl,description,isPrivate,updatedAt",
+          ],
+          ...(input.env ? { env: input.env } : {}),
+        }).pipe(Effect.map((result) => result.stdout.trim()));
+        const repositories = yield* decodeGitHubJson(
+          raw,
+          RawGitHubOwnedRepositoriesSchema,
+          "listOwnedRepositories",
+          "GitHub CLI returned invalid repository list JSON.",
+        );
+        return { owner, repositories };
+      }),
     createRepository: (input) =>
       execute({
         cwd: input.cwd,

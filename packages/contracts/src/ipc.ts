@@ -103,6 +103,8 @@ import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
+  SourceControlListOwnedRepositoriesInput,
+  SourceControlListOwnedRepositoriesResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryInfo,
@@ -637,6 +639,9 @@ export interface EnvironmentApi {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
   };
   sourceControl: {
+    listOwnedRepositories: (
+      input: SourceControlListOwnedRepositoriesInput,
+    ) => Promise<SourceControlListOwnedRepositoriesResult>;
     lookupRepository: (
       input: SourceControlRepositoryLookupInput,
     ) => Promise<SourceControlRepositoryInfo>;
