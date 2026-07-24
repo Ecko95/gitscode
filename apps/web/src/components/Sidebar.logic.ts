@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type {
   RepositoryProfile,
   RepositoryProfilesSettings,
@@ -12,7 +13,12 @@ import {
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
-import type { SidebarThreadSummary, Thread } from "../types";
+import type { ProjectGroupingSettings } from "../logicalProject";
+import {
+  buildSidebarProjectSnapshots,
+  type SidebarProjectSnapshot,
+} from "../sidebarProjectGrouping";
+import type { Project, SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
@@ -49,6 +55,30 @@ export function filterSidebarProjectsByRepositoryProfile<
         profiles,
       }) === selectedProfile,
   );
+}
+
+export function buildSidebarProjectsForRepositoryProfile(input: {
+  projects: readonly Project[];
+  selectedProfile: RepositoryProfile;
+  profiles: RepositoryProfilesSettings;
+  settings: ProjectGroupingSettings;
+  primaryEnvironmentId: EnvironmentId | null;
+  resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
+}): { projects: Project[]; snapshots: SidebarProjectSnapshot[] } {
+  const projects = filterSidebarProjectsByRepositoryProfile(
+    input.projects,
+    input.selectedProfile,
+    input.profiles,
+  );
+  return {
+    projects,
+    snapshots: buildSidebarProjectSnapshots({
+      projects,
+      settings: input.settings,
+      primaryEnvironmentId: input.primaryEnvironmentId,
+      resolveEnvironmentLabel: input.resolveEnvironmentLabel,
+    }),
+  };
 }
 
 export interface ThreadStatusPill {

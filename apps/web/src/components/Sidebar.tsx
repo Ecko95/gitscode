@@ -167,8 +167,8 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
+  buildSidebarProjectsForRepositoryProfile,
   getSidebarThreadIdsToPrewarm,
-  filterSidebarProjectsByRepositoryProfile,
   getVisibleThreadsForProject,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -203,7 +203,6 @@ import {
 import type { SidebarThreadSummary } from "../types";
 import {
   buildPhysicalToLogicalProjectKeyMap,
-  buildSidebarProjectSnapshots,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -3231,22 +3230,38 @@ export default function Sidebar() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
-  const visibleProjects = useMemo(
-    () =>
-      filterSidebarProjectsByRepositoryProfile(
-        projects,
-        sidebarRepositoryProfile,
-        repositoryProfiles,
-      ),
-    [projects, repositoryProfiles, sidebarRepositoryProfile],
-  );
-  const orderedProjects = useMemo(() => {
+  const allOrderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
-      items: visibleProjects,
+      items: projects,
       preferredIds: projectOrder,
       getId: getProjectOrderKey,
     });
-  }, [projectOrder, visibleProjects]);
+  }, [projectOrder, projects]);
+
+  const { projects: orderedProjects, snapshots: sidebarProjects } = useMemo(
+    () =>
+      buildSidebarProjectsForRepositoryProfile({
+        projects: allOrderedProjects,
+        selectedProfile: sidebarRepositoryProfile,
+        profiles: repositoryProfiles,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: (environmentId) => {
+          const rt = savedEnvironmentRuntimeById[environmentId];
+          const saved = savedEnvironmentRegistry[environmentId];
+          return rt?.descriptor?.label ?? saved?.label ?? null;
+        },
+      }),
+    [
+      allOrderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      repositoryProfiles,
+      savedEnvironmentRegistry,
+      savedEnvironmentRuntimeById,
+      sidebarRepositoryProfile,
+    ],
+  );
 
   // Build a mapping from physical project key → logical project key for
   // cross-environment grouping.  Projects that share a repositoryIdentity
@@ -3267,25 +3282,6 @@ export default function Sidebar() {
       ),
     [orderedProjects],
   );
-
-  const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(() => {
-    return buildSidebarProjectSnapshots({
-      projects: orderedProjects,
-      settings: projectGroupingSettings,
-      primaryEnvironmentId,
-      resolveEnvironmentLabel: (environmentId) => {
-        const rt = savedEnvironmentRuntimeById[environmentId];
-        const saved = savedEnvironmentRegistry[environmentId];
-        return rt?.descriptor?.label ?? saved?.label ?? null;
-      },
-    });
-  }, [
-    orderedProjects,
-    projectGroupingSettings,
-    primaryEnvironmentId,
-    savedEnvironmentRegistry,
-    savedEnvironmentRuntimeById,
-  ]);
 
   const sidebarProjectByKey = useMemo(
     () => new Map(sidebarProjects.map((project) => [project.projectKey, project] as const)),
@@ -3884,7 +3880,7 @@ export default function Sidebar() {
             suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-            projectsLength={visibleProjects.length}
+            projectsLength={orderedProjects.length}
           />
 
           <SidebarSeparator />

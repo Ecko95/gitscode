@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
+  buildSidebarProjectsForRepositoryProfile,
   createThreadJumpHintVisibilityController,
   filterSidebarProjectsByRepositoryProfile,
   getSidebarThreadIdsToPrewarm,
@@ -44,10 +45,50 @@ const repositoryProfiles = {
 } satisfies RepositoryProfilesSettings;
 
 describe("filterSidebarProjectsByRepositoryProfile", () => {
-  it("filters physical projects before grouped repositories can mix profiles", () => {
+  it("filters mixed-profile physical members before building the displayed logical group", () => {
+    const repositoryIdentity = {
+      canonicalKey: "github.com/example/shared",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/shared.git",
+      },
+    };
+    const personalProject = makeProject({
+      id: ProjectId.make("personal-project"),
+      cwd: "/repos/personal/shared",
+      repositoryIdentity,
+    });
+    const workProject = makeProject({
+      id: ProjectId.make("work-project"),
+      cwd: "/repos/work/shared",
+      repositoryIdentity,
+    });
+
+    const result = buildSidebarProjectsForRepositoryProfile({
+      projects: [personalProject, workProject],
+      selectedProfile: "work",
+      profiles: repositoryProfiles,
+      settings: {
+        sidebarProjectGroupingMode: "repository",
+        sidebarProjectGroupingOverrides: {},
+      },
+      primaryEnvironmentId: localEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(result.projects).toEqual([workProject]);
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.snapshots[0]?.projectKey).toBe(repositoryIdentity.canonicalKey);
+    expect(result.snapshots[0]?.memberProjects.map((member) => member.id)).toEqual([
+      workProject.id,
+    ]);
+  });
+
+  it("filters projects by their automatic profile", () => {
     const projects = [
-      { id: "personal", cwd: "/repos/personal/app", logicalKey: "shared-repository" },
-      { id: "work", cwd: "/repos/work/app", logicalKey: "shared-repository" },
+      { id: "personal", cwd: "/repos/personal/app" },
+      { id: "work", cwd: "/repos/work/app" },
     ];
 
     expect(
