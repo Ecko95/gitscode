@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type RepositoryProfile,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
@@ -67,6 +68,7 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -80,8 +82,10 @@ import {
 import { ProviderInstanceCard, type ProviderAuthActions } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
+  buildRepositoryProfileMappingPatch,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  parseWorkRoots,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -128,6 +132,16 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
+const UNMAPPED_PROFILE_INSTANCE = "__not_configured__";
+const REPOSITORY_PROFILE_OPTIONS = [
+  { value: "personal", label: "Personal" },
+  { value: "work", label: "Work" },
+] as const satisfies ReadonlyArray<{ value: RepositoryProfile; label: string }>;
+const REPOSITORY_PROFILE_DRIVERS = [
+  { driver: ProviderDriverKind.make("codex"), label: "Codex" },
+  { driver: ProviderDriverKind.make("cursor"), label: "Cursor" },
+  { driver: ProviderDriverKind.make("claudeAgent"), label: "Claude" },
+] as const;
 
 function withoutProviderInstanceKey<V>(
   record: Readonly<Record<ProviderInstanceId, V>> | undefined,
@@ -1407,6 +1421,10 @@ export function ProviderSettingsPanel() {
     }
   }
 
+  const liveEntriesById = new Map(
+    deriveProviderInstanceEntries(serverProviders).map((entry) => [entry.instanceId, entry]),
+  );
+
   const updateProviderInstance = (
     row: InstanceRow,
     next: ProviderInstanceConfig,
@@ -1505,6 +1523,134 @@ export function ProviderSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection title="Repository profiles">
+        <SettingsRow
+          title="Work roots"
+          description="One parent folder per line. Repositories inside these folders use the Work profile."
+          control={
+            <Textarea
+              key={settings.repositoryProfiles.workRoots.join("\n")}
+              size="sm"
+              className="w-full sm:w-80"
+              defaultValue={settings.repositoryProfiles.workRoots.join("\n")}
+              placeholder="/path/to/work"
+              aria-label="Work repository roots"
+              onBlur={(event) => {
+                updateSettings({
+                  repositoryProfiles: {
+                    ...settings.repositoryProfiles,
+                    workRoots: parseWorkRoots(event.currentTarget.value),
+                  },
+                });
+              }}
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Personal control-plane account"
+          description="Hermes and Motoko use their independent Personal Codex OAuth chain. Repository mappings do not change it."
+        />
+
+        {REPOSITORY_PROFILE_DRIVERS.map(({ driver, label }) => {
+          const driverRows = rows.filter((row) => row.driver === driver);
+          return (
+            <SettingsRow
+              key={driver}
+              title={label}
+              description={`Provider instances used for ${label} repository work.`}
+              control={
+                <div className="grid w-full grid-cols-2 gap-2 sm:w-auto">
+                  {REPOSITORY_PROFILE_OPTIONS.map((profileOption) => {
+                    const mappedInstanceId =
+                      settings.repositoryProfiles.providerInstances[profileOption.value][driver];
+                    const mappedRow = driverRows.find((row) => row.instanceId === mappedInstanceId);
+                    const mappedEntry = mappedInstanceId
+                      ? liveEntriesById.get(mappedInstanceId)
+                      : undefined;
+                    const mappedLabel = mappedInstanceId
+                      ? mappedRow
+                        ? (mappedEntry?.displayName ??
+                            mappedRow.instance.displayName ??
+                            String(mappedRow.instanceId)) +
+                          (mappedRow.instance.enabled === false || mappedEntry?.enabled === false
+                            ? " (disabled)"
+                            : mappedEntry?.isAvailable === false
+                              ? " (unavailable)"
+                              : "")
+                        : `${mappedInstanceId} (missing)`
+                      : "Not configured";
+
+                    return (
+                      <label key={profileOption.value} className="min-w-0 space-y-1">
+                        <span className="block text-[11px] text-muted-foreground">
+                          {profileOption.label}
+                        </span>
+                        <Select
+                          value={mappedInstanceId ?? UNMAPPED_PROFILE_INSTANCE}
+                          onValueChange={(value) => {
+                            updateSettings(
+                              buildRepositoryProfileMappingPatch({
+                                repositoryProfiles: settings.repositoryProfiles,
+                                profile: profileOption.value,
+                                driver,
+                                instanceId:
+                                  value === UNMAPPED_PROFILE_INSTANCE
+                                    ? undefined
+                                    : (value as ProviderInstanceId),
+                              }),
+                            );
+                          }}
+                        >
+                          <SelectTrigger
+                            className="w-full sm:w-44"
+                            aria-label={`${profileOption.label} ${label} instance`}
+                          >
+                            <SelectValue>{mappedLabel}</SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup align="end" alignItemWithTrigger={false}>
+                            <SelectItem hideIndicator value={UNMAPPED_PROFILE_INSTANCE}>
+                              Not configured
+                            </SelectItem>
+                            {mappedInstanceId && !mappedRow ? (
+                              <SelectItem hideIndicator disabled value={mappedInstanceId}>
+                                {mappedInstanceId} (missing)
+                              </SelectItem>
+                            ) : null}
+                            {driverRows.map((row) => {
+                              const entry = liveEntriesById.get(row.instanceId);
+                              const disabled =
+                                row.instance.enabled === false ||
+                                entry?.enabled === false ||
+                                entry?.isAvailable === false;
+                              const optionLabel =
+                                entry?.displayName ??
+                                row.instance.displayName ??
+                                String(row.instanceId);
+                              return (
+                                <SelectItem
+                                  hideIndicator
+                                  key={row.instanceId}
+                                  value={row.instanceId}
+                                  disabled={disabled}
+                                >
+                                  {optionLabel}
+                                  {disabled ? " (disabled)" : ""}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectPopup>
+                        </Select>
+                      </label>
+                    );
+                  })}
+                </div>
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+
       <SettingsSection
         title="Providers"
         headerAction={

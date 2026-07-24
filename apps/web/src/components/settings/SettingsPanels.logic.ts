@@ -2,10 +2,48 @@ import type {
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
+  RepositoryProfile,
   ServerSettings,
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+
+export function parseWorkRoots(input: string): ReadonlyArray<string> {
+  return [
+    ...new Set(
+      input
+        .split("\n")
+        .map((root) => root.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+export function buildRepositoryProfileMappingPatch(input: {
+  readonly repositoryProfiles: ServerSettings["repositoryProfiles"];
+  readonly profile: RepositoryProfile;
+  readonly driver: ProviderDriverKind;
+  readonly instanceId?: ProviderInstanceId | undefined;
+}): Pick<UnifiedSettings, "repositoryProfiles"> {
+  const profileMappings = {
+    ...input.repositoryProfiles.providerInstances[input.profile],
+  };
+  if (input.instanceId === undefined) {
+    delete profileMappings[input.driver];
+  } else {
+    profileMappings[input.driver] = input.instanceId;
+  }
+
+  return {
+    repositoryProfiles: {
+      ...input.repositoryProfiles,
+      providerInstances: {
+        ...input.repositoryProfiles.providerInstances,
+        [input.profile]: profileMappings,
+      },
+    },
+  };
+}
 
 function collapseOtelSignalsUrl(input: {
   readonly tracesUrl: string;

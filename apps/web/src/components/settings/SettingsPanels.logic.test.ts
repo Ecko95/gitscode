@@ -6,9 +6,83 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  buildRepositoryProfileMappingPatch,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  parseWorkRoots,
 } from "./SettingsPanels.logic";
+
+describe("parseWorkRoots", () => {
+  it("trims, drops empty lines, and keeps the first occurrence of each root", () => {
+    expect(parseWorkRoots(" /srv/work \n\n/srv/personal\n/srv/work\n /srv/personal ")).toEqual([
+      "/srv/work",
+      "/srv/personal",
+    ]);
+  });
+});
+
+describe("buildRepositoryProfileMappingPatch", () => {
+  it("updates one driver without dropping either profile's other mappings", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const cursor = ProviderDriverKind.make("cursor");
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const patch = buildRepositoryProfileMappingPatch({
+      repositoryProfiles: {
+        workRoots: ["/srv/work"],
+        providerInstances: {
+          personal: {
+            [codex]: ProviderInstanceId.make("codex_personal"),
+            [claude]: ProviderInstanceId.make("claude_personal"),
+          },
+          work: {
+            [codex]: ProviderInstanceId.make("codex_work"),
+            [cursor]: ProviderInstanceId.make("cursor_work"),
+          },
+        },
+      },
+      profile: "work",
+      driver: codex,
+      instanceId: ProviderInstanceId.make("codex_bts"),
+    });
+
+    expect(patch.repositoryProfiles).toEqual({
+      workRoots: ["/srv/work"],
+      providerInstances: {
+        personal: {
+          codex: "codex_personal",
+          claudeAgent: "claude_personal",
+        },
+        work: {
+          codex: "codex_bts",
+          cursor: "cursor_work",
+        },
+      },
+    });
+  });
+
+  it("clears one mapping without dropping the remaining mappings", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const cursor = ProviderDriverKind.make("cursor");
+    const patch = buildRepositoryProfileMappingPatch({
+      repositoryProfiles: {
+        workRoots: [],
+        providerInstances: {
+          personal: {},
+          work: {
+            [codex]: ProviderInstanceId.make("codex_work"),
+            [cursor]: ProviderInstanceId.make("cursor_work"),
+          },
+        },
+      },
+      profile: "work",
+      driver: codex,
+    });
+
+    expect(patch.repositoryProfiles?.providerInstances?.work).toEqual({
+      cursor: "cursor_work",
+    });
+  });
+});
 
 describe("formatDiagnosticsDescription", () => {
   it("collapses trace and metric URLs that share the same OTEL base path", () => {

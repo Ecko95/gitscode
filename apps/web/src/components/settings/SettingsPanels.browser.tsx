@@ -1143,6 +1143,58 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
   });
 
+  it("shows repository profile mappings without substituting missing or disabled instances", async () => {
+    const codex = ProviderDriverKind.make("codex");
+    const personalCodexId = ProviderInstanceId.make("codex_personal");
+    const missingCodexId = ProviderInstanceId.make("codex_work_missing");
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        {
+          ...createOutdatedProvider("codex"),
+          instanceId: personalCodexId,
+          displayName: "Personal Codex",
+          enabled: false,
+        },
+      ],
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [personalCodexId]: {
+            driver: codex,
+            displayName: "Personal Codex",
+            enabled: false,
+          },
+        },
+        repositoryProfiles: {
+          workRoots: ["/srv/work"],
+          providerInstances: {
+            personal: { [codex]: personalCodexId },
+            work: { [codex]: missingCodexId },
+          },
+        },
+      },
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Repository profiles")).toBeInTheDocument();
+    await expect.element(page.getByText("Personal control-plane account")).toBeInTheDocument();
+    await expect
+      .element(page.getByLabelText("Personal Codex instance"))
+      .toHaveTextContent("Personal Codex (disabled)");
+    await expect
+      .element(page.getByLabelText("Work Codex instance"))
+      .toHaveTextContent("codex_work_missing (missing)");
+    await expect
+      .element(page.getByLabelText("Work Cursor instance"))
+      .toHaveTextContent("Not configured");
+  });
+
   it("runs one-click provider updates from the provider card", async () => {
     const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockResolvedValue({
       providers: [createOutdatedProvider("codex")],
