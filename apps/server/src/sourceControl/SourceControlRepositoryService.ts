@@ -11,6 +11,8 @@ import {
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
+  type SourceControlListOwnedRepositoriesInput,
+  type SourceControlListOwnedRepositoriesResult,
   type SourceControlProviderKind,
   type SourceControlPublishRepositoryInput,
   type SourceControlPublishRepositoryResult,
@@ -22,9 +24,13 @@ import {
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { GitHubCli } from "./GitHubCli.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
 export interface SourceControlRepositoryServiceShape {
+  readonly listOwnedRepositories: (
+    input: SourceControlListOwnedRepositoriesInput,
+  ) => Effect.Effect<SourceControlListOwnedRepositoriesResult, SourceControlRepositoryError>;
   readonly lookupRepository: (
     input: SourceControlRepositoryLookupInput,
   ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
@@ -120,6 +126,7 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
   const config = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const github = yield* GitHubCli;
   const path = yield* Path.Path;
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
 
@@ -154,6 +161,31 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
     });
     return toRepositoryInfo(providerKind, urls);
   });
+
+  const listOwnedRepositories = Effect.fn("SourceControlRepositoryService.listOwnedRepositories")(
+    function* (input: SourceControlListOwnedRepositoriesInput) {
+      const env =
+        input.repositoryProfile === "work"
+          ? {
+              ...process.env,
+              GH_CONFIG_DIR:
+                process.env.T3CODE_GITHUB_WORK_CONFIG_DIR ??
+                path.join(NodeOS.homedir(), ".config", "gh-work"),
+            }
+          : undefined;
+      const result = yield* github.listOwnedRepositories({
+        cwd: config.cwd,
+        ...(env ? { env } : {}),
+      });
+      return {
+        owner: result.owner,
+        repositories: result.repositories.map((repository) => ({
+          provider: "github" as const,
+          ...repository,
+        })),
+      };
+    },
+  );
 
   const normalizeDestinationPath = Effect.fn("SourceControlRepositoryService.normalizeDestination")(
     function* (destinationPath: string) {
@@ -306,6 +338,8 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
   );
 
   return SourceControlRepositoryService.of({
+    listOwnedRepositories: (input) =>
+      listOwnedRepositories(input).pipe(mapRepositoryError("listOwnedRepositories", "github")),
     lookupRepository: (input) =>
       lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
     cloneRepository: (input) =>
