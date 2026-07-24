@@ -221,8 +221,6 @@ import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
-  SourceControlListOwnedRepositoriesInput,
-  SourceControlListOwnedRepositoriesResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryError,
@@ -377,7 +375,6 @@ export const WS_METHODS = {
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
-  sourceControlListOwnedRepositories: "sourceControl.listOwnedRepositories",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
 
@@ -541,15 +538,6 @@ export const WsSourceControlLookupRepositoryRpc = Rpc.make(
   {
     payload: SourceControlRepositoryLookupInput,
     success: SourceControlRepositoryInfo,
-    error: SourceControlRepositoryError,
-  },
-);
-
-export const WsSourceControlListOwnedRepositoriesRpc = Rpc.make(
-  WS_METHODS.sourceControlListOwnedRepositories,
-  {
-    payload: SourceControlListOwnedRepositoriesInput,
-    success: SourceControlListOwnedRepositoriesResult,
     error: SourceControlRepositoryError,
   },
 );
@@ -1268,7 +1256,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
   WsSourceControlLookupRepositoryRpc,
-  WsSourceControlListOwnedRepositoriesRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
   WsAudioTranscribeRpc,

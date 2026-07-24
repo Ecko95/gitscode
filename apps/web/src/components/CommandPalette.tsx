@@ -9,7 +9,6 @@ import {
   ProviderInstanceId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
-  type SourceControlOwnedRepository,
   type SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -562,24 +561,6 @@ function OpenCommandPaletteDialog() {
       browseDirectoryPath.length > 0 &&
       browseEnvironmentId !== null &&
       !relativePathNeedsActiveProject,
-  });
-  const isWorkGitHubRepositorySearch =
-    addProjectCloneFlow?.step === "repository" &&
-    addProjectCloneFlow.source === "github" &&
-    settings.sidebarRepositoryProfile === "work";
-  const ownedRepositoriesQuery = useQuery({
-    queryKey: ["sourceControlOwnedRepositories", addProjectEnvironmentId, "work", "github"],
-    queryFn: async () => {
-      if (!addProjectEnvironmentId) throw new Error("Environment API is not available.");
-      const api = readEnvironmentApi(addProjectEnvironmentId);
-      if (!api) throw new Error("Environment API is not available.");
-      return api.sourceControl.listOwnedRepositories({
-        provider: "github",
-        repositoryProfile: "work",
-      });
-    },
-    staleTime: 60_000,
-    enabled: isWorkGitHubRepositorySearch && addProjectEnvironmentId !== null,
   });
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const {
@@ -1213,31 +1194,7 @@ function OpenCommandPaletteDialog() {
   );
 
   function getDefaultCloneParentPath(environmentId: EnvironmentId): string {
-    if (settings.sidebarRepositoryProfile === "work") {
-      const workRoot = settings.repositoryProfiles.workRoots[0]?.trim();
-      if (workRoot) return ensureBrowseDirectoryPath(workRoot);
-    }
     return getAddProjectInitialQueryForEnvironment(environmentId);
-  }
-
-  function selectOwnedRepository(repository: SourceControlOwnedRepository): void {
-    if (!addProjectCloneFlow || addProjectCloneFlow.step !== "repository") return;
-    const repositoryName = repository.nameWithOwner.split("/").at(-1) ?? repository.nameWithOwner;
-    const destinationPath = appendBrowsePathSegment(
-      getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
-      repositoryName,
-    );
-    setAddProjectCloneFlow({
-      step: "confirm",
-      environmentId: addProjectCloneFlow.environmentId,
-      source: "github",
-      repositoryInput: repository.nameWithOwner,
-      repository,
-      remoteUrl: repository.sshUrl,
-    });
-    setHighlightedItemValue(null);
-    setQuery(destinationPath);
-    setBrowseGeneration((generation) => generation + 1);
   }
 
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
@@ -1427,66 +1384,7 @@ function OpenCommandPaletteDialog() {
 
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (addProjectCloneFlow?.step === "repository") {
-    displayedGroups = isWorkGitHubRepositorySearch
-      ? [
-          {
-            value: "work-github-repositories",
-            label: ownedRepositoriesQuery.data
-              ? `${ownedRepositoriesQuery.data.owner}'s repositories`
-              : "BTS GitHub repositories",
-            items: ownedRepositoriesQuery.isPending
-              ? [
-                  {
-                    kind: "action" as const,
-                    value: "work-github-repositories:loading",
-                    searchTerms: [],
-                    title: "Loading repositories…",
-                    icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
-                    disabled: true,
-                    run: async () => {},
-                  },
-                ]
-              : ownedRepositoriesQuery.isError
-                ? [
-                    {
-                      kind: "action" as const,
-                      value: "work-github-repositories:error",
-                      searchTerms: [],
-                      title: "BTS GitHub sign-in required",
-                      description: errorMessage(ownedRepositoriesQuery.error),
-                      icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
-                      disabled: true,
-                      run: async () => {},
-                    },
-                  ]
-                : (ownedRepositoriesQuery.data?.repositories ?? [])
-                    .filter((repository) => {
-                      const search = query.trim().toLowerCase();
-                      return (
-                        search.length === 0 ||
-                        repository.nameWithOwner.toLowerCase().includes(search) ||
-                        repository.description?.toLowerCase().includes(search)
-                      );
-                    })
-                    .map((repository) => ({
-                      kind: "action" as const,
-                      value: `work-github-repository:${repository.nameWithOwner}`,
-                      searchTerms: [
-                        repository.nameWithOwner,
-                        repository.description ?? "",
-                        repository.isPrivate ? "private" : "public",
-                      ],
-                      title: repository.nameWithOwner,
-                      description:
-                        repository.description ||
-                        (repository.isPrivate ? "Private repository" : "Public repository"),
-                      icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
-                      keepOpen: true,
-                      run: async () => selectOwnedRepository(repository),
-                    })),
-          },
-        ]
-      : [];
+    displayedGroups = [];
   } else if (addProjectCloneFlow?.step === "confirm") {
     displayedGroups = relativePathNeedsActiveProject ? [] : cloneDestinationBrowseGroups;
   } else if (isBrowsing) {
@@ -1563,11 +1461,7 @@ function OpenCommandPaletteDialog() {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    if (
-      addProjectCloneFlow?.step === "repository" &&
-      event.key === "Enter" &&
-      !highlightedItemValue?.startsWith("work-github-repository:")
-    ) {
+    if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
       event.preventDefault();
       void submitAddProjectCloneFlow();
       return;

@@ -290,44 +290,6 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("lists repositories owned by the isolated authenticated account", () =>
-    Effect.gen(function* () {
-      mockRun
-        .mockReturnValueOnce(Effect.succeed(processOutput("joshuaduffill\n")))
-        .mockReturnValueOnce(
-          Effect.succeed(
-            processOutput(
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
-              JSON.stringify([
-                {
-                  nameWithOwner: "joshuaduffill/private-app",
-                  url: "https://github.com/joshuaduffill/private-app",
-                  sshUrl: "git@github.com:joshuaduffill/private-app.git",
-                  description: "BTS delivery app",
-                  isPrivate: true,
-                  updatedAt: "2026-07-24T12:00:00Z",
-                },
-              ]),
-            ),
-          ),
-        );
-
-      const gh = yield* GitHubCli.GitHubCli;
-      const env = { GH_CONFIG_DIR: "/credentials/github-work" };
-      const result = yield* gh.listOwnedRepositories({ cwd: "/repo", env });
-
-      expect(result.owner).toBe("joshuaduffill");
-      expect(result.repositories).toHaveLength(1);
-      expect(mockRun).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          args: expect.arrayContaining(["joshuaduffill", "--source"]),
-          env,
-        }),
-      );
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("creates repositories and parses clone URLs from create output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

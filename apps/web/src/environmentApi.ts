@@ -39,7 +39,6 @@ export function createEnvironmentApi(
       browse: rpcClient.filesystem.browse,
     },
     sourceControl: {
-      listOwnedRepositories: rpcClient.sourceControl.listOwnedRepositories,
       lookupRepository: rpcClient.sourceControl.lookupRepository,
       cloneRepository: rpcClient.sourceControl.cloneRepository,
       publishRepository: rpcClient.sourceControl.publishRepository,

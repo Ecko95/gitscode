@@ -12,7 +12,6 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
-import { GitHubCli } from "./GitHubCli.ts";
 
 const CLONE_URLS = {
   nameWithOwner: "octocat/t3code",
@@ -58,11 +57,6 @@ function makeLayer(input: {
   readonly git?: Partial<GitVcsDriver.GitVcsDriverShape>;
 }) {
   return SourceControlRepositoryService.layer.pipe(
-    Layer.provide(
-      Layer.mock(GitHubCli)({
-        listOwnedRepositories: () => Effect.die("unexpected GitHub repository list"),
-      }),
-    ),
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         get: () => Effect.succeed(input.provider ?? makeProvider()),
