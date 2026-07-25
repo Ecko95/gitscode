@@ -329,6 +329,8 @@ const defaultGitsDevCommands: GitsDevCommandListResult = {
   configPath: "/tmp/default-project/.gits/dev-commands.json",
   tailscaleAvailable: true,
   magicDnsName: "subject28.tail.ts.net",
+  allowedHosts: [],
+  bindHost: "127.0.0.1",
   commands: [
     {
       id: "web-dev",
@@ -898,6 +900,9 @@ const buildAppUnderTest = (options?: {
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      devAllowedHosts: [],
+      devBindHost: "127.0.0.1",
+      devTailscaleServeEnabled: false,
       ...options?.config,
     };
     const layerConfig = Layer.succeed(ServerConfig, config);

@@ -14,7 +14,9 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
+import { parseAllowedHosts } from "../gits/dev-command-runner.ts";
 import {
+  DEFAULT_DEV_BIND_HOST,
   DEFAULT_PORT,
   deriveServerPaths,
   ensureServerDirectories,
@@ -133,6 +135,18 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   tailscaleServePort: Config.port("T3CODE_TAILSCALE_SERVE_PORT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  devAllowedHosts: Config.string("GITS_DEV_ALLOWED_HOSTS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  devBindHost: Config.string("GITS_DEV_BIND_HOST").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  devTailscaleServeEnabled: Config.boolean("GITS_DEV_TAILSCALE_SERVE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -394,6 +408,9 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      devAllowedHosts: parseAllowedHosts(env.devAllowedHosts),
+      devBindHost: env.devBindHost?.trim() || DEFAULT_DEV_BIND_HOST,
+      devTailscaleServeEnabled: env.devTailscaleServeEnabled ?? false,
       ...(env.mcpOauthCallbackUrl ? { mcpOauthCallbackUrl: env.mcpOauthCallbackUrl } : {}),
       hermesTelegramRelayToken: env.hermesTelegramRelayToken,
       vapidPublicKey: env.vapidPublicKey,

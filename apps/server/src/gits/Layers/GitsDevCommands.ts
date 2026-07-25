@@ -15,8 +15,14 @@ import {
   type GitsDevCommandListResult,
 } from "@t3tools/contracts";
 
-import { ServerConfig } from "../../config.ts";
-import { materializeDevCommandRunner, withStrictPortArgs } from "../dev-command-runner.ts";
+import { readTailscaleStatus } from "@t3tools/tailscale";
+
+import { DEFAULT_DEV_BIND_HOST, ServerConfig } from "../../config.ts";
+import {
+  materializeDevCommandRunner,
+  parseAllowedHosts,
+  withStrictPortArgs,
+} from "../dev-command-runner.ts";
 import { GitsDevCommands, type GitsDevCommandsShape } from "../Services/GitsDevCommands.ts";
 
 const ConfigCommandSchema = Schema.Struct({
@@ -31,7 +37,13 @@ const ConfigCommandSchema = Schema.Struct({
   servePort: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 
+const ConfigDevSchema = Schema.Struct({
+  allowedHosts: Schema.optional(Schema.Array(Schema.String)),
+  bindHost: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
 const ConfigFileSchema = Schema.Struct({
+  dev: Schema.optional(ConfigDevSchema),
   commands: Schema.Array(ConfigCommandSchema),
 });
 const decodeConfigFile = Schema.decodeUnknownEffect(ConfigFileSchema);
@@ -252,7 +264,9 @@ function uniqueCommands(
 export function buildDevCommandLaunchCommand(input: {
   readonly runnerPath: string;
   readonly command: GitsDevCommand;
+  readonly allowedHosts?: ReadonlyArray<string>;
 }): string {
+  const allowedHosts = input.allowedHosts ?? [];
   const env = [
     ["GITS_DEV_NAME", input.command.name],
     ["GITS_DEV_CWD", input.command.cwd],
@@ -263,6 +277,12 @@ export function buildDevCommandLaunchCommand(input: {
     ...(input.command.localHost === null
       ? []
       : [["GITS_DEV_LOCAL_HOST", input.command.localHost] as const]),
+    ...(allowedHosts.length === 0
+      ? []
+      : [["GITS_DEV_ALLOWED_HOSTS", allowedHosts.join(",")] as const]),
+    ...(input.command.publishOnTailnet && input.command.servePort !== null
+      ? [["GITS_DEV_SERVE_PORT", String(input.command.servePort)] as const]
+      : []),
   ] as const;
 
   return `${env.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} bash ${shellQuote(input.runnerPath)}`;
@@ -273,22 +293,29 @@ function toPublicCommand(input: {
   readonly projectDir: string;
   readonly runnerPath: string;
   readonly explicit: boolean;
+  readonly settings: ResolvedDevSettings;
 }): GitsDevCommand {
   const commandId = input.configCommand.id.trim();
   const cwd = normalizeText(input.configCommand.cwd)
     ? Path.resolve(input.projectDir, input.configCommand.cwd!.trim())
     : input.projectDir;
   const localPort = normalizePort(input.configCommand.port ?? null);
-  const localHost =
-    normalizeText(input.configCommand.host) ?? (localPort === null ? null : "127.0.0.1");
+  const localHost = normalizeText(input.configCommand.host) ?? input.settings.bindHost;
   const commandText =
     input.explicit && localPort !== null
       ? withStrictPortArgs({
           command: input.configCommand.command,
-          host: localHost ?? "127.0.0.1",
+          host: localHost,
           port: localPort,
         })
       : input.configCommand.command.trim();
+  const servePort = normalizePort(input.configCommand.servePort ?? null);
+  const publishOnTailnet =
+    input.explicit &&
+    input.configCommand.publishOnTailnet === true &&
+    input.settings.tailscaleServeEnabled &&
+    localPort !== null &&
+    servePort !== null;
   const command: GitsDevCommand = {
     id: commandId,
     name: input.configCommand.name.trim(),
@@ -297,9 +324,12 @@ function toPublicCommand(input: {
     command: commandText,
     localPort,
     localHost,
-    publishOnTailnet: false,
-    servePort: null,
-    previewUrl: null,
+    publishOnTailnet,
+    servePort: publishOnTailnet ? servePort : null,
+    previewUrl:
+      publishOnTailnet && input.settings.magicDnsName
+        ? `https://${input.settings.magicDnsName}:${servePort}/`
+        : null,
     launchCommand: "",
   };
   return {
@@ -307,8 +337,57 @@ function toPublicCommand(input: {
     launchCommand: buildDevCommandLaunchCommand({
       runnerPath: input.runnerPath,
       command,
+      allowedHosts: input.settings.allowedHosts,
     }),
   };
+}
+
+interface ResolvedDevSettings {
+  readonly allowedHosts: ReadonlyArray<string>;
+  readonly bindHost: string;
+  readonly tailscaleServeEnabled: boolean;
+  readonly magicDnsName: string | null;
+}
+
+function resolveDevSettings(input: {
+  readonly options: GitsDevCommandsOptions;
+  readonly file?: typeof ConfigDevSchema.Type | undefined;
+}): ResolvedDevSettings {
+  const fileAllowedHosts = parseAllowedHosts(input.file?.allowedHosts);
+  return {
+    // Project config replaces the server-wide default so a repo can opt out of it.
+    allowedHosts:
+      fileAllowedHosts.length > 0
+        ? fileAllowedHosts
+        : parseAllowedHosts(input.options.allowedHosts),
+    bindHost:
+      normalizeText(input.file?.bindHost ?? null) ??
+      input.options.bindHost ??
+      DEFAULT_DEV_BIND_HOST,
+    tailscaleServeEnabled: input.options.tailscaleServeEnabled ?? false,
+    magicDnsName: input.options.magicDnsName ?? null,
+  };
+}
+
+function tailnetWarnings(input: {
+  readonly commands: ReadonlyArray<ConfigCommand>;
+  readonly settings: ResolvedDevSettings;
+}): ReadonlyArray<string> {
+  const requested = input.commands.filter((command) => command.publishOnTailnet === true);
+  if (requested.length === 0) return [];
+  if (!input.settings.tailscaleServeEnabled) {
+    return ["Tailnet publishing is disabled. Set GITS_DEV_TAILSCALE_SERVE=true to enable it."];
+  }
+  const missingPort = requested.filter(
+    (command) => normalizePort(command.servePort ?? null) === null,
+  );
+  return missingPort.length === 0
+    ? []
+    : [
+        `Tailnet publishing needs an explicit servePort for: ${missingPort
+          .map((command) => command.id)
+          .join(", ")}.`,
+      ];
 }
 
 function toConfigCommandForWrite(input: {
@@ -335,44 +414,51 @@ function toConfigCommandForWrite(input: {
 
 async function buildListResult(
   projectDir: string,
-  runnerPath: string,
+  options: GitsDevCommandsOptions,
 ): Promise<GitsDevCommandListResult> {
+  const runnerPath = options.runnerPath;
   const config = await readFirstExistingConfig(projectDir);
 
   if (config !== null) {
     const parsedJson = JSON.parse(config.raw) as unknown;
     const parsed = await decodeConfigFile(parsedJson).pipe(Effect.runPromise);
+    const settings = resolveDevSettings({ options, file: parsed.dev });
     return {
       projectDir,
       configPath: config.configPath,
-      tailscaleAvailable: false,
-      magicDnsName: null,
+      tailscaleAvailable: settings.tailscaleServeEnabled,
+      magicDnsName: settings.magicDnsName,
+      allowedHosts: settings.allowedHosts,
+      bindHost: settings.bindHost,
       commands: parsed.commands.map((command) =>
         toPublicCommand({
           configCommand: command,
           projectDir,
           runnerPath,
           explicit: true,
+          settings,
         }),
       ),
-      warnings: parsed.commands.some((command) => command.publishOnTailnet === true)
-        ? ["Tailnet publishing is unavailable until isolated preview endpoints are enabled."]
-        : [],
+      warnings: tailnetWarnings({ commands: parsed.commands, settings }),
     };
   }
 
+  const settings = resolveDevSettings({ options });
   const discovered = uniqueCommands(await discoverCommands(projectDir));
   return {
     projectDir,
     configPath: null,
-    tailscaleAvailable: false,
-    magicDnsName: null,
+    tailscaleAvailable: settings.tailscaleServeEnabled,
+    magicDnsName: settings.magicDnsName,
+    allowedHosts: settings.allowedHosts,
+    bindHost: settings.bindHost,
     commands: discovered.map((command) =>
       toPublicCommand({
         configCommand: command,
         projectDir,
         runnerPath,
         explicit: false,
+        settings,
       }),
     ),
     warnings:
@@ -386,12 +472,19 @@ async function buildListResult(
   };
 }
 
-export function makeGitsDevCommandsService(options: {
+export interface GitsDevCommandsOptions {
   readonly runnerPath: string;
-}): GitsDevCommandsShape {
+  /** Server-wide default hostnames dev servers accept (`GITS_DEV_ALLOWED_HOSTS`). */
+  readonly allowedHosts?: ReadonlyArray<string> | string;
+  readonly bindHost?: string;
+  readonly tailscaleServeEnabled?: boolean;
+  readonly magicDnsName?: string | null;
+}
+
+export function makeGitsDevCommandsService(options: GitsDevCommandsOptions): GitsDevCommandsShape {
   const listCommands: GitsDevCommandsShape["listCommands"] = (input: GitsDevCommandListInput) =>
     Effect.tryPromise({
-      try: () => buildListResult(input.projectDir, options.runnerPath),
+      try: () => buildListResult(input.projectDir, options),
       catch: (cause) =>
         toDevCommandError(
           `Failed to inspect or parse dev command config in ${input.projectDir}.`,
@@ -404,7 +497,7 @@ export function makeGitsDevCommandsService(options: {
       try: async () => {
         const existing = await readFirstExistingConfig(input.projectDir);
         if (existing !== null) {
-          return buildListResult(input.projectDir, options.runnerPath);
+          return buildListResult(input.projectDir, options);
         }
         const discovered = uniqueCommands(await discoverCommands(input.projectDir));
         if (discovered.length === 0) {
@@ -423,7 +516,7 @@ export function makeGitsDevCommandsService(options: {
           ),
         } satisfies typeof ConfigFileSchema.Type;
         await Fs.writeFile(configPath, `${toPrettyJson(file)}\n`, "utf8");
-        return buildListResult(input.projectDir, options.runnerPath);
+        return buildListResult(input.projectDir, options);
       },
       catch: (cause) =>
         isGitsDevCommandError(cause)
@@ -442,6 +535,19 @@ export const GitsDevCommandsLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
     const runnerPath = yield* Effect.promise(() => materializeDevCommandRunner(config.stateDir));
-    return makeGitsDevCommandsService({ runnerPath });
+    // Read once at boot: the tailnet name is stable for the lifetime of the process.
+    const magicDnsName = config.devTailscaleServeEnabled
+      ? yield* readTailscaleStatus.pipe(
+          Effect.map((status) => status.magicDnsName),
+          Effect.catchCause(() => Effect.succeed(null)),
+        )
+      : null;
+    return makeGitsDevCommandsService({
+      runnerPath,
+      allowedHosts: config.devAllowedHosts,
+      bindHost: config.devBindHost,
+      tailscaleServeEnabled: config.devTailscaleServeEnabled,
+      magicDnsName,
+    });
   }),
 );

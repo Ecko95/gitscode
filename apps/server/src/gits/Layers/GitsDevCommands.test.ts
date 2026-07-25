@@ -38,19 +38,109 @@ it("keeps inferred dev commands private and does not claim a port", async () => 
   }
 });
 
-it("does not assume a port for an inferred root dev script", async () => {
+it("does not assume a port for an inferred root dev script but binds IPv4 loopback", async () => {
   const projectDir = await makeProject({ scripts: { dev: "bun run --filter '*' dev" } });
   try {
     const commands = makeGitsDevCommandsService({ runnerPath });
     const result = await Effect.runPromise(commands.listCommands({ projectDir }));
 
-    expect(result.commands[0]).toMatchObject({ localHost: null, localPort: null });
+    expect(result.commands[0]).toMatchObject({ localHost: "127.0.0.1", localPort: null });
   } finally {
     await fs.rm(projectDir, { recursive: true, force: true });
   }
 });
 
-it("uses the owned runner and disables legacy Tailnet publishing", async () => {
+it("injects configured allowed hosts into the launch command", async () => {
+  const projectDir = await makeProject({ scripts: { dev: "vite" } });
+  try {
+    const commands = makeGitsDevCommandsService({
+      runnerPath,
+      allowedHosts: ".taild6d729.ts.net",
+      bindHost: "127.0.0.1",
+    });
+    const result = await Effect.runPromise(commands.listCommands({ projectDir }));
+
+    expect(result.commands[0]?.launchCommand).toContain(
+      "GITS_DEV_ALLOWED_HOSTS='.taild6d729.ts.net'",
+    );
+    // Surfaced in the cockpit so a 403 is diagnosable without reading the env.
+    expect(result).toMatchObject({ allowedHosts: [".taild6d729.ts.net"], bindHost: "127.0.0.1" });
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+it("lets the project config override the server-wide dev settings", async () => {
+  const projectDir = await makeProject({ scripts: {} });
+  try {
+    await fs.mkdir(path.join(projectDir, ".gits"));
+    await fs.writeFile(
+      path.join(projectDir, ".gits", "dev-commands.json"),
+      JSON.stringify({
+        dev: { allowedHosts: ["app.taild6d729.ts.net"], bindHost: "0.0.0.0" },
+        commands: [{ id: "web-dev", name: "Web dev", command: "vite", port: 5173 }],
+      }),
+    );
+    const commands = makeGitsDevCommandsService({
+      runnerPath,
+      allowedHosts: ".other.ts.net",
+    });
+    const result = await Effect.runPromise(commands.listCommands({ projectDir }));
+
+    expect(result.commands[0]?.localHost).toBe("0.0.0.0");
+    expect(result.commands[0]?.launchCommand).toContain(
+      "GITS_DEV_ALLOWED_HOSTS='app.taild6d729.ts.net'",
+    );
+    expect(result.commands[0]?.launchCommand).toContain("--host 0.0.0.0 --port 5173 --strictPort");
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+it("publishes on the tailnet only when the server enables it", async () => {
+  const projectDir = await makeProject({ scripts: {} });
+  const config = {
+    commands: [
+      {
+        id: "web-dev",
+        name: "Web dev",
+        command: "vite",
+        port: 5173,
+        publishOnTailnet: true,
+        servePort: 8444,
+      },
+    ],
+  };
+  try {
+    await fs.mkdir(path.join(projectDir, ".gits"));
+    await fs.writeFile(path.join(projectDir, ".gits", "dev-commands.json"), JSON.stringify(config));
+
+    const disabled = await Effect.runPromise(
+      makeGitsDevCommandsService({ runnerPath }).listCommands({ projectDir }),
+    );
+    expect(disabled.commands[0]).toMatchObject({ publishOnTailnet: false, servePort: null });
+    expect(disabled.commands[0]?.launchCommand).not.toContain("GITS_DEV_SERVE_PORT");
+    expect(disabled.warnings.join(" ")).toContain("Tailnet publishing is disabled");
+
+    const enabled = await Effect.runPromise(
+      makeGitsDevCommandsService({
+        runnerPath,
+        tailscaleServeEnabled: true,
+        magicDnsName: "vps-eu.taild6d729.ts.net",
+      }).listCommands({ projectDir }),
+    );
+    expect(enabled.commands[0]).toMatchObject({
+      publishOnTailnet: true,
+      servePort: 8444,
+      previewUrl: "https://vps-eu.taild6d729.ts.net:8444/",
+    });
+    expect(enabled.commands[0]?.launchCommand).toContain("GITS_DEV_SERVE_PORT='8444'");
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+it("uses the owned runner and keeps unconfigured Tailnet publishing off", async () => {
   const projectDir = await makeProject({ scripts: {} });
   try {
     await fs.mkdir(path.join(projectDir, ".gits"));
@@ -83,8 +173,8 @@ it("uses the owned runner and disables legacy Tailnet publishing", async () => {
     expect(result.commands[0]?.launchCommand).toContain(
       "GITS_DEV_COMMAND='vite --host 127.0.0.1 --port 5173 --strictPort'",
     );
-    expect(result.commands[0]?.launchCommand).not.toContain("GITS_DEV_PUBLISH_TAILNET");
-    expect(result.warnings.join(" ")).toContain("Tailnet publishing is unavailable");
+    expect(result.commands[0]?.launchCommand).not.toContain("GITS_DEV_SERVE_PORT");
+    expect(result.warnings.join(" ")).toContain("Tailnet publishing is disabled");
   } finally {
     await fs.rm(projectDir, { recursive: true, force: true });
   }

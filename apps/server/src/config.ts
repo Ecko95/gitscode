@@ -16,6 +16,9 @@ import * as Context from "effect/Context";
 
 export const DEFAULT_PORT = 3773;
 
+/** IPv4 loopback: `::1`-only binds break proxying to a literal 127.0.0.1 target. */
+export const DEFAULT_DEV_BIND_HOST = "127.0.0.1";
+
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 
@@ -73,6 +76,12 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly logWebSocketEvents: boolean;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
+  /** Hostnames spawned dev servers accept in the Host header (Vite `server.allowedHosts`). */
+  readonly devAllowedHosts: ReadonlyArray<string>;
+  /** Interface spawned dev servers bind to. */
+  readonly devBindHost: string;
+  /** Allow dev commands to register themselves with `tailscale serve`. */
+  readonly devTailscaleServeEnabled: boolean;
   readonly mcpOauthCallbackUrl?: string | undefined;
   readonly hermesTelegramRelayToken?: string | undefined;
   readonly vapidPublicKey?: string | undefined;
@@ -173,6 +182,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           logWebSocketEvents: false,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          devAllowedHosts: [],
+          devBindHost: DEFAULT_DEV_BIND_HOST,
+          devTailscaleServeEnabled: false,
           hermesTelegramRelayToken: undefined,
           vapidPublicKey: undefined,
           vapidPrivateKey: undefined,

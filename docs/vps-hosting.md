@@ -77,6 +77,99 @@ The script:
 
 ---
 
+## Dev servers spawned by GITS on a tailnet host
+
+**Symptom.** You open a dev server from the cockpit and the browser shows
+`Blocked request. This host is not allowed.` (HTTP 403). Vite (and most modern dev
+servers) validate the `Host` header; when the page is reached over Tailscale the
+header is `vps-eu.taild6d729.ts.net`, not `localhost`, so the request is rejected.
+
+**Fix.** Tell GITS which hostnames dev servers should accept. It injects them at
+spawn time — no project's `vite.config` is ever edited.
+
+```bash
+# systemd user units inherit nothing from your shell, so set these when (re)installing
+# the unit — install-gits-user-service.sh bakes any that are non-empty into it:
+GITS_DEV_ALLOWED_HOSTS=.taild6d729.ts.net \
+GITS_DEV_BIND_HOST=127.0.0.1 \
+  scripts/gits-hosting/install-gits-user-service.sh --start
+```
+
+| Setting                 | Env var                    | `.gits/dev-commands.json`  | Default     |
+| ----------------------- | -------------------------- | -------------------------- | ----------- |
+| Allowed `Host` headers  | `GITS_DEV_ALLOWED_HOSTS`   | `dev.allowedHosts` (array) | _(none)_    |
+| Bind address            | `GITS_DEV_BIND_HOST`       | `dev.bindHost`             | `127.0.0.1` |
+| Allow `tailscale serve` | `GITS_DEV_TAILSCALE_SERVE` | _(server-wide only)_       | `false`     |
+
+The env var is a comma-separated list. A per-project `.gits/dev-commands.json`
+replaces the server-wide list for that repo:
+
+```json
+{
+  "dev": { "allowedHosts": [".taild6d729.ts.net"], "bindHost": "127.0.0.1" },
+  "commands": [{ "id": "web-dev", "name": "Web dev", "command": "bun run dev", "port": 5175 }]
+}
+```
+
+**How it is injected.** The dev-command runner exports
+`__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` (read by Vite 7+ without touching the
+project config), exports `HOST` as a bind hint for webpack/CRA-style servers, and
+appends `--host <bindHost> --port <port> --strictPort` to commands it recognises
+(direct `vite …`, or `bun|npm|pnpm|yarn run <script>` after `--`) when the command
+has an explicit `port`.
+
+_Escape hatch._ Frameworks with their own allow-list flag can read
+`GITS_DEV_ALLOWED_HOSTS` from their own config — it is exported into the dev server's
+environment:
+
+```js
+// next.config.js
+allowedDevOrigins: (process.env.GITS_DEV_ALLOWED_HOSTS ?? "").split(",").filter(Boolean),
+// webpack.config.js
+devServer: { allowedHosts: (process.env.GITS_DEV_ALLOWED_HOSTS ?? "").split(",").filter(Boolean) },
+```
+
+Note: Vite 7 treats the injected value as a **single** host, Vite 8 splits on commas.
+On Vite 7, keep the list to one entry (the leading-dot tailnet wildcard covers it).
+
+### Optional: publish a dev server on the tailnet automatically
+
+> Note the topology policy above: app-port Serve mappings are **not** the default posture.
+> This flag exists for hosts that have accepted that trade-off; mappings stay tailnet-only
+> (never Funnel) and are torn down when the dev server exits.
+
+Off by default because `tailscale serve` needs root or
+`tailscale set --operator=$(whoami)`. Enable it server-wide and opt in per command:
+
+```bash
+GITS_DEV_TAILSCALE_SERVE=true
+```
+
+```json
+{
+  "id": "web-dev",
+  "name": "Web dev",
+  "command": "bun run dev",
+  "port": 5175,
+  "publishOnTailnet": true,
+  "servePort": 8444
+}
+```
+
+The runner then registers and deregisters the mapping around the dev server's
+lifetime — equivalent to running these by hand:
+
+```bash
+tailscale serve --bg --https=8444 http://127.0.0.1:5175   # on
+tailscale serve --https=8444 off                          # off
+```
+
+Use a `servePort` distinct from the cockpit's `8443`. The cockpit shows the resulting
+`https://<host>.<tailnet>.ts.net:8444/` once it is up. If `tailscale` is missing or
+lacks permission, the dev server still starts and the runner logs a warning.
+
+---
+
 ## Service unit
 
 `install-gits-user-service.sh` generates a systemd user unit identical to the WSL

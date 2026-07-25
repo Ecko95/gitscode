@@ -75,6 +75,9 @@ const make_test_server_config = (baseDir: string) =>
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      devAllowedHosts: [],
+      devBindHost: "127.0.0.1",
+      devTailscaleServeEnabled: false,
     } satisfies ServerConfigShape;
   });
 

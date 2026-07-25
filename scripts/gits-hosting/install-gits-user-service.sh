@@ -67,6 +67,14 @@ unit_path="$(gits_hosting_service_unit_path)"
 metadata_path="$(gits_hosting_metadata_path)"
 mkdir -p "$(dirname "$unit_path")"
 
+dev_env_lines=""
+for dev_var in GITS_DEV_ALLOWED_HOSTS GITS_DEV_BIND_HOST GITS_DEV_TAILSCALE_SERVE; do
+  dev_value="${!dev_var:-}"
+  if [[ -n "$dev_value" ]]; then
+    dev_env_lines+="Environment=${dev_var}=${dev_value}"$'\n'
+  fi
+done
+
 cat >"$unit_path" <<EOF
 [Unit]
 Description=Hosted GITS cockpit
@@ -81,7 +89,7 @@ Environment=T3CODE_HOME=${gits_hosting_t3code_home}
 Environment=GITS_BUILD_INFO_PATH=${metadata_path}
 Environment=GITS_CONFINE_BIN=${gits_hosting_worktree}/scripts/gits-confine.sh
 Environment=PATH=${service_path}
-ExecStart=${node_path} --max-old-space-size=${gits_hosting_node_heap_mb} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}
+${dev_env_lines}ExecStart=${node_path} --max-old-space-size=${gits_hosting_node_heap_mb} apps/server/dist/bin.mjs serve --host ${gits_hosting_host} --port ${gits_hosting_port}
 Restart=on-failure
 RestartSec=3
 MemoryMax=${gits_hosting_memory_max}

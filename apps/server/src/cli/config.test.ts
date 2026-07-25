@@ -47,6 +47,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpServiceName: "t3-server",
   } as const;
 
+  const defaultDevServerConfig = {
+    devAllowedHosts: [],
+    devBindHost: "127.0.0.1",
+    devTailscaleServeEnabled: false,
+  } as const;
+
   const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
     const fs = yield* FileSystem.FileSystem;
     const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
@@ -119,6 +125,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        ...defaultDevServerConfig,
         hermesTelegramRelayToken: "relay-token",
       });
     }),
@@ -186,6 +193,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
+        ...defaultDevServerConfig,
       });
     }),
   );
@@ -255,6 +263,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        ...defaultDevServerConfig,
       });
     }),
   );
@@ -329,6 +338,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        ...defaultDevServerConfig,
       });
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
     }),
@@ -454,6 +464,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        ...defaultDevServerConfig,
       });
     }),
   );
@@ -523,6 +534,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        ...defaultDevServerConfig,
       });
     }),
   );
@@ -586,6 +598,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        ...defaultDevServerConfig,
       });
     }),
   );

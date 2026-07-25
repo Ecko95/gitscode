@@ -270,6 +270,9 @@ export const GitsDevCommandListResult = Schema.Struct({
   configPath: Schema.NullOr(PathString),
   tailscaleAvailable: Schema.Boolean,
   magicDnsName: Schema.NullOr(TrimmedNonEmptyString),
+  /** Host headers spawned dev servers accept; empty means only localhost works. */
+  allowedHosts: Schema.Array(TrimmedNonEmptyString),
+  bindHost: TrimmedNonEmptyString,
   commands: Schema.Array(GitsDevCommand),
   warnings: Schema.Array(TrimmedNonEmptyString),
 });

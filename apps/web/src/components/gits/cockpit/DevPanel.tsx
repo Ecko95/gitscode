@@ -78,6 +78,18 @@ export function DevCommandPanel({
         <div className="grid gap-1 text-xs text-muted-foreground">
           <div>Route: {motokoSelectedRouteLabel(selectedProjectRoot)}</div>
           <div>Config: {list?.configPath ?? "Missing"}</div>
+          {list ? (
+            <div>
+              Bind: <span className="font-mono">{list.bindHost}</span> · Allowed hosts:{" "}
+              {list.allowedHosts.length > 0 ? (
+                <span className="font-mono">{list.allowedHosts.join(", ")}</span>
+              ) : (
+                <span title="Dev servers will reject requests proxied from any other hostname.">
+                  localhost only — set GITS_DEV_ALLOWED_HOSTS
+                </span>
+              )}
+            </div>
+          ) : null}
           {list?.magicDnsName ? <div>Tailnet: {list.magicDnsName}</div> : null}
         </div>
         {list?.warnings.length ? (
