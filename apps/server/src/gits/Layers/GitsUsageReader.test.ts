@@ -7,17 +7,24 @@ import { assert, it } from "@effect/vitest";
 
 import { readUsageSummary } from "./GitsUsageReader.ts";
 
-function withUsageHomes(run: (codexHome: string, claudeHome: string) => void) {
+async function withUsageHomes(run: (codexHome: string, claudeHome: string) => Promise<void>) {
   const previousCodex = process.env.GITS_CODEX_USAGE_HOME;
   const previousClaude = process.env.GITS_CLAUDE_USAGE_HOME;
+  const previousToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   const root = mkdtempSync(join(tmpdir(), "t3-usage-reader-"));
   const codexHome = join(root, "codex");
   const claudeHome = join(root, "claude");
   process.env.GITS_CODEX_USAGE_HOME = codexHome;
   process.env.GITS_CLAUDE_USAGE_HOME = claudeHome;
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
   try {
-    run(codexHome, claudeHome);
+    await run(codexHome, claudeHome);
   } finally {
+    if (previousToken === undefined) {
+      delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    } else {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = previousToken;
+    }
     if (previousCodex === undefined) {
       delete process.env.GITS_CODEX_USAGE_HOME;
     } else {
@@ -31,8 +38,8 @@ function withUsageHomes(run: (codexHome: string, claudeHome: string) => void) {
   }
 }
 
-it("parses confirmed Codex token_count and Claude message usage JSONL records", () => {
-  withUsageHomes((codexHome, claudeHome) => {
+it("parses confirmed Codex token_count and Claude message usage JSONL records", async () => {
+  await withUsageHomes(async (codexHome, claudeHome) => {
     const codexDir = join(codexHome, "sessions", "2026", "07", "06");
     const claudeDir = join(claudeHome, "projects", "-repo");
     mkdirSync(codexDir, { recursive: true });
@@ -85,7 +92,7 @@ it("parses confirmed Codex token_count and Claude message usage JSONL records", 
     });
     writeFileSync(join(claudeDir, "session.jsonl"), [claudeLine, claudeLine].join("\n"));
 
-    const summary = readUsageSummary();
+    const summary = await readUsageSummary();
     assert.equal(summary.currency, "USD");
     assert.equal(summary.totals.inputTokens, 44115);
     assert.equal(summary.totals.cachedInputTokens, 4992);
@@ -99,5 +106,35 @@ it("parses confirmed Codex token_count and Claude message usage JSONL records", 
     assert.equal(summary.days[0]?.date, "2026-07-06");
     assert.equal(summary.sources[0]?.status, "available");
     assert.equal(summary.sources[1]?.status, "available");
+  });
+});
+
+it("reports Claude rate windows from the OAuth usage endpoint", async () => {
+  await withUsageHomes(async (_codexHome, claudeHome) => {
+    mkdirSync(claudeHome, { recursive: true });
+    writeFileSync(
+      join(claudeHome, ".credentials.json"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat01-test" } }),
+    );
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          five_hour: { utilization: 1, resets_at: "2026-07-26T21:00:00.993830+00:00" },
+          seven_day: { utilization: 14, resets_at: "2026-07-29T05:00:00.993852+00:00" },
+        }),
+      )) as unknown as typeof globalThis.fetch;
+    try {
+      const summary = await readUsageSummary();
+      const claudeWindows = summary.windows.filter((window) => window.provider === "claude");
+      assert.equal(claudeWindows.length, 2);
+      assert.equal(claudeWindows[0]?.windowMinutes, 300);
+      assert.equal(claudeWindows[0]?.usedPercent, 1);
+      assert.equal(claudeWindows[0]?.resetAt, "2026-07-26T21:00:00.993Z");
+      assert.equal(claudeWindows[1]?.windowMinutes, 10080);
+      assert.equal(claudeWindows[1]?.usedPercent, 14);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });

@@ -209,7 +209,7 @@ export const gitsUsageRouteLayer = HttpRouter.add(
   "/api/gits/usage",
   Effect.gen(function* () {
     yield* authenticateGitsSession;
-    const summary = yield* Effect.try({
+    const summary = yield* Effect.tryPromise({
       try: () => readUsageSummary(),
       catch: (cause) => new GitsUsageRouteError({ cause }),
     });

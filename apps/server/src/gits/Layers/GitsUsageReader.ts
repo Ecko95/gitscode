@@ -34,6 +34,7 @@ const EMPTY_TOKENS: UsageTokenTotals = {
 const MAX_FILES_PER_PROVIDER = 256;
 const MAX_TAIL_BYTES = 8 * 1024 * 1024;
 const DEFAULT_LOOKBACK_DAYS = 30;
+const CLAUDE_WINDOW_TTL_MS = 60_000;
 
 type RateLimit = {
   readonly used_percent?: unknown;
@@ -351,6 +352,79 @@ function parseClaudeFile(filePath: string): TokenEvent[] {
   return events;
 }
 
+// Claude writes no rate-limit records to its JSONL logs, so the 5h/weekly
+// windows come from the same OAuth endpoint the CLI's /usage screen reads.
+type ClaudeUsageResponse = {
+  readonly five_hour?: { readonly utilization?: unknown; readonly resets_at?: unknown };
+  readonly seven_day?: { readonly utilization?: unknown; readonly resets_at?: unknown };
+};
+
+function claudeOauthToken(credentialsPath: string): string | null {
+  const fromEnv = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const parsed = JSON.parse(readTail(credentialsPath)) as {
+      readonly claudeAiOauth?: { readonly accessToken?: unknown };
+    };
+    const token = parsed.claudeAiOauth?.accessToken;
+    return typeof token === "string" && token.trim().length > 0 ? token.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function claudeWindow(
+  raw: ClaudeUsageResponse["five_hour"],
+  windowMinutes: number,
+  sourcePath: string,
+): UsageWindowSummary | null {
+  const usedPercent = percent(raw?.utilization);
+  if (usedPercent === null) return null;
+  const resetsAt = typeof raw?.resets_at === "string" ? dateMs(raw.resets_at) : null;
+  return {
+    provider: "claude",
+    label: usageLabel(windowMinutes),
+    usedPercent,
+    remainingPercent: Math.max(0, 100 - usedPercent),
+    windowMinutes,
+    // @effect-diagnostics-next-line globalDate:off
+    resetAt: resetsAt === null ? null : new Date(resetsAt).toISOString(),
+    sourcePath,
+  };
+}
+
+let claudeWindowCache: { readonly atMs: number; readonly windows: UsageWindowSummary[] } | null =
+  null;
+
+async function readClaudeRateWindows(): Promise<UsageWindowSummary[]> {
+  // @effect-diagnostics-next-line globalDate:off
+  const nowMs = Date.now();
+  if (claudeWindowCache && nowMs - claudeWindowCache.atMs < CLAUDE_WINDOW_TTL_MS) {
+    return claudeWindowCache.windows;
+  }
+  const credentialsPath = join(claudeHome(), ".credentials.json");
+  const token = claudeOauthToken(credentialsPath);
+  if (token === null) return [];
+  try {
+    // @effect-diagnostics-next-line globalFetch:off
+    const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      headers: { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return [];
+    const payload = (await response.json()) as ClaudeUsageResponse;
+    const windows = [
+      claudeWindow(payload.five_hour, 300, credentialsPath),
+      claudeWindow(payload.seven_day, 10080, credentialsPath),
+    ].filter((window) => window !== null);
+    // Only successes are cached, so a transient failure retries on next poll.
+    if (windows.length > 0) claudeWindowCache = { atMs: nowMs, windows };
+    return windows;
+  } catch {
+    return [];
+  }
+}
+
 function addEvent(
   buckets: Map<string, MutableBucket>,
   key: string,
@@ -399,7 +473,7 @@ function makeSource(
   };
 }
 
-export function readUsageSummary(): UsageSummary {
+export async function readUsageSummary(): Promise<UsageSummary> {
   const checkedAt = checkedAtIso();
   const codexRoot = join(codexHome(), "sessions");
   const claudeRoot = join(claudeHome(), "projects");
@@ -428,6 +502,7 @@ export function readUsageSummary(): UsageSummary {
       pushEvent(event);
     }
   }
+  windows.push(...(await readClaudeRateWindows()));
 
   const modelBuckets = new Map<string, MutableBucket>();
   const dayBuckets = new Map<string, MutableBucket>();
