@@ -973,8 +973,100 @@ export const AutomodeGoal = Schema.Struct({
   integrationBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  planningNotes: Schema.NullOr(SummaryString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  planningBoundary: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type AutomodeGoal = typeof AutomodeGoal.Type;
+
+export const CockpitInboxState = Schema.Literals([
+  "pending-review",
+  "approved-queued",
+  "waiting-quota-reset",
+  "scheduled-tonight",
+  "running",
+  "attention-required",
+  "completed",
+  "rejected",
+  "deferred",
+]);
+export type CockpitInboxState = typeof CockpitInboxState.Type;
+
+export const CockpitInboxFilter = Schema.Literals([
+  "unread",
+  "pending",
+  "approved",
+  "waiting",
+  "completed",
+]);
+export type CockpitInboxFilter = typeof CockpitInboxFilter.Type;
+
+export const CockpitInboxEvent = Schema.Struct({
+  eventKey: TrimmedNonEmptyString,
+  at: IsoDateTime,
+  state: CockpitInboxState,
+  reason: SummaryString,
+  deepLink: TrimmedNonEmptyString,
+});
+export type CockpitInboxEvent = typeof CockpitInboxEvent.Type;
+
+export const CockpitInboxItem = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  proposalId: TrimmedNonEmptyString,
+  goalId: Schema.NullOr(TrimmedNonEmptyString),
+  title: TrimmedNonEmptyString,
+  repository: Schema.NullOr(PathString),
+  state: CockpitInboxState,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  terminalAt: Schema.NullOr(IsoDateTime),
+  readAt: Schema.NullOr(IsoDateTime),
+  pinned: Schema.Boolean,
+  reason: SummaryString,
+  deepLink: TrimmedNonEmptyString,
+  timeline: Schema.Array(CockpitInboxEvent),
+});
+export type CockpitInboxItem = typeof CockpitInboxItem.Type;
+
+export const CockpitInboxCounts = Schema.Struct({
+  unread: NonNegativeInt,
+  pending: NonNegativeInt,
+  approved: NonNegativeInt,
+  waiting: NonNegativeInt,
+  completed: NonNegativeInt,
+});
+export type CockpitInboxCounts = typeof CockpitInboxCounts.Type;
+
+export const CockpitInboxListInput = Schema.Struct({
+  filter: Schema.optional(CockpitInboxFilter),
+});
+export type CockpitInboxListInput = typeof CockpitInboxListInput.Type;
+
+export const CockpitInboxListResult = Schema.Struct({
+  items: Schema.Array(CockpitInboxItem),
+  counts: CockpitInboxCounts,
+});
+export type CockpitInboxListResult = typeof CockpitInboxListResult.Type;
+
+export const CockpitInboxMarkReadInput = Schema.Struct({ id: TrimmedNonEmptyString });
+export type CockpitInboxMarkReadInput = typeof CockpitInboxMarkReadInput.Type;
+
+export const CockpitInboxPinInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  pinned: Schema.Boolean,
+});
+export type CockpitInboxPinInput = typeof CockpitInboxPinInput.Type;
+
+export class CockpitInboxError extends Schema.TaggedErrorClass<CockpitInboxError>()(
+  "CockpitInboxError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
 
 export const AutomodeBudgetUsageSource = Schema.Literals(["provider-runtime", "unavailable"]);
 export type AutomodeBudgetUsageSource = typeof AutomodeBudgetUsageSource.Type;

@@ -246,6 +246,12 @@ export interface WsRpcClient {
       readonly killGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeGoalsKill>;
       readonly episodesList: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeEpisodesList>;
     };
+    readonly cockpitInbox: {
+      readonly list: RpcUnaryMethod<typeof WS_METHODS.gitsCockpitInboxList>;
+      readonly markRead: RpcUnaryMethod<typeof WS_METHODS.gitsCockpitInboxMarkRead>;
+      readonly markAllRead: RpcUnaryMethod<typeof WS_METHODS.gitsCockpitInboxMarkAllRead>;
+      readonly pin: RpcUnaryMethod<typeof WS_METHODS.gitsCockpitInboxPin>;
+    };
     readonly capacity: {
       readonly getSnapshot: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsCapacityGetSnapshot>;
     };
@@ -554,6 +560,16 @@ export function createWsRpcClient(
           transport.request((client) => client[WS_METHODS.gitsAutomodeGoalsKill](input)),
         episodesList: (input) =>
           transport.request((client) => client[WS_METHODS.gitsAutomodeEpisodesList](input)),
+      },
+      cockpitInbox: {
+        list: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsCockpitInboxList](input)),
+        markRead: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsCockpitInboxMarkRead](input)),
+        markAllRead: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsCockpitInboxMarkAllRead](input)),
+        pin: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsCockpitInboxPin](input)),
       },
       capacity: {
         getSnapshot: () =>
