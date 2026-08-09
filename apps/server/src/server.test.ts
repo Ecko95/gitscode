@@ -319,6 +319,7 @@ const defaultAutomodeDispatchResult: AutomodeDispatchResult = {
 const defaultGitsSchedulerSnapshot: GitsSchedulerSnapshot = {
   config: { enabled: false, maxGoalsPerNight: 3, weeklyMaxUsedPercent: 80 },
   arming: { status: "disarmed", nightKey: null, armedAt: null, disarmedReason: null },
+  automaticArmingAuthorized: false,
   currentSlot: null,
   slotRemainingMs: null,
   goalsStartedTonight: 0,

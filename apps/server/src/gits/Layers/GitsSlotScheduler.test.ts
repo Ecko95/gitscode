@@ -144,13 +144,17 @@ describe("parse_scheduler_slots", () => {
 
 // --- Service tests ---------------------------------------------------------------------------
 
-function usageWindow(label: string, usedPercent: number | null): GitsUsageWindow {
+function usageWindow(
+  label: string,
+  usedPercent: number | null,
+  resetAt = label === "5h" ? "2026-01-07T05:00:00.000Z" : "2026-01-14T00:00:00.000Z",
+): GitsUsageWindow {
   return {
     label,
     usedPercent,
     remainingPercent: null,
     windowMinutes: label === "5h" ? 300 : 10_080,
-    resetAt: null,
+    resetAt,
     level: "unknown",
     source: "codex-session-jsonl",
     note: null,
@@ -284,6 +288,21 @@ describe("GitsSlotScheduler arming", () => {
       const snapshot = yield* scheduler.disarm({ reason: "manual stop" });
       assert.equal(snapshot.arming.status, "disarmed");
       assert.equal(snapshot.arming.disarmedReason, "manual stop");
+      assert.equal(snapshot.automaticArmingAuthorized, false);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("approval enables automatic arming and targets the first eligible future night", () =>
+    Effect.gen(function* () {
+      const scheduler = yield* GitsSlotScheduler;
+      yield* TestClock.setTime(WED_2200);
+      const snapshot = yield* scheduler.scheduleApprovedGoal({
+        eligibleAt: "2026-01-10T20:00:00.000Z",
+      });
+      assert.equal(snapshot.config.enabled, true);
+      assert.equal(snapshot.automaticArmingAuthorized, true);
+      assert.equal(snapshot.arming.status, "armed");
+      assert.equal(snapshot.arming.nightKey, "2026-01-11");
     }).pipe(Effect.provide(makeLayer())),
   );
 });
@@ -315,7 +334,12 @@ describe("GitsSlotScheduler gate", () => {
       yield* TestClock.setTime(WED_0230);
       yield* scheduler.setConfig({ enabled: true });
       const result = yield* scheduler.checkStartAllowed(envelope);
-      assert.deepEqual(result, { allowed: false, reason: "Not armed for tonight" });
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "schedule",
+        reason: "Not armed for tonight",
+        retryAt: null,
+      });
     }).pipe(Effect.provide(makeLayer())),
   );
 
@@ -324,7 +348,12 @@ describe("GitsSlotScheduler gate", () => {
       const scheduler = yield* armTonight;
       yield* TestClock.setTime(Date.UTC(2026, 0, 8, 2, 0)); // next night, old arm
       const result = yield* scheduler.checkStartAllowed(envelope);
-      assert.deepEqual(result, { allowed: false, reason: "Armed night ended" });
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "schedule",
+        reason: "Armed night ended",
+        retryAt: null,
+      });
     }).pipe(Effect.provide(makeLayer())),
   );
 
@@ -337,7 +366,9 @@ describe("GitsSlotScheduler gate", () => {
       const result = yield* scheduler.checkStartAllowed(envelope);
       assert.deepEqual(result, {
         allowed: false,
+        category: "schedule",
         reason: "Outside slot window (next slot 00:00)",
+        retryAt: null,
       });
     }).pipe(Effect.provide(makeLayer())),
   );
@@ -349,7 +380,12 @@ describe("GitsSlotScheduler gate", () => {
         yield* scheduler.recordGoalStart({ goalId, episodeId: `epi-${goalId}` });
       }
       const result = yield* scheduler.checkStartAllowed(envelope);
-      assert.deepEqual(result, { allowed: false, reason: "Night goal cap reached (3)" });
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "schedule",
+        reason: "Night goal cap reached (3)",
+        retryAt: null,
+      });
     }).pipe(Effect.provide(makeLayer())),
   );
 
@@ -360,14 +396,21 @@ describe("GitsSlotScheduler gate", () => {
       const peers = yield* scheduler.checkStartAllowed({ ...envelope, maxActivePeers: 2 });
       assert.deepEqual(peers, {
         allowed: false,
+        category: "policy",
         reason: "Autonomy envelope requires maxActivePeers=1 (policy has 2)",
+        retryAt: null,
       });
 
       const noCap = yield* scheduler.checkStartAllowed({
         ...envelope,
         expectedRuntimeMinutes: null,
       });
-      assert.deepEqual(noCap, { allowed: false, reason: "No runtime cap configured" });
+      assert.deepEqual(noCap, {
+        allowed: false,
+        category: "policy",
+        reason: "No runtime cap configured",
+        retryAt: null,
+      });
 
       const tooLong = yield* scheduler.checkStartAllowed({
         ...envelope,
@@ -375,7 +418,9 @@ describe("GitsSlotScheduler gate", () => {
       });
       assert.deepEqual(tooLong, {
         allowed: false,
+        category: "policy",
         reason: "Runtime cap exceeds the night envelope (~90m)",
+        retryAt: null,
       });
     }).pipe(Effect.provide(makeLayer())),
   );
@@ -385,7 +430,12 @@ describe("GitsSlotScheduler gate", () => {
       const scheduler = yield* armTonight;
       yield* TestClock.setTime(WED_0945); // 15 minutes of runway left
       const result = yield* scheduler.checkStartAllowed(envelope);
-      assert.deepEqual(result, { allowed: false, reason: "Insufficient slot runway" });
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "schedule",
+        reason: "Insufficient slot runway",
+        retryAt: null,
+      });
     }).pipe(Effect.provide(makeLayer())),
   );
 
@@ -393,7 +443,12 @@ describe("GitsSlotScheduler gate", () => {
     Effect.gen(function* () {
       const scheduler = yield* armTonight;
       const result = yield* scheduler.checkStartAllowed(envelope);
-      assert.deepEqual(result, { allowed: false, reason: "Codex 5h window at 50%" });
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "quota",
+        reason: "Codex 5h window at 50%",
+        retryAt: "2026-01-07T05:00:00.000Z",
+      });
     }).pipe(
       Effect.provide(
         makeLayer({
@@ -411,7 +466,9 @@ describe("GitsSlotScheduler gate", () => {
       const result = yield* scheduler.checkStartAllowed(envelope);
       assert.deepEqual(result, {
         allowed: false,
+        category: "quota",
         reason: "Codex weekly window at 85% (reserve 20%)",
+        retryAt: "2026-01-14T00:00:00.000Z",
       });
     }).pipe(
       Effect.provide(
@@ -424,28 +481,89 @@ describe("GitsSlotScheduler gate", () => {
     ),
   );
 
-  it.effect("fails open on missing capacity telemetry with a distinct reason", () =>
+  it.effect("fails closed on missing capacity telemetry", () =>
     Effect.gen(function* () {
       const scheduler = yield* armTonight;
       const result = yield* scheduler.checkStartAllowed(envelope);
-      assert.deepEqual(result, { allowed: true });
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "quota",
+        reason: "Codex 5h and weekly quota telemetry is missing or stale",
+        retryAt: null,
+      });
       const snapshot = yield* scheduler.getSnapshot();
-      assert.equal(snapshot.lastGateDecision?.allowed, true);
-      assert.equal(snapshot.lastGateDecision?.reason, "capacity unknown (no telemetry)");
+      assert.equal(snapshot.lastGateDecision?.allowed, false);
+      assert.equal(
+        snapshot.lastGateDecision?.reason,
+        "Codex 5h and weekly quota telemetry is missing or stale",
+      );
     }).pipe(Effect.provide(makeLayer({ capacity: Effect.succeed(capacitySnapshot([])) }))),
   );
 
-  it.effect("fails open on a capacity monitor error with a distinct reason", () =>
+  it.effect("fails closed on a capacity monitor error", () =>
     Effect.gen(function* () {
       const scheduler = yield* armTonight;
       const result = yield* scheduler.checkStartAllowed(envelope);
-      assert.deepEqual(result, { allowed: true });
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "quota",
+        reason: "Codex quota telemetry unavailable (capacity monitor error)",
+        retryAt: null,
+      });
       const snapshot = yield* scheduler.getSnapshot();
-      assert.equal(snapshot.lastGateDecision?.reason, "capacity monitor error");
+      assert.equal(
+        snapshot.lastGateDecision?.reason,
+        "Codex quota telemetry unavailable (capacity monitor error)",
+      );
     }).pipe(
       Effect.provide(
         makeLayer({
           capacity: Effect.fail(new GitsCapacityError({ message: "usage reader exploded" })),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("treats expired reset telemetry as stale", () =>
+    Effect.gen(function* () {
+      const scheduler = yield* armTonight;
+      const result = yield* scheduler.checkStartAllowed(envelope);
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "quota",
+        reason: "Codex 5h quota telemetry is missing or stale",
+        retryAt: null,
+      });
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          capacity: Effect.succeed(
+            capacitySnapshot([
+              usageWindow("5h", 10, "2026-01-07T02:00:00.000Z"),
+              usageWindow("weekly", 20),
+            ]),
+          ),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("uses the later reset when both quota windows block", () =>
+    Effect.gen(function* () {
+      const scheduler = yield* armTonight;
+      const result = yield* scheduler.checkStartAllowed(envelope);
+      assert.deepEqual(result, {
+        allowed: false,
+        category: "quota",
+        reason: "Codex 5h and weekly windows exceed their limits",
+        retryAt: "2026-01-14T00:00:00.000Z",
+      });
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          capacity: Effect.succeed(
+            capacitySnapshot([usageWindow("5h", 60), usageWindow("weekly", 90)]),
+          ),
         }),
       ),
     ),

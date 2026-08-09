@@ -1225,6 +1225,7 @@ export type GitsSchedulerGateDecision = typeof GitsSchedulerGateDecision.Type;
 export const GitsSchedulerSnapshot = Schema.Struct({
   config: GitsSchedulerConfig,
   arming: GitsSchedulerArming,
+  automaticArmingAuthorized: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   currentSlot: Schema.NullOr(GitsSchedulerSlot),
   slotRemainingMs: Schema.NullOr(NonNegativeInt),
   goalsStartedTonight: NonNegativeInt,

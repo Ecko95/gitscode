@@ -1059,7 +1059,12 @@ describe("AutomodeDriver", () => {
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
-          gateResult: { allowed: false, reason: "Outside slot window (next slot 00:00)" },
+          gateResult: {
+            allowed: false,
+            category: "schedule",
+            reason: "Outside slot window (next slot 00:00)",
+            retryAt: null,
+          },
           onRecordGoalStart: (input) => starts.push(input),
         }),
       ),
@@ -1114,7 +1119,12 @@ describe("AutomodeDriver", () => {
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
-          gateResult: { allowed: false, reason: "Night goal cap reached (1)" },
+          gateResult: {
+            allowed: false,
+            category: "schedule",
+            reason: "Night goal cap reached (1)",
+            retryAt: null,
+          },
           onOpenHeldPr: () => {
             openCalls += 1;
           },
