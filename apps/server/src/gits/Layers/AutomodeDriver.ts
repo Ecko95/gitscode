@@ -237,10 +237,9 @@ export const AutomodeDriverLive = Layer.effect(
         if (policy.integrationBranch === null) {
           return;
         }
-        const landedRepo = snapshot.goals.find((goal) => goal.status === "completed")?.repo ?? null;
-        if (landedRepo === null) {
-          return;
-        }
+        const completedGoal = snapshot.goals.find((goal) => goal.status === "completed");
+        if (completedGoal === undefined) return;
+        const landedRepo = completedGoal.repo;
 
         if (snapshot.heldPrUrl === null || snapshot.heldPrNumber === null) {
           // Open the held PR exactly once, only if at least one slice landed.
@@ -256,22 +255,20 @@ export const AutomodeDriverLive = Layer.effect(
             body: `Autonomous run — landed slices (held for review, not auto-merged):\n\n${landedTitles}`,
           });
           if (result.status === "rejected") {
-            yield* halt(null, `Halted: could not open held PR — ${result.reason}`);
+            yield* halt(completedGoal, `Halted: could not open held PR — ${result.reason}`);
             return;
           }
           yield* supervisor.recordHeldPr({
             url: result.url,
             number: result.number,
           });
-          const completedGoal = snapshot.goals.find((goal) => goal.status === "completed");
           if (
-            completedGoal !== undefined &&
-            (yield* recordInbox(
+            yield* recordInbox(
               completedGoal,
               "completed",
               `goal:${completedGoal.id}:held-pr-created`,
               "Held PR created for landed slices.",
-            ))
+            )
           ) {
             yield* notify({
               subject: "GITS automode held PR created",
