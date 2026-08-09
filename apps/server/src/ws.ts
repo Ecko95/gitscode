@@ -105,7 +105,11 @@ import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { AutomodeEpisodeLedger } from "./persistence/Services/AutomodeEpisodeLedger.ts";
-import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
+import {
+  decideProposalWithAutomodeBridge,
+  hasLiveGoalForEpisode,
+} from "./gits/Layers/HermesAutomodeBridge.ts";
+import { AutomodeNotifications } from "./gits/Layers/AutomodeNotifications.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import {
   denyThreadAccess,
@@ -425,6 +429,23 @@ const makeWsRpcLayer = (
       const openGsdAdapter = yield* OpenGsdAdapter;
       const automodeSupervisor = yield* AutomodeSupervisor;
       const automodeEpisodeLedger = yield* AutomodeEpisodeLedger;
+      const automodeNotifications = yield* AutomodeNotifications;
+      const notifyProposal = (proposal: { readonly id: string; readonly title: string }) =>
+        Effect.gen(function* () {
+          const policy = yield* automodeSupervisor.getPolicy();
+          yield* automodeNotifications.notify({
+            key: `proposal:${proposal.id}:created`,
+            subject: "New Motoko proposal",
+            text: proposal.title,
+            url: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,
+            gitsEnabled: policy.gitsNotificationsEnabled,
+            telegramEnabled: policy.telegramNotificationsEnabled,
+          });
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("gits.proposal.notification-failed", { cause }),
+          ),
+        );
       // R#1 (kill-switch-only manual gate): manual peer actions stay human-driven, but the
       // global automode kill switch also freezes them. ponytail: reuse DelamainAdapterError
       // (these RPC channels already carry it) so no rpc.ts/client contract change is needed.
@@ -2324,17 +2345,45 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitsHermesInspectGits]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesInspectGits,
-            hermesAdapter.inspectGitsAndPropose(input),
+            hermesAdapter.inspectGitsAndPropose(input).pipe(Effect.tap(notifyProposal)),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesChat]: (input) =>
-          observeRpcEffect(WS_METHODS.gitsHermesChat, hermesAdapter.chat(input), {
-            "rpc.aggregate": "gits",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitsHermesChat,
+            hermesAdapter
+              .chat(input)
+              .pipe(
+                Effect.tap((result) =>
+                  result.proposal === null ? Effect.void : notifyProposal(result.proposal),
+                ),
+              ),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsHermesDecideProposal]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesDecideProposal,
-            decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input),
+            decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input).pipe(
+              Effect.tap((proposal) =>
+                input.decision !== "approve"
+                  ? Effect.void
+                  : automodeSupervisor.getSnapshot().pipe(
+                      Effect.flatMap((snapshot) =>
+                        hasLiveGoalForEpisode(snapshot.goals, proposal.episodeId)
+                          ? automodeNotifications.notify({
+                              key: `proposal:${proposal.id}:queued`,
+                              subject: "Motoko proposal queued",
+                              text: proposal.title,
+                              url: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,
+                              gitsEnabled: snapshot.policy.gitsNotificationsEnabled,
+                              telegramEnabled: snapshot.policy.telegramNotificationsEnabled,
+                            })
+                          : Effect.void,
+                      ),
+                      Effect.catchCause(() => Effect.void),
+                    ),
+              ),
+            ),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesWriteProjectContext]: (input) =>
@@ -2350,9 +2399,13 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesRunSchedule]: (input) =>
-          observeRpcEffect(WS_METHODS.gitsHermesRunSchedule, hermesAdapter.runSchedule(input), {
-            "rpc.aggregate": "gits",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitsHermesRunSchedule,
+            hermesAdapter
+              .runSchedule(input)
+              .pipe(Effect.tap((result) => Effect.forEach(result.proposals, notifyProposal))),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

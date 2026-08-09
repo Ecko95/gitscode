@@ -244,6 +244,12 @@ describe("HermesCliAdapter cockpit chat", () => {
         blockedReason: "Hermes cockpit chat did not complete.",
         source: "hermes cockpit chat",
         projectDir: "/tmp/gits",
+        model: null,
+        notBefore: null,
+        maxRuntimeMinutes: null,
+        verificationCommands: [],
+        integrationBranch: null,
+        sourceThreadId: null,
         decisionReason: null,
         decidedAt: null,
         createdAt: "2026-06-03T00:00:00.000Z",
@@ -272,6 +278,12 @@ describe("HermesCliAdapter cockpit chat", () => {
         blockedReason: null,
         source: "hermes cockpit chat",
         projectDir: "/tmp/gits",
+        model: null,
+        notBefore: null,
+        maxRuntimeMinutes: null,
+        verificationCommands: [],
+        integrationBranch: null,
+        sourceThreadId: null,
         decisionReason: null,
         decidedAt: null,
         createdAt: "2026-06-03T00:00:00.000Z",
@@ -361,6 +373,32 @@ describe("HermesCliAdapter sweep draft derivation", () => {
     expect(draft.kind).toBe("delamain-peer");
     expect(draft.status).toBe("draft");
     expect(draft.repo).toBe(repo);
+  });
+
+  it("atomically saves proposal edits before approving", async () => {
+    const { card } = await seed("worktree-spawn");
+    const updated = await Effect.runPromise(
+      decideProposal({
+        proposalId: card.id,
+        decision: "approve",
+        title: "Edited title",
+        prompt: "Edited execution prompt",
+        model: "gpt-5.6-sol",
+        notBefore: "2026-01-02T00:00:00.000Z",
+        maxRuntimeMinutes: 45,
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        integrationBranch: "auto/edited",
+      }),
+    );
+    expect(updated).toMatchObject({
+      title: "Edited title",
+      nextCommandOrPrompt: "Edited execution prompt",
+      model: "gpt-5.6-sol",
+      notBefore: "2026-01-02T00:00:00.000Z",
+      maxRuntimeMinutes: 45,
+      integrationBranch: "auto/edited",
+    });
+    expect(updated.verificationCommands).toHaveLength(1);
   });
 
   it("drafts an approved read-only card as verification (why the sweep must not use read-only)", async () => {
@@ -744,6 +782,14 @@ describe("HermesCliAdapter proposal helpers", () => {
   it("normalizeProposal backfills a legacy card without episodeId", () => {
     const normalized = normalizeProposal({ id: "hermes-old", title: "Old card" });
     expect(normalized?.episodeId).toBe("epi-legacy-hermes-old");
+    expect(normalized).toMatchObject({
+      model: null,
+      notBefore: null,
+      maxRuntimeMinutes: null,
+      verificationCommands: [],
+      integrationBranch: null,
+      sourceThreadId: null,
+    });
   });
 
   it("normalizeProposal keeps a stored episodeId", () => {

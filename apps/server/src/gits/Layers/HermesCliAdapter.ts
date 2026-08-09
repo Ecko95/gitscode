@@ -1107,6 +1107,25 @@ export function normalizeProposal(value: unknown): HermesProposalCard | null {
     blockedReason: nullableStringFromUnknown(record.blockedReason),
     source: nullableStringFromUnknown(record.source) ?? "hermes proposal store",
     projectDir: nullableStringFromUnknown(record.projectDir),
+    model: nullableStringFromUnknown(record.model),
+    notBefore: nullableStringFromUnknown(record.notBefore),
+    maxRuntimeMinutes:
+      typeof record.maxRuntimeMinutes === "number" &&
+      Number.isInteger(record.maxRuntimeMinutes) &&
+      record.maxRuntimeMinutes >= 0
+        ? record.maxRuntimeMinutes
+        : null,
+    verificationCommands: Array.isArray(record.verificationCommands)
+      ? record.verificationCommands.flatMap((command) => {
+          if (typeof command !== "object" || command === null) return [];
+          const item = command as Record<string, unknown>;
+          const label = nullableStringFromUnknown(item.label);
+          const cmd = arrayFromUnknown(item.cmd, []);
+          return label === null || cmd.length === 0 ? [] : [{ label, cmd }];
+        })
+      : [],
+    integrationBranch: nullableStringFromUnknown(record.integrationBranch),
+    sourceThreadId: nullableStringFromUnknown(record.sourceThreadId),
     decisionReason: nullableStringFromUnknown(record.decisionReason),
     decidedAt: nullableStringFromUnknown(record.decidedAt),
     createdAt: nullableStringFromUnknown(record.createdAt) ?? LEGACY_PROPOSAL_TIMESTAMP,
@@ -1240,6 +1259,7 @@ export function makeProposal(input: {
   readonly recommendedExecutor?: HermesProposalExecutor;
   readonly verificationPlan?: ReadonlyArray<string>;
   readonly nextCommandOrPrompt?: string | null;
+  readonly sourceThreadId?: string;
 }): HermesProposalCard {
   const risk = input.blockedReason !== null ? "blocked" : actionRisk(input.actionKind);
   return {
@@ -1267,6 +1287,12 @@ export function makeProposal(input: {
     blockedReason: input.blockedReason,
     source: input.source,
     projectDir: input.projectDir,
+    model: null,
+    notBefore: null,
+    maxRuntimeMinutes: null,
+    verificationCommands: [],
+    integrationBranch: null,
+    sourceThreadId: input.sourceThreadId ?? null,
     decisionReason: null,
     decidedAt: null,
     createdAt: input.now,
@@ -1885,6 +1911,7 @@ const makeInspectGitsAndPropose =
             : `Hermes Codex OAuth chain requires re-login. Run \`${preflight.command}\`.`,
           source: "hermes chat -q",
           projectDir: input.projectDir,
+          ...(input.sourceThreadId === undefined ? {} : { sourceThreadId: input.sourceThreadId }),
           now,
           evidence: ["GITS preflight blocked the Hermes spawn before execution.", preflight.reason],
         });
@@ -1936,6 +1963,7 @@ const makeInspectGitsAndPropose =
         blockedReason: exec.exitCode === 0 ? null : "Hermes proposal command did not complete.",
         source: "hermes chat -q",
         projectDir: input.projectDir,
+        ...(input.sourceThreadId === undefined ? {} : { sourceThreadId: input.sourceThreadId }),
         now,
         evidence: [
           "Hermes was invoked in read-only inspection mode.",
@@ -2131,6 +2159,20 @@ export const decideProposal: HermesAdapterShape["decideProposal"] = (input) =>
         : (input.reason ?? proposal.blockedReason);
     const updated: HermesProposalCard = {
       ...proposal,
+      title: input.title ?? proposal.title,
+      nextCommandOrPrompt: input.prompt ?? proposal.nextCommandOrPrompt,
+      projectDir: input.projectDir ?? proposal.projectDir,
+      model: input.model === undefined ? proposal.model : input.model,
+      notBefore: input.notBefore === undefined ? proposal.notBefore : input.notBefore,
+      maxRuntimeMinutes:
+        input.maxRuntimeMinutes === undefined
+          ? proposal.maxRuntimeMinutes
+          : input.maxRuntimeMinutes,
+      verificationCommands: input.verificationCommands ?? proposal.verificationCommands,
+      integrationBranch:
+        input.integrationBranch === undefined
+          ? proposal.integrationBranch
+          : input.integrationBranch,
       status: nextStatus,
       blockedReason,
       decisionReason: input.reason ?? null,

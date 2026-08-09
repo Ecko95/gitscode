@@ -1,12 +1,14 @@
 import type {
   GitsCapacitySnapshot,
   GitsCockpitProject,
+  GitsVerifyCommand,
   HermesChatResult,
   HermesCommandResult,
   HermesExecutionDraft,
   HermesLogTailResult,
   HermesProposalCard,
   HermesProposalListResult,
+  HermesProposalDecisionInput,
   HermesScheduleKind,
   HermesScheduleRunResult,
   HermesSessionListResult,
@@ -38,6 +40,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Input } from "~/components/ui/input";
 import { Separator } from "~/components/ui/separator";
 import {
   Select,
@@ -57,6 +60,7 @@ import {
   SheetTitle,
 } from "~/components/ui/sheet";
 import { Spinner } from "~/components/ui/spinner";
+import { Textarea } from "~/components/ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { ComposerVoiceButton } from "~/components/chat/ComposerVoiceButton";
 import { useVoiceTranscription } from "~/hooks/useVoiceTranscription";
@@ -158,6 +162,32 @@ export function motokoSelectedRouteLabel(selectedProjectRoot: string): string {
 export const EMPTY_MOTOKO_TRANSCRIPT: ReadonlyArray<MotokoTranscriptEntry> = [];
 
 export type MotokoProposalDecision = "approve" | "reject" | "defer";
+export type MotokoProposalEdits = Omit<
+  HermesProposalDecisionInput,
+  "proposalId" | "decision" | "reason"
+>;
+
+function parseVerificationCommands(value: string): ReadonlyArray<GitsVerifyCommand> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.every(
+        (item) =>
+          isRecord(item) &&
+          typeof item.label === "string" &&
+          Array.isArray(item.cmd) &&
+          item.cmd.every((part) => typeof part === "string") &&
+          (item.timeoutSeconds === undefined || typeof item.timeoutSeconds === "number"),
+      )
+    ) {
+      return null;
+    }
+    return parsed as GitsVerifyCommand[];
+  } catch {
+    return null;
+  }
+}
 
 const MOTOKO_TRANSCRIPTS_STORAGE_KEY = "gits:motoko:transcripts:v1";
 const MOTOKO_TRANSCRIPT_PERSIST_LIMIT = 200;
@@ -289,10 +319,37 @@ function MotokoProposalCard({
 }: {
   proposal: HermesProposalCard;
   actionPending: boolean;
-  onDecision: (proposal: HermesProposalCard, decision: MotokoProposalDecision) => void;
+  onDecision: (
+    proposal: HermesProposalCard,
+    decision: MotokoProposalDecision,
+    edits: MotokoProposalEdits,
+  ) => void;
   onDraft: (proposalId: string) => void;
   compact?: boolean;
 }) {
+  const [title, setTitle] = useState(proposal.title);
+  const [prompt, setPrompt] = useState(proposal.nextCommandOrPrompt ?? "");
+  const [repo, setRepo] = useState(proposal.projectDir ?? "");
+  const [model, setModel] = useState(proposal.model ?? "");
+  const [notBefore, setNotBefore] = useState(proposal.notBefore?.slice(0, 16) ?? "");
+  const [runtime, setRuntime] = useState(
+    proposal.maxRuntimeMinutes === null ? "" : String(proposal.maxRuntimeMinutes),
+  );
+  const [integrationBranch, setIntegrationBranch] = useState(proposal.integrationBranch ?? "");
+  const [verificationCommandsJson, setVerificationCommandsJson] = useState(
+    JSON.stringify(proposal.verificationCommands, null, 2),
+  );
+  const verificationCommands = parseVerificationCommands(verificationCommandsJson);
+  const edits = (): MotokoProposalEdits => ({
+    title: title.trim(),
+    prompt,
+    projectDir: repo.trim(),
+    model: model.trim() || null,
+    notBefore: notBefore ? new Date(notBefore).toISOString() : null,
+    maxRuntimeMinutes: runtime ? Number(runtime) : null,
+    verificationCommands: verificationCommands ?? proposal.verificationCommands,
+    integrationBranch: integrationBranch.trim() || null,
+  });
   const draftKind = motokoProposalDraftKind(proposal);
   const canApprove =
     proposal.status === "proposed" ||
@@ -309,6 +366,7 @@ function MotokoProposalCard({
       proposal.scope.length > 0);
   return (
     <article
+      id={`proposal-${proposal.id}`}
       className={cn(
         "grid gap-2.5 rounded-lg border border-border/70 border-l-2 bg-card/80 px-3.5 py-3 text-xs shadow-xs",
         MOTOKO_PROPOSAL_STATUS_ACCENT[proposal.status],
@@ -348,6 +406,68 @@ function MotokoProposalCard({
       <p className={cn("leading-relaxed text-muted-foreground", compact && "line-clamp-2")}>
         {proposal.summary}
       </p>
+      {!compact && canApprove ? (
+        <div className="grid gap-2 rounded-md border border-border/60 bg-background/70 p-3">
+          <Input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            aria-label="Title"
+          />
+          <Textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            aria-label="Execution prompt"
+            placeholder="Execution prompt"
+          />
+          <details>
+            <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">
+              Advanced execution settings
+            </summary>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <Input
+                value={repo}
+                onChange={(event) => setRepo(event.target.value)}
+                placeholder="Repository"
+              />
+              <Input
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                placeholder="Model"
+              />
+              <Input
+                type="datetime-local"
+                value={notBefore}
+                onChange={(event) => setNotBefore(event.target.value)}
+              />
+              <Input
+                type="number"
+                min="0"
+                value={runtime}
+                onChange={(event) => setRuntime(event.target.value)}
+                placeholder="Runtime minutes"
+              />
+              <Input
+                className="sm:col-span-2"
+                value={integrationBranch}
+                onChange={(event) => setIntegrationBranch(event.target.value)}
+                placeholder="Integration branch"
+              />
+              <Textarea
+                className="min-h-28 font-mono text-[11px] sm:col-span-2"
+                value={verificationCommandsJson}
+                onChange={(event) => setVerificationCommandsJson(event.target.value)}
+                aria-label="Verification commands JSON"
+                placeholder='[{"label":"test","cmd":["bun","run","test"]}]'
+              />
+              {verificationCommands === null ? (
+                <p className="text-destructive sm:col-span-2">
+                  Verification commands must be a JSON array of label/cmd objects.
+                </p>
+              ) : null}
+            </div>
+          </details>
+        </div>
+      ) : null}
       {hasDetails ? (
         <details className="overflow-hidden rounded-md border border-border/60 bg-background/70">
           <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground">
@@ -386,7 +506,7 @@ function MotokoProposalCard({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => onDecision(proposal, "defer")}
+              onClick={() => onDecision(proposal, "defer", edits())}
               disabled={actionPending}
             >
               Defer
@@ -396,7 +516,7 @@ function MotokoProposalCard({
             <Button
               size="sm"
               variant="destructive-outline"
-              onClick={() => onDecision(proposal, "reject")}
+              onClick={() => onDecision(proposal, "reject", edits())}
               disabled={actionPending}
             >
               Reject
@@ -405,8 +525,13 @@ function MotokoProposalCard({
           {canApprove ? (
             <Button
               size="sm"
-              onClick={() => onDecision(proposal, "approve")}
-              disabled={actionPending}
+              onClick={() => onDecision(proposal, "approve", edits())}
+              disabled={
+                actionPending ||
+                title.trim().length === 0 ||
+                (draftKind !== "verification" && repo.trim().length === 0) ||
+                verificationCommands === null
+              }
             >
               <CheckCircle2Icon className="size-3.5" />
               {draftKind === "delamain-peer" ? "Approve & dispatch" : "Approve"}
@@ -421,6 +546,42 @@ function MotokoProposalCard({
         </div>
       </footer>
     </article>
+  );
+}
+
+export function MotokoProposalReview({
+  proposals,
+  proposalId,
+  actionPending,
+  onDecision,
+}: {
+  proposals: HermesProposalListResult | undefined;
+  proposalId: string | null;
+  actionPending: boolean;
+  onDecision: (
+    proposal: HermesProposalCard,
+    decision: MotokoProposalDecision,
+    edits: MotokoProposalEdits,
+  ) => void;
+}) {
+  if (proposalId === null) return null;
+  const proposal = proposals?.proposals.find((candidate) => candidate.id === proposalId);
+  if (!proposal) return null;
+  return (
+    <div className="border-b border-border bg-background px-4 py-4 sm:px-5">
+      <h3 className="text-sm font-semibold">Proposal review</h3>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Review and edit Motoko&apos;s execution settings before this enters the Automode queue.
+      </p>
+      <div className="mt-3">
+        <MotokoProposalCard
+          proposal={proposal}
+          actionPending={actionPending}
+          onDecision={onDecision}
+          onDraft={() => undefined}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -805,6 +966,7 @@ export function MotokoPanel({
   onWriteContext,
   onDraft,
   onRunSchedule,
+  focusedProposalId,
 }: {
   status: HermesStatusResult | undefined;
   capacity: GitsCapacitySnapshot | undefined;
@@ -825,6 +987,7 @@ export function MotokoPanel({
   interactionMode: MotokoInteractionMode;
   scheduleKind: HermesScheduleKind;
   actionPending: boolean;
+  focusedProposalId?: string | null;
   onRefresh: () => void;
   onToggleInteractionMode: () => void;
   onProjectRootChange: (value: string) => void;
@@ -837,13 +1000,24 @@ export function MotokoPanel({
   onChatSubmit: () => void;
   onClearChat: () => void;
   onNewChat: () => void;
-  onDecision: (proposal: HermesProposalCard, decision: MotokoProposalDecision) => void;
+  onDecision: (
+    proposal: HermesProposalCard,
+    decision: MotokoProposalDecision,
+    edits: MotokoProposalEdits,
+  ) => void;
   onWriteContext: () => void;
   onDraft: (proposalId: string) => void;
   onRunSchedule: () => void;
 }) {
-  const cards = proposals?.proposals ?? [];
+  const cards = useMemo(() => proposals?.proposals ?? [], [proposals]);
   const [proposalsOpen, setProposalsOpen] = useState(false);
+  useEffect(() => {
+    if (!focusedProposalId || !cards.some((card) => card.id === focusedProposalId)) return;
+    setProposalsOpen(true);
+    requestAnimationFrame(() =>
+      document.getElementById(`proposal-${focusedProposalId}`)?.scrollIntoView({ block: "center" }),
+    );
+  }, [cards, focusedProposalId]);
 
   // --- Composer: panel-local input so submit can clear it immediately (optimistic),
   // instead of waiting for the shell's mutation onSuccess to clear `chatInput`. We still

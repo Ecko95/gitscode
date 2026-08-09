@@ -8,7 +8,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import type { AutomodeGoal } from "@t3tools/contracts";
+import type { AutomodeGoal, ThreadId } from "@t3tools/contracts";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { shortGoalCode } from "../HermesTelegramCommand.ts";
@@ -18,15 +18,68 @@ import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
+import { AutomodeNotifications } from "./AutomodeNotifications.ts";
 import { hasLiveGoalForRepo } from "./HermesAutomodeBridge.ts";
 import { london_instant } from "./GitsSlotScheduler.ts";
 import { repoAllowed } from "./AutomodeSupervisor.ts";
-
-const REPLY_HINT = "Reply: APPROVE <code> · REJECT <code>";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 const STATE_FILE_NAME = "automode-proposal-sweep-state.json";
 const DEFAULT_START_MINUTES = 20 * 60; // 20:00 London dinner window.
 const START_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function selectContinuationsByRepo(readModel: {
+  readonly projects: ReadonlyArray<{ readonly id: string; readonly workspaceRoot: string }>;
+  readonly threads: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly projectId: string;
+    readonly title: string;
+    readonly updatedAt: string;
+    readonly archivedAt: string | null;
+    readonly deletedAt: string | null;
+    readonly latestTurn: { readonly state: string } | null;
+    readonly proposedPlans: ReadonlyArray<{
+      readonly implementedAt: string | null;
+      readonly implementationThreadId: string | null;
+    }>;
+  }>;
+}) {
+  const projects = new Map(
+    readModel.projects.map((project) => [project.id, project.workspaceRoot]),
+  );
+  const candidates = new Map<
+    string,
+    { readonly id: ThreadId; readonly title: string; readonly reason: string }
+  >();
+  for (const thread of readModel.threads.toSorted((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt),
+  )) {
+    const repo = projects.get(thread.projectId);
+    if (
+      repo === undefined ||
+      candidates.has(repo) ||
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null
+    ) {
+      continue;
+    }
+    const pendingPlan = thread.proposedPlans.some(
+      (plan) => plan.implementedAt === null && plan.implementationThreadId === null,
+    );
+    const interrupted =
+      thread.latestTurn?.state === "interrupted" || thread.latestTurn?.state === "error";
+    if (pendingPlan || interrupted) {
+      candidates.set(repo, {
+        id: thread.id,
+        title: thread.title,
+        reason: pendingPlan
+          ? "an accepted plan remains unimplemented"
+          : "the last turn did not complete",
+      });
+    }
+  }
+  return candidates;
+}
 
 /** GITS_PROPOSAL_SWEEP_START_HHMM override; invalid input warns and falls back to 20:00. */
 function parseStartMinutes(raw: string | undefined): {
@@ -104,6 +157,8 @@ export const AutomodeProposalSweepLive = Layer.effect(
     const hermes = yield* HermesAdapter;
     const ledger = yield* AutomodeEpisodeLedger;
     const notifier = yield* HermesTelegramNotifier;
+    const notifications = yield* AutomodeNotifications;
+    const projection = yield* ProjectionSnapshotQuery;
     const parsedStart = parseStartMinutes(process.env.GITS_PROPOSAL_SWEEP_START_HHMM);
     if (parsedStart.error !== null) {
       yield* Effect.logWarning("gits.sweep.start-invalid", { detail: parsedStart.error });
@@ -113,12 +168,10 @@ export const AutomodeProposalSweepLive = Layer.effect(
     const stateRef = yield* Ref.make(yield* loadState(statePath));
     const semaphore = yield* Semaphore.make(1);
 
-    // Propose to ONE repo: skip it if a goal is already live for it (dedup BEFORE the codex
-    // spend), then spawn Hermes, approve the card, draft it, and enqueue the drafted
-    // delamain-peer as a queued goal carrying the card's episodeId. A failure here is
-    // logged and swallowed so the sweep continues to the next repo. Returns the enqueued
-    // goal (null on any skip/failure) so the caller can gate approval and notify.
-    const sweepRepo = (repo: string): Effect.Effect<AutomodeGoal | null> =>
+    const sweepRepo = (
+      repo: string,
+      continuation?: { readonly id: ThreadId; readonly title: string; readonly reason: string },
+    ): Effect.Effect<{ readonly proposed: boolean; readonly goal: AutomodeGoal | null }> =>
       Effect.gen(function* () {
         // Dedup by repo, ahead of hermes: a fresh inspect always mints a new episodeId, so
         // episode dedup could never fire here. A repo whose prior-night sweep or cockpit
@@ -126,27 +179,44 @@ export const AutomodeProposalSweepLive = Layer.effect(
         const snapshot = yield* supervisor.getSnapshot();
         if (hasLiveGoalForRepo(snapshot.goals, repo)) {
           yield* Effect.logInfo("gits.sweep.dedup-skipped", { repo });
-          return null;
+          return { proposed: false, goal: null };
         }
         // Feedback loop: fold the repo's recent ledger outcomes into the proposal prompt so
         // Hermes doesn't blindly repeat an idea that already ran, landed, or got flagged.
         const episodes = yield* ledger.list_episodes({ repo, limit: 5 });
-        const outcomesSection =
-          episodes.length === 0
-            ? undefined
+        const promptSections = [
+          ...(episodes.length === 0
+            ? []
             : [
-                "Recent automode outcomes for this repo:",
-                ...episodes.map(
-                  (episode) =>
-                    `- ${episode.goalTitle}: ${episode.verdict}${episode.flagged ? " (flagged)" : ""}`,
-                ),
-              ].join("\n");
+                [
+                  "Recent automode outcomes for this repo:",
+                  ...episodes.map(
+                    (episode) =>
+                      `- ${episode.goalTitle}: ${episode.verdict}${episode.flagged ? " (flagged)" : ""}`,
+                  ),
+                ].join("\n"),
+              ]),
+          ...(continuation === undefined
+            ? []
+            : [
+                `Unfinished past thread ${continuation.id} (${continuation.title}): ${continuation.reason}. Propose the smallest safe continuation if it is still relevant.`,
+              ]),
+        ];
         // "worktree-spawn" makes the card actionable: a read-only inspect card can only ever
         // draft as "verification", never "delamain-peer" (draftKindFor keys on actionKind).
         const card = yield* hermes.inspectGitsAndPropose({
           projectDir: repo,
           actionKind: "worktree-spawn",
-          ...(outcomesSection === undefined ? {} : { prompt: outcomesSection }),
+          ...(promptSections.length === 0 ? {} : { prompt: promptSections.join("\n\n") }),
+          ...(continuation === undefined ? {} : { sourceThreadId: continuation.id }),
+        });
+        yield* notifications.notify({
+          key: `proposal:${card.id}:created`,
+          subject: "New Motoko proposal",
+          text: `${card.title} — ${path.basename(repo)}`,
+          url: `/gits?panel=autopilot&proposal=${encodeURIComponent(card.id)}`,
+          gitsEnabled: snapshot.policy.gitsNotificationsEnabled,
+          telegramEnabled: snapshot.policy.telegramNotificationsEnabled,
         });
         if (card.status === "blocked" || card.projectDir === null) {
           yield* Effect.logInfo("gits.sweep.card-skipped", {
@@ -154,7 +224,12 @@ export const AutomodeProposalSweepLive = Layer.effect(
             status: card.status,
             blockedReason: card.blockedReason,
           });
-          return null;
+          return { proposed: false, goal: null };
+        }
+        // A review-required sweep stops at the proposal. The cockpit approval bridge owns
+        // decide -> draft -> enqueue, so edits are applied before any runnable goal exists.
+        if (snapshot.policy.sweepRequiresConfirmation) {
+          return { proposed: true, goal: null };
         }
         // Approve before drafting — mirrors the approve bridge's decide→draft order.
         // draftFromProposal blocks any card whose status !== "approved".
@@ -166,7 +241,7 @@ export const AutomodeProposalSweepLive = Layer.effect(
             kind: draft.kind,
             status: draft.status,
           });
-          return null;
+          return { proposed: false, goal: null };
         }
         const enqueued = yield* supervisor.enqueueGoal({
           title: draft.title,
@@ -176,11 +251,11 @@ export const AutomodeProposalSweepLive = Layer.effect(
           origin: "sweep",
         });
         // enqueueGoal prepends the new goal, so it's always the freshest entry.
-        return enqueued.goals[0] ?? null;
+        return { proposed: true, goal: enqueued.goals[0] ?? null };
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("gits.sweep.repo-failed", { repo, cause: Cause.pretty(cause) }).pipe(
-            Effect.as(null),
+            Effect.as({ proposed: false, goal: null }),
           ),
         ),
       );
@@ -213,32 +288,29 @@ export const AutomodeProposalSweepLive = Layer.effect(
           yield* Ref.set(stateRef, next);
           // Sequential: hermes invocations share codex capacity — never parallelise.
           const newGoals: AutomodeGoal[] = [];
+          let proposalCount = 0;
           let attemptedRepos = 0;
+          const readModel = yield* projection.getSnapshot().pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("gits.sweep.continuations-unavailable", {
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(null)),
+            ),
+          );
+          const continuationByRepo =
+            readModel === null ? new Map() : selectContinuationsByRepo(readModel);
           for (const repo of policy.proposalRepos) {
             if (!repoAllowed(policy, repo)) {
               yield* Effect.logWarning("gits.sweep.repo-not-allowed", { repo });
               continue;
             }
             attemptedRepos += 1;
-            const goal = yield* sweepRepo(repo);
+            const { proposed, goal } = yield* sweepRepo(repo, continuationByRepo.get(repo));
+            if (proposed) proposalCount += 1;
             if (goal === null) continue;
             newGoals.push(goal);
-            if (policy.sweepRequiresConfirmation) {
-              // Parks the goal at waiting-approval via the shared dispatch-time approval gate:
-              // the goal carries origin "sweep" (enqueued above), and goalNeedsApproval in
-              // AutomodeSupervisor.ts treats sweep + sweepRequiresConfirmation as needing
-              // approval independent of requireApprovalForPeerSpawn.
-              yield* supervisor.dispatchGoal({ goalId: goal.id }).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("gits.sweep.confirm-gate-failed", {
-                    goalId: goal.id,
-                    cause: Cause.pretty(cause),
-                  }),
-                ),
-              );
-            }
           }
-          if (attemptedRepos > 0 && newGoals.length === 0) {
+          if (attemptedRepos > 0 && proposalCount === 0) {
             // A sweep night is consumed up front, so a silent zero-goal run means the owner
             // waits a whole day without knowing anything went wrong. Always say so.
             // ponytail: generic message; per-repo reasons live in the gits.sweep.* logs.
@@ -260,14 +332,12 @@ export const AutomodeProposalSweepLive = Layer.effect(
             // The reply hint must reflect reality: with confirmation off, goals are already
             // queued for autonomous dispatch — APPROVE/REJECT would be a false gate; STOP is
             // the only real control.
-            const text = policy.sweepRequiresConfirmation
-              ? ["New goals from tonight's sweep:", ...goalLines, "", REPLY_HINT].join("\n")
-              : [
-                  "New goals from tonight's sweep (queued for autonomous run — no confirmation required):",
-                  ...goalLines,
-                  "",
-                  "Reply: STOP to halt automode.",
-                ].join("\n");
+            const text = [
+              "New goals from tonight's sweep (queued for autonomous run — no confirmation required):",
+              ...goalLines,
+              "",
+              "Reply: STOP to halt automode.",
+            ].join("\n");
             yield* notifier
               .notify({ subject: "GITS nightly sweep", text })
               .pipe(

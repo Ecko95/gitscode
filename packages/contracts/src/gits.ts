@@ -904,6 +904,10 @@ export const AutomodePolicy = Schema.Struct({
   // decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a legacy
   // automode-state.json without telegramDigestEnabled must still decode.
   telegramDigestEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  gitsNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  telegramNotificationsEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   // Human-in-the-loop gate for the nightly sweep: when true (default), sweep-drafted goals
   // enter waiting-approval so the owner confirms them (e.g. Telegram APPROVE <id>) before
   // dispatch; when false, the sweep keeps its legacy self-approved queued behavior.
@@ -957,6 +961,16 @@ export const AutomodeGoal = Schema.Struct({
   // branch when policy sets one, else a per-goal branch cut from the base ref.
   // Decoding default is load-bearing — see origin above.
   branch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  notBefore: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  maxRuntimeMinutes: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  verificationCommands: Schema.Array(GitsVerifyCommand).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  integrationBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 });
@@ -1014,6 +1028,8 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   motokoAuthority: Schema.optional(MotokoAuthority),
   telegramDigestEnabled: Schema.optional(Schema.Boolean),
+  gitsNotificationsEnabled: Schema.optional(Schema.Boolean),
+  telegramNotificationsEnabled: Schema.optional(Schema.Boolean),
   sweepRequiresConfirmation: Schema.optional(Schema.Boolean),
 });
 export type AutomodePolicyUpdateInput = typeof AutomodePolicyUpdateInput.Type;
@@ -1027,6 +1043,10 @@ export const AutomodeEnqueueGoalInput = Schema.Struct({
   episodeId: Schema.optional(TrimmedNonEmptyString),
   // Goal origin (manual/proposal/sweep); the supervisor defaults to "manual" when absent.
   origin: Schema.optional(AutomodeGoalOrigin),
+  notBefore: Schema.optional(Schema.NullOr(IsoDateTime)),
+  maxRuntimeMinutes: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
+  integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type AutomodeEnqueueGoalInput = typeof AutomodeEnqueueGoalInput.Type;
 
@@ -1418,6 +1438,7 @@ export const HermesInspectGitsProposalInput = Schema.Struct({
   // still required downstream) — a read-only card can only ever become a verification
   // draft (draftKindFor). Pass "read-only" explicitly for inert informational cards.
   actionKind: Schema.optional(HermesProposalActionKind),
+  sourceThreadId: Schema.optional(ThreadId),
 });
 export type HermesInspectGitsProposalInput = typeof HermesInspectGitsProposalInput.Type;
 
@@ -1528,6 +1549,22 @@ export const HermesProposalCard = Schema.Struct({
   blockedReason: Schema.NullOr(SummaryString),
   source: TrimmedNonEmptyString,
   projectDir: Schema.NullOr(PathString),
+  model: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  notBefore: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  maxRuntimeMinutes: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  verificationCommands: Schema.Array(GitsVerifyCommand).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  integrationBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  sourceThreadId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   decisionReason: Schema.NullOr(SummaryString),
   decidedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
@@ -1548,6 +1585,14 @@ export const HermesProposalDecisionInput = Schema.Struct({
   proposalId: TrimmedNonEmptyString,
   decision: HermesProposalDecision,
   reason: Schema.optional(SummaryString),
+  title: Schema.optional(TrimmedNonEmptyString),
+  prompt: Schema.optional(SummaryString),
+  projectDir: Schema.optional(PathString),
+  model: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  notBefore: Schema.optional(Schema.NullOr(IsoDateTime)),
+  maxRuntimeMinutes: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
+  integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type HermesProposalDecisionInput = typeof HermesProposalDecisionInput.Type;
 

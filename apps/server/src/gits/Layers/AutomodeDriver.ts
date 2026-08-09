@@ -23,9 +23,9 @@ import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { GitsSlotScheduler } from "../Services/GitsSlotScheduler.ts";
 import { AUTOMODE_BASE_REF, AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
-import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
 import { decide_automode_gate } from "./AutomodeReviewGate.ts";
+import { AutomodeNotifications } from "./AutomodeNotifications.ts";
 
 export const HALT_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 
@@ -92,7 +92,7 @@ export const AutomodeDriverLive = Layer.effect(
     const scheduler = yield* GitsSlotScheduler;
     const telegramDigest = yield* AutomodeTelegramDigest;
     const proposalSweep = yield* AutomodeProposalSweep;
-    const telegramNotifier = yield* HermesTelegramNotifier;
+    const notifications = yield* AutomodeNotifications;
 
     const toDriverError = (message: string) => (cause: unknown) =>
       new AutomodeSupervisorError({ message, cause });
@@ -104,23 +104,42 @@ export const AutomodeDriverLive = Layer.effect(
       readonly reason: string;
       readonly prUrl?: string | null;
     }) =>
-      telegramNotifier
-        .notify({
-          subject: input.subject,
-          text: [
-            `Title: ${input.title}`,
-            `Goal ID: ${input.goalId ?? "none"}`,
-            `Reason: ${input.reason}`,
-            ...(input.prUrl === undefined || input.prUrl === null
-              ? []
-              : [`PR URL: ${input.prUrl}`]),
-          ].join("\n"),
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("gits.automode.telegram.alert-failed", { cause }),
-          ),
-        );
+      Effect.gen(function* () {
+        const policy = yield* supervisor.getPolicy();
+        yield* notifications
+          .notify({
+            key: `automode:${input.goalId ?? "driver"}:${input.subject}`,
+            subject: input.subject,
+            text: [
+              `Title: ${input.title}`,
+              `Goal ID: ${input.goalId ?? "none"}`,
+              `Reason: ${input.reason}`,
+              ...(input.prUrl === undefined || input.prUrl === null
+                ? []
+                : [`PR URL: ${input.prUrl}`]),
+            ].join("\n"),
+            url: `/gits?panel=autopilot${input.goalId === null ? "" : `&goal=${encodeURIComponent(input.goalId)}`}`,
+            gitsEnabled: policy.gitsNotificationsEnabled,
+            telegramEnabled: policy.telegramNotificationsEnabled,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("gits.automode.notification-failed", { cause }),
+            ),
+          );
+      });
+
+    const failGoal = (goal: AutomodeGoal, reason: string) =>
+      supervisor.failGoal({ goalId: goal.id, reason }).pipe(
+        Effect.tap(() =>
+          notify({
+            subject: "GITS automode goal failed",
+            title: goal.title,
+            goalId: goal.id,
+            reason,
+          }),
+        ),
+      );
 
     // Same-reason halt alerts are suppressed for a cooldown window: a driver that
     // re-halts into the same failure (e.g. operator keeps resuming, or a gate keeps
@@ -240,24 +259,27 @@ export const AutomodeDriverLive = Layer.effect(
           }
 
           if (peer.integrationStatus === "failed" || TERMINAL_FAIL_STATUSES.has(peer.status)) {
-            yield* supervisor.failGoal({
-              goalId: running.id,
-              reason: `Peer ${peer.id} ended as ${peer.status}.`,
-            });
+            yield* failGoal(running, `Peer ${peer.id} ended as ${peer.status}.`);
             yield* halt(running, `Halted: ${running.title} failed (${peer.status}).`);
             return;
           }
           if (peer.integrationStatus === "skipped") {
             // delamain skips the push when the peer branch has zero commits ahead of the
             // sync base — nothing ever reaches origin, so landing would fail every tick.
-            yield* supervisor.failGoal({
-              goalId: running.id,
-              reason: `Peer ${peer.id} finished with no changes ahead of the integration branch (nothing pushed).`,
-            });
+            yield* failGoal(
+              running,
+              `Peer ${peer.id} finished with no changes ahead of the integration branch (nothing pushed).`,
+            );
             yield* halt(running, `Halted: ${running.title} produced no changes to land.`);
             return;
           }
           if (peer.status === "waiting") {
+            yield* notify({
+              subject: "GITS automode goal waiting",
+              title: running.title,
+              goalId: running.id,
+              reason: `Peer ${peer.id} is waiting on input.`,
+            });
             yield* halt(
               running,
               `Halted: peer ${peer.id} is waiting on input for ${running.title}.`,
@@ -281,7 +303,11 @@ export const AutomodeDriverLive = Layer.effect(
             // Floor ∪ policy (policy wins by label). The fail-closed empty check guards
             // the MERGED set — unreachable while the floor const is non-empty, kept as
             // defense against a future emptied floor.
-            const verificationCommands = merge_verify_commands(policy.verificationCommands);
+            const verificationCommands = merge_verify_commands(
+              running.verificationCommands.length > 0
+                ? running.verificationCommands
+                : policy.verificationCommands,
+            );
             if (verificationCommands.length === 0) {
               yield* halt(
                 running,
@@ -300,10 +326,10 @@ export const AutomodeDriverLive = Layer.effect(
                 .workflowStatus({ workflowId: running.workflowId })
                 .pipe(Effect.result);
               if (Result.isFailure(statusResult)) {
-                yield* supervisor.failGoal({
-                  goalId: running.id,
-                  reason: `Could not read workflow ${running.workflowId} status to resolve the landed slice.`,
-                });
+                yield* failGoal(
+                  running,
+                  `Could not read workflow ${running.workflowId} status to resolve the landed slice.`,
+                );
                 yield* halt(
                   running,
                   `Halted: workflow ${running.workflowId} status read failed for ${running.title}.`,
@@ -312,10 +338,10 @@ export const AutomodeDriverLive = Layer.effect(
               }
               const leafIds = statusResult.success.peerIds;
               if (leafIds.length === 0) {
-                yield* supervisor.failGoal({
-                  goalId: running.id,
-                  reason: `Workflow ${running.workflowId} finished with no leaf peer to land.`,
-                });
+                yield* failGoal(
+                  running,
+                  `Workflow ${running.workflowId} finished with no leaf peer to land.`,
+                );
                 yield* halt(
                   running,
                   `Halted: workflow ${running.workflowId} produced no leaf peer for ${running.title}.`,
@@ -333,10 +359,10 @@ export const AutomodeDriverLive = Layer.effect(
                 .getPeerStatus({ peerId: leafIds[0]! })
                 .pipe(Effect.result);
               if (Result.isFailure(leafResult)) {
-                yield* supervisor.failGoal({
-                  goalId: running.id,
-                  reason: `Could not read leaf peer ${leafIds[0]} of workflow ${running.workflowId}.`,
-                });
+                yield* failGoal(
+                  running,
+                  `Could not read leaf peer ${leafIds[0]} of workflow ${running.workflowId}.`,
+                );
                 yield* halt(
                   running,
                   `Halted: leaf peer ${leafIds[0]} status read failed for ${running.title}.`,
@@ -365,10 +391,7 @@ export const AutomodeDriverLive = Layer.effect(
               })
               .pipe(Effect.result);
             if (Result.isFailure(reviewResult)) {
-              yield* supervisor.failGoal({
-                goalId: running.id,
-                reason: `Verifier errored for ${running.title}.`,
-              });
+              yield* failGoal(running, `Verifier errored for ${running.title}.`);
               yield* halt(
                 running,
                 `Halted: verifier errored for ${running.title} — manual check needed.`,
@@ -379,7 +402,7 @@ export const AutomodeDriverLive = Layer.effect(
             const review = reviewResult.success;
             const decision = decide_automode_gate(review);
             if (decision.action === "fail") {
-              yield* supervisor.failGoal({ goalId: running.id, reason: decision.reason });
+              yield* failGoal(running, decision.reason);
               yield* halt(running, `Halted: ${running.title} failed review — ${decision.reason}`);
               return;
             }
@@ -490,11 +513,18 @@ export const AutomodeDriverLive = Layer.effect(
           yield* maintainHeldPr(snapshot);
           return;
         }
+        if (
+          next.notBefore !== null &&
+          Date.parse(next.notBefore) > (yield* Clock.currentTimeMillis)
+        ) {
+          yield* maintainHeldPr(snapshot);
+          return;
+        }
         // Scheduler start gate (decisions 6/7/11/20): a deny leaves the goal queued for a
         // later tick — quiet, NOT a halt. Manual RPC dispatch stays ungated (human-driven).
         const gate = yield* scheduler
           .checkStartAllowed({
-            expectedRuntimeMinutes: snapshot.policy.maxRuntimeMinutes,
+            expectedRuntimeMinutes: next.maxRuntimeMinutes ?? snapshot.policy.maxRuntimeMinutes,
             maxActivePeers: snapshot.policy.maxActivePeers,
           })
           .pipe(Effect.mapError(toDriverError("Scheduler start gate check failed.")));
@@ -535,6 +565,14 @@ export const AutomodeDriverLive = Layer.effect(
         }
         const result = dispatched.success;
         if (result.peer === null) {
+          yield* notify({
+            subject: result.approvalRequired
+              ? "GITS automode goal waiting"
+              : "GITS automode goal blocked",
+            title: next.title,
+            goalId: next.id,
+            reason: result.blockedReason ?? "Automode dispatch did not start.",
+          });
           yield* halt(
             next,
             result.blockedReason ?? `Dispatch of ${next.title} did not spawn a peer.`,

@@ -114,6 +114,12 @@ function makeProposal(status: HermesProposalStatus): HermesProposalCard {
     blockedReason: null,
     source: "test",
     projectDir: "/tmp/source-repo",
+    model: "gpt-5.6-sol",
+    notBefore: "2026-01-02T00:00:00.000Z",
+    maxRuntimeMinutes: 45,
+    verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+    integrationBranch: "auto/proposal-1",
+    sourceThreadId: "thread-1",
     decisionReason: null,
     decidedAt: null,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -202,6 +208,11 @@ describe("decideProposalWithAutomodeBridge", () => {
       assert.equal(snapshot.goals[0]!.status, "queued");
       // Episode thread (decision 23): the goal carries the proposal's episodeId.
       assert.equal(snapshot.goals[0]!.episodeId, "epi-proposal-1");
+      assert.equal(snapshot.goals[0]!.model, "gpt-5.6-sol");
+      assert.equal(snapshot.goals[0]!.notBefore, "2026-01-02T00:00:00.000Z");
+      assert.equal(snapshot.goals[0]!.maxRuntimeMinutes, 45);
+      assert.equal(snapshot.goals[0]!.verificationCommands.length, 1);
+      assert.equal(snapshot.goals[0]!.integrationBranch, "auto/proposal-1");
 
       const dispatched = yield* supervisor.dispatchGoal({ goalId: snapshot.goals[0]!.id });
       assert.equal(dispatched.goal.status, "running");
@@ -217,7 +228,7 @@ describe("decideProposalWithAutomodeBridge", () => {
     );
   });
 
-  it.effect("approve with flag off stays handoff-only", () =>
+  it.effect("approve queues even when the legacy auto-enqueue flag is off", () =>
     Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       yield* supervisor.updatePolicy({
@@ -232,15 +243,18 @@ describe("decideProposalWithAutomodeBridge", () => {
         decision: "approve",
       });
 
-      assert.equal((yield* supervisor.getSnapshot()).goals.length, 0);
-      assert.equal(draftCallCount(), 0);
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+      assert.equal(draftCallCount(), 1);
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
-  it.effect("approve with flag on but manual mode stays handoff-only", () =>
+  it.effect("approve queues in manual mode without dispatching", () =>
     Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
-      yield* supervisor.updatePolicy({ autoEnqueueApprovedProposals: true });
+      yield* supervisor.updatePolicy({
+        autoEnqueueApprovedProposals: true,
+        allowedRepos: ["/tmp/source-repo"],
+      });
       const { hermes, draftCallCount } = makeFakeHermes();
 
       yield* decideProposalWithAutomodeBridge(hermes, supervisor, {
@@ -248,8 +262,8 @@ describe("decideProposalWithAutomodeBridge", () => {
         decision: "approve",
       });
 
-      assert.equal((yield* supervisor.getSnapshot()).goals.length, 0);
-      assert.equal(draftCallCount(), 0);
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+      assert.equal(draftCallCount(), 1);
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
@@ -290,7 +304,7 @@ describe("decideProposalWithAutomodeBridge", () => {
       });
 
       assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
-      assert.equal(draftCallCount(), 1);
+      assert.equal(draftCallCount(), 0);
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
@@ -306,6 +320,21 @@ describe("decideProposalWithAutomodeBridge", () => {
 
       assert.equal((yield* supervisor.getSnapshot()).goals.length, 0);
       assert.equal(draftCallCount(), 0);
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
+  it.effect("rejects edited repositories outside Automode policy before persisting approval", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      const { hermes } = makeFakeHermes();
+      const error = yield* decideProposalWithAutomodeBridge(hermes, supervisor, {
+        proposalId: "proposal-1",
+        decision: "approve",
+        projectDir: "/tmp/not-allowed",
+      }).pipe(Effect.flip);
+
+      assert.include(error.message, "not allowed");
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 0);
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 

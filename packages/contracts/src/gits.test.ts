@@ -341,6 +341,14 @@ describe("AutomodeGoal", () => {
     const parsed = decodeAutomodeGoal({ ...legacyGoal, branch: "automode/goal-f948a67a" });
     expect(parsed.branch).toBe("automode/goal-f948a67a");
   });
+
+  it("defaults proposal scheduling fields on legacy goals", () => {
+    const parsed = decodeAutomodeGoal(legacyGoal);
+    expect(parsed.notBefore).toBeNull();
+    expect(parsed.maxRuntimeMinutes).toBeNull();
+    expect(parsed.verificationCommands).toEqual([]);
+    expect(parsed.integrationBranch).toBeNull();
+  });
 });
 
 describe("Delamain workflow launch contracts", () => {
@@ -410,6 +418,26 @@ describe("Hermes Motoko contracts", () => {
     createdAt: "2026-06-02T10:00:00.000Z",
     updatedAt: "2026-06-02T10:00:00.000Z",
   } as const;
+
+  it("decodes editable proposal execution settings", () => {
+    const parsed = decodeHermesProposal({
+      ...baseProposal,
+      model: "gpt-5.6-sol",
+      notBefore: "2026-06-03T00:00:00.000Z",
+      maxRuntimeMinutes: 45,
+      verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+      integrationBranch: "auto/proposal-1",
+      sourceThreadId: "thread-1",
+    });
+    expect(parsed).toMatchObject({
+      model: "gpt-5.6-sol",
+      notBefore: "2026-06-03T00:00:00.000Z",
+      maxRuntimeMinutes: 45,
+      integrationBranch: "auto/proposal-1",
+      sourceThreadId: "thread-1",
+    });
+    expect(parsed.verificationCommands).toHaveLength(1);
+  });
 
   it("accepts Motoko status with setup warnings and profile status", () => {
     const parsed = decodeHermesStatus({

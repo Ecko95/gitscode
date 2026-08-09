@@ -81,6 +81,7 @@ import { AutomodeSupervisorLive } from "./gits/Layers/AutomodeSupervisor.ts";
 import { AutomodeUsageMeterLive } from "./gits/Layers/AutomodeUsageMeter.ts";
 import { AutomodeDriverLive } from "./gits/Layers/AutomodeDriver.ts";
 import { AutomodeProposalSweepLive } from "./gits/Layers/AutomodeProposalSweep.ts";
+import { AutomodeNotificationsLive } from "./gits/Layers/AutomodeNotifications.ts";
 import { AutomodeTelegramDigestLive } from "./gits/Layers/AutomodeTelegramDigest.ts";
 import { GitsSlotSchedulerLive } from "./gits/Layers/GitsSlotScheduler.ts";
 import { HermesTelegramNotifierLive } from "./gits/Layers/HermesTelegramNotifier.ts";
@@ -118,6 +119,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -344,6 +346,13 @@ const GitsSlotSchedulerLayerLive = GitsSlotSchedulerLive.pipe(
   ),
 );
 
+const AutomodeNotificationsLayerLive = AutomodeNotificationsLive.pipe(
+  Layer.provide(HermesTelegramNotifierLive),
+  Layer.provide(
+    PushNotificationLayerLive.pipe(Layer.provide(WebPushSubscriptionRepositoryLayerLive)),
+  ),
+);
+
 const AutomodeEpisodeLedgerLayerLive = AutomodeEpisodeLedgerLive.pipe(
   Layer.provide(PersistenceLayerLive),
 );
@@ -366,6 +375,8 @@ const HermesAdapterLayerLive = HermesCliAdapterLive.pipe(
 const AutomodeProposalSweepLayerLive = AutomodeProposalSweepLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(HermesAdapterLayerLive),
+  Layer.provide(AutomodeNotificationsLayerLive),
+  Layer.provide(OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provide(PersistenceLayerLive))),
 );
 
 const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
@@ -378,6 +389,7 @@ const AutomodeDriverLayerLive = AutomodeDriverLive.pipe(
   Layer.provide(AutomodeTelegramDigestLayerLive),
   Layer.provide(AutomodeProposalSweepLayerLive),
   Layer.provide(HermesTelegramNotifierLive),
+  Layer.provide(AutomodeNotificationsLayerLive),
   Layer.provide(
     GitsReviewPipelineLive.pipe(
       Layer.provide(GitsCodexVerifierAdapterLive),
@@ -413,7 +425,7 @@ const GitsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(HermesAdapterLayerLive),
   Layer.provideMerge(AutomodeSupervisorLayerLive),
   Layer.provideMerge(GitsSlotSchedulerLayerLive),
-  Layer.provideMerge(AutomodeDriverLayerLive),
+  Layer.provideMerge(Layer.merge(AutomodeDriverLayerLive, AutomodeNotificationsLayerLive)),
   // Exposed directly (not just as AutomodeDriverLayerLive's internal dependency) so the ws.ts
   // RPC layer can `yield* AutomodeEpisodeLedger` for gits.automode.episodes.list.
   Layer.provideMerge(AutomodeEpisodeLedgerLayerLive),

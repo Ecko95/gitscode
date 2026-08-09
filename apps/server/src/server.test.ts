@@ -140,6 +140,7 @@ import {
   type GitsSlotSchedulerShape,
 } from "./gits/Services/GitsSlotScheduler.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
+import { AutomodeNotifications } from "./gits/Layers/AutomodeNotifications.ts";
 import { setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
@@ -248,6 +249,10 @@ const defaultAutomodeGoal: AutomodeGoal = {
   prompt: "Spawn a safe test peer.",
   repo: "/tmp/source-repo",
   model: "gpt-5.5",
+  notBefore: null,
+  maxRuntimeMinutes: null,
+  verificationCommands: [],
+  integrationBranch: null,
   status: "queued",
   peerId: null,
   blockedReason: null,
@@ -279,6 +284,8 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     integrationBranch: null,
     motokoAuthority: "observe",
     telegramDigestEnabled: true,
+    gitsNotificationsEnabled: true,
+    telegramNotificationsEnabled: false,
     sweepRequiresConfirmation: true,
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
@@ -492,6 +499,12 @@ const defaultHermesProposal: HermesProposalCard = {
   blockedReason: null,
   source: "test",
   projectDir: null,
+  model: null,
+  notBefore: null,
+  maxRuntimeMinutes: null,
+  verificationCommands: [],
+  integrationBranch: null,
+  sourceThreadId: null,
   decisionReason: null,
   decidedAt: null,
   createdAt: "1970-01-01T00:00:00.000Z",
@@ -1216,6 +1229,7 @@ const buildAppUnderTest = (options?: {
           }),
         ...options?.layers?.hermesAdapter,
       }),
+      Layer.mock(AutomodeNotifications)({ notify: () => Effect.void }),
     );
 
     const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
@@ -5519,7 +5533,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "devCommandsInit:/tmp/default-project",
         "inspect:/tmp/default-project",
         "chat:Plan next action",
+        "proposals",
         "decide:proposal-test:approve",
+        "draft:proposal-test",
         "context:/tmp/default-project",
         "draft:proposal-test",
         "schedule:daily-briefing:/tmp/default-project",

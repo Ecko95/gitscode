@@ -236,6 +236,8 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     integrationBranch: null,
     motokoAuthority: "observe",
     telegramDigestEnabled: true,
+    gitsNotificationsEnabled: true,
+    telegramNotificationsEnabled: false,
     sweepRequiresConfirmation: true,
     updatedAt,
   };
@@ -350,10 +352,8 @@ function sortGoals(goals: ReadonlyArray<AutomodeGoal>): AutomodeGoal[] {
   return [...goals].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-function shouldScheduleRuntimeLimit(policy: AutomodePolicy): policy is AutomodePolicy & {
-  readonly maxRuntimeMinutes: number;
-} {
-  return policy.maxRuntimeMinutes !== null && policy.maxRuntimeMinutes > 0;
+function shouldScheduleRuntimeLimit(minutes: number | null): minutes is number {
+  return minutes !== null && minutes > 0;
 }
 
 function budgetBlockedReason(
@@ -425,6 +425,9 @@ function applyPolicyUpdate(
       input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,
     motokoAuthority: input.motokoAuthority ?? policy.motokoAuthority,
     telegramDigestEnabled: input.telegramDigestEnabled ?? policy.telegramDigestEnabled,
+    gitsNotificationsEnabled: input.gitsNotificationsEnabled ?? policy.gitsNotificationsEnabled,
+    telegramNotificationsEnabled:
+      input.telegramNotificationsEnabled ?? policy.telegramNotificationsEnabled,
     sweepRequiresConfirmation: input.sweepRequiresConfirmation ?? policy.sweepRequiresConfirmation,
     updatedAt,
   };
@@ -661,7 +664,7 @@ export const AutomodeSupervisorLive = Layer.effect(
               if (
                 nextPolicy.mode === "autonomous" &&
                 nextPolicy.maxBudgetUsd === null &&
-                !shouldScheduleRuntimeLimit(nextPolicy)
+                !shouldScheduleRuntimeLimit(nextPolicy.maxRuntimeMinutes)
               ) {
                 return yield* toAutomodeError(
                   "Autonomous mode requires a resource cap — set a max budget (maxBudgetUsd) or a runtime cap (maxRuntimeMinutes).",
@@ -703,6 +706,10 @@ export const AutomodeSupervisorLive = Layer.effect(
             rejectedAt: null,
             workflowId: null,
             branch: null,
+            notBefore: input.notBefore ?? null,
+            maxRuntimeMinutes: input.maxRuntimeMinutes ?? null,
+            verificationCommands: input.verificationCommands ?? [],
+            integrationBranch: input.integrationBranch ?? null,
           };
           const nextState = yield* commitState((state) => ({
             ...state,
@@ -877,7 +884,8 @@ export const AutomodeSupervisorLive = Layer.effect(
           // into one branch, and deterministic, so a re-approved goal resumes its branch.
           // Never spawn unpinned: delamain's default would merge peer work straight into
           // the origin default branch.
-          const goalBranch = state.policy.integrationBranch ?? `automode/${goal.id}`;
+          const goalBranch =
+            goal.integrationBranch ?? state.policy.integrationBranch ?? `automode/${goal.id}`;
           yield* landing.ensure_integration_branch({
             repo: goal.repo,
             integrationBranch: goalBranch,
@@ -910,8 +918,9 @@ export const AutomodeSupervisorLive = Layer.effect(
               ),
             );
           const workflowId: string | null = null;
-          const deadlineEpochMs = shouldScheduleRuntimeLimit(state.policy)
-            ? DateTime.toEpochMillis(yield* DateTime.now) + state.policy.maxRuntimeMinutes * 60_000
+          const runtimeMinutes = goal.maxRuntimeMinutes ?? state.policy.maxRuntimeMinutes;
+          const deadlineEpochMs = shouldScheduleRuntimeLimit(runtimeMinutes)
+            ? DateTime.toEpochMillis(yield* DateTime.now) + runtimeMinutes * 60_000
             : null;
 
           const updatedAt = yield* nowIso;

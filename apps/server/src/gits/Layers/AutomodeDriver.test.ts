@@ -30,6 +30,7 @@ import {
   HermesTelegramNotifierError,
   type HermesTelegramNotifierShape,
 } from "../Services/HermesTelegramNotifier.ts";
+import { AutomodeNotifications } from "./AutomodeNotifications.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import {
   GitsSlotScheduler,
@@ -298,7 +299,14 @@ function makeLayer(
     notify: (input) =>
       Effect.suspend(() => {
         options?.onNotify?.(input);
-        return options?.notifyError === undefined ? Effect.void : Effect.fail(options.notifyError);
+        return options?.notifyError === undefined ? Effect.void : Effect.die(options.notifyError);
+      }),
+  });
+  const notifications = Layer.mock(AutomodeNotifications)({
+    notify: (input) =>
+      Effect.suspend(() => {
+        options?.onNotify?.(input);
+        return options?.notifyError === undefined ? Effect.void : Effect.die(options.notifyError);
       }),
   });
   const config = ServerConfig.layerTest(
@@ -324,6 +332,7 @@ function makeLayer(
     Layer.provide(digest),
     Layer.provide(proposalSweep),
     Layer.provide(notifier),
+    Layer.provide(notifications),
   );
 }
 
@@ -392,6 +401,28 @@ describe("AutomodeDriver", () => {
       const goal = snapshot.goals.find((g) => g.title === "First");
       assert.equal(goal?.status, "running");
       assert.equal(goal?.peerId, "peer-driver");
+    }).pipe(Effect.provide(makeLayer(peerStatus)));
+  });
+
+  it.effect("keeps a proposal queued until its not-before time", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({
+        title: "Scheduled",
+        repo: "/tmp/source-repo",
+        prompt: "do it later",
+        notBefore: "2099-01-01T00:00:00.000Z",
+      });
+
+      yield* driver.tickOnce();
+
+      assert.equal(
+        (yield* supervisor.getSnapshot()).goals.find((goal) => goal.title === "Scheduled")?.status,
+        "queued",
+      );
     }).pipe(Effect.provide(makeLayer(peerStatus)));
   });
 

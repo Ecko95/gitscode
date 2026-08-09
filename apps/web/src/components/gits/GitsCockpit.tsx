@@ -62,15 +62,19 @@ import {
   saveMotokoTranscripts,
   type MotokoInteractionMode,
   type MotokoProposalDecision,
+  type MotokoProposalEdits,
   type MotokoTranscriptEntry,
   type MotokoTranscriptState,
 } from "./cockpit/MotokoPanel";
 import { handleDevOpenPreview } from "./cockpit/DevPanel";
 import { useGitsCockpitQueries } from "./cockpit/useGitsCockpitQueries";
 import { useDevCommandSessions } from "./cockpit/useDevCommandSessions";
+import { readCockpitDeepLink } from "./cockpit/motoko/motoko.logic";
 
 export function GitsCockpit() {
-  const [activeTab, setActiveTab] = useState<GitsCockpitTab>("overview");
+  const deepLink = readCockpitDeepLink(typeof window === "undefined" ? "" : window.location.search);
+  const [activeTab, setActiveTab] = useState<GitsCockpitTab>(deepLink.panel);
+  const [focusedProposalId] = useState(deepLink.proposalId);
   const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
   const [spawnRepo, setSpawnRepo] = useState("");
   const [spawnName, setSpawnName] = useState("");
@@ -400,11 +404,13 @@ export function GitsCockpit() {
       decision: MotokoProposalDecision;
       routeKey: string;
       title: string;
+      edits: MotokoProposalEdits;
     }) => {
       const client = readGitsClient();
       const decided = await client.hermes.decideProposal({
         proposalId: input.proposalId,
         decision: input.decision,
+        ...input.edits,
       });
       if (input.decision !== "approve" || decided.status !== "approved") {
         return { decided, draft: null };
@@ -924,12 +930,14 @@ export function GitsCockpit() {
                     setMotokoChatInput("");
                     hermesChatMutation.reset();
                   }}
-                  onDecision={(proposal, decision) =>
+                  focusedProposalId={focusedProposalId}
+                  onDecision={(proposal, decision, edits) =>
                     void hermesDecisionMutation.mutate({
                       proposalId: proposal.id,
                       decision,
                       routeKey: motokoRoute,
                       title: proposal.title,
+                      edits,
                     })
                   }
                   onWriteContext={() => void hermesContextMutation.mutate()}
@@ -951,6 +959,17 @@ export function GitsCockpit() {
                   goalModel={automodeGoalModel}
                   goalPrompt={automodeGoalPrompt}
                   projects={query.data?.projects}
+                  proposals={hermesProposalsQuery.data}
+                  focusedProposalId={focusedProposalId}
+                  onProposalDecision={(proposal, decision, edits) =>
+                    void hermesDecisionMutation.mutate({
+                      proposalId: proposal.id,
+                      decision,
+                      routeKey: motokoRoute,
+                      title: proposal.title,
+                      edits,
+                    })
+                  }
                   onRefresh={() => void automodeQuery.refetch()}
                   onKillSwitchChange={(next) => void automodeKillSwitchMutation.mutate(next)}
                   onGoalTitleChange={setAutomodeGoalTitle}

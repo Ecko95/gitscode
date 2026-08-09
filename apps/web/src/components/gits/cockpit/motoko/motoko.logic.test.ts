@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { computeRestorableAfterSend, isNearBottom, visibleTranscriptWindow } from "./motoko.logic";
+import {
+  computeRestorableAfterSend,
+  isNearBottom,
+  readCockpitDeepLink,
+  visibleTranscriptWindow,
+} from "./motoko.logic";
+
+it("reads proposal and Automode notification deep links", () => {
+  expect(readCockpitDeepLink("?panel=motoko&proposal=p-1")).toEqual({
+    panel: "motoko",
+    proposalId: "p-1",
+  });
+  expect(readCockpitDeepLink("?panel=autopilot&goal=g-1")).toEqual({
+    panel: "autopilot",
+    proposalId: null,
+  });
+});
 
 describe("isNearBottom", () => {
   it("is true when scrolled to the very bottom", () => {

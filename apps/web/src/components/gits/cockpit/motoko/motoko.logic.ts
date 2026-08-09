@@ -3,6 +3,18 @@
 
 export const MOTOKO_TRANSCRIPT_RENDER_LIMIT = 80;
 
+export function readCockpitDeepLink(search: string): {
+  readonly panel: "overview" | "motoko" | "autopilot";
+  readonly proposalId: string | null;
+} {
+  const params = new URLSearchParams(search);
+  const panel = params.get("panel");
+  return {
+    panel: panel === "motoko" || panel === "autopilot" ? panel : "overview",
+    proposalId: params.get("proposal"),
+  };
+}
+
 /** True when the scrollable region is within `thresholdPx` of its bottom edge. */
 export function isNearBottom(
   metrics: {
