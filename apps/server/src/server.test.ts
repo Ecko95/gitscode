@@ -5039,6 +5039,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const calls: string[] = [];
       yield* buildAppUnderTest({
         layers: {
+          gitsSlotScheduler: {
+            setConfig: (input) =>
+              Effect.sync(() => {
+                calls.push(`scheduler:${input.enabled}`);
+                return {
+                  ...defaultGitsSchedulerSnapshot,
+                  config: { ...defaultGitsSchedulerSnapshot.config, enabled: input.enabled ?? false },
+                };
+              }),
+          },
           automodeSupervisor: {
             getSnapshot: () =>
               Effect.sync(() => {
@@ -5114,6 +5124,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(snapshot.policy.mode, "manual");
 
+      const configured = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsAutomodeConfigure]({
+            enabled: true,
+            repositories: ["/tmp/source-repo"],
+          }),
+        ),
+      );
+      assert.equal(configured.automode.policy.mode, "autonomous");
+      assert.equal(configured.scheduler.config.enabled, true);
+
       const policy = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.gitsAutomodeUpdatePolicy]({
@@ -5162,6 +5183,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(dispatched.peer?.id, defaultDelamainPeer.id);
       assert.deepEqual(calls, [
         "snapshot",
+        "scheduler:true",
+        "policy:autonomous",
         "policy:supervised",
         "enqueue:/tmp/source-repo",
         "approve:goal-test",

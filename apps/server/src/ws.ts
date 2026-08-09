@@ -113,6 +113,10 @@ import {
   hasLiveGoalForEpisode,
 } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { AutomodeNotifications } from "./gits/Layers/AutomodeNotifications.ts";
+import {
+  configureAutopilot,
+  emergencyStopAutopilot,
+} from "./gits/Layers/AutopilotControl.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import {
   denyThreadAccess,
@@ -2293,6 +2297,15 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "gits" },
           ),
+        [WS_METHODS.gitsAutomodeConfigure]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeConfigure,
+            configureAutopilot(
+              { supervisor: automodeSupervisor, scheduler: gitsSlotScheduler },
+              input,
+            ),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsAutomodeUpdatePolicy]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsAutomodeUpdatePolicy,
@@ -2366,9 +2379,14 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsAutomodeStopAll]: (_input) =>
-          observeRpcEffect(WS_METHODS.gitsAutomodeStopAll, automodeSupervisor.stopAll(), {
-            "rpc.aggregate": "gits",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitsAutomodeStopAll,
+            emergencyStopAutopilot({
+              supervisor: automodeSupervisor,
+              scheduler: gitsSlotScheduler,
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsAutomodeGoalsKill]: (input) =>
           observeRpcEffect(WS_METHODS.gitsAutomodeGoalsKill, automodeSupervisor.killGoal(input), {
             "rpc.aggregate": "gits",
