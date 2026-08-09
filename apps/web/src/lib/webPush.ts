@@ -142,7 +142,14 @@ export async function sendWebPushTest(kind: WebPushTestKind): Promise<WebPushTes
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ endpoint: diagnostics.subscription.endpoint, kind }),
   });
-  if (!response.ok) throw new Error(`/api/push/test failed with HTTP ${response.status}`);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { readonly error?: unknown } | null;
+    throw new Error(
+      typeof body?.error === "string"
+        ? body.error
+        : `/api/push/test failed with HTTP ${response.status}`,
+    );
+  }
   return (await response.json()) as WebPushTestResult;
 }
 

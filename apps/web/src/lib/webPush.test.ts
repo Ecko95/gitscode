@@ -89,4 +89,26 @@ describe("web push diagnostics", () => {
       }),
     );
   });
+
+  it("surfaces the server reason when a notification test fails", async () => {
+    installBrowser();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ enabled: true, publicKey: "key" }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "This device subscription is not registered." }),
+        }),
+    );
+
+    await expect(sendWebPushTest("delivery")).rejects.toThrow(
+      "This device subscription is not registered.",
+    );
+  });
 });

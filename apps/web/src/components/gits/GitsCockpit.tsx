@@ -418,8 +418,7 @@ export function GitsCockpit() {
           candidate.episodeId === decided.episodeId &&
           !["completed", "failed", "blocked", "rejected"].includes(candidate.status),
       );
-      if (!goal) throw new Error("Proposal was approved, but its queued Goal was not found.");
-      return { decided, draft: null, goal };
+      return { decided, draft: null, goal: goal ?? null };
     },
     onSuccess: async (result, input) => {
       appendMotokoTranscript(input.routeKey, {

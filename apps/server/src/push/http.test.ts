@@ -83,18 +83,20 @@ it.effect("push test route uses fixed server payload and a unique test tag", () 
   }),
 );
 
-it.effect("push test route rejects thread-scoped sessions before sending", () =>
+it.effect("push test route only allows owner sessions", () =>
   Effect.gen(function* () {
-    const sent: Array<{ readonly endpoint: string; readonly payload: PushNotificationPayload }> =
-      [];
-    const response = yield* execute(
-      "thread-scoped",
-      { endpoint: "https://push.example/device", kind: "delivery" },
-      "sent",
-      sent,
-    );
-    assert.equal(response.status, 403);
-    assert.equal(sent.length, 0);
+    for (const role of ["client", "thread-scoped"] as const) {
+      const sent: Array<{ readonly endpoint: string; readonly payload: PushNotificationPayload }> =
+        [];
+      const response = yield* execute(
+        role,
+        { endpoint: "https://push.example/device", kind: "delivery" },
+        "sent",
+        sent,
+      );
+      assert.equal(response.status, 403);
+      assert.equal(sent.length, 0);
+    }
   }),
 );
 

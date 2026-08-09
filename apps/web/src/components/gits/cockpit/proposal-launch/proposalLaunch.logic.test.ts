@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import {
   TEST_PROPOSAL,
   initialProposalLaunchForm,
+  guidedAutopilotRepositories,
+  isGuidedAutopilotProposal,
   launchModelOptions,
   proposalLaunchEdits,
   validateProposalLaunchForm,
@@ -37,7 +39,6 @@ describe("guided proposal launch logic", () => {
     expect(initialProposalLaunchForm(proposal, policy)).toMatchObject({
       repository: "/srv/repo",
       model: "model-a",
-      notBefore: "2026-08-10T20:30",
       runtime: "45",
       integrationBranch: "autopilot/proposal",
       verificationCommands: [{ label: "lint", cmd: ["bun", "lint"] }],
@@ -79,17 +80,24 @@ describe("guided proposal launch logic", () => {
   });
 
   it("builds typed edits and converts local time to ISO", () => {
-    const form = initialProposalLaunchForm(proposal, policy);
-    expect(proposalLaunchEdits(form)).toEqual({
-      title: proposal.title,
-      prompt: proposal.nextCommandOrPrompt,
-      projectDir: "/srv/repo",
-      model: "model-a",
-      notBefore: new Date("2026-08-10T20:30").toISOString(),
-      maxRuntimeMinutes: 45,
-      verificationCommands: [{ label: "lint", cmd: ["bun", "lint"] }],
-      integrationBranch: "autopilot/proposal",
-    });
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = "Europe/London";
+    try {
+      const form = initialProposalLaunchForm(proposal, policy);
+      expect(form.notBefore).toBe("2026-08-10T21:30");
+      expect(proposalLaunchEdits(form)).toEqual({
+        title: proposal.title,
+        prompt: proposal.nextCommandOrPrompt,
+        projectDir: "/srv/repo",
+        model: "model-a",
+        notBefore: proposal.notBefore,
+        maxRuntimeMinutes: 45,
+        verificationCommands: [{ label: "lint", cmd: ["bun", "lint"] }],
+        integrationBranch: "autopilot/proposal",
+      });
+    } finally {
+      process.env.TZ = previousTimezone;
+    }
   });
 
   it("exports a deterministic proposal-only test fixture", () => {
@@ -99,5 +107,25 @@ describe("guided proposal launch logic", () => {
       status: "proposed",
       projectDir: "/srv/example-project",
     });
+  });
+
+  it("only guides actionable Delamain proposals", () => {
+    expect(isGuidedAutopilotProposal(TEST_PROPOSAL)).toBe(true);
+    expect(isGuidedAutopilotProposal({ ...TEST_PROPOSAL, actionKind: "read-only" })).toBe(false);
+    expect(isGuidedAutopilotProposal({ ...TEST_PROPOSAL, recommendedExecutor: "open-gsd" })).toBe(
+      false,
+    );
+    expect(isGuidedAutopilotProposal({ ...TEST_PROPOSAL, blockedReason: "Needs input" })).toBe(
+      false,
+    );
+  });
+
+  it("keeps legacy allowed repositories in the watched list", () => {
+    expect(
+      guidedAutopilotRepositories({
+        ...policy,
+        proposalRepos: ["/srv/proposals", "/srv/repo"],
+      }),
+    ).toEqual(["/srv/proposals", "/srv/repo"]);
   });
 });

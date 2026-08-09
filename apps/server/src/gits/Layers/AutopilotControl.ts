@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 import {
   AutomodeSupervisorError,
@@ -62,8 +63,15 @@ export function emergencyStopAutopilot(dependencies: {
   readonly supervisor: Pick<AutomodeSupervisorShape, "stopAll">;
   readonly scheduler: Pick<GitsSlotSchedulerShape, "disarm">;
 }): Effect.Effect<AutomodeStopAllResult, AutomodeSupervisorError> {
-  return dependencies.scheduler.disarm({ reason: "Autopilot emergency stop." }).pipe(
-    Effect.mapError(schedulerError("Failed to disarm the Autopilot scheduler.")),
-    Effect.flatMap(() => dependencies.supervisor.stopAll()),
-  );
+  return Effect.gen(function* () {
+    const stopped = yield* Effect.result(dependencies.supervisor.stopAll());
+    const disarmed = yield* Effect.result(
+      dependencies.scheduler
+        .disarm({ reason: "Autopilot emergency stop." })
+        .pipe(Effect.mapError(schedulerError("Failed to disarm the Autopilot scheduler."))),
+    );
+    if (Result.isFailure(stopped)) return yield* stopped.failure;
+    if (Result.isFailure(disarmed)) return yield* disarmed.failure;
+    return stopped.success;
+  });
 }

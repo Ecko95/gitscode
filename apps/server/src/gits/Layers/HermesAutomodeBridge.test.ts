@@ -220,6 +220,35 @@ const armAutonomous = Effect.gen(function* () {
 });
 
 describe("decideProposalWithAutomodeBridge", () => {
+  it.effect("concurrent acceptance creates one live Goal", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      const { hermes } = makeFakeHermes();
+
+      yield* Effect.all(
+        [
+          decideProposalWithAutomodeBridge(hermes, supervisor, {
+            proposalId: "proposal-1",
+            decision: "approve",
+          }),
+          decideProposalWithAutomodeBridge(hermes, supervisor, {
+            proposalId: "proposal-1",
+            decision: "approve",
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(
+        snapshot.goals.filter(
+          (goal) => goal.episodeId === "epi-proposal-1" && goal.status === "queued",
+        ).length,
+        1,
+      );
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
   it.effect("approval queues once, arms for eligibility, and records the durable transition", () =>
     Effect.gen(function* () {
       const supervisor = yield* armAutonomous;
@@ -601,6 +630,7 @@ describe("decideProposalWithAutomodeBridge", () => {
         state: "attention-required",
       });
       assert.include(events.at(-1)!.reason, "Retry");
+      assert.equal(events.at(-1)!.deepLink, "/gits?panel=autopilot&proposal=proposal-1");
 
       yield* decideProposalWithAutomodeBridge(
         hermes,
@@ -649,6 +679,7 @@ describe("decideProposalWithAutomodeBridge", () => {
         eventKey: "proposal:proposal-1:acceptance-failed",
         state: "attention-required",
       });
+      assert.equal(events.at(-1)!.deepLink, "/gits?panel=autopilot&proposal=proposal-1");
 
       yield* decideProposalWithAutomodeBridge(
         hermes,

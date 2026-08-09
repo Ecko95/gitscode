@@ -42,6 +42,12 @@ const tierLabels = new Map<string, string>([
   [CODEX_MODEL_TIERS.medium, "Terra · Balanced"],
   [CODEX_MODEL_TIERS.high, "Sol · Deep"],
 ]);
+const padDatePart = (value: number) => String(value).padStart(2, "0");
+
+function localDateTimeInput(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+}
 
 export function launchModelOptions(policy: AutomodePolicy): ReadonlyArray<LaunchModelOption> {
   const models =
@@ -49,6 +55,18 @@ export function launchModelOptions(policy: AutomodePolicy): ReadonlyArray<Launch
       ? policy.allowedModels
       : [CODEX_MODEL_TIERS.light, CODEX_MODEL_TIERS.medium, CODEX_MODEL_TIERS.high];
   return [...new Set(models)].map((value) => ({ value, label: tierLabels.get(value) ?? value }));
+}
+
+export function isGuidedAutopilotProposal(proposal: HermesProposalCard): boolean {
+  return (
+    proposal.actionKind !== "read-only" &&
+    proposal.recommendedExecutor === "delamain" &&
+    proposal.blockedReason === null
+  );
+}
+
+export function guidedAutopilotRepositories(policy: AutomodePolicy): ReadonlyArray<string> {
+  return [...new Set([...policy.proposalRepos, ...policy.allowedRepos])];
 }
 
 export function initialProposalLaunchForm(
@@ -67,7 +85,7 @@ export function initialProposalLaunchForm(
     prompt: proposal.nextCommandOrPrompt ?? proposal.detail,
     repository: proposal.projectDir ?? policy.allowedRepos[0] ?? "",
     model,
-    notBefore: proposal.notBefore?.slice(0, 16) ?? "",
+    notBefore: proposal.notBefore === null ? "" : localDateTimeInput(proposal.notBefore),
     runtime:
       proposal.maxRuntimeMinutes !== null
         ? String(proposal.maxRuntimeMinutes)

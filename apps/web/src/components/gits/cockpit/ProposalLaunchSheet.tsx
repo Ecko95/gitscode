@@ -102,6 +102,15 @@ function IdeaStep({ proposal }: { readonly proposal: HermesProposalCard }) {
         <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Outcome</p>
         <h3 className="font-heading text-2xl font-semibold tracking-tight">{proposal.title}</h3>
         <p className="text-sm leading-6 text-muted-foreground">{proposal.summary}</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline">
+            {proposal.risk[0]!.toUpperCase() + proposal.risk.slice(1)} risk
+          </Badge>
+          <Badge variant="outline">{proposal.actionKind}</Badge>
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {proposal.projectDir ?? "Repository chosen before queueing"}
+          </span>
+        </div>
       </section>
       <div className="grid gap-4 rounded-xl border border-border/70 bg-muted/24 p-4">
         <section className="grid gap-2">
@@ -122,6 +131,16 @@ function IdeaStep({ proposal }: { readonly proposal: HermesProposalCard }) {
             ))}
           </ul>
         </section>
+        {proposal.verificationPlan.length > 0 ? (
+          <section className="grid gap-2 border-t border-border/60 pt-4">
+            <p className="text-xs font-medium text-muted-foreground">How it will be checked</p>
+            <ul className="grid gap-1.5 text-sm leading-5">
+              {proposal.verificationPlan.map((item) => (
+                <li key={item}>— {item}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </div>
       <p className="text-sm leading-6 text-muted-foreground">{proposal.detail}</p>
     </div>
@@ -293,7 +312,13 @@ function RunStep({
   );
 }
 
-function ReviewStep({ form }: { readonly form: ProposalLaunchForm }) {
+function ReviewStep({
+  form,
+  proposal,
+}: {
+  readonly form: ProposalLaunchForm;
+  readonly proposal: HermesProposalCard;
+}) {
   const rows = [
     ["Model", form.model],
     ["Repository", form.repository],
@@ -323,6 +348,19 @@ function ReviewStep({ form }: { readonly form: ProposalLaunchForm }) {
           </div>
         ))}
       </dl>
+      <div className="grid gap-2 rounded-xl border border-border/70 p-4 text-sm">
+        <p className="font-medium">What runs</p>
+        <p className="text-muted-foreground">{form.prompt}</p>
+        {proposal.verificationPlan.length > 0 ? (
+          <p className="text-muted-foreground">
+            Expected verification: {proposal.verificationPlan.join(" · ")}
+          </p>
+        ) : null}
+        <p className="text-muted-foreground">
+          Successful work stays on an isolated branch and ends in a held PR for review. Autopilot
+          does not merge it automatically.
+        </p>
+      </div>
     </div>
   );
 }
@@ -372,7 +410,11 @@ export function ProposalLaunchSheet({
     setWorking(true);
     setError(null);
     try {
-      const goal = await onDecision(activeProposal, decision, proposalLaunchEdits(form));
+      const goal = await onDecision(
+        activeProposal,
+        decision,
+        decision === "approve" ? proposalLaunchEdits(form) : {},
+      );
       if (decision === "approve" && goal === null) {
         throw new Error("The proposal was approved, but its queued Goal could not be confirmed.");
       }
@@ -431,7 +473,7 @@ export function ProposalLaunchSheet({
               onFormChange={setForm}
             />
           ) : (
-            <ReviewStep form={form} />
+            <ReviewStep form={form} proposal={activeProposal} />
           )}
           {error !== null ? (
             <p

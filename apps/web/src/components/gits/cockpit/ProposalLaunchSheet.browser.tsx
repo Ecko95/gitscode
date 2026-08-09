@@ -59,6 +59,9 @@ describe("ProposalLaunchSheet", () => {
     await expect.element(page.getByText("1 of 3")).toBeVisible();
     await expect.element(page.getByText(TEST_PROPOSAL.summary)).toBeVisible();
     await expect.element(page.getByText("Notification delivery")).toBeVisible();
+    await expect.element(page.getByText("/srv/example-project")).toBeVisible();
+    await expect.element(page.getByText("Low risk")).toBeVisible();
+    await expect.element(page.getByText("Complete the local test flow.")).toBeVisible();
     await page.getByRole("button", { name: "Continue" }).click();
 
     await expect.element(page.getByText("2 of 3")).toBeVisible();
@@ -71,6 +74,7 @@ describe("ProposalLaunchSheet", () => {
 
     await expect.element(page.getByText("3 of 3")).toBeVisible();
     await expect.element(page.getByText("/srv/example-project")).toBeVisible();
+    await expect.element(page.getByText(/held PR for review/)).toBeVisible();
     await page.getByRole("button", { name: "Accept & Queue" }).click();
     expect(onDecision).toHaveBeenCalledTimes(1);
     await expect.element(page.getByText("Queued", { exact: true })).toBeVisible();
@@ -89,7 +93,7 @@ describe("ProposalLaunchSheet", () => {
       />,
     );
     await page.getByRole("button", { name: "Later" }).click();
-    expect(onDecision).toHaveBeenCalledWith(TEST_PROPOSAL, "defer", expect.any(Object));
+    expect(onDecision).toHaveBeenCalledWith(TEST_PROPOSAL, "defer", {});
   });
 
   it("keeps Reject on the existing decision callback", async () => {
@@ -104,7 +108,7 @@ describe("ProposalLaunchSheet", () => {
       />,
     );
     await page.getByRole("button", { name: "Reject" }).click();
-    expect(onDecision).toHaveBeenCalledWith(TEST_PROPOSAL, "reject", expect.any(Object));
+    expect(onDecision).toHaveBeenCalledWith(TEST_PROPOSAL, "reject", {});
   });
 
   it("completes proposal notification test mode without a decision", async () => {

@@ -3,7 +3,6 @@ import * as Exit from "effect/Exit";
 import { describe, expect, it } from "vitest";
 
 import {
-  AutomodeSupervisorError,
   GitsSlotSchedulerError,
   type AutomodeSnapshot,
   type GitsSchedulerSnapshot,
@@ -103,7 +102,7 @@ describe("AutopilotControl", () => {
     expect(policyCalls).toBe(0);
   });
 
-  it("disarms before pausing and before emergency stop", async () => {
+  it("disarms before pausing and stops peers before disarming an emergency stop", async () => {
     const pauseCalls: Array<readonly [string, unknown]> = [];
     await Effect.runPromise(
       configureAutopilot(
@@ -159,21 +158,27 @@ describe("AutopilotControl", () => {
         },
       }),
     );
-    expect(stopCalls).toEqual(["scheduler.disarm", "supervisor.stopAll"]);
+    expect(stopCalls).toEqual(["supervisor.stopAll", "scheduler.disarm"]);
   });
 
-  it("maps scheduler errors into the supervisor error contract", async () => {
+  it("still stops peers when emergency scheduler disarm fails", async () => {
+    let stopCalls = 0;
     const exit = await Effect.runPromiseExit(
       emergencyStopAutopilot({
         scheduler: {
           disarm: () => Effect.fail(new GitsSlotSchedulerError({ message: "cannot disarm" })),
         },
         supervisor: {
-          stopAll: () => Effect.fail(new AutomodeSupervisorError({ message: "not reached" })),
+          stopAll: () =>
+            Effect.sync(() => {
+              stopCalls += 1;
+              return { stoppedPeers: 1, failures: 0 };
+            }),
         },
       }),
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
+    expect(stopCalls).toBe(1);
   });
 });

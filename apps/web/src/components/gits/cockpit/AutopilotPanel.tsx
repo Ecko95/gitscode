@@ -40,6 +40,10 @@ import { useStore } from "~/store";
 import type { MotokoProposalDecision, MotokoProposalEdits } from "./MotokoPanel";
 import { InboxSection } from "./InboxSection";
 import { ProposalLaunchSheet } from "./ProposalLaunchSheet";
+import {
+  guidedAutopilotRepositories,
+  isGuidedAutopilotProposal,
+} from "./proposal-launch/proposalLaunch.logic";
 import { EmptyState, StatusPill, formatCount } from "./primitives";
 
 const TERMINAL_GOAL_STATUSES = new Set(["completed", "failed", "blocked", "rejected"]);
@@ -147,7 +151,10 @@ export function AutopilotPanel({
   const { readGitsClient, targetEnvironmentId } = useAutopilotGitsClient();
   const policy = snapshot?.policy;
   const on = policy?.mode === "autonomous" && !policy.killSwitchEnabled;
-  const policyRepositories = policy?.proposalRepos ?? [];
+  const policyRepositories = useMemo(
+    () => (policy ? guidedAutopilotRepositories(policy) : []),
+    [policy],
+  );
   const repositoryKey = policyRepositories.join("\n");
   const [repositories, setRepositories] = useState<ReadonlyArray<string>>(policyRepositories);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -160,15 +167,16 @@ export function AutopilotPanel({
   const proposalTest = notificationTest === "proposal";
   const [launchOpen, setLaunchOpen] = useState(proposalTest);
 
-  useEffect(
-    () => setRepositories(repositoryKey.split("\n").filter(Boolean)),
-    [repositoryKey],
-  );
+  useEffect(() => setRepositories(repositoryKey.split("\n").filter(Boolean)), [repositoryKey]);
 
   useEffect(() => {
     if (!focusedProposalId) return;
     const proposal = proposals?.proposals.find((candidate) => candidate.id === focusedProposalId);
-    if (proposal) {
+    if (
+      proposal &&
+      ["proposed", "approved"].includes(proposal.status) &&
+      isGuidedAutopilotProposal(proposal)
+    ) {
       setSelectedProposal(proposal);
       setLaunchOpen(true);
     }
@@ -204,13 +212,28 @@ export function AutopilotPanel({
   });
 
   const pendingProposals = useMemo(
-    () => proposals?.proposals.filter((proposal) => proposal.status === "proposed") ?? [],
+    () =>
+      proposals?.proposals.filter(
+        (proposal) => proposal.status === "proposed" && isGuidedAutopilotProposal(proposal),
+      ) ?? [],
     [proposals],
   );
+  const focusedProposalUnavailable =
+    focusedProposalId !== null &&
+    proposals !== undefined &&
+    !proposals.proposals.some(
+      (proposal) =>
+        proposal.id === focusedProposalId &&
+        ["proposed", "approved"].includes(proposal.status) &&
+        isGuidedAutopilotProposal(proposal),
+    )
+      ? "This proposal is no longer available for guided Autopilot. Refresh the Inbox or review it in Motoko."
+      : null;
   const visibleGoals =
     snapshot?.goals.filter((goal) => !TERMINAL_GOAL_STATUSES.has(goal.status)).slice(0, 5) ?? [];
   const errorMessage =
     validationError ??
+    focusedProposalUnavailable ??
     (error instanceof Error ? error.message : null) ??
     (stopAll.error instanceof Error ? stopAll.error.message : null);
 

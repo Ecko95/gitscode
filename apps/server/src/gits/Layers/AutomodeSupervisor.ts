@@ -67,6 +67,12 @@ interface AutomodeState {
 }
 
 const ACTIVE_PEER_STATUSES = new Set<PeerStatus>(["pending", "running", "blocked", "waiting"]);
+const TERMINAL_GOAL_STATUSES = new Set<AutomodeGoalStatus>([
+  "completed",
+  "failed",
+  "blocked",
+  "rejected",
+]);
 const INTEGRATION_PATTERN = /\b(merge|admin-merge|integrate|pull request|pr)\b/i;
 const DESTRUCTIVE_PATTERN = /\b(reset --hard|rm -rf|delete|destroy|drop|truncate|force push)\b/i;
 const AUTOMODE_STATE_FILE_NAME = "automode-state.json";
@@ -718,12 +724,21 @@ export const AutomodeSupervisorLive = Layer.effect(
             planningNotes: null,
             planningBoundary: null,
           };
-          const nextState = yield* commitState((state) => ({
-            ...state,
-            goals: [goal, ...state.goals],
-            lastEvent: `Queued ${input.title}.`,
-            updatedAt: createdAt,
-          }));
+          const nextState = yield* commitState((state) =>
+            input.episodeId !== undefined &&
+            state.goals.some(
+              (existing) =>
+                existing.episodeId === input.episodeId &&
+                !TERMINAL_GOAL_STATUSES.has(existing.status),
+            )
+              ? state
+              : {
+                  ...state,
+                  goals: [goal, ...state.goals],
+                  lastEvent: `Queued ${input.title}.`,
+                  updatedAt: createdAt,
+                },
+          );
           return yield* snapshotFromState(nextState);
         }),
       deferGoal: (input) =>

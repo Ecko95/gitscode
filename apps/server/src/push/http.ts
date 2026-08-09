@@ -49,6 +49,17 @@ const authenticatePushSession = Effect.gen(function* () {
   return session;
 });
 
+const authenticatePushOwnerSession = Effect.gen(function* () {
+  const session = yield* authenticatePushSession;
+  if (session.role !== "owner") {
+    return yield* new AuthError({
+      message: "Only owner sessions can send web push tests.",
+      status: 403,
+    });
+  }
+  return session;
+});
+
 export const pushPublicConfigRouteLayer = HttpRouter.add(
   "GET",
   "/api/push/config",
@@ -167,7 +178,7 @@ export const pushTestRouteLayer = HttpRouter.add(
   "POST",
   "/api/push/test",
   Effect.gen(function* () {
-    yield* authenticatePushSession;
+    yield* authenticatePushOwnerSession;
     const input = yield* HttpServerRequest.schemaBodyJson(WebPushTestInput).pipe(
       Effect.mapError(
         (cause) =>

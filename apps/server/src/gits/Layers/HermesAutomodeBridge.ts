@@ -203,10 +203,7 @@ export const decideProposalWithAutomodeBridge = (
             targetsCurrentNight = scheduled.targetsCurrentNight;
           }
           const eventKey = `proposal:${decided.id}:${input.decision}`;
-          const deepLink =
-            current === undefined
-              ? `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`
-              : `/gits?panel=autopilot&goal=${encodeURIComponent(current.id)}`;
+          const deepLink = `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`;
           yield* dependencies.inbox.record({
             episodeId: decided.episodeId,
             proposalId: decided.id,
@@ -267,10 +264,7 @@ export const decideProposalWithAutomodeBridge = (
               state: "attention-required",
               reason:
                 "Acceptance did not finish. Retry Accept & Queue; any existing Goal will be reused.",
-              deepLink:
-                goal === undefined
-                  ? `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`
-                  : `/gits?panel=autopilot&goal=${encodeURIComponent(goal.id)}`,
+              deepLink: `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`,
             }),
           ),
           Effect.catch(() => Effect.void),

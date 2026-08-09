@@ -256,6 +256,37 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("enqueues at most one live goal for an episode", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      yield* Effect.all(
+        [
+          supervisor.enqueueGoal({
+            episodeId: "episode-concurrent",
+            title: "First acceptance",
+            repo: "/tmp/source-repo",
+            prompt: "Run once.",
+          }),
+          supervisor.enqueueGoal({
+            episodeId: "episode-concurrent",
+            title: "Second acceptance",
+            repo: "/tmp/source-repo",
+            prompt: "Run once.",
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(
+        snapshot.goals.filter(
+          (goal) => goal.episodeId === "episode-concurrent" && goal.status !== "completed",
+        ).length,
+        1,
+      );
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("blocks dispatch when the kill switch is enabled", () =>
     Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
