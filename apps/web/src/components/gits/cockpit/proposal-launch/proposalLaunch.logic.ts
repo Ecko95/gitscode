@@ -24,6 +24,11 @@ export interface LaunchModelOption {
   readonly label: string;
 }
 
+export function readProposalLaunchStep(search: string): LaunchStep {
+  const step = new URLSearchParams(search).get("proposalStep");
+  return step === "model" || step === "review" ? step : "idea";
+}
+
 export type ProposalLaunchEdits = Omit<
   HermesProposalDecisionInput,
   "proposalId" | "decision" | "reason"
@@ -33,7 +38,7 @@ export type ProposalLaunchValidation =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      readonly field: "repository" | "model" | "runtime" | "notBefore";
+      readonly field: "repository" | "model" | "runtime" | "notBefore" | "verification";
       readonly message: string;
     };
 
@@ -109,12 +114,28 @@ export function validateProposalLaunchForm(form: ProposalLaunchForm): ProposalLa
   }
   if (form.runtime.length > 0) {
     const runtime = Number(form.runtime);
-    if (!Number.isInteger(runtime) || runtime < 0) {
-      return { ok: false, field: "runtime", message: "Runtime must be zero or more minutes." };
+    if (!Number.isInteger(runtime) || runtime <= 0) {
+      return { ok: false, field: "runtime", message: "Runtime must be at least one minute." };
     }
   }
   if (form.notBefore.length > 0 && Number.isNaN(new Date(form.notBefore).getTime())) {
     return { ok: false, field: "notBefore", message: "Choose a valid start time." };
+  }
+  if (
+    form.verificationCommands.some(
+      (command) =>
+        command.label.trim().length === 0 ||
+        command.cmd.length === 0 ||
+        command.cmd.some((argument) => argument.trim().length === 0) ||
+        (command.timeoutSeconds !== undefined &&
+          (!Number.isInteger(command.timeoutSeconds) || command.timeoutSeconds < 0)),
+    )
+  ) {
+    return {
+      ok: false,
+      field: "verification",
+      message: "Each verification check needs a label, non-empty arguments, and a valid timeout.",
+    };
   }
   return { ok: true };
 }

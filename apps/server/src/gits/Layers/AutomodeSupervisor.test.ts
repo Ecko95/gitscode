@@ -287,6 +287,22 @@ describe("AutomodeSupervisorLive", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("rejects a zero-minute Goal runtime override", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const error = yield* supervisor
+        .enqueueGoal({
+          title: "Uncapped goal",
+          repo: "/tmp/source-repo",
+          prompt: "Run without a cap.",
+          maxRuntimeMinutes: 0,
+        })
+        .pipe(Effect.flip);
+
+      assert.include(error.message, "positive");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("blocks dispatch when the kill switch is enabled", () =>
     Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;

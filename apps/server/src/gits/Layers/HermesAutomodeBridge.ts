@@ -96,6 +96,11 @@ export const decideProposalWithAutomodeBridge = (
           message: "Proposal model is not allowed by Automode policy.",
         });
       }
+      if (effectiveRuntime !== null && effectiveRuntime <= 0) {
+        return yield* new HermesAdapterError({
+          message: "Proposal runtime must be a positive number of minutes.",
+        });
+      }
       if (
         snapshot.policy.maxRuntimeMinutes !== null &&
         effectiveRuntime !== null &&

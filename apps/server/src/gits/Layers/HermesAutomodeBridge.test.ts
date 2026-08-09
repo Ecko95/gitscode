@@ -456,6 +456,14 @@ describe("decideProposalWithAutomodeBridge", () => {
           input: {
             proposalId: "proposal-1",
             decision: "approve",
+            maxRuntimeMinutes: 0,
+          },
+          message: "positive",
+        },
+        {
+          input: {
+            proposalId: "proposal-1",
+            decision: "approve",
             maxRuntimeMinutes: 31,
           },
           message: "runtime",

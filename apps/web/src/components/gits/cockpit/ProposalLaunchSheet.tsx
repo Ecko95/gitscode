@@ -41,6 +41,7 @@ import {
   initialProposalLaunchForm,
   launchModelOptions,
   proposalLaunchEdits,
+  readProposalLaunchStep,
   validateProposalLaunchForm,
   type LaunchStep,
   type ProposalLaunchForm,
@@ -171,29 +172,83 @@ function VerificationRows({
       {commands.map((command, index) => (
         <div
           key={`${command.label}-${index}`}
-          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto] gap-2"
+          className="grid gap-2 rounded-lg border border-border/60 p-3"
         >
-          <Input
-            aria-label={`Verification ${index + 1} label`}
-            value={command.label}
-            onChange={(event) => update(index, { label: event.currentTarget.value })}
-          />
-          <Input
-            aria-label={`Verification ${index + 1} command`}
-            className="font-mono text-xs"
-            value={command.cmd.join(" ")}
-            onChange={(event) =>
-              update(index, { cmd: event.currentTarget.value.trim().split(/\s+/).filter(Boolean) })
-            }
-          />
-          <Button
-            aria-label={`Remove verification ${index + 1}`}
-            size="icon"
-            variant="ghost"
-            onClick={() => onChange(commands.filter((_, row) => row !== index))}
-          >
-            <Trash2Icon />
-          </Button>
+          <div className="grid grid-cols-[minmax(0,1fr)_8rem_auto] gap-2">
+            <Input
+              aria-label={`Verification ${index + 1} label`}
+              value={command.label}
+              onChange={(event) => update(index, { label: event.currentTarget.value })}
+            />
+            <Input
+              aria-label={`Verification ${index + 1} timeout seconds`}
+              min="0"
+              placeholder="Timeout"
+              type="number"
+              value={command.timeoutSeconds ?? ""}
+              onChange={(event) => {
+                const { timeoutSeconds: _, ...withoutTimeout } = command;
+                const value = event.currentTarget.value;
+                onChange(
+                  commands.map((entry, row) =>
+                    row === index
+                      ? value === ""
+                        ? withoutTimeout
+                        : { ...withoutTimeout, timeoutSeconds: Number(value) }
+                      : entry,
+                  ),
+                );
+              }}
+            />
+            <Button
+              aria-label={`Remove verification ${index + 1}`}
+              size="icon"
+              variant="ghost"
+              onClick={() => onChange(commands.filter((_, row) => row !== index))}
+            >
+              <Trash2Icon />
+            </Button>
+          </div>
+          <div className="grid gap-2">
+            {command.cmd.map((argument, argumentIndex) => (
+              // oxlint-disable-next-line react/no-array-index-key -- argv values can repeat; position is their identity
+              <div key={argumentIndex} className="flex gap-2">
+                <Input
+                  aria-label={`Verification ${index + 1} argument ${argumentIndex + 1}`}
+                  className="font-mono text-xs"
+                  value={argument}
+                  onChange={(event) =>
+                    update(index, {
+                      cmd: command.cmd.map((entry, row) =>
+                        row === argumentIndex ? event.currentTarget.value : entry,
+                      ),
+                    })
+                  }
+                />
+                <Button
+                  aria-label={`Remove verification ${index + 1} argument ${argumentIndex + 1}`}
+                  disabled={command.cmd.length === 1}
+                  size="icon"
+                  variant="ghost"
+                  onClick={() =>
+                    update(index, {
+                      cmd: command.cmd.filter((_, row) => row !== argumentIndex),
+                    })
+                  }
+                >
+                  <Trash2Icon />
+                </Button>
+              </div>
+            ))}
+            <Button
+              className="justify-self-start"
+              size="xs"
+              variant="ghost"
+              onClick={() => update(index, { cmd: [...command.cmd, ""] })}
+            >
+              <PlusIcon /> Add argument
+            </Button>
+          </div>
         </div>
       ))}
     </div>
@@ -386,7 +441,7 @@ export function ProposalLaunchSheet({
 
   useEffect(() => {
     if (!open || activeProposal === null) return;
-    setStep("idea");
+    setStep(readProposalLaunchStep(typeof window === "undefined" ? "" : window.location.search));
     setForm(initialProposalLaunchForm(activeProposal, policy));
     setAdvanced(false);
     setWorking(false);
@@ -397,6 +452,14 @@ export function ProposalLaunchSheet({
 
   const validation = useMemo(() => validateProposalLaunchForm(form), [form]);
   if (activeProposal === null) return null;
+
+  const changeStep = (next: LaunchStep) => {
+    setStep(next);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("proposalStep", next);
+    window.history.replaceState(null, "", url);
+  };
 
   const decide = async (decision: MotokoProposalDecision) => {
     if (decision === "approve" && !validation.ok) {
@@ -502,16 +565,18 @@ export function ProposalLaunchSheet({
                 <Button
                   disabled={working}
                   variant="outline"
-                  onClick={() => setStep(step === "review" ? "model" : "idea")}
+                  onClick={() => changeStep(step === "review" ? "model" : "idea")}
                 >
                   Back
                 </Button>
               ) : null}
               {step === "idea" ? (
-                <Button onClick={() => setStep("model")}>Continue</Button>
+                <Button onClick={() => changeStep("model")}>Continue</Button>
               ) : step === "model" ? (
                 <Button
-                  onClick={() => (validation.ok ? setStep("review") : setError(validation.message))}
+                  onClick={() =>
+                    validation.ok ? changeStep("review") : setError(validation.message)
+                  }
                 >
                   Review queue
                 </Button>

@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { useMutation } from "@tanstack/react-query";
 import { OctagonAlertIcon, RefreshCwIcon, RocketIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   AlertDialog,
@@ -167,6 +167,26 @@ export function AutopilotPanel({
   const proposalTest = notificationTest === "proposal";
   const [launchOpen, setLaunchOpen] = useState(proposalTest);
 
+  const openProposal = useCallback((proposal: HermesProposalCard, resetStep = true) => {
+    setSelectedProposal(proposal);
+    setLaunchOpen(true);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("panel", "autopilot");
+    url.searchParams.set("proposal", proposal.id);
+    if (resetStep) url.searchParams.set("proposalStep", "idea");
+    window.history.replaceState(null, "", url);
+  }, []);
+
+  const changeLaunchOpen = (open: boolean) => {
+    setLaunchOpen(open);
+    if (open || proposalTest || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("proposal");
+    url.searchParams.delete("proposalStep");
+    window.history.replaceState(null, "", url);
+  };
+
   useEffect(() => setRepositories(repositoryKey.split("\n").filter(Boolean)), [repositoryKey]);
 
   useEffect(() => {
@@ -177,10 +197,9 @@ export function AutopilotPanel({
       ["proposed", "approved"].includes(proposal.status) &&
       isGuidedAutopilotProposal(proposal)
     ) {
-      setSelectedProposal(proposal);
-      setLaunchOpen(true);
+      openProposal(proposal, false);
     }
-  }, [focusedProposalId, proposals]);
+  }, [focusedProposalId, proposals, openProposal]);
 
   const configure = useMutation({
     mutationFn: (enabled: boolean) => {
@@ -334,14 +353,7 @@ export function AutopilotPanel({
                       {proposal.summary}
                     </p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedProposal(proposal);
-                      setLaunchOpen(true);
-                    }}
-                  >
+                  <Button size="sm" variant="outline" onClick={() => openProposal(proposal)}>
                     Review
                   </Button>
                 </article>
@@ -387,7 +399,7 @@ export function AutopilotPanel({
       {policy ? (
         <ProposalLaunchSheet
           open={launchOpen}
-          onOpenChange={setLaunchOpen}
+          onOpenChange={changeLaunchOpen}
           proposal={selectedProposal}
           policy={policy}
           {...(proposalTest ? { testMode: "proposal" as const } : {})}

@@ -12,6 +12,7 @@ import {
   isGuidedAutopilotProposal,
   launchModelOptions,
   proposalLaunchEdits,
+  readProposalLaunchStep,
   validateProposalLaunchForm,
 } from "./proposalLaunch.logic.ts";
 
@@ -73,10 +74,20 @@ describe("guided proposal launch logic", () => {
       ok: false,
       field: "runtime",
     });
+    expect(validateProposalLaunchForm({ ...form, runtime: "0" })).toMatchObject({
+      ok: false,
+      field: "runtime",
+    });
     expect(validateProposalLaunchForm({ ...form, notBefore: "invalid" })).toMatchObject({
       ok: false,
       field: "notBefore",
     });
+    expect(
+      validateProposalLaunchForm({
+        ...form,
+        verificationCommands: [{ label: "Check", cmd: ["bun", ""] }],
+      }),
+    ).toMatchObject({ ok: false, field: "verification" });
   });
 
   it("builds typed edits and converts local time to ISO", () => {
@@ -127,5 +138,11 @@ describe("guided proposal launch logic", () => {
         proposalRepos: ["/srv/proposals", "/srv/repo"],
       }),
     ).toEqual(["/srv/proposals", "/srv/repo"]);
+  });
+
+  it("restores only valid URL-backed launch steps", () => {
+    expect(readProposalLaunchStep("?proposalStep=review")).toBe("review");
+    expect(readProposalLaunchStep("?proposalStep=unknown")).toBe("idea");
+    expect(readProposalLaunchStep("")).toBe("idea");
   });
 });

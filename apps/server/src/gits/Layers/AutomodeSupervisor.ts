@@ -118,6 +118,10 @@ function toAutomodeError(message: string, cause?: unknown) {
   });
 }
 
+function hasValidGoalRuntime(runtime: number | null | undefined): boolean {
+  return runtime === null || runtime === undefined || runtime > 0;
+}
+
 function unavailableBudgetUsage(note: string): AutomodeBudgetUsage {
   return {
     source: "unavailable",
@@ -698,6 +702,9 @@ export const AutomodeSupervisorLive = Layer.effect(
         }),
       enqueueGoal: (input) =>
         Effect.gen(function* () {
+          if (!hasValidGoalRuntime(input.maxRuntimeMinutes)) {
+            return yield* toAutomodeError("Goal runtime must be a positive number of minutes.");
+          }
           const createdAt = yield* nowIso;
           const goal: AutomodeGoal = {
             id: `goal-${randomUUID()}`,
@@ -769,6 +776,9 @@ export const AutomodeSupervisorLive = Layer.effect(
         }),
       updateQueuedGoal: (input) =>
         Effect.gen(function* () {
+          if (!hasValidGoalRuntime(input.maxRuntimeMinutes)) {
+            return yield* toAutomodeError("Goal runtime must be a positive number of minutes.");
+          }
           const updatedAt = yield* nowIso;
           const nextState = yield* commitStateOrFail((state) => {
             const current = findGoal(state, input.goalId);

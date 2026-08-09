@@ -2,7 +2,7 @@ import "../../../index.css";
 
 import type { AutomodeGoal, AutomodePolicy } from "@t3tools/contracts";
 import { page } from "vitest/browser";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { ProposalLaunchSheet } from "./ProposalLaunchSheet";
@@ -43,7 +43,25 @@ const queuedGoal = {
   planningBoundary: null,
 } satisfies AutomodeGoal;
 
+afterEach(() => window.history.replaceState(null, "", window.location.pathname));
+
 describe("ProposalLaunchSheet", () => {
+  it("restores the current step from the URL", async () => {
+    window.history.replaceState(null, "", `${window.location.pathname}?proposalStep=review`);
+    render(
+      <ProposalLaunchSheet
+        onDecision={vi.fn()}
+        onOpenChange={() => undefined}
+        open
+        policy={policy}
+        proposal={TEST_PROPOSAL}
+      />,
+    );
+
+    await expect.element(page.getByText("3 of 3")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Accept & Queue" })).toBeVisible();
+  });
+
   it("guides review, model choice, advanced details, and queue confirmation", async () => {
     const onDecision = vi.fn().mockResolvedValue(queuedGoal);
     render(
@@ -63,6 +81,7 @@ describe("ProposalLaunchSheet", () => {
     await expect.element(page.getByText("Low risk")).toBeVisible();
     await expect.element(page.getByText("Complete the local test flow.")).toBeVisible();
     await page.getByRole("button", { name: "Continue" }).click();
+    expect(new URL(window.location.href).searchParams.get("proposalStep")).toBe("model");
 
     await expect.element(page.getByText("2 of 3")).toBeVisible();
     await expect.element(page.getByRole("combobox", { name: "Model" })).toBeVisible();
@@ -70,13 +89,24 @@ describe("ProposalLaunchSheet", () => {
     await expect.element(page.getByText("Repository override")).not.toBeInTheDocument();
     await page.getByRole("button", { name: "Advanced details" }).click();
     await expect.element(page.getByText("Repository override")).toBeVisible();
+    await page.getByRole("button", { name: "Add check" }).click();
+    await page
+      .getByRole("textbox", { name: "Verification 1 argument 3", exact: true })
+      .fill("test file.ts");
+    await page.getByLabelText("Verification 1 timeout seconds").fill("30");
     await page.getByRole("button", { name: "Review queue" }).click();
+    expect(new URL(window.location.href).searchParams.get("proposalStep")).toBe("review");
 
     await expect.element(page.getByText("3 of 3")).toBeVisible();
     await expect.element(page.getByText("/srv/example-project")).toBeVisible();
     await expect.element(page.getByText(/held PR for review/)).toBeVisible();
     await page.getByRole("button", { name: "Accept & Queue" }).click();
     expect(onDecision).toHaveBeenCalledTimes(1);
+    expect(onDecision.mock.calls[0]?.[2]).toMatchObject({
+      verificationCommands: [
+        { label: "Check", cmd: ["bun", "run", "test file.ts"], timeoutSeconds: 30 },
+      ],
+    });
     await expect.element(page.getByText("Queued", { exact: true })).toBeVisible();
     await expect.element(page.getByText(queuedGoal.title)).toBeVisible();
   });
