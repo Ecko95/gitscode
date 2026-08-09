@@ -9,7 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { resolveRepositoryProfile } from "@t3tools/shared/repositoryProfiles";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -72,6 +72,7 @@ import { useDevCommandSessions } from "./cockpit/useDevCommandSessions";
 import { readCockpitDeepLink } from "./cockpit/motoko/motoko.logic";
 
 export function GitsCockpit() {
+  const queryClient = useQueryClient();
   const deepLink = readCockpitDeepLink(typeof window === "undefined" ? "" : window.location.search);
   const [activeTab, setActiveTab] = useState<GitsCockpitTab>(deepLink.panel);
   const [focusedProposalId] = useState(deepLink.proposalId);
@@ -115,10 +116,6 @@ export function GitsCockpit() {
   const [gsdMaxBudget, setGsdMaxBudget] = useState("");
   const [skillReviews, setSkillReviews] = useState<SkillReviewState>(() => loadSkillReviewState());
   const [mcpOverrides, setMcpOverrides] = useState<McpOverrideState>(() => loadMcpOverrideState());
-  const [automodeGoalTitle, setAutomodeGoalTitle] = useState("");
-  const [automodeGoalRepo, setAutomodeGoalRepo] = useState("");
-  const [automodeGoalModel, setAutomodeGoalModel] = useState("");
-  const [automodeGoalPrompt, setAutomodeGoalPrompt] = useState("");
   const [openGsdCommandResult, setOpenGsdCommandResult] = useState<
     OpenGsdCommandResult | undefined
   >(undefined);
@@ -413,14 +410,15 @@ export function GitsCockpit() {
         ...input.edits,
       });
       if (input.decision !== "approve" || decided.status !== "approved") {
-        return { decided, draft: null };
+        return { decided, draft: null, goal: null };
       }
-      // Approval means "go" through the automode rails: the server-side approve bridge
-      // enqueues delamain-peer drafts as automode goals (own branch, verify floor, held
-      // PR). Never spawn a raw peer here — an unpinned spawn would let delamain merge
-      // unreviewed work straight into the origin default branch.
-      const draft = await client.hermes.draftFromProposal({ proposalId: input.proposalId });
-      return { decided, draft };
+      const automode = await client.automode.getSnapshot();
+      const goal = automode.goals.find(
+        (candidate) =>
+          candidate.episodeId === decided.episodeId &&
+          !["completed", "failed", "blocked", "rejected"].includes(candidate.status),
+      );
+      return { decided, draft: null, goal: goal ?? null };
     },
     onSuccess: async (result, input) => {
       appendMotokoTranscript(input.routeKey, {
@@ -429,7 +427,15 @@ export function GitsCockpit() {
         message: motokoDecisionSummary(input.decision, input.title, result),
         createdAt: new Date().toISOString(),
       });
-      await Promise.all([hermesProposalsQuery.refetch(), hermesQuery.refetch()]);
+      await Promise.all([
+        hermesProposalsQuery.refetch(),
+        hermesQuery.refetch(),
+        automodeQuery.refetch(),
+        schedulerQuery.refetch(),
+        queryClient.invalidateQueries({
+          queryKey: ["gits", "cockpit-inbox", targetEnvironmentId],
+        }),
+      ]);
     },
     onError: (error, input) => {
       appendMotokoTranscript(input.routeKey, {
@@ -560,73 +566,6 @@ export function GitsCockpit() {
       await query.refetch();
     },
   });
-  const automodeKillSwitchEnabled = automodeQuery.data?.policy.killSwitchEnabled ?? true;
-  const automodeKillSwitchMutation = useMutation({
-    mutationFn: async (killSwitchEnabled: boolean) =>
-      readGitsClient().automode.updatePolicy({ killSwitchEnabled }),
-    onSuccess: async () => {
-      await automodeQuery.refetch();
-    },
-  });
-  const automodeEnqueueMutation = useMutation({
-    mutationFn: async () =>
-      readGitsClient().automode.enqueueGoal({
-        title: automodeGoalTitle.trim(),
-        repo: automodeGoalRepo.trim(),
-        prompt: automodeGoalPrompt.trim(),
-        ...(automodeGoalModel.trim().length > 0 ? { model: automodeGoalModel.trim() } : {}),
-      }),
-    onSuccess: async () => {
-      setAutomodeGoalTitle("");
-      setAutomodeGoalPrompt("");
-      await automodeQuery.refetch();
-    },
-  });
-  const automodeApproveMutation = useMutation({
-    mutationFn: async (goalId: string) => readGitsClient().automode.approveGoal({ goalId }),
-    onSuccess: async () => {
-      await automodeQuery.refetch();
-    },
-  });
-  const automodeRejectMutation = useMutation({
-    mutationFn: async (goalId: string) =>
-      readGitsClient().automode.rejectGoal({ goalId, reason: "Rejected in cockpit." }),
-    onSuccess: async () => {
-      await automodeQuery.refetch();
-    },
-  });
-  const automodeDispatchMutation = useMutation({
-    mutationFn: async (goalId: string) => readGitsClient().automode.dispatchGoal({ goalId }),
-    onSuccess: async () => {
-      await Promise.all([automodeQuery.refetch(), delamainQuery.refetch()]);
-    },
-  });
-  const schedulerSetConfigMutation = useMutation({
-    mutationFn: async (input: { enabled: boolean }) =>
-      readGitsClient().automode.schedulerSetConfig(input),
-    onSuccess: async () => {
-      await schedulerQuery.refetch();
-    },
-  });
-  const schedulerArmMutation = useMutation({
-    mutationFn: async () => readGitsClient().automode.schedulerArm(),
-    onSuccess: async () => {
-      await schedulerQuery.refetch();
-    },
-  });
-  const schedulerDisarmMutation = useMutation({
-    mutationFn: async () =>
-      readGitsClient().automode.schedulerDisarm({ reason: "Disarmed in cockpit." }),
-    onSuccess: async () => {
-      await schedulerQuery.refetch();
-    },
-  });
-  const driverResumeMutation = useMutation({
-    mutationFn: async () => readGitsClient().automode.resumeDriver(),
-    onSuccess: async () => {
-      await automodeQuery.refetch();
-    },
-  });
   const actionError =
     spawnMutation.error ??
     replyMutation.error ??
@@ -661,26 +600,6 @@ export function GitsCockpit() {
     hermesDecisionMutation.isPending ||
     hermesDraftMutation.isPending ||
     hermesScheduleMutation.isPending;
-  const automodeActionError =
-    automodeKillSwitchMutation.error ??
-    automodeEnqueueMutation.error ??
-    automodeApproveMutation.error ??
-    automodeRejectMutation.error ??
-    automodeDispatchMutation.error ??
-    schedulerSetConfigMutation.error ??
-    schedulerArmMutation.error ??
-    schedulerDisarmMutation.error ??
-    driverResumeMutation.error;
-  const automodeActionPending =
-    automodeKillSwitchMutation.isPending ||
-    automodeEnqueueMutation.isPending ||
-    automodeApproveMutation.isPending ||
-    automodeRejectMutation.isPending ||
-    automodeDispatchMutation.isPending ||
-    schedulerSetConfigMutation.isPending ||
-    schedulerArmMutation.isPending ||
-    schedulerDisarmMutation.isPending ||
-    driverResumeMutation.isPending;
   const updateSkillReview = (
     skillId: string,
     updater: (current: SkillReviewState[string]) => SkillReviewState[string],
@@ -728,13 +647,6 @@ export function GitsCockpit() {
     }
     setSelectedProjectRoot(MOTOKO_ROOT_ROUTE_VALUE);
   }, [query.data?.projects, selectedProjectRoot]);
-
-  useEffect(() => {
-    if (automodeGoalRepo.trim().length > 0) {
-      return;
-    }
-    setAutomodeGoalRepo(selectedProjectRoot);
-  }, [automodeGoalRepo, selectedProjectRoot]);
 
   const tabCounts = useMemo<Record<GitsCockpitTab, string>>(() => {
     const runningGoals =
@@ -948,48 +860,22 @@ export function GitsCockpit() {
               {activeTab === "autopilot" ? (
                 <AutopilotPanel
                   snapshot={automodeQuery.data}
-                  scheduler={schedulerQuery.data}
                   loading={automodeQuery.isPending || automodeQuery.isFetching}
                   error={automodeQuery.error}
-                  actionError={automodeActionError}
-                  actionPending={automodeActionPending}
-                  killSwitchEnabled={automodeKillSwitchEnabled}
-                  goalTitle={automodeGoalTitle}
-                  goalRepo={automodeGoalRepo}
-                  goalModel={automodeGoalModel}
-                  goalPrompt={automodeGoalPrompt}
                   projects={query.data?.projects}
                   proposals={hermesProposalsQuery.data}
                   focusedProposalId={focusedProposalId}
-                  onProposalDecision={(proposal, decision, edits) =>
-                    void hermesDecisionMutation.mutate({
+                  onProposalDecision={async (proposal, decision, edits) => {
+                    const result = await hermesDecisionMutation.mutateAsync({
                       proposalId: proposal.id,
                       decision,
                       routeKey: motokoRoute,
                       title: proposal.title,
                       edits,
-                    })
-                  }
-                  onRefresh={() => void automodeQuery.refetch()}
-                  onKillSwitchChange={(next) => void automodeKillSwitchMutation.mutate(next)}
-                  onGoalTitleChange={setAutomodeGoalTitle}
-                  onGoalRepoChange={setAutomodeGoalRepo}
-                  onGoalModelChange={setAutomodeGoalModel}
-                  onGoalPromptChange={setAutomodeGoalPrompt}
-                  onEnqueueGoal={() => void automodeEnqueueMutation.mutate()}
-                  onApproveGoal={(goalId) => void automodeApproveMutation.mutate(goalId)}
-                  onRejectGoal={(goalId) => {
-                    if (window.confirm(`Reject automode goal ${goalId}?`)) {
-                      void automodeRejectMutation.mutate(goalId);
-                    }
+                    });
+                    return result.goal;
                   }}
-                  onDispatchGoal={(goalId) => void automodeDispatchMutation.mutate(goalId)}
-                  onSchedulerEnabledChange={(enabled) =>
-                    void schedulerSetConfigMutation.mutate({ enabled })
-                  }
-                  onSchedulerArm={() => void schedulerArmMutation.mutate()}
-                  onSchedulerDisarm={() => void schedulerDisarmMutation.mutate()}
-                  onResumeDriver={() => void driverResumeMutation.mutate()}
+                  onRefresh={() => void automodeQuery.refetch()}
                 />
               ) : null}
               {activeTab === "fleet" ? (

@@ -11,12 +11,18 @@ export interface PushNotificationPayload {
   readonly url: string;
 }
 
+export type TargetedPushResult = "sent" | "disabled" | "not-found" | "failed";
+
 export interface PushNotificationServiceShape {
   readonly getPublicConfig: () => {
     readonly enabled: boolean;
     readonly publicKey: string | null;
   };
   readonly sendToAll: (payload: PushNotificationPayload) => Effect.Effect<void>;
+  readonly sendToEndpoint: (
+    endpoint: string,
+    payload: PushNotificationPayload,
+  ) => Effect.Effect<TargetedPushResult>;
   readonly sendForOrchestrationEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
 }
 

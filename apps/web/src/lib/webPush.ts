@@ -2,6 +2,8 @@ import type {
   WebPushPublicConfig,
   WebPushRegisterInput,
   WebPushSubscription,
+  WebPushTestKind,
+  WebPushTestResult,
   WebPushUnregisterInput,
 } from "@t3tools/contracts";
 
@@ -18,7 +20,7 @@ function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
   return outputArray.buffer;
 }
 
-function normalizeSubscription(subscription: PushSubscription): WebPushSubscription | null {
+export function normalizeSubscription(subscription: PushSubscription): WebPushSubscription | null {
   const json = subscription.toJSON();
   if (
     typeof json.endpoint !== "string" ||
@@ -36,6 +38,25 @@ function normalizeSubscription(subscription: PushSubscription): WebPushSubscript
       auth: json.keys.auth,
     },
   };
+}
+
+export type WebPushDiagnosticStatus =
+  | "unsupported"
+  | "permission-required"
+  | "permission-denied"
+  | "server-disabled"
+  | "subscription-missing"
+  | "ready";
+
+export interface WebPushDiagnostics {
+  readonly status: WebPushDiagnosticStatus;
+  readonly supported: boolean;
+  readonly secureContext: boolean;
+  readonly permission: NotificationPermission | "unsupported";
+  readonly serviceWorkerReady: boolean;
+  readonly serverConfigured: boolean;
+  readonly subscription: WebPushSubscription | null;
+  readonly ready: boolean;
 }
 
 async function postJson(path: string, body: unknown): Promise<void> {
@@ -65,6 +86,71 @@ export async function getWebPushPublicConfig(): Promise<WebPushPublicConfig> {
     throw new Error(`/api/push/config failed with HTTP ${response.status}`);
   }
   return (await response.json()) as WebPushPublicConfig;
+}
+
+export async function readWebPushDiagnostics(): Promise<WebPushDiagnostics> {
+  const secureContext = typeof window !== "undefined" && window.isSecureContext;
+  const supported = typeof navigator !== "undefined" && canUseWebPush();
+  const base = {
+    supported,
+    secureContext,
+    permission: supported ? Notification.permission : ("unsupported" as const),
+    serviceWorkerReady: false,
+    serverConfigured: false,
+    subscription: null,
+    ready: false,
+  };
+  if (!supported) return { ...base, status: "unsupported" };
+  if (Notification.permission === "denied") return { ...base, status: "permission-denied" };
+  if (Notification.permission !== "granted") return { ...base, status: "permission-required" };
+
+  const [config, registration] = await Promise.all([
+    getWebPushPublicConfig(),
+    navigator.serviceWorker.ready,
+  ]);
+  if (!config.enabled || !config.publicKey) {
+    return { ...base, serviceWorkerReady: true, status: "server-disabled" };
+  }
+  const subscription = await registration.pushManager.getSubscription();
+  const normalized = subscription ? normalizeSubscription(subscription) : null;
+  if (!normalized) {
+    return {
+      ...base,
+      serviceWorkerReady: true,
+      serverConfigured: true,
+      status: "subscription-missing",
+    };
+  }
+  return {
+    ...base,
+    serviceWorkerReady: true,
+    serverConfigured: true,
+    subscription: normalized,
+    ready: true,
+    status: "ready",
+  };
+}
+
+export async function sendWebPushTest(kind: WebPushTestKind): Promise<WebPushTestResult> {
+  const diagnostics = await readWebPushDiagnostics();
+  if (!diagnostics.ready || diagnostics.subscription === null) {
+    throw new Error("Push to phone is not ready on this device.");
+  }
+  const response = await fetch("/api/push/test", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: diagnostics.subscription.endpoint, kind }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { readonly error?: unknown } | null;
+    throw new Error(
+      typeof body?.error === "string"
+        ? body.error
+        : `/api/push/test failed with HTTP ${response.status}`,
+    );
+  }
+  return (await response.json()) as WebPushTestResult;
 }
 
 export async function registerWebPushSubscription(): Promise<void> {

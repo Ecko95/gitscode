@@ -753,6 +753,9 @@ describe("GeneralSettingsPanel observability", () => {
       .element(page.getByRole("heading", { name: "Diagnostics", exact: true }))
       .toBeInTheDocument();
     await expect.element(page.getByRole("link", { name: "View diagnostics" })).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Push notification diagnostics")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Send delivery test" })).toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Send proposal test" })).toBeDisabled();
     await expect
       .element(
         page.getByText(

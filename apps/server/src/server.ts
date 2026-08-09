@@ -156,6 +156,7 @@ import { PushNotificationReactorLive } from "./push/Layers/PushNotificationReact
 import {
   pushPublicConfigRouteLayer,
   pushRegisterRouteLayer,
+  pushTestRouteLayer,
   pushUnregisterRouteLayer,
 } from "./push/http.ts";
 
@@ -268,6 +269,10 @@ const WebPushSubscriptionRepositoryLayerLive = WebPushSubscriptionRepositoryLive
   Layer.provide(PersistenceLayerLive),
 );
 
+const RegisteredPushNotificationLayerLive = PushNotificationLayerLive.pipe(
+  Layer.provide(WebPushSubscriptionRepositoryLayerLive),
+);
+
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
 );
@@ -346,9 +351,7 @@ const GitsSlotSchedulerLayerLive = GitsSlotSchedulerLive.pipe(
 
 const AutomodeNotificationsLayerLive = AutomodeNotificationsLive.pipe(
   Layer.provide(HermesTelegramNotifierLive),
-  Layer.provide(
-    PushNotificationLayerLive.pipe(Layer.provide(WebPushSubscriptionRepositoryLayerLive)),
-  ),
+  Layer.provide(RegisteredPushNotificationLayerLive),
 );
 
 const CockpitInboxLayerLive = CockpitInboxLive;
@@ -610,6 +613,7 @@ const GitsRoutesLayer = Layer.mergeAll(
 const PushRoutesLayer = Layer.mergeAll(
   pushPublicConfigRouteLayer,
   pushRegisterRouteLayer,
+  pushTestRouteLayer,
   pushUnregisterRouteLayer,
 );
 
@@ -737,7 +741,7 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       browserPreviewCleanupLayer,
-    );
+    ).pipe(Layer.provideMerge(RegisteredPushNotificationLayerLive));
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),

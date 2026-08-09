@@ -230,6 +230,7 @@ export interface WsRpcClient {
     };
     readonly automode: {
       readonly getSnapshot: RpcUnaryNoArgMethod<typeof WS_METHODS.gitsAutomodeGetSnapshot>;
+      readonly configure: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeConfigure>;
       readonly updatePolicy: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeUpdatePolicy>;
       readonly enqueueGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeEnqueueGoal>;
       readonly approveGoal: RpcUnaryMethod<typeof WS_METHODS.gitsAutomodeApproveGoal>;
@@ -535,6 +536,8 @@ export function createWsRpcClient(
       automode: {
         getSnapshot: () =>
           transport.request((client) => client[WS_METHODS.gitsAutomodeGetSnapshot]({})),
+        configure: (input) =>
+          transport.request((client) => client[WS_METHODS.gitsAutomodeConfigure](input)),
         updatePolicy: (input) =>
           transport.request((client) => client[WS_METHODS.gitsAutomodeUpdatePolicy](input)),
         enqueueGoal: (input) =>

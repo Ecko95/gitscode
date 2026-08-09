@@ -12,6 +12,7 @@ import {
   type PushNotificationPayload,
   PushNotificationService,
   type PushNotificationServiceShape,
+  type TargetedPushResult,
 } from "../Services/PushNotificationService.ts";
 
 function activityRequestId(payload: unknown): string | null {
@@ -163,9 +164,54 @@ const makePushNotificationService = Effect.gen(function* () {
     });
   };
 
+  const sendToEndpoint: PushNotificationServiceShape["sendToEndpoint"] = (endpoint, payload) => {
+    if (!configured) {
+      return Effect.succeed("disabled");
+    }
+
+    return Effect.gen(function* () {
+      const subscriptions = yield* repository.list().pipe(
+        Effect.map((entries) => entries as ReadonlyArray<(typeof entries)[number]> | null),
+        Effect.catch((cause) =>
+          Effect.logWarning("failed to list web push subscriptions for test", { cause }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+      if (subscriptions === null) {
+        return "failed" as TargetedPushResult;
+      }
+      const entry = subscriptions.find((candidate) => candidate.subscription.endpoint === endpoint);
+      if (entry === undefined) {
+        return "not-found" as TargetedPushResult;
+      }
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const body = JSON.stringify(payload);
+      return yield* sender.send(entry.subscription, body).pipe(
+        Effect.as<TargetedPushResult>("sent"),
+        Effect.catchTag("WebPushSendError", (error) =>
+          Effect.gen(function* () {
+            if (isExpiredSubscriptionError(error)) {
+              yield* repository.deleteByEndpoint(endpoint).pipe(Effect.ignore);
+            } else {
+              yield* Effect.logWarning("failed to send targeted web push notification", {
+                endpoint,
+                statusCode: error.statusCode,
+                cause: error.cause,
+              });
+            }
+            return "failed" as const;
+          }),
+        ),
+      );
+    });
+  };
+
   return {
     getPublicConfig,
     sendToAll,
+    sendToEndpoint,
     sendForOrchestrationEvent,
   };
 });

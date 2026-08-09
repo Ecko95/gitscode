@@ -174,3 +174,109 @@ it.effect("sends configured push notifications and removes expired subscriptions
     assert.deepStrictEqual(deletedEndpoints, [expired.endpoint]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("sends a test only to the exact registered endpoint", () => {
+  const active = makeSubscription("https://push.example.test/active");
+  const other = makeSubscription("https://push.example.test/other");
+  const sentEndpoints: Array<string> = [];
+  const layer = PushNotificationServiceLive.pipe(
+    Layer.provide(configLayer),
+    Layer.provide(environmentLayer),
+    Layer.provide(
+      Layer.succeed(WebPushSubscriptionRepository, {
+        upsert: () => Effect.void,
+        deleteByEndpoint: () => Effect.void,
+        list: () => Effect.succeed([persisted(active), persisted(other)]),
+      }),
+    ),
+    Layer.provide(
+      Layer.succeed(WebPushSender, {
+        send: (subscription) =>
+          Effect.sync(() => {
+            sentEndpoints.push(subscription.endpoint);
+          }),
+      }),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* PushNotificationService;
+    const payload = { title: "Test", body: "Body", tag: "test-1", url: "/gits" };
+    assert.strictEqual(yield* service.sendToEndpoint(active.endpoint, payload), "sent");
+    assert.strictEqual(
+      yield* service.sendToEndpoint("https://push.example.test/missing", payload),
+      "not-found",
+    );
+    assert.deepStrictEqual(sentEndpoints, [active.endpoint]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reports disabled and failed targeted delivery and deletes expired endpoints", () => {
+  const expired = makeSubscription("https://push.example.test/expired");
+  const deletedEndpoints: Array<string> = [];
+  const repositoryLayer = Layer.succeed(WebPushSubscriptionRepository, {
+    upsert: () => Effect.void,
+    deleteByEndpoint: (endpoint: string) =>
+      Effect.sync(() => {
+        deletedEndpoints.push(endpoint);
+      }),
+    list: () => Effect.succeed([persisted(expired)]),
+  });
+  const senderLayer = Layer.succeed(WebPushSender, {
+    send: () => Effect.fail(new WebPushSendError({ endpoint: expired.endpoint, statusCode: 410 })),
+  });
+  const payload = { title: "Test", body: "Body", tag: "test-2", url: "/gits" };
+
+  return Effect.gen(function* () {
+    const configuredService = yield* PushNotificationService;
+    assert.strictEqual(
+      yield* configuredService.sendToEndpoint(expired.endpoint, payload),
+      "failed",
+    );
+    assert.deepStrictEqual(deletedEndpoints, [expired.endpoint]);
+  }).pipe(
+    Effect.provide(
+      PushNotificationServiceLive.pipe(
+        Layer.provide(configLayer),
+        Layer.provide(environmentLayer),
+        Layer.provide(repositoryLayer),
+        Layer.provide(senderLayer),
+      ),
+    ),
+  );
+});
+
+it.effect("reports targeted delivery as disabled without VAPID configuration", () => {
+  const subscription = makeSubscription("https://push.example.test/device");
+  const layer = PushNotificationServiceLive.pipe(
+    Layer.provide(
+      Layer.succeed(ServerConfig, {
+        vapidPublicKey: undefined,
+        vapidPrivateKey: undefined,
+        vapidSubject: undefined,
+      } as ServerConfigShape),
+    ),
+    Layer.provide(environmentLayer),
+    Layer.provide(
+      Layer.succeed(WebPushSubscriptionRepository, {
+        upsert: () => Effect.void,
+        deleteByEndpoint: () => Effect.void,
+        list: () => Effect.succeed([persisted(subscription)]),
+      }),
+    ),
+    Layer.provide(Layer.succeed(WebPushSender, { send: () => Effect.void })),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* PushNotificationService;
+    assert.strictEqual(
+      yield* service.sendToEndpoint(subscription.endpoint, {
+        title: "Test",
+        body: "Body",
+        tag: "test-3",
+        url: "/gits",
+      }),
+      "disabled",
+    );
+  }).pipe(Effect.provide(layer));
+});
