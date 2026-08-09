@@ -209,6 +209,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       },
       automode: {
         getSnapshot: vi.fn(),
+        configure: vi.fn(),
         updatePolicy: vi.fn(),
         enqueueGoal: vi.fn(),
         approveGoal: vi.fn(),
