@@ -147,10 +147,9 @@ describe("runProcess", () => {
     vi.stubEnv("GITS_PROCESS_RUNNER_AMBIENT_SENTINEL", "ambient-secret");
     const selectedPath = process.env.PATH ?? "";
     const selectedEnv = buildChildEnv({
-      Path: selectedPath,
-      SystemRoot: "C:\\Windows",
-      ComSpec: "C:\\Windows\\System32\\cmd.exe",
-      UserProfile: "C:\\Users\\worker",
+      PATH: selectedPath,
+      HOME: "/accounts/work-home",
+      SHELL: "/bin/sh",
       OPENAI_WORKER_ACCOUNT: "work",
       CODEX_HOME: "/accounts/work-codex",
     });
@@ -158,7 +157,7 @@ describe("runProcess", () => {
       command: process.execPath,
       args: [
         "-e",
-        "process.stdout.write([process.env.GITS_PROCESS_RUNNER_AMBIENT_SENTINEL ?? '', process.env.OPENAI_WORKER_ACCOUNT ?? '', process.env.CODEX_HOME ?? '', process.env.Path ?? '', process.env.SystemRoot ?? '', process.env.ComSpec ?? '', process.env.UserProfile ?? ''].join('|'))",
+        "process.stdout.write([process.env.GITS_PROCESS_RUNNER_AMBIENT_SENTINEL ?? '', process.env.OPENAI_WORKER_ACCOUNT ?? '', process.env.CODEX_HOME ?? '', process.env.PATH ?? '', process.env.HOME ?? '', process.env.SHELL ?? ''].join('|'))",
       ],
       env: selectedEnv,
       extendEnv: false,
@@ -169,7 +168,7 @@ describe("runProcess", () => {
       const result = yield* runner.run(input);
 
       expect(result.stdout).toBe(
-        `|work|/accounts/work-codex|${selectedPath}|C:\\Windows|C:\\Windows\\System32\\cmd.exe|C:\\Users\\worker`,
+        `|work|/accounts/work-codex|${selectedPath}|/accounts/work-home|/bin/sh`,
       );
     }).pipe(Effect.provide(ProcessRunnerLive.pipe(Layer.provide(NodeServices.layer))));
   });

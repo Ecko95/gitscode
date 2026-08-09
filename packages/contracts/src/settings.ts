@@ -19,10 +19,14 @@ export const ClientSelectedRepositoryProfile = RepositoryProfile.pipe(
 );
 export type ClientSelectedRepositoryProfile = typeof ClientSelectedRepositoryProfile.Type;
 
-export const RepositoryProfileProviderInstanceMappings = Schema.Record(
+const RepositoryProfileProviderInstanceMappingsSchema = Schema.Record(
   ProviderDriverKind,
   ProviderInstanceId,
-).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+);
+export const RepositoryProfileProviderInstanceMappings =
+  RepositoryProfileProviderInstanceMappingsSchema.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  );
 export type RepositoryProfileProviderInstanceMappings =
   typeof RepositoryProfileProviderInstanceMappings.Type;
 
@@ -31,6 +35,14 @@ export const RepositoryProfileProviderInstances = Schema.Struct({
   work: RepositoryProfileProviderInstanceMappings,
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type RepositoryProfileProviderInstances = typeof RepositoryProfileProviderInstances.Type;
+
+const RepositoryProfilesSettingsPatch = Schema.Struct({
+  workRoots: Schema.Array(TrimmedString),
+  providerInstances: Schema.Struct({
+    personal: RepositoryProfileProviderInstanceMappingsSchema,
+    work: RepositoryProfileProviderInstanceMappingsSchema,
+  }),
+});
 
 export const RepositoryProfilesSettings = Schema.Struct({
   workRoots: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -646,7 +658,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
   // Whole-map replacement, matching providerInstances. The settings UI sends
   // the complete value so removed driver mappings cannot survive a deep merge.
-  repositoryProfiles: Schema.optionalKey(RepositoryProfilesSettings),
+  repositoryProfiles: Schema.optionalKey(RepositoryProfilesSettingsPatch),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
