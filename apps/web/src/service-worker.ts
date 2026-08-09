@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 
+import { notificationTargetUrl } from "./lib/notificationTarget";
+
 type PrecacheEntry = {
   readonly url: string;
   readonly revision: string | null;
@@ -100,10 +102,7 @@ sw.addEventListener("push", (event) => {
 
 sw.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL(
-    typeof event.notification.data?.url === "string" ? event.notification.data.url : "/",
-    sw.location.origin,
-  ).toString();
+  const url = notificationTargetUrl(event.notification.data?.url, sw.location.origin);
 
   event.waitUntil(
     sw.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {

@@ -36,6 +36,7 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
+import { cn } from "../../lib/utils";
 import {
   DEFAULT_GITS_CHAT_PREFS,
   useGitsChatPrefs,
@@ -44,7 +45,12 @@ import {
 } from "../../hooks/useGitsChatPrefs";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
-import { canUseWebPush } from "../../lib/webPush";
+import {
+  canUseWebPush,
+  readWebPushDiagnostics,
+  sendWebPushTest,
+  type WebPushDiagnostics,
+} from "../../lib/webPush";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -537,6 +543,107 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
+function PushNotificationDiagnostics() {
+  const [diagnostics, setDiagnostics] = useState<WebPushDiagnostics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState<"delivery" | "proposal" | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      setDiagnostics(await readWebPushDiagnostics());
+    } catch (cause) {
+      setResult(cause instanceof Error ? cause.message : "Push diagnostics failed.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const send = async (kind: "delivery" | "proposal") => {
+    setSending(kind);
+    setResult(null);
+    try {
+      await sendWebPushTest(kind);
+      setResult("Sent — tap the notification to confirm Android delivery.");
+    } catch (cause) {
+      setResult(
+        cause instanceof Error ? cause.message : "The test notification could not be sent.",
+      );
+    } finally {
+      setSending(null);
+    }
+  };
+
+  const rows = [
+    ["Secure PWA", diagnostics?.secureContext === true],
+    ["Browser push", diagnostics?.supported === true],
+    ["Permission", diagnostics?.permission === "granted"],
+    ["Server keys", diagnostics?.serverConfigured === true],
+    ["This device", diagnostics?.subscription !== null && diagnostics?.subscription !== undefined],
+  ] as const;
+  return (
+    <div
+      className="border-b border-border/50 px-4 py-4 sm:px-6"
+      aria-label="Push notification diagnostics"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Android notification test</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Tests this installed PWA and its existing device subscription.
+          </p>
+        </div>
+        <Button size="xs" variant="ghost" disabled={loading} onClick={() => void refresh()}>
+          <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} /> Refresh
+        </Button>
+      </div>
+      <dl className="mt-3 grid gap-1.5 sm:grid-cols-5">
+        {rows.map(([label, ready]) => (
+          <div key={label} className="rounded-lg border border-border/60 px-2.5 py-2">
+            <dt className="text-[10px] tracking-wide text-muted-foreground uppercase">{label}</dt>
+            <dd
+              className={cn(
+                "mt-1 text-xs font-medium",
+                ready ? "text-success-foreground" : "text-muted-foreground",
+              )}
+            >
+              {loading ? "Checking…" : ready ? "Ready" : "Not ready"}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!diagnostics?.ready || sending !== null}
+          onClick={() => void send("delivery")}
+        >
+          {sending === "delivery" ? "Sending…" : "Send delivery test"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!diagnostics?.ready || sending !== null}
+          onClick={() => void send("proposal")}
+        >
+          {sending === "proposal" ? "Sending…" : "Send proposal test"}
+        </Button>
+        {result ? (
+          <p role="status" className="text-xs text-muted-foreground">
+            {result}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const { prefs: gitsChatPrefs, setPref: setGitsChatPref } = useGitsChatPrefs();
@@ -887,6 +994,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <PushNotificationDiagnostics />
 
         <SettingsRow
           title="Diff line wrapping"
