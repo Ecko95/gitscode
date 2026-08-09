@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - external CLI boundary and expiring viewer tickets.
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
@@ -55,6 +56,36 @@ export interface BrowserPreviewManagerOptions {
   readonly run?: BrowserPreviewRun;
 }
 
+// Playwright installs each Chromium build under its own `chromium-<revision>` directory and
+// prunes old ones, so pinning revisions goes stale on the next `playwright install`.
+const PLAYWRIGHT_CHROME_RELATIVE_PATHS = [
+  "chrome-linux64/chrome",
+  "chrome-linux/chrome",
+  "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+] as const;
+
+export function playwright_chrome_candidates(cache_dir: string): ReadonlyArray<string> {
+  let entries: ReadonlyArray<string>;
+  try {
+    entries = readdirSync(cache_dir);
+  } catch {
+    return [];
+  }
+
+  return (
+    entries
+      .flatMap((entry) => {
+        const revision = /^chromium(?:_headless_shell)?-(\d+)$/u.exec(entry)?.[1];
+        return revision === undefined ? [] : [{ entry, revision: Number(revision) }];
+      })
+      // Newest revision first: Playwright keeps older builds around until they are pruned.
+      .sort((left, right) => right.revision - left.revision)
+      .flatMap(({ entry }) =>
+        PLAYWRIGHT_CHROME_RELATIVE_PATHS.map((relative) => join(cache_dir, entry, relative)),
+      )
+  );
+}
+
 function resolve_browser_path(): string | undefined {
   if (process.env.GSD_BROWSER_BROWSER_PATH) {
     return process.env.GSD_BROWSER_BROWSER_PATH;
@@ -64,8 +95,9 @@ function resolve_browser_path(): string | undefined {
     "/usr/bin/google-chrome",
     "/usr/bin/google-chrome-stable",
     "/usr/bin/chromium",
-    `${process.env.HOME ?? ""}/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome`,
-    `${process.env.HOME ?? ""}/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome`,
+    ...(process.env.HOME
+      ? playwright_chrome_candidates(join(process.env.HOME, ".cache", "ms-playwright"))
+      : []),
   ];
   return candidates.find((candidate) => existsSync(candidate));
 }

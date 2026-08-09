@@ -1,7 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { BrowserPreviewManager } from "./browser-preview-manager.ts";
+import { BrowserPreviewManager, playwright_chrome_candidates } from "./browser-preview-manager.ts";
 
 const threadId = ThreadId.make("thread-browser-preview");
 
@@ -73,5 +73,33 @@ describe("BrowserPreviewManager", () => {
 
     expect(stopped).toHaveLength(2);
     expect(tickets.map((ticket) => manager.resolve_ticket(ticket))).toEqual([null, null]);
+  });
+});
+
+describe("playwright_chrome_candidates", () => {
+  it("prefers the newest revision and ignores unrelated cache entries", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "gits-playwright-cache-"));
+    try {
+      for (const entry of ["chromium-1208", "chromium-1228", "firefox-1489", ".links"]) {
+        await fs.mkdir(path.join(cacheDir, entry), { recursive: true });
+      }
+
+      const candidates = playwright_chrome_candidates(cacheDir);
+
+      expect(candidates[0]).toBe(path.join(cacheDir, "chromium-1228", "chrome-linux64", "chrome"));
+      expect(candidates).toContain(
+        path.join(cacheDir, "chromium-1208", "chrome-linux64", "chrome"),
+      );
+      expect(candidates.join(" ")).not.toContain("firefox");
+    } finally {
+      await fs.rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns nothing when the cache directory is absent", () => {
+    expect(playwright_chrome_candidates("/nonexistent/ms-playwright")).toEqual([]);
   });
 });
