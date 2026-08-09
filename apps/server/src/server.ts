@@ -354,6 +354,8 @@ const AutomodeNotificationsLayerLive = AutomodeNotificationsLive.pipe(
   ),
 );
 
+const CockpitInboxLayerLive = CockpitInboxLive;
+
 const AutomodeEpisodeLedgerLayerLive = AutomodeEpisodeLedgerLive.pipe(
   Layer.provide(PersistenceLayerLive),
 );
@@ -377,6 +379,7 @@ const AutomodeProposalSweepLayerLive = AutomodeProposalSweepLive.pipe(
   Layer.provide(AutomodeSupervisorLayerLive),
   Layer.provide(HermesAdapterLayerLive),
   Layer.provide(AutomodeNotificationsLayerLive),
+  Layer.provide(CockpitInboxLayerLive),
   Layer.provide(OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provide(PersistenceLayerLive))),
 );
 
@@ -409,7 +412,7 @@ const CodexMcpAuthLayerLive = CodexMcpAuthLive.pipe(
 );
 
 const GitsLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(Layer.merge(GitsBuildInfoResolverLive, CockpitInboxLive)),
+  Layer.provideMerge(Layer.merge(GitsBuildInfoResolverLive, CockpitInboxLayerLive)),
   Layer.provideMerge(GitsNotesLive),
   Layer.provideMerge(GitsCapacityMonitorLive),
   Layer.provideMerge(GitsCodexVerifierAdapterLive),

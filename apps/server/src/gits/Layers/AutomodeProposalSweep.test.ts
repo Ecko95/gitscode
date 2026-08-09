@@ -20,6 +20,7 @@ import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
+import { CockpitInbox } from "../Services/CockpitInbox.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
@@ -113,6 +114,8 @@ interface HermesOptions {
   readonly episodes?: ReadonlyArray<AutomodeEpisode>;
   readonly telegramSent?: string[];
   readonly notificationsSent?: string[];
+  readonly notificationOrder?: string[];
+  readonly inboxFails?: boolean;
 }
 
 function makeLayer(hermesOptions: HermesOptions = {}) {
@@ -169,8 +172,22 @@ function makeLayer(hermesOptions: HermesOptions = {}) {
   const notifications = Layer.mock(AutomodeNotifications)({
     notify: (input) =>
       Effect.sync(() => {
+        hermesOptions.notificationOrder?.push("delivery");
         hermesOptions.notificationsSent?.push(input.url);
       }),
+  });
+  const inbox = Layer.mock(CockpitInbox)({
+    record: (input) =>
+      hermesOptions.inboxFails
+        ? Effect.fail({ _tag: "CockpitInboxError", message: "write failed" } as never)
+        : Effect.sync(() => {
+            hermesOptions.notificationOrder?.push(`inbox:${input.eventKey}`);
+            return { item: {} as never, event: {} as never, created: true };
+          }),
+    list: () => Effect.die("unused"),
+    markRead: () => Effect.die("unused"),
+    markAllRead: () => Effect.die("unused"),
+    setPinned: () => Effect.die("unused"),
   });
   const projection = Layer.mock(ProjectionSnapshotQuery)({
     getSnapshot: () =>
@@ -187,6 +204,7 @@ function makeLayer(hermesOptions: HermesOptions = {}) {
     Layer.provide(ledger),
     Layer.provide(notifier),
     Layer.provide(notifications),
+    Layer.provide(inbox),
     Layer.provide(projection),
     Layer.provideMerge(TestClock.layer()),
   );
@@ -375,6 +393,7 @@ describe("AutomodeProposalSweep", () => {
 
   it.effect("leaves a review-required sweep as a proposal and deep-links its notification", () => {
     const notificationsSent: string[] = [];
+    const notificationOrder: string[] = [];
     return Effect.gen(function* () {
       const supervisor = yield* arm({
         sweepRequiresConfirmation: true,
@@ -387,7 +406,19 @@ describe("AutomodeProposalSweep", () => {
       const snapshot = yield* supervisor.getSnapshot();
       assert.equal(snapshot.goals.length, 0);
       assert.deepEqual(notificationsSent, ["/gits?panel=autopilot&proposal=proposal-1"]);
-    }).pipe(Effect.provide(makeLayer({ notificationsSent })));
+      assert.deepEqual(notificationOrder, ["inbox:proposal:proposal-1:created", "delivery"]);
+    }).pipe(Effect.provide(makeLayer({ notificationsSent, notificationOrder })));
+  });
+
+  it.effect("does not deliver when the durable Inbox write fails", () => {
+    const notificationsSent: string[] = [];
+    return Effect.gen(function* () {
+      yield* arm({ sweepRequiresConfirmation: true });
+      const sweep = yield* AutomodeProposalSweep;
+      yield* TestClock.setTime(EVENING);
+      yield* sweep.tick();
+      assert.deepEqual(notificationsSent, []);
+    }).pipe(Effect.provide(makeLayer({ notificationsSent, inboxFails: true })));
   });
 
   it.effect("does not enqueue a review-required sweep when peer approval is off", () => {

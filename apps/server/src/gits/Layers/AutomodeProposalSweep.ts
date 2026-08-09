@@ -17,6 +17,7 @@ import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisod
 import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
+import { CockpitInbox } from "../Services/CockpitInbox.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
 import { AutomodeNotifications } from "./AutomodeNotifications.ts";
 import { hasLiveGoalForRepo } from "./HermesAutomodeBridge.ts";
@@ -158,6 +159,7 @@ export const AutomodeProposalSweepLive = Layer.effect(
     const ledger = yield* AutomodeEpisodeLedger;
     const notifier = yield* HermesTelegramNotifier;
     const notifications = yield* AutomodeNotifications;
+    const inbox = yield* CockpitInbox;
     const projection = yield* ProjectionSnapshotQuery;
     const parsedStart = parseStartMinutes(process.env.GITS_PROPOSAL_SWEEP_START_HHMM);
     if (parsedStart.error !== null) {
@@ -210,8 +212,20 @@ export const AutomodeProposalSweepLive = Layer.effect(
           ...(promptSections.length === 0 ? {} : { prompt: promptSections.join("\n\n") }),
           ...(continuation === undefined ? {} : { sourceThreadId: continuation.id }),
         });
+        const eventKey = `proposal:${card.id}:created`;
+        yield* inbox.record({
+          episodeId: card.episodeId,
+          proposalId: card.id,
+          goalId: null,
+          title: card.title,
+          repository: card.projectDir,
+          eventKey,
+          state: "pending-review",
+          reason: "Proposal ready for review.",
+          deepLink: `/gits?panel=autopilot&proposal=${encodeURIComponent(card.id)}`,
+        });
         yield* notifications.notify({
-          key: `proposal:${card.id}:created`,
+          key: eventKey,
           subject: "New Motoko proposal",
           text: `${card.title} — ${path.basename(repo)}`,
           url: `/gits?panel=autopilot&proposal=${encodeURIComponent(card.id)}`,

@@ -21,6 +21,7 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type HermesProposalCard,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -433,11 +434,26 @@ const makeWsRpcLayer = (
       const automodeEpisodeLedger = yield* AutomodeEpisodeLedger;
       const automodeNotifications = yield* AutomodeNotifications;
       const cockpitInbox = yield* Effect.serviceOption(CockpitInbox);
-      const notifyProposal = (proposal: { readonly id: string; readonly title: string }) =>
+      const notifyProposal = (proposal: HermesProposalCard) =>
         Effect.gen(function* () {
           const policy = yield* automodeSupervisor.getPolicy();
+          if (Option.isNone(cockpitInbox)) {
+            return yield* new CockpitInboxError({ message: "Cockpit Inbox is unavailable." });
+          }
+          const key = `proposal:${proposal.id}:created`;
+          yield* cockpitInbox.value.record({
+            episodeId: proposal.episodeId,
+            proposalId: proposal.id,
+            goalId: null,
+            title: proposal.title,
+            repository: proposal.projectDir,
+            eventKey: key,
+            state: "pending-review",
+            reason: "Proposal ready for review.",
+            deepLink: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,
+          });
           yield* automodeNotifications.notify({
-            key: `proposal:${proposal.id}:created`,
+            key,
             subject: "New Motoko proposal",
             text: proposal.title,
             url: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,
