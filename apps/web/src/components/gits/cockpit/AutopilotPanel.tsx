@@ -68,6 +68,7 @@ import {
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
+import { InboxSection } from "./InboxSection";
 
 import {
   type AutopilotPolicyForm,
@@ -609,6 +610,8 @@ export function AutopilotPanel({
           ) : null}
         </div>
       ) : null}
+
+      <InboxSection readGitsClient={readGitsClient} environmentId={targetEnvironmentId} />
 
       <h3 className="border-b border-border/60 px-4 py-2.5 text-xs font-semibold uppercase text-muted-foreground/80 sm:px-5">
         Automation switchboard

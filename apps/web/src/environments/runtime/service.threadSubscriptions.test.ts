@@ -223,6 +223,12 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
         killGoal: vi.fn(),
         episodesList: vi.fn(),
       },
+      cockpitInbox: {
+        list: vi.fn(),
+        markRead: vi.fn(),
+        markAllRead: vi.fn(),
+        pin: vi.fn(),
+      },
       capacity: {
         getSnapshot: vi.fn(),
       },
