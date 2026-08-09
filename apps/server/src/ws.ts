@@ -2422,7 +2422,14 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitsHermesDecideProposal]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesDecideProposal,
-            decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input).pipe(
+            decideProposalWithAutomodeBridge(
+              hermesAdapter,
+              automodeSupervisor,
+              input,
+              Option.isSome(cockpitInbox)
+                ? { scheduler: gitsSlotScheduler, inbox: cockpitInbox.value }
+                : undefined,
+            ).pipe(
               Effect.tap((proposal) =>
                 input.decision !== "approve"
                   ? Effect.void
@@ -2430,7 +2437,7 @@ const makeWsRpcLayer = (
                       Effect.flatMap((snapshot) =>
                         hasLiveGoalForEpisode(snapshot.goals, proposal.episodeId)
                           ? automodeNotifications.notify({
-                              key: `proposal:${proposal.id}:queued`,
+                              key: `proposal:${proposal.id}:approve`,
                               subject: "Motoko proposal queued",
                               text: proposal.title,
                               url: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,

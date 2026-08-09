@@ -16,6 +16,7 @@ import { ServerConfig } from "../../config.ts";
 import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
+import type { CockpitInboxRecordInput } from "../Services/CockpitInbox.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
 import { AutomodeSupervisorTestRoutingLayer } from "./AutomodeSupervisor.testHelpers.ts";
@@ -149,8 +150,12 @@ const defaultDraft: HermesExecutionDraft = {
 function makeFakeHermes(options?: {
   readonly initialStatus?: HermesProposalStatus;
   readonly draft?: HermesExecutionDraft;
+  readonly proposal?: Partial<HermesProposalCard>;
 }) {
-  let proposal = makeProposal(options?.initialStatus ?? "proposed");
+  let proposal = {
+    ...makeProposal(options?.initialStatus ?? "proposed"),
+    ...options?.proposal,
+  };
   let draftCalls = 0;
   return {
     hermes: {
@@ -189,6 +194,73 @@ const armAutonomous = Effect.gen(function* () {
 });
 
 describe("decideProposalWithAutomodeBridge", () => {
+  it.effect("approval queues once, arms for eligibility, and records the durable transition", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      const { hermes } = makeFakeHermes({ proposal: { notBefore: null } });
+      const scheduled: Array<string | null> = [];
+      const events: CockpitInboxRecordInput[] = [];
+      const dependencies = {
+        scheduler: {
+          scheduleApprovedGoal: ({ eligibleAt }: { readonly eligibleAt: string | null }) =>
+            Effect.sync(() => {
+              scheduled.push(eligibleAt);
+              return {} as never;
+            }),
+        },
+        inbox: {
+          record: (input: CockpitInboxRecordInput) =>
+            Effect.sync(() => {
+              events.push(input);
+              return {} as never;
+            }),
+        },
+      };
+
+      yield* decideProposalWithAutomodeBridge(
+        hermes,
+        supervisor,
+        { proposalId: "proposal-1", decision: "approve" },
+        dependencies,
+      );
+      yield* decideProposalWithAutomodeBridge(
+        hermes,
+        supervisor,
+        { proposalId: "proposal-1", decision: "approve" },
+        dependencies,
+      );
+
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+      assert.deepEqual(scheduled, [null, null]);
+      assert.deepEqual(
+        events.map(({ eventKey, state, goalId }) => ({ eventKey, state, goalId })),
+        [
+          {
+            eventKey: "proposal:proposal-1:approve",
+            state: "approved-queued",
+            goalId: events[0]!.goalId,
+          },
+          {
+            eventKey: `goal:${events[0]!.goalId}:scheduled`,
+            state: "scheduled-tonight",
+            goalId: events[0]!.goalId,
+          },
+          {
+            eventKey: "proposal:proposal-1:approve",
+            state: "approved-queued",
+            goalId: events[0]!.goalId,
+          },
+          {
+            eventKey: `goal:${events[0]!.goalId}:scheduled`,
+            state: "scheduled-tonight",
+            goalId: events[0]!.goalId,
+          },
+        ],
+      );
+      assert.isNotNull(events[0]!.goalId);
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
   it.effect("approve with flag on + autonomous enqueues a goal that dispatch can run", () => {
     let spawnCount = 0;
     return Effect.gen(function* () {

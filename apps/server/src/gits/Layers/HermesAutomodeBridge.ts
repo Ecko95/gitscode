@@ -1,8 +1,11 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
 import { HermesAdapterError, type HermesProposalDecisionInput } from "@t3tools/contracts";
 
 import type { AutomodeSupervisorShape } from "../Services/AutomodeSupervisor.ts";
+import type { CockpitInboxShape } from "../Services/CockpitInbox.ts";
+import type { GitsSlotSchedulerShape } from "../Services/GitsSlotScheduler.ts";
 import type { HermesAdapterShape } from "../Services/HermesAdapter.ts";
 
 const TERMINAL_GOAL_STATUSES = ["completed", "failed", "blocked", "rejected"];
@@ -41,6 +44,10 @@ export const decideProposalWithAutomodeBridge = (
   hermes: Pick<HermesAdapterShape, "listProposals" | "decideProposal" | "draftFromProposal">,
   automode: Pick<AutomodeSupervisorShape, "getSnapshot" | "enqueueGoal">,
   input: HermesProposalDecisionInput,
+  dependencies?: {
+    readonly scheduler: Pick<GitsSlotSchedulerShape, "scheduleApprovedGoal">;
+    readonly inbox: Pick<CockpitInboxShape, "record">;
+  },
 ) =>
   Effect.gen(function* () {
     const snapshot =
@@ -110,6 +117,64 @@ export const decideProposalWithAutomodeBridge = (
                 new HermesAdapterError({ message: "Failed to queue approved proposal.", cause }),
             ),
           );
+      }
+    }
+    if (dependencies !== undefined) {
+      const current =
+        input.decision === "approve"
+          ? (yield* automode.getSnapshot()).goals.find(
+              (goal) =>
+                goal.episodeId === decided.episodeId &&
+                !TERMINAL_GOAL_STATUSES.includes(goal.status),
+            )
+          : undefined;
+      if (input.decision !== "approve" || current !== undefined) {
+        if (input.decision === "approve") {
+          yield* dependencies.scheduler.scheduleApprovedGoal({ eligibleAt: decided.notBefore });
+        }
+        const eventKey = `proposal:${decided.id}:${input.decision}`;
+        const deepLink =
+          current === undefined
+            ? `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`
+            : `/gits?panel=autopilot&goal=${encodeURIComponent(current.id)}`;
+        yield* dependencies.inbox.record({
+          episodeId: decided.episodeId,
+          proposalId: decided.id,
+          goalId: current?.id ?? null,
+          title: decided.title,
+          repository: decided.projectDir,
+          eventKey,
+          state:
+            input.decision === "approve"
+              ? "approved-queued"
+              : input.decision === "reject"
+                ? "rejected"
+                : "deferred",
+          reason:
+            input.decision === "approve"
+              ? "Approved and queued for autonomous work."
+              : input.decision === "reject"
+                ? "Proposal rejected."
+                : "Proposal deferred.",
+          deepLink,
+        });
+        const now = yield* Clock.currentTimeMillis;
+        if (
+          input.decision === "approve" &&
+          (decided.notBefore === null || Date.parse(decided.notBefore) <= now)
+        ) {
+          yield* dependencies.inbox.record({
+            episodeId: decided.episodeId,
+            proposalId: decided.id,
+            goalId: current!.id,
+            title: decided.title,
+            repository: decided.projectDir,
+            eventKey: `goal:${current!.id}:scheduled`,
+            state: "scheduled-tonight",
+            reason: "Scheduled for the current autonomy night.",
+            deepLink,
+          });
+        }
       }
     }
     return decided;
