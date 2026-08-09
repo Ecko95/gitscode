@@ -50,6 +50,8 @@ describe("AutomodePolicy held-PR fields", () => {
     expect(decoded.nightlyProposalSweep).toBe(false);
     expect(decoded.proposalRepos).toEqual([]);
     expect(decoded.telegramDigestEnabled).toBe(true);
+    expect(decoded.gitsNotificationsEnabled).toBe(true);
+    expect(decoded.telegramNotificationsEnabled).toBe(false);
     expect(decoded.sweepRequiresConfirmation).toBe(true);
   });
 
@@ -59,9 +61,13 @@ describe("AutomodePolicy held-PR fields", () => {
       verificationCommands: [{ label: "test", cmd: ["bun", "run", "test"] }],
       integrationBranch: "auto/x",
       autoEnqueueApprovedProposals: true,
+      gitsNotificationsEnabled: false,
+      telegramNotificationsEnabled: true,
     });
     expect(decoded.integrationBranch).toBe("auto/x");
     expect(decoded.autoEnqueueApprovedProposals).toBe(true);
+    expect(decoded.gitsNotificationsEnabled).toBe(false);
+    expect(decoded.telegramNotificationsEnabled).toBe(true);
   });
 
   it("decodes an explicit telegramDigestEnabled and accepts it on the update input", () => {

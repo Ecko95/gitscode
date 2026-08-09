@@ -28,6 +28,12 @@ import {
   AutomodeSnapshotInput,
   AutomodeStopAllResult,
   AutomodeSupervisorError,
+  CockpitInboxError,
+  CockpitInboxItem,
+  CockpitInboxListInput,
+  CockpitInboxListResult,
+  CockpitInboxMarkReadInput,
+  CockpitInboxPinInput,
   DelamainAdapterError,
   DelamainInboxResult,
   DelamainPeer,
@@ -326,6 +332,10 @@ export const WS_METHODS = {
   gitsAutomodeEpisodesList: "gits.automode.episodes.list",
   gitsAutomodeStopAll: "gits.automode.stopAll",
   gitsAutomodeGoalsKill: "gits.automode.goals.kill",
+  gitsCockpitInboxList: "gits.cockpit.inbox.list",
+  gitsCockpitInboxMarkRead: "gits.cockpit.inbox.markRead",
+  gitsCockpitInboxMarkAllRead: "gits.cockpit.inbox.markAllRead",
+  gitsCockpitInboxPin: "gits.cockpit.inbox.pin",
   gitsCapacityGetSnapshot: "gits.capacity.snapshot",
   gitsHermesGetStatus: "gits.hermes.status",
   gitsHermesGetConfig: "gits.hermes.config",
@@ -1024,6 +1034,30 @@ export const WsGitsAutomodeGoalsKillRpc = Rpc.make(WS_METHODS.gitsAutomodeGoalsK
   error: AutomodeSupervisorError,
 });
 
+export const WsGitsCockpitInboxListRpc = Rpc.make(WS_METHODS.gitsCockpitInboxList, {
+  payload: CockpitInboxListInput,
+  success: CockpitInboxListResult,
+  error: CockpitInboxError,
+});
+
+export const WsGitsCockpitInboxMarkReadRpc = Rpc.make(WS_METHODS.gitsCockpitInboxMarkRead, {
+  payload: CockpitInboxMarkReadInput,
+  success: CockpitInboxItem,
+  error: CockpitInboxError,
+});
+
+export const WsGitsCockpitInboxMarkAllReadRpc = Rpc.make(WS_METHODS.gitsCockpitInboxMarkAllRead, {
+  payload: CockpitInboxListInput,
+  success: CockpitInboxListResult,
+  error: CockpitInboxError,
+});
+
+export const WsGitsCockpitInboxPinRpc = Rpc.make(WS_METHODS.gitsCockpitInboxPin, {
+  payload: CockpitInboxPinInput,
+  success: CockpitInboxItem,
+  error: CockpitInboxError,
+});
+
 export const WsGitsCapacityGetSnapshotRpc = Rpc.make(WS_METHODS.gitsCapacityGetSnapshot, {
   payload: GitsCapacitySnapshotInput,
   success: GitsCapacitySnapshot,
@@ -1338,6 +1372,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsAutomodeEpisodesListRpc,
   WsGitsAutomodeStopAllRpc,
   WsGitsAutomodeGoalsKillRpc,
+  WsGitsCockpitInboxListRpc,
+  WsGitsCockpitInboxMarkReadRpc,
+  WsGitsCockpitInboxMarkAllReadRpc,
+  WsGitsCockpitInboxPinRpc,
   WsGitsCapacityGetSnapshotRpc,
   WsGitsHermesGetStatusRpc,
   WsGitsHermesGetConfigRpc,

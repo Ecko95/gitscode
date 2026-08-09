@@ -61,3 +61,24 @@ reactor. The current mapped events are:
 ponytail: notification text uses `Thread <threadId>` instead of loading the
 projection title in the hot reactor path. Notification clicks still deep-link to
 the exact thread route.
+
+## Cockpit Inbox and Automode
+
+Motoko proposal and Automode transitions are persisted in the Cockpit Inbox
+before optional PWA or Telegram delivery. The Inbox works without either
+external channel. Terminal items (`completed`, `rejected`, and `deferred`) are
+removed after 90 days; pinned items and all active items are retained.
+
+Approving a proposal queues one goal and enables and arms the existing scheduler
+for the first eligible London autonomy night. Starts fail closed when either the
+Codex five-hour or weekly quota window is missing, stale, errored, or above its
+configured limit. A known limiting reset defers the queued goal to that timestamp;
+the server never guesses a reset when telemetry is unusable.
+
+Boot and explicit operator disarm clear approval-based automatic-arming
+authorization. A driver wait may retarget a later night only while that persisted
+authorization remains active. Manual goal dispatch remains unchanged.
+
+PWA delivery still requires the VAPID setup above. Telegram delivery requires a
+working Hermes Telegram notifier. Channel failures do not remove Inbox history
+or roll back queued work.

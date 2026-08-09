@@ -44,6 +44,12 @@ export interface HermesAdapterShape {
     input: HermesInspectGitsProposalInput,
   ) => Effect.Effect<HermesProposalCard, HermesAdapterError>;
   readonly chat: (input: HermesChatInput) => Effect.Effect<HermesChatResult, HermesAdapterError>;
+  readonly refinePlan: (input: {
+    readonly title: string;
+    readonly prompt: string;
+    readonly repo: string;
+    readonly boundary: string;
+  }) => Effect.Effect<string, HermesAdapterError>;
   readonly decideProposal: (
     input: HermesProposalDecisionInput,
   ) => Effect.Effect<HermesProposalCard, HermesAdapterError>;

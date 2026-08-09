@@ -249,7 +249,11 @@ function execHermes(
               return;
             }
 
-            reject({ error, stderr: redactSecrets(stderr), stdout: redactSecrets(stdout) });
+            reject({
+              error,
+              stderr: redactSecrets(stderr),
+              stdout: redactSecrets(stdout),
+            });
           },
         );
       }),
@@ -455,7 +459,10 @@ function codexPoolStatus(parsed: unknown): {
     }
     return { usable: true, reason: null };
   }
-  return { usable: false, reason: `no usable credential_pool entry: ${issues.join("; ")}` };
+  return {
+    usable: false,
+    reason: `no usable credential_pool entry: ${issues.join("; ")}`,
+  };
 }
 
 export function parseCodexChainHealth(authJsonText: string | null): HermesCodexChainHealth {
@@ -506,11 +513,17 @@ export function parseCodexChainHealth(authJsonText: string | null): HermesCodexC
   if (lastAuthError?.relogin_required === true) {
     const code = typeof lastAuthError.code === "string" ? lastAuthError.code : "unknown";
     const at = typeof lastAuthError.at === "string" ? ` at ${lastAuthError.at}` : "";
-    return { kind: "needs-reauth", reason: poolStatus.reason ?? `relogin required (${code}${at})` };
+    return {
+      kind: "needs-reauth",
+      reason: poolStatus.reason ?? `relogin required (${code}${at})`,
+    };
   }
   const tokens =
     typeof record.tokens === "object" && record.tokens !== null
-      ? (record.tokens as { readonly access_token?: unknown; readonly refresh_token?: unknown })
+      ? (record.tokens as {
+          readonly access_token?: unknown;
+          readonly refresh_token?: unknown;
+        })
       : null;
   if (!hasNonEmptyToken(tokens?.access_token) || !hasNonEmptyToken(tokens?.refresh_token)) {
     return {
@@ -728,7 +741,11 @@ export async function codexChainPreflight(
     return null;
   }
   const reason = health.kind === "missing" ? "no Codex OAuth chain in HERMES_HOME" : health.reason;
-  return { kind: "needs-reauth", reason, command: codexReauthCommand(config.hermesHome) };
+  return {
+    kind: "needs-reauth",
+    reason,
+    command: codexReauthCommand(config.hermesHome),
+  };
 }
 
 type CodexChainAlert = (preflight: {
@@ -865,6 +882,39 @@ export function buildHermesCockpitChatArgs(prompt: string): string[] {
     "gits-cockpit",
     "--max-turns",
     String(HERMES_COCKPIT_CHAT_MAX_TURNS),
+    "-q",
+    prompt,
+  ];
+}
+
+export function buildHermesPlanRefinementPrompt(input: {
+  readonly title: string;
+  readonly prompt: string;
+  readonly boundary: string;
+}): string {
+  return [
+    "Analyze this queued task in observe-only mode.",
+    "Do not use shell commands, alter files, create worktrees, or start execution.",
+    `Task: ${input.title}`,
+    `Current request: ${input.prompt}`,
+    `Earliest execution boundary: ${input.boundary}`,
+    "Return concise planning notes that reduce the work to a safe bounded slice.",
+  ].join("\n");
+}
+
+export function buildHermesPlanRefinementArgs(prompt: string): string[] {
+  // `none` is deliberately an unknown/empty Hermes toolset: explicit toolsets skip
+  // coding-context defaults, and resolving this name yields zero tools.
+  return [
+    "chat",
+    "-Q",
+    "--source",
+    "gits-plan-refinement",
+    "--ignore-rules",
+    "--max-turns",
+    "1",
+    "-t",
+    "none",
     "-q",
     prompt,
   ];
@@ -1107,6 +1157,25 @@ export function normalizeProposal(value: unknown): HermesProposalCard | null {
     blockedReason: nullableStringFromUnknown(record.blockedReason),
     source: nullableStringFromUnknown(record.source) ?? "hermes proposal store",
     projectDir: nullableStringFromUnknown(record.projectDir),
+    model: nullableStringFromUnknown(record.model),
+    notBefore: nullableStringFromUnknown(record.notBefore),
+    maxRuntimeMinutes:
+      typeof record.maxRuntimeMinutes === "number" &&
+      Number.isInteger(record.maxRuntimeMinutes) &&
+      record.maxRuntimeMinutes >= 0
+        ? record.maxRuntimeMinutes
+        : null,
+    verificationCommands: Array.isArray(record.verificationCommands)
+      ? record.verificationCommands.flatMap((command) => {
+          if (typeof command !== "object" || command === null) return [];
+          const item = command as Record<string, unknown>;
+          const label = nullableStringFromUnknown(item.label);
+          const cmd = arrayFromUnknown(item.cmd, []);
+          return label === null || cmd.length === 0 ? [] : [{ label, cmd }];
+        })
+      : [],
+    integrationBranch: nullableStringFromUnknown(record.integrationBranch),
+    sourceThreadId: nullableStringFromUnknown(record.sourceThreadId),
     decisionReason: nullableStringFromUnknown(record.decisionReason),
     decidedAt: nullableStringFromUnknown(record.decidedAt),
     createdAt: nullableStringFromUnknown(record.createdAt) ?? LEGACY_PROPOSAL_TIMESTAMP,
@@ -1240,6 +1309,7 @@ export function makeProposal(input: {
   readonly recommendedExecutor?: HermesProposalExecutor;
   readonly verificationPlan?: ReadonlyArray<string>;
   readonly nextCommandOrPrompt?: string | null;
+  readonly sourceThreadId?: string;
 }): HermesProposalCard {
   const risk = input.blockedReason !== null ? "blocked" : actionRisk(input.actionKind);
   return {
@@ -1267,6 +1337,12 @@ export function makeProposal(input: {
     blockedReason: input.blockedReason,
     source: input.source,
     projectDir: input.projectDir,
+    model: null,
+    notBefore: null,
+    maxRuntimeMinutes: null,
+    verificationCommands: [],
+    integrationBranch: null,
+    sourceThreadId: input.sourceThreadId ?? null,
     decisionReason: null,
     decidedAt: null,
     createdAt: input.now,
@@ -1885,6 +1961,7 @@ const makeInspectGitsAndPropose =
             : `Hermes Codex OAuth chain requires re-login. Run \`${preflight.command}\`.`,
           source: "hermes chat -q",
           projectDir: input.projectDir,
+          ...(input.sourceThreadId === undefined ? {} : { sourceThreadId: input.sourceThreadId }),
           now,
           evidence: ["GITS preflight blocked the Hermes spawn before execution.", preflight.reason],
         });
@@ -1936,6 +2013,7 @@ const makeInspectGitsAndPropose =
         blockedReason: exec.exitCode === 0 ? null : "Hermes proposal command did not complete.",
         source: "hermes chat -q",
         projectDir: input.projectDir,
+        ...(input.sourceThreadId === undefined ? {} : { sourceThreadId: input.sourceThreadId }),
         now,
         evidence: [
           "Hermes was invoked in read-only inspection mode.",
@@ -2131,6 +2209,20 @@ export const decideProposal: HermesAdapterShape["decideProposal"] = (input) =>
         : (input.reason ?? proposal.blockedReason);
     const updated: HermesProposalCard = {
       ...proposal,
+      title: input.title ?? proposal.title,
+      nextCommandOrPrompt: input.prompt ?? proposal.nextCommandOrPrompt,
+      projectDir: input.projectDir ?? proposal.projectDir,
+      model: input.model === undefined ? proposal.model : input.model,
+      notBefore: input.notBefore === undefined ? proposal.notBefore : input.notBefore,
+      maxRuntimeMinutes:
+        input.maxRuntimeMinutes === undefined
+          ? proposal.maxRuntimeMinutes
+          : input.maxRuntimeMinutes,
+      verificationCommands: input.verificationCommands ?? proposal.verificationCommands,
+      integrationBranch:
+        input.integrationBranch === undefined
+          ? proposal.integrationBranch
+          : input.integrationBranch,
       status: nextStatus,
       blockedReason,
       decisionReason: input.reason ?? null,
@@ -2348,6 +2440,23 @@ function makeHermesCliAdapterShape(
   notifier: HermesTelegramNotifierShape,
 ): HermesAdapterShape {
   const notifyAuthFailure = makeCodexChainAlert(notifier);
+  const refinePlan: HermesAdapterShape["refinePlan"] = (input) =>
+    Effect.gen(function* () {
+      const config = yield* getConfig();
+      yield* Effect.tryPromise({
+        try: () => ensureSoul(config),
+        catch: (cause) => toHermesError("Failed to prepare Hermes plan refinement.", cause),
+      });
+      const result = yield* execHermes(
+        buildHermesPlanRefinementArgs(buildHermesPlanRefinementPrompt(input)),
+        { cwd: input.repo, timeoutMs: PROPOSAL_TIMEOUT_MS },
+      );
+      const notes = nonEmpty(result.stdout) ?? nonEmpty(result.stderr);
+      if (result.exitCode !== 0 || notes === null) {
+        return yield* toHermesError("Hermes plan refinement did not complete.");
+      }
+      return notes;
+    });
   return {
     getStatus,
     getConfig,
@@ -2359,6 +2468,7 @@ function makeHermesCliAdapterShape(
     listProposals,
     inspectGitsAndPropose: makeInspectGitsAndPropose(notifyAuthFailure),
     chat: makeChat(capacityMonitor, notifyAuthFailure),
+    refinePlan,
     decideProposal,
     writeProjectContext: makeWriteProjectContext(
       capacityMonitor,

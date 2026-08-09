@@ -14,7 +14,22 @@ export type GitsSchedulerGateResult =
       /** Set ONLY by the config.enabled === false bypass — the driver must not count these starts against the night cap. */
       readonly bypassed?: true;
     }
-  | { readonly allowed: false; readonly reason: string };
+  | {
+      readonly allowed: false;
+      readonly category: "schedule" | "quota" | "policy";
+      readonly reason: string;
+      readonly retryAt: string | null;
+      readonly targetsCurrentNight?: boolean;
+    };
+
+export interface GitsSchedulerScheduleApprovedGoalInput {
+  readonly eligibleAt: string | null;
+}
+
+export interface GitsSchedulerScheduleApprovedGoalResult {
+  readonly snapshot: GitsSchedulerSnapshot;
+  readonly targetsCurrentNight: boolean;
+}
 
 export interface GitsSchedulerStartCheckInput {
   /** policy.maxRuntimeMinutes at gate time; null = no cap configured (fail closed). */
@@ -35,6 +50,12 @@ export interface GitsSlotSchedulerShape {
   readonly arm: () => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;
   readonly disarm: (
     input: GitsSchedulerDisarmInput,
+  ) => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;
+  readonly scheduleApprovedGoal: (
+    input: GitsSchedulerScheduleApprovedGoalInput,
+  ) => Effect.Effect<GitsSchedulerScheduleApprovedGoalResult, GitsSlotSchedulerError>;
+  readonly retargetApprovedGoal: (
+    input: GitsSchedulerScheduleApprovedGoalInput,
   ) => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;
   readonly checkStartAllowed: (
     input: GitsSchedulerStartCheckInput,

@@ -904,6 +904,10 @@ export const AutomodePolicy = Schema.Struct({
   // decoding default is load-bearing — PersistedAutomodeState embeds this schema, so a legacy
   // automode-state.json without telegramDigestEnabled must still decode.
   telegramDigestEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  gitsNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  telegramNotificationsEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   // Human-in-the-loop gate for the nightly sweep: when true (default), sweep-drafted goals
   // enter waiting-approval so the owner confirms them (e.g. Telegram APPROVE <id>) before
   // dispatch; when false, the sweep keeps its legacy self-approved queued behavior.
@@ -959,8 +963,110 @@ export const AutomodeGoal = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  notBefore: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  maxRuntimeMinutes: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  verificationCommands: Schema.Array(GitsVerifyCommand).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  integrationBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  planningNotes: Schema.NullOr(SummaryString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  planningBoundary: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type AutomodeGoal = typeof AutomodeGoal.Type;
+
+export const CockpitInboxState = Schema.Literals([
+  "pending-review",
+  "approved-queued",
+  "waiting-quota-reset",
+  "scheduled-tonight",
+  "running",
+  "attention-required",
+  "completed",
+  "rejected",
+  "deferred",
+]);
+export type CockpitInboxState = typeof CockpitInboxState.Type;
+
+export const CockpitInboxFilter = Schema.Literals([
+  "unread",
+  "pending",
+  "approved",
+  "waiting",
+  "completed",
+]);
+export type CockpitInboxFilter = typeof CockpitInboxFilter.Type;
+
+export const CockpitInboxEvent = Schema.Struct({
+  eventKey: TrimmedNonEmptyString,
+  at: IsoDateTime,
+  state: CockpitInboxState,
+  reason: SummaryString,
+  deepLink: TrimmedNonEmptyString,
+});
+export type CockpitInboxEvent = typeof CockpitInboxEvent.Type;
+
+export const CockpitInboxItem = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  proposalId: TrimmedNonEmptyString,
+  goalId: Schema.NullOr(TrimmedNonEmptyString),
+  title: TrimmedNonEmptyString,
+  repository: Schema.NullOr(PathString),
+  state: CockpitInboxState,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  terminalAt: Schema.NullOr(IsoDateTime),
+  readAt: Schema.NullOr(IsoDateTime),
+  pinned: Schema.Boolean,
+  reason: SummaryString,
+  deepLink: TrimmedNonEmptyString,
+  timeline: Schema.Array(CockpitInboxEvent),
+});
+export type CockpitInboxItem = typeof CockpitInboxItem.Type;
+
+export const CockpitInboxCounts = Schema.Struct({
+  unread: NonNegativeInt,
+  pending: NonNegativeInt,
+  approved: NonNegativeInt,
+  waiting: NonNegativeInt,
+  completed: NonNegativeInt,
+});
+export type CockpitInboxCounts = typeof CockpitInboxCounts.Type;
+
+export const CockpitInboxListInput = Schema.Struct({
+  filter: Schema.optional(CockpitInboxFilter),
+});
+export type CockpitInboxListInput = typeof CockpitInboxListInput.Type;
+
+export const CockpitInboxListResult = Schema.Struct({
+  items: Schema.Array(CockpitInboxItem),
+  counts: CockpitInboxCounts,
+});
+export type CockpitInboxListResult = typeof CockpitInboxListResult.Type;
+
+export const CockpitInboxMarkReadInput = Schema.Struct({ id: TrimmedNonEmptyString });
+export type CockpitInboxMarkReadInput = typeof CockpitInboxMarkReadInput.Type;
+
+export const CockpitInboxPinInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  pinned: Schema.Boolean,
+});
+export type CockpitInboxPinInput = typeof CockpitInboxPinInput.Type;
+
+export class CockpitInboxError extends Schema.TaggedErrorClass<CockpitInboxError>()(
+  "CockpitInboxError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
 
 export const AutomodeBudgetUsageSource = Schema.Literals(["provider-runtime", "unavailable"]);
 export type AutomodeBudgetUsageSource = typeof AutomodeBudgetUsageSource.Type;
@@ -1014,6 +1120,8 @@ export const AutomodePolicyUpdateInput = Schema.Struct({
   integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   motokoAuthority: Schema.optional(MotokoAuthority),
   telegramDigestEnabled: Schema.optional(Schema.Boolean),
+  gitsNotificationsEnabled: Schema.optional(Schema.Boolean),
+  telegramNotificationsEnabled: Schema.optional(Schema.Boolean),
   sweepRequiresConfirmation: Schema.optional(Schema.Boolean),
 });
 export type AutomodePolicyUpdateInput = typeof AutomodePolicyUpdateInput.Type;
@@ -1027,6 +1135,10 @@ export const AutomodeEnqueueGoalInput = Schema.Struct({
   episodeId: Schema.optional(TrimmedNonEmptyString),
   // Goal origin (manual/proposal/sweep); the supervisor defaults to "manual" when absent.
   origin: Schema.optional(AutomodeGoalOrigin),
+  notBefore: Schema.optional(Schema.NullOr(IsoDateTime)),
+  maxRuntimeMinutes: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
+  integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type AutomodeEnqueueGoalInput = typeof AutomodeEnqueueGoalInput.Type;
 
@@ -1113,6 +1225,7 @@ export type GitsSchedulerGateDecision = typeof GitsSchedulerGateDecision.Type;
 export const GitsSchedulerSnapshot = Schema.Struct({
   config: GitsSchedulerConfig,
   arming: GitsSchedulerArming,
+  automaticArmingAuthorized: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   currentSlot: Schema.NullOr(GitsSchedulerSlot),
   slotRemainingMs: Schema.NullOr(NonNegativeInt),
   goalsStartedTonight: NonNegativeInt,
@@ -1418,6 +1531,7 @@ export const HermesInspectGitsProposalInput = Schema.Struct({
   // still required downstream) — a read-only card can only ever become a verification
   // draft (draftKindFor). Pass "read-only" explicitly for inert informational cards.
   actionKind: Schema.optional(HermesProposalActionKind),
+  sourceThreadId: Schema.optional(ThreadId),
 });
 export type HermesInspectGitsProposalInput = typeof HermesInspectGitsProposalInput.Type;
 
@@ -1528,6 +1642,22 @@ export const HermesProposalCard = Schema.Struct({
   blockedReason: Schema.NullOr(SummaryString),
   source: TrimmedNonEmptyString,
   projectDir: Schema.NullOr(PathString),
+  model: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  notBefore: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  maxRuntimeMinutes: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  verificationCommands: Schema.Array(GitsVerifyCommand).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  integrationBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  sourceThreadId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   decisionReason: Schema.NullOr(SummaryString),
   decidedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
@@ -1548,6 +1678,14 @@ export const HermesProposalDecisionInput = Schema.Struct({
   proposalId: TrimmedNonEmptyString,
   decision: HermesProposalDecision,
   reason: Schema.optional(SummaryString),
+  title: Schema.optional(TrimmedNonEmptyString),
+  prompt: Schema.optional(SummaryString),
+  projectDir: Schema.optional(PathString),
+  model: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  notBefore: Schema.optional(Schema.NullOr(IsoDateTime)),
+  maxRuntimeMinutes: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  verificationCommands: Schema.optional(Schema.Array(GitsVerifyCommand)),
+  integrationBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type HermesProposalDecisionInput = typeof HermesProposalDecisionInput.Type;
 

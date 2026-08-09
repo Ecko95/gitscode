@@ -11,18 +11,21 @@ import type {
   HermesExecutionDraft,
   HermesProposalCard,
 } from "@t3tools/contracts";
-import { HermesAdapterError } from "@t3tools/contracts";
+import { HermesAdapterError, ThreadId } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeSupervisor } from "../Services/AutomodeSupervisor.ts";
 import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
+import { CockpitInbox } from "../Services/CockpitInbox.ts";
 import { DelamainAdapter } from "../Services/DelamainAdapter.ts";
 import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import { HermesTelegramNotifier } from "../Services/HermesTelegramNotifier.ts";
-import { AutomodeProposalSweepLive } from "./AutomodeProposalSweep.ts";
+import { AutomodeProposalSweepLive, selectContinuationsByRepo } from "./AutomodeProposalSweep.ts";
+import { AutomodeNotifications } from "./AutomodeNotifications.ts";
 import { AutomodeSupervisorLive } from "./AutomodeSupervisor.ts";
 import { AutomodeSupervisorTestRoutingLayer } from "./AutomodeSupervisor.testHelpers.ts";
 
@@ -70,6 +73,12 @@ function makeCard(overrides: Partial<HermesProposalCard>): HermesProposalCard {
     blockedReason: null,
     source: "test",
     projectDir: REPO,
+    model: null,
+    notBefore: null,
+    maxRuntimeMinutes: null,
+    verificationCommands: [],
+    integrationBranch: null,
+    sourceThreadId: null,
     decisionReason: null,
     decidedAt: null,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -104,6 +113,9 @@ interface HermesOptions {
   readonly onInspect?: (input: { readonly projectDir: string; readonly prompt?: string }) => void;
   readonly episodes?: ReadonlyArray<AutomodeEpisode>;
   readonly telegramSent?: string[];
+  readonly notificationsSent?: string[];
+  readonly notificationOrder?: string[];
+  readonly inboxFails?: boolean;
 }
 
 function makeLayer(hermesOptions: HermesOptions = {}) {
@@ -157,11 +169,43 @@ function makeLayer(hermesOptions: HermesOptions = {}) {
         hermesOptions.telegramSent?.push(`${subject}\n${text}`);
       }),
   });
+  const notifications = Layer.mock(AutomodeNotifications)({
+    notify: (input) =>
+      Effect.sync(() => {
+        hermesOptions.notificationOrder?.push("delivery");
+        hermesOptions.notificationsSent?.push(input.url);
+      }),
+  });
+  const inbox = Layer.mock(CockpitInbox)({
+    record: (input) =>
+      hermesOptions.inboxFails
+        ? Effect.fail({ _tag: "CockpitInboxError", message: "write failed" } as never)
+        : Effect.sync(() => {
+            hermesOptions.notificationOrder?.push(`inbox:${input.eventKey}`);
+            return { item: {} as never, event: {} as never, created: true };
+          }),
+    list: () => Effect.die("unused"),
+    markRead: () => Effect.die("unused"),
+    markAllRead: () => Effect.die("unused"),
+    setPinned: () => Effect.die("unused"),
+  });
+  const projection = Layer.mock(ProjectionSnapshotQuery)({
+    getSnapshot: () =>
+      Effect.succeed({
+        snapshotSequence: 0,
+        projects: [],
+        threads: [],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+  });
   return AutomodeProposalSweepLive.pipe(
     Layer.provideMerge(supervisor),
     Layer.provide(hermes),
     Layer.provide(ledger),
     Layer.provide(notifier),
+    Layer.provide(notifications),
+    Layer.provide(inbox),
+    Layer.provide(projection),
     Layer.provideMerge(TestClock.layer()),
   );
 }
@@ -191,6 +235,25 @@ function arm(options?: {
 }
 
 describe("AutomodeProposalSweep", () => {
+  it("selects the newest unfinished thread per repository", () => {
+    const selected = selectContinuationsByRepo({
+      projects: [{ id: "project-1", workspaceRoot: REPO }],
+      threads: [
+        {
+          id: ThreadId.make("thread-unfinished"),
+          projectId: "project-1",
+          title: "Finish notifications",
+          updatedAt: "2026-01-02T00:00:00.000Z",
+          archivedAt: null,
+          deletedAt: null,
+          latestTurn: { state: "interrupted" },
+          proposedPlans: [],
+        },
+      ],
+    });
+    assert.equal(selected.get(REPO)?.id, "thread-unfinished");
+  });
+
   it.effect("enqueues one waiting-approval goal per opted-in repo, once per night", () => {
     let inspects = 0;
     return Effect.gen(function* () {
@@ -328,58 +391,53 @@ describe("AutomodeProposalSweep", () => {
     }).pipe(Effect.provide(makeLayer({ onInspect: () => (inspects += 1) })));
   });
 
-  it.effect(
-    "parks the sweep-drafted goal at waiting-approval and Telegram-announces it with its id when confirmation is required",
-    () => {
-      const telegramSent: string[] = [];
-      return Effect.gen(function* () {
-        const supervisor = yield* arm({
-          sweepRequiresConfirmation: true,
-          requireApprovalForPeerSpawn: true,
-        });
-        const sweep = yield* AutomodeProposalSweep;
-        yield* TestClock.setTime(EVENING);
-        yield* sweep.tick();
+  it.effect("leaves a review-required sweep as a proposal and deep-links its notification", () => {
+    const notificationsSent: string[] = [];
+    const notificationOrder: string[] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* arm({
+        sweepRequiresConfirmation: true,
+        requireApprovalForPeerSpawn: true,
+      });
+      const sweep = yield* AutomodeProposalSweep;
+      yield* TestClock.setTime(EVENING);
+      yield* sweep.tick();
 
-        const snapshot = yield* supervisor.getSnapshot();
-        assert.equal(snapshot.goals.length, 1);
-        const goal = snapshot.goals[0]!;
-        // The confirmation gate parks the goal — it must NOT be self-approved.
-        assert.equal(goal.status, "waiting-approval");
-        assert.isNull(goal.approvedAt);
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.length, 0);
+      assert.deepEqual(notificationsSent, ["/gits?panel=autopilot&proposal=proposal-1"]);
+      assert.deepEqual(notificationOrder, ["inbox:proposal:proposal-1:created", "delivery"]);
+    }).pipe(Effect.provide(makeLayer({ notificationsSent, notificationOrder })));
+  });
 
-        assert.equal(telegramSent.length, 1);
-        const message = telegramSent[0] ?? "";
-        assert.include(message, `[${goal.id.replace(/^goal-/, "").slice(0, 4)}]`);
-        assert.match(message, /Improve sweep repo — sweep-repo/);
-        assert.include(message, "Reply: APPROVE <code> · REJECT <code>");
-      }).pipe(Effect.provide(makeLayer({ telegramSent })));
-    },
-  );
+  it.effect("does not deliver when the durable Inbox write fails", () => {
+    const notificationsSent: string[] = [];
+    return Effect.gen(function* () {
+      yield* arm({ sweepRequiresConfirmation: true });
+      const sweep = yield* AutomodeProposalSweep;
+      yield* TestClock.setTime(EVENING);
+      yield* sweep.tick();
+      assert.deepEqual(notificationsSent, []);
+    }).pipe(Effect.provide(makeLayer({ notificationsSent, inboxFails: true })));
+  });
 
-  it.effect(
-    "parks the sweep-drafted goal at waiting-approval even when requireApprovalForPeerSpawn is off",
-    () => {
-      return Effect.gen(function* () {
-        // sweepRequiresConfirmation must gate independent of requireApprovalForPeerSpawn —
-        // an operator who disables per-peer-spawn approval must not thereby also waive the
-        // owner's sweep confirmation contract.
-        const supervisor = yield* arm({
-          sweepRequiresConfirmation: true,
-          requireApprovalForPeerSpawn: false,
-        });
-        const sweep = yield* AutomodeProposalSweep;
-        yield* TestClock.setTime(EVENING);
-        yield* sweep.tick();
+  it.effect("does not enqueue a review-required sweep when peer approval is off", () => {
+    return Effect.gen(function* () {
+      // sweepRequiresConfirmation must gate independent of requireApprovalForPeerSpawn —
+      // an operator who disables per-peer-spawn approval must not thereby also waive the
+      // owner's sweep confirmation contract.
+      const supervisor = yield* arm({
+        sweepRequiresConfirmation: true,
+        requireApprovalForPeerSpawn: false,
+      });
+      const sweep = yield* AutomodeProposalSweep;
+      yield* TestClock.setTime(EVENING);
+      yield* sweep.tick();
 
-        const snapshot = yield* supervisor.getSnapshot();
-        assert.equal(snapshot.goals.length, 1);
-        const goal = snapshot.goals[0]!;
-        assert.equal(goal.status, "waiting-approval");
-        assert.isNull(goal.approvedAt);
-      }).pipe(Effect.provide(makeLayer()));
-    },
-  );
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals.length, 0);
+    }).pipe(Effect.provide(makeLayer()));
+  });
 
   it.effect(
     "keeps the legacy self-queued path (still Telegram-announced) when sweepRequiresConfirmation is off",

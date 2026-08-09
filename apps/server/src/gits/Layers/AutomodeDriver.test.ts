@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 
 import {
   AutomodeSupervisorError,
+  CockpitInboxError,
   GitsReviewError,
   GitsSlotSchedulerError,
   type DelamainPeer,
@@ -25,11 +26,14 @@ import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
 import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
+import { CockpitInbox, type CockpitInboxRecordInput } from "../Services/CockpitInbox.ts";
+import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import {
   HermesTelegramNotifier,
   HermesTelegramNotifierError,
   type HermesTelegramNotifierShape,
 } from "../Services/HermesTelegramNotifier.ts";
+import { AutomodeNotifications } from "./AutomodeNotifications.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import {
   GitsSlotScheduler,
@@ -149,6 +153,10 @@ interface MakeLayerOptions {
   readonly onDigestTick?: () => void;
   readonly onNotify?: (input: Parameters<HermesTelegramNotifierShape["notify"]>[0]) => void;
   readonly notifyError?: HermesTelegramNotifierError;
+  readonly onInbox?: (input: CockpitInboxRecordInput) => void;
+  readonly inboxError?: CockpitInboxError;
+  readonly onRefinePlan?: (boundary: string) => void;
+  readonly onRetarget?: (eligibleAt: string | null) => void;
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -245,6 +253,7 @@ function makeLayer(
       }),
   });
   const scheduler = Layer.mock(GitsSlotScheduler)({
+    getSnapshot: () => Effect.succeed({ arming: { disarmedReason: null } } as never),
     checkStartAllowed: () => Effect.succeed(options?.gateResult ?? { allowed: true as const }),
     recordGoalStart: (input) =>
       Effect.suspend(() => {
@@ -252,6 +261,11 @@ function makeLayer(
         return options?.recordGoalStartError !== undefined
           ? Effect.fail(options.recordGoalStartError)
           : Effect.void;
+      }),
+    retargetApprovedGoal: ({ eligibleAt }) =>
+      Effect.sync(() => {
+        options?.onRetarget?.(eligibleAt);
+        return {} as never;
       }),
   });
   const landing = Layer.mock(AutomodeLanding)({
@@ -298,7 +312,33 @@ function makeLayer(
     notify: (input) =>
       Effect.suspend(() => {
         options?.onNotify?.(input);
-        return options?.notifyError === undefined ? Effect.void : Effect.fail(options.notifyError);
+        return options?.notifyError === undefined ? Effect.void : Effect.die(options.notifyError);
+      }),
+  });
+  const notifications = Layer.mock(AutomodeNotifications)({
+    notify: (input) =>
+      Effect.suspend(() => {
+        options?.onNotify?.(input);
+        return options?.notifyError === undefined ? Effect.void : Effect.die(options.notifyError);
+      }),
+  });
+  const inbox = Layer.mock(CockpitInbox)({
+    record: (input) =>
+      Effect.suspend(() => {
+        if (options?.inboxError !== undefined) return Effect.fail(options.inboxError);
+        options?.onInbox?.(input);
+        return Effect.succeed({} as never);
+      }),
+    list: () => Effect.die("unused"),
+    markRead: () => Effect.die("unused"),
+    markAllRead: () => Effect.die("unused"),
+    setPinned: () => Effect.die("unused"),
+  });
+  const hermes = Layer.mock(HermesAdapter)({
+    refinePlan: ({ boundary }) =>
+      Effect.sync(() => {
+        options?.onRefinePlan?.(boundary);
+        return "Split the task into one bounded retry change.";
       }),
   });
   const config = ServerConfig.layerTest(
@@ -324,6 +364,9 @@ function makeLayer(
     Layer.provide(digest),
     Layer.provide(proposalSweep),
     Layer.provide(notifier),
+    Layer.provide(notifications),
+    Layer.provide(inbox),
+    Layer.provide(hermes),
   );
 }
 
@@ -392,6 +435,28 @@ describe("AutomodeDriver", () => {
       const goal = snapshot.goals.find((g) => g.title === "First");
       assert.equal(goal?.status, "running");
       assert.equal(goal?.peerId, "peer-driver");
+    }).pipe(Effect.provide(makeLayer(peerStatus)));
+  });
+
+  it.effect("keeps a proposal queued until its not-before time", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({
+        title: "Scheduled",
+        repo: "/tmp/source-repo",
+        prompt: "do it later",
+        notBefore: "2099-01-01T00:00:00.000Z",
+      });
+
+      yield* driver.tickOnce();
+
+      assert.equal(
+        (yield* supervisor.getSnapshot()).goals.find((goal) => goal.title === "Scheduled")?.status,
+        "queued",
+      );
     }).pipe(Effect.provide(makeLayer(peerStatus)));
   });
 
@@ -567,6 +632,34 @@ describe("AutomodeDriver", () => {
       assert.equal(snapshot.goals.find((g) => g.title === "Bad")?.status, "failed");
       assert.equal(snapshot.driverHalted, true);
     }).pipe(Effect.provide(makeLayer(peerStatus, { review: failingReview })));
+  });
+
+  it.effect("Inbox failure never blocks halt and suppresses external failure alerts", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const notifications: Parameters<HermesTelegramNotifierShape["notify"]>[0][] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Bad", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+      peerStatus.current = "done";
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals[0]?.status, "failed");
+      assert.equal(snapshot.driverHalted, true);
+      assert.equal(notifications.length, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          review: failingReview,
+          inboxError: new CockpitInboxError({ message: "Inbox disk full" }),
+          onNotify: (input) => notifications.push(input),
+        }),
+      ),
+    );
   });
 
   it.effect("on done: integration skipped (nothing pushed) → goal failed and chain halts", () => {
@@ -1013,6 +1106,9 @@ describe("AutomodeDriver", () => {
   it.effect("scheduler deny → no dispatch, goal stays queued, no halt", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
     const starts: GitsSchedulerGoalStartInput[] = [];
+    const inbox: CockpitInboxRecordInput[] = [];
+    let refinements = 0;
+    let retargets = 0;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       const driver = yield* AutomodeDriver;
@@ -1022,14 +1118,117 @@ describe("AutomodeDriver", () => {
       yield* driver.tickOnce();
 
       const snapshot = yield* supervisor.getSnapshot();
-      assert.equal(snapshot.goals.find((g) => g.title === "Gated")?.status, "queued");
+      const goal = snapshot.goals.find((g) => g.title === "Gated")!;
+      assert.equal(goal.status, "queued");
+      assert.equal(goal.notBefore, null);
       assert.equal(snapshot.driverHalted, false);
       assert.equal(starts.length, 0);
+      assert.equal(refinements, 0);
+      assert.equal(retargets, 0);
+      assert.equal(inbox[0]?.state, "scheduled-tonight");
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
-          gateResult: { allowed: false, reason: "Outside slot window (next slot 00:00)" },
+          gateResult: {
+            allowed: false,
+            category: "schedule",
+            reason: "Outside slot window (next slot 00:00)",
+            retryAt: "2099-01-02T00:00:00.000Z",
+            targetsCurrentNight: true,
+          },
           onRecordGoalStart: (input) => starts.push(input),
+          onRefinePlan: () => {
+            refinements += 1;
+          },
+          onRetarget: () => {
+            retargets += 1;
+          },
+          onInbox: (event) => inbox.push(event),
+        }),
+      ),
+    );
+  });
+
+  it.effect("known quota reset defers and refines once without dispatching", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const resetAt = "2099-01-02T00:00:00.000Z";
+    const refinements: string[] = [];
+    const retargets: Array<string | null> = [];
+    const inbox: CockpitInboxRecordInput[] = [];
+    let spawns = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Quota wait", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+      yield* driver.tickOnce();
+
+      const goal = (yield* supervisor.getSnapshot()).goals[0]!;
+      assert.equal(goal.status, "queued");
+      assert.equal(goal.notBefore, resetAt);
+      assert.equal(goal.planningBoundary, resetAt);
+      assert.include(goal.planningNotes ?? "", "bounded retry change");
+      assert.deepEqual(refinements, [resetAt]);
+      assert.deepEqual(retargets, [resetAt]);
+      assert.deepEqual(
+        inbox.map((event) => event.state),
+        ["waiting-quota-reset"],
+      );
+      assert.equal(spawns, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          gateResult: {
+            allowed: false,
+            category: "quota",
+            reason: "Codex weekly window at 92%",
+            retryAt: resetAt,
+          },
+          onRefinePlan: (boundary) => refinements.push(boundary),
+          onRetarget: (eligibleAt) => retargets.push(eligibleAt),
+          onInbox: (event) => inbox.push(event),
+          onSpawnPeer: () => {
+            spawns += 1;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("missing quota telemetry records a wait without guessing a reset", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const inbox: CockpitInboxRecordInput[] = [];
+    let refinements = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({
+        title: "Telemetry wait",
+        repo: "/tmp/source-repo",
+        prompt: "x",
+      });
+      yield* driver.tickOnce();
+
+      const goal = (yield* supervisor.getSnapshot()).goals[0]!;
+      assert.equal(goal.notBefore, null);
+      assert.equal(refinements, 0);
+      assert.equal(inbox[0]?.eventKey, `goal:${goal.id}:waiting:telemetry`);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          gateResult: {
+            allowed: false,
+            category: "quota",
+            reason: "Codex quota telemetry is missing or stale",
+            retryAt: null,
+          },
+          onRefinePlan: () => {
+            refinements += 1;
+          },
+          onInbox: (event) => inbox.push(event),
         }),
       ),
     );
@@ -1083,7 +1282,12 @@ describe("AutomodeDriver", () => {
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
-          gateResult: { allowed: false, reason: "Night goal cap reached (1)" },
+          gateResult: {
+            allowed: false,
+            category: "schedule",
+            reason: "Night goal cap reached (1)",
+            retryAt: null,
+          },
           onOpenHeldPr: () => {
             openCalls += 1;
           },

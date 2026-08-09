@@ -6,6 +6,7 @@ import {
   type AutomodeDispatchResult,
   type AutomodeGoal,
   type AutomodeSnapshot,
+  type CockpitInboxItem,
   type DelamainPeer,
   type GitsBuildInfo,
   type GitsCapacitySnapshot,
@@ -140,6 +141,8 @@ import {
   type GitsSlotSchedulerShape,
 } from "./gits/Services/GitsSlotScheduler.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
+import { CockpitInbox, type CockpitInboxShape } from "./gits/Services/CockpitInbox.ts";
+import { AutomodeNotifications } from "./gits/Layers/AutomodeNotifications.ts";
 import { setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
@@ -248,6 +251,12 @@ const defaultAutomodeGoal: AutomodeGoal = {
   prompt: "Spawn a safe test peer.",
   repo: "/tmp/source-repo",
   model: "gpt-5.5",
+  notBefore: null,
+  maxRuntimeMinutes: null,
+  verificationCommands: [],
+  integrationBranch: null,
+  planningNotes: null,
+  planningBoundary: null,
   status: "queued",
   peerId: null,
   blockedReason: null,
@@ -279,6 +288,8 @@ const defaultAutomodeSnapshot: AutomodeSnapshot = {
     integrationBranch: null,
     motokoAuthority: "observe",
     telegramDigestEnabled: true,
+    gitsNotificationsEnabled: true,
+    telegramNotificationsEnabled: false,
     sweepRequiresConfirmation: true,
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
@@ -310,6 +321,7 @@ const defaultAutomodeDispatchResult: AutomodeDispatchResult = {
 const defaultGitsSchedulerSnapshot: GitsSchedulerSnapshot = {
   config: { enabled: false, maxGoalsPerNight: 3, weeklyMaxUsedPercent: 80 },
   arming: { status: "disarmed", nightKey: null, armedAt: null, disarmedReason: null },
+  automaticArmingAuthorized: false,
   currentSlot: null,
   slotRemainingMs: null,
   goalsStartedTonight: 0,
@@ -492,6 +504,12 @@ const defaultHermesProposal: HermesProposalCard = {
   blockedReason: null,
   source: "test",
   projectDir: null,
+  model: null,
+  notBefore: null,
+  maxRuntimeMinutes: null,
+  verificationCommands: [],
+  integrationBranch: null,
+  sourceThreadId: null,
   decisionReason: null,
   decidedAt: null,
   createdAt: "1970-01-01T00:00:00.000Z",
@@ -858,6 +876,7 @@ const buildAppUnderTest = (options?: {
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
     automodeSupervisor?: Partial<AutomodeSupervisorShape>;
     gitsSlotScheduler?: Partial<GitsSlotSchedulerShape>;
+    cockpitInbox?: Partial<CockpitInboxShape>;
     gitsCapacityMonitor?: Partial<GitsCapacityMonitorShape>;
     hermesAdapter?: Partial<HermesAdapterShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
@@ -1141,8 +1160,10 @@ const buildAppUnderTest = (options?: {
       }),
       Layer.mock(AutomodeSupervisor)({
         getSnapshot: () => Effect.succeed(defaultAutomodeSnapshot),
+        getPolicy: () => Effect.succeed(defaultAutomodeSnapshot.policy),
         updatePolicy: () => Effect.succeed(defaultAutomodeSnapshot),
         enqueueGoal: () => Effect.succeed(defaultAutomodeSnapshot),
+        updateQueuedGoal: () => Effect.succeed(defaultAutomodeGoal),
         approveGoal: () => Effect.succeed(defaultAutomodeGoal),
         rejectGoal: () =>
           Effect.succeed({
@@ -1162,7 +1183,28 @@ const buildAppUnderTest = (options?: {
         setConfig: () => Effect.succeed(defaultGitsSchedulerSnapshot),
         arm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
         disarm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
+        scheduleApprovedGoal: () =>
+          Effect.succeed({
+            snapshot: defaultGitsSchedulerSnapshot,
+            targetsCurrentNight: false,
+          }),
         ...options?.layers?.gitsSlotScheduler,
+      }),
+      Layer.mock(CockpitInbox)({
+        list: () =>
+          Effect.succeed({
+            items: [],
+            counts: { unread: 0, pending: 0, approved: 0, waiting: 0, completed: 0 },
+          }),
+        markRead: () => Effect.die("not configured"),
+        markAllRead: () =>
+          Effect.succeed({
+            items: [],
+            counts: { unread: 0, pending: 0, approved: 0, waiting: 0, completed: 0 },
+          }),
+        setPinned: () => Effect.die("not configured"),
+        record: () => Effect.succeed({} as never),
+        ...options?.layers?.cockpitInbox,
       }),
       Layer.mock(GitsCapacityMonitor)({
         getSnapshot: () => Effect.succeed(defaultGitsCapacitySnapshot),
@@ -1216,6 +1258,7 @@ const buildAppUnderTest = (options?: {
           }),
         ...options?.layers?.hermesAdapter,
       }),
+      Layer.mock(AutomodeNotifications)({ notify: () => Effect.void }),
     );
 
     const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
@@ -5209,6 +5252,81 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc Cockpit Inbox mutations", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const item: CockpitInboxItem = {
+        id: "epi-1",
+        proposalId: "proposal-1",
+        goalId: null,
+        title: "Review proposal",
+        repository: "/tmp/repo",
+        state: "pending-review",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        terminalAt: null,
+        readAt: null,
+        pinned: false,
+        reason: "Ready for review.",
+        deepLink: "/gits?panel=autopilot&proposal=proposal-1",
+        timeline: [],
+      };
+      const result = {
+        items: [item],
+        counts: { unread: 1, pending: 1, approved: 0, waiting: 0, completed: 0 },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          cockpitInbox: {
+            list: ({ filter }) =>
+              Effect.sync(() => {
+                calls.push(`list:${filter}`);
+                return result;
+              }),
+            markRead: ({ id }) =>
+              Effect.sync(() => {
+                calls.push(`read:${id}`);
+                return { ...item, readAt: "2026-01-02T00:00:00.000Z" };
+              }),
+            markAllRead: ({ filter }) =>
+              Effect.sync(() => {
+                calls.push(`readAll:${filter}`);
+                return result;
+              }),
+            setPinned: ({ id, pinned }) =>
+              Effect.sync(() => {
+                calls.push(`pin:${id}:${pinned}`);
+                return { ...item, pinned };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxList]({ filter: "pending" }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxMarkRead]({ id: "epi-1" }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxMarkAllRead]({ filter: "pending" }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxPin]({ id: "epi-1", pinned: true }),
+        ),
+      );
+      assert.deepEqual(calls, ["list:pending", "read:epi-1", "readAll:pending", "pin:epi-1:true"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc capacity snapshot", () =>
     Effect.gen(function* () {
       let calls = 0;
@@ -5519,7 +5637,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "devCommandsInit:/tmp/default-project",
         "inspect:/tmp/default-project",
         "chat:Plan next action",
+        "proposals",
         "decide:proposal-test:approve",
+        "draft:proposal-test",
         "context:/tmp/default-project",
         "draft:proposal-test",
         "schedule:daily-briefing:/tmp/default-project",

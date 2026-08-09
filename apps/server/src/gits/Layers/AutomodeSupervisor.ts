@@ -236,6 +236,8 @@ function defaultPolicy(updatedAt: string): AutomodePolicy {
     integrationBranch: null,
     motokoAuthority: "observe",
     telegramDigestEnabled: true,
+    gitsNotificationsEnabled: true,
+    telegramNotificationsEnabled: false,
     sweepRequiresConfirmation: true,
     updatedAt,
   };
@@ -320,7 +322,10 @@ function evaluatePolicyGate(
           : resourceScoped && !modelAllowed(policy, args.model)
             ? "Model is outside the automode allowlist."
             : budgetReason;
-  return { blockedReason, needsApproval: promptNeedsApproval(policy, args.prompt) };
+  return {
+    blockedReason,
+    needsApproval: promptNeedsApproval(policy, args.prompt),
+  };
 }
 
 function updateGoal(
@@ -350,10 +355,8 @@ function sortGoals(goals: ReadonlyArray<AutomodeGoal>): AutomodeGoal[] {
   return [...goals].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-function shouldScheduleRuntimeLimit(policy: AutomodePolicy): policy is AutomodePolicy & {
-  readonly maxRuntimeMinutes: number;
-} {
-  return policy.maxRuntimeMinutes !== null && policy.maxRuntimeMinutes > 0;
+function shouldScheduleRuntimeLimit(minutes: number | null): minutes is number {
+  return minutes !== null && minutes > 0;
 }
 
 function budgetBlockedReason(
@@ -425,6 +428,9 @@ function applyPolicyUpdate(
       input.integrationBranch === undefined ? policy.integrationBranch : input.integrationBranch,
     motokoAuthority: input.motokoAuthority ?? policy.motokoAuthority,
     telegramDigestEnabled: input.telegramDigestEnabled ?? policy.telegramDigestEnabled,
+    gitsNotificationsEnabled: input.gitsNotificationsEnabled ?? policy.gitsNotificationsEnabled,
+    telegramNotificationsEnabled:
+      input.telegramNotificationsEnabled ?? policy.telegramNotificationsEnabled,
     sweepRequiresConfirmation: input.sweepRequiresConfirmation ?? policy.sweepRequiresConfirmation,
     updatedAt,
   };
@@ -604,7 +610,9 @@ export const AutomodeSupervisorLive = Layer.effect(
         // Workflow-dispatched goals track the workflow run's id as peerId; kill the whole
         // run (runner + live leaves), not the run record as if it were a leaf peer.
         if (currentGoal.workflowId !== null) {
-          yield* delamainAdapter.workflowKill({ workflowId: currentGoal.workflowId });
+          yield* delamainAdapter.workflowKill({
+            workflowId: currentGoal.workflowId,
+          });
         } else {
           yield* delamainAdapter.killPeer({ peerId, signal: "SIGTERM" });
         }
@@ -661,7 +669,7 @@ export const AutomodeSupervisorLive = Layer.effect(
               if (
                 nextPolicy.mode === "autonomous" &&
                 nextPolicy.maxBudgetUsd === null &&
-                !shouldScheduleRuntimeLimit(nextPolicy)
+                !shouldScheduleRuntimeLimit(nextPolicy.maxRuntimeMinutes)
               ) {
                 return yield* toAutomodeError(
                   "Autonomous mode requires a resource cap — set a max budget (maxBudgetUsd) or a runtime cap (maxRuntimeMinutes).",
@@ -703,6 +711,12 @@ export const AutomodeSupervisorLive = Layer.effect(
             rejectedAt: null,
             workflowId: null,
             branch: null,
+            notBefore: input.notBefore ?? null,
+            maxRuntimeMinutes: input.maxRuntimeMinutes ?? null,
+            verificationCommands: input.verificationCommands ?? [],
+            integrationBranch: input.integrationBranch ?? null,
+            planningNotes: null,
+            planningBoundary: null,
           };
           const nextState = yield* commitState((state) => ({
             ...state,
@@ -711,6 +725,70 @@ export const AutomodeSupervisorLive = Layer.effect(
             updatedAt: createdAt,
           }));
           return yield* snapshotFromState(nextState);
+        }),
+      deferGoal: (input) =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const nextState = yield* commitState((state) =>
+            updateGoal(
+              {
+                ...state,
+                lastEvent: `Deferred queued work until ${input.notBefore}.`,
+                updatedAt,
+              },
+              input.goalId,
+              (goal) => ({
+                ...goal,
+                notBefore: input.notBefore,
+                planningNotes: input.planningNotes,
+                planningBoundary: input.planningBoundary,
+                updatedAt,
+              }),
+            ),
+          );
+          const goal = findGoal(nextState, input.goalId);
+          if (goal === null) {
+            return yield* toAutomodeError(`Automode goal ${input.goalId} was not found.`);
+          }
+          return goal;
+        }),
+      updateQueuedGoal: (input) =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const nextState = yield* commitStateOrFail((state) => {
+            const current = findGoal(state, input.goalId);
+            if (current === null) {
+              return toAutomodeError(`Automode goal ${input.goalId} was not found.`);
+            }
+            if (!["queued", "waiting-approval", "blocked"].includes(current.status)) {
+              return toAutomodeError(
+                `Automode goal ${input.goalId} cannot be edited while ${current.status}.`,
+              );
+            }
+            return Effect.succeed(
+              updateGoal(
+                { ...state, lastEvent: `Updated ${input.title}.`, updatedAt },
+                input.goalId,
+                (goal) => ({
+                  ...goal,
+                  title: input.title,
+                  prompt: input.prompt,
+                  repo: normalizePath(input.repo),
+                  model: input.model,
+                  notBefore: input.notBefore,
+                  maxRuntimeMinutes: input.maxRuntimeMinutes,
+                  verificationCommands: input.verificationCommands,
+                  integrationBranch: input.integrationBranch,
+                  planningNotes: null,
+                  planningBoundary: null,
+                  blockedReason: null,
+                  status: "queued",
+                  updatedAt,
+                }),
+              ),
+            );
+          });
+          return findGoal(nextState, input.goalId)!;
         }),
       approveGoal: (input) =>
         Effect.gen(function* () {
@@ -877,7 +955,8 @@ export const AutomodeSupervisorLive = Layer.effect(
           // into one branch, and deterministic, so a re-approved goal resumes its branch.
           // Never spawn unpinned: delamain's default would merge peer work straight into
           // the origin default branch.
-          const goalBranch = state.policy.integrationBranch ?? `automode/${goal.id}`;
+          const goalBranch =
+            goal.integrationBranch ?? state.policy.integrationBranch ?? `automode/${goal.id}`;
           yield* landing.ensure_integration_branch({
             repo: goal.repo,
             integrationBranch: goalBranch,
@@ -885,7 +964,13 @@ export const AutomodeSupervisorLive = Layer.effect(
           });
 
           // Episode threading v1: traceability via the prompt (delamain untouched).
-          const episodePrompt = `Episode: ${goal.episodeId}\n${goal.prompt}`;
+          const episodePrompt = [
+            `Episode: ${goal.episodeId}`,
+            goal.prompt,
+            ...(goal.planningNotes === null
+              ? []
+              : [`Motoko planning notes for ${goal.planningBoundary}:\n${goal.planningNotes}`]),
+          ].join("\n");
           const peer = yield* delamainAdapter
             .spawnPeer({
               repo: goal.repo,
@@ -910,8 +995,9 @@ export const AutomodeSupervisorLive = Layer.effect(
               ),
             );
           const workflowId: string | null = null;
-          const deadlineEpochMs = shouldScheduleRuntimeLimit(state.policy)
-            ? DateTime.toEpochMillis(yield* DateTime.now) + state.policy.maxRuntimeMinutes * 60_000
+          const runtimeMinutes = goal.maxRuntimeMinutes ?? state.policy.maxRuntimeMinutes;
+          const deadlineEpochMs = shouldScheduleRuntimeLimit(runtimeMinutes)
+            ? DateTime.toEpochMillis(yield* DateTime.now) + runtimeMinutes * 60_000
             : null;
 
           const updatedAt = yield* nowIso;
@@ -922,7 +1008,10 @@ export const AutomodeSupervisorLive = Layer.effect(
                 runtimeDeadlines:
                   deadlineEpochMs === null
                     ? current.runtimeDeadlines
-                    : { ...current.runtimeDeadlines, [goal.id]: deadlineEpochMs },
+                    : {
+                        ...current.runtimeDeadlines,
+                        [goal.id]: deadlineEpochMs,
+                      },
                 lastEvent:
                   workflowId === null
                     ? `Spawned peer ${peer.id} for ${goal.title}.`

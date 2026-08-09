@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   AutomodeGoal,
+  CockpitInboxFilter,
+  CockpitInboxItem,
   DelamainWorkflowRunInput,
   DelamainWorkflowRunResult,
   GitsBuildInfo,
@@ -27,6 +29,8 @@ const decodeGitsNote = Schema.decodeUnknownSync(GitsNote);
 const decodeGitsNoteWriteInput = Schema.decodeUnknownSync(GitsNoteWriteInput);
 const decodeGitsNotesError = Schema.decodeUnknownSync(GitsNotesError);
 const decodeAutomodeGoal = Schema.decodeUnknownSync(AutomodeGoal);
+const decodeCockpitInboxFilter = Schema.decodeUnknownSync(CockpitInboxFilter);
+const decodeCockpitInboxItem = Schema.decodeUnknownSync(CockpitInboxItem);
 const decodeGitsSkillInventorySnapshot = Schema.decodeUnknownSync(GitsSkillInventorySnapshot);
 const decodeGitsMcpInventorySnapshot = Schema.decodeUnknownSync(GitsMcpInventorySnapshot);
 const decodeGitsCapacitySnapshot = Schema.decodeUnknownSync(GitsCapacitySnapshot);
@@ -341,6 +345,66 @@ describe("AutomodeGoal", () => {
     const parsed = decodeAutomodeGoal({ ...legacyGoal, branch: "automode/goal-f948a67a" });
     expect(parsed.branch).toBe("automode/goal-f948a67a");
   });
+
+  it("defaults proposal scheduling fields on legacy goals", () => {
+    const parsed = decodeAutomodeGoal(legacyGoal);
+    expect(parsed.notBefore).toBeNull();
+    expect(parsed.maxRuntimeMinutes).toBeNull();
+    expect(parsed.verificationCommands).toEqual([]);
+    expect(parsed.integrationBranch).toBeNull();
+    expect(parsed.planningNotes).toBeNull();
+    expect(parsed.planningBoundary).toBeNull();
+  });
+});
+
+describe("Cockpit Inbox contracts", () => {
+  const baseItem = {
+    id: "epi-proposal-1",
+    proposalId: "proposal-1",
+    goalId: null,
+    title: "Improve retry handling",
+    repository: "/home/test/project",
+    state: "pending-review",
+    createdAt: "2026-06-02T10:00:00.000Z",
+    updatedAt: "2026-06-02T10:00:00.000Z",
+    terminalAt: null,
+    readAt: null,
+    pinned: false,
+    reason: "Motoko created a proposal.",
+    deepLink: "/gits?panel=autopilot&proposal=proposal-1",
+    timeline: [
+      {
+        eventKey: "proposal:proposal-1:created",
+        at: "2026-06-02T10:00:00.000Z",
+        state: "pending-review",
+        reason: "Motoko created a proposal.",
+        deepLink: "/gits?panel=autopilot&proposal=proposal-1",
+      },
+    ],
+  } as const;
+
+  it.each([
+    "pending-review",
+    "approved-queued",
+    "waiting-quota-reset",
+    "scheduled-tonight",
+    "running",
+    "attention-required",
+    "completed",
+    "rejected",
+    "deferred",
+  ] as const)("decodes the %s state", (state) => {
+    expect(decodeCockpitInboxItem({ ...baseItem, state })).toMatchObject({ state });
+  });
+
+  it.each(["unread", "pending", "approved", "waiting", "completed"] as const)(
+    "decodes the %s filter",
+    (filter) => expect(decodeCockpitInboxFilter(filter)).toBe(filter),
+  );
+
+  it("rejects an unknown filter", () => {
+    expect(() => decodeCockpitInboxFilter("running")).toThrow();
+  });
 });
 
 describe("Delamain workflow launch contracts", () => {
@@ -410,6 +474,26 @@ describe("Hermes Motoko contracts", () => {
     createdAt: "2026-06-02T10:00:00.000Z",
     updatedAt: "2026-06-02T10:00:00.000Z",
   } as const;
+
+  it("decodes editable proposal execution settings", () => {
+    const parsed = decodeHermesProposal({
+      ...baseProposal,
+      model: "gpt-5.6-sol",
+      notBefore: "2026-06-03T00:00:00.000Z",
+      maxRuntimeMinutes: 45,
+      verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+      integrationBranch: "auto/proposal-1",
+      sourceThreadId: "thread-1",
+    });
+    expect(parsed).toMatchObject({
+      model: "gpt-5.6-sol",
+      notBefore: "2026-06-03T00:00:00.000Z",
+      maxRuntimeMinutes: 45,
+      integrationBranch: "auto/proposal-1",
+      sourceThreadId: "thread-1",
+    });
+    expect(parsed.verificationCommands).toHaveLength(1);
+  });
 
   it("accepts Motoko status with setup warnings and profile status", () => {
     const parsed = decodeHermesStatus({

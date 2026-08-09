@@ -21,6 +21,7 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type HermesProposalCard,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -34,6 +35,7 @@ import {
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   AutomodeSupervisorError,
+  CockpitInboxError,
   BrowserPreviewError,
   CritError,
   DelamainAdapterError,
@@ -101,11 +103,16 @@ import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
 import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
 import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
 import { GitsSlotScheduler } from "./gits/Services/GitsSlotScheduler.ts";
+import { CockpitInbox } from "./gits/Services/CockpitInbox.ts";
 import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
 import { AutomodeEpisodeLedger } from "./persistence/Services/AutomodeEpisodeLedger.ts";
-import { decideProposalWithAutomodeBridge } from "./gits/Layers/HermesAutomodeBridge.ts";
+import {
+  decideProposalWithAutomodeBridge,
+  hasLiveGoalForEpisode,
+} from "./gits/Layers/HermesAutomodeBridge.ts";
+import { AutomodeNotifications } from "./gits/Layers/AutomodeNotifications.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import {
   denyThreadAccess,
@@ -314,7 +321,10 @@ export function resumeThreadStream<E1, E2, R>(
     event.aggregateKind === "thread" &&
     event.aggregateId === threadId &&
     isThreadDetailEvent(event);
-  const toItem = (event: OrchestrationEvent) => ({ kind: "event" as const, event });
+  const toItem = (event: OrchestrationEvent) => ({
+    kind: "event" as const,
+    event,
+  });
   return Stream.concat(
     catchUpEvents.pipe(Stream.filter(keep), Stream.map(toItem)),
     liveEvents.pipe(Stream.filter(keep), Stream.map(toItem)),
@@ -425,6 +435,63 @@ const makeWsRpcLayer = (
       const openGsdAdapter = yield* OpenGsdAdapter;
       const automodeSupervisor = yield* AutomodeSupervisor;
       const automodeEpisodeLedger = yield* AutomodeEpisodeLedger;
+      const automodeNotifications = yield* AutomodeNotifications;
+      const cockpitInbox = yield* Effect.serviceOption(CockpitInbox);
+      const notifyProposal = (proposal: HermesProposalCard) =>
+        Effect.gen(function* () {
+          const policy = yield* automodeSupervisor.getPolicy().pipe(
+            Effect.mapError(
+              (cause) =>
+                new HermesAdapterError({
+                  message: "Failed to read notification policy.",
+                  cause,
+                }),
+            ),
+          );
+          if (Option.isNone(cockpitInbox)) {
+            return yield* new HermesAdapterError({
+              message: "Cockpit Inbox is unavailable.",
+            });
+          }
+          const key = `proposal:${proposal.id}:created`;
+          yield* cockpitInbox.value
+            .record({
+              episodeId: proposal.episodeId,
+              proposalId: proposal.id,
+              goalId: null,
+              title: proposal.title,
+              repository: proposal.projectDir,
+              eventKey: key,
+              state: "pending-review",
+              reason: "Proposal ready for review.",
+              deepLink: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new HermesAdapterError({
+                    message: "Failed to persist proposal in the Cockpit Inbox.",
+                    cause,
+                  }),
+              ),
+            );
+          yield* automodeNotifications
+            .notify({
+              key,
+              subject: "New Motoko proposal",
+              text: proposal.title,
+              url: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,
+              gitsEnabled: policy.gitsNotificationsEnabled,
+              telegramEnabled: policy.telegramNotificationsEnabled,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("gits.proposal.notification-failed", {
+                  cause,
+                }),
+              ),
+            );
+        });
       // R#1 (kill-switch-only manual gate): manual peer actions stay human-driven, but the
       // global automode kill switch also freezes them. ponytail: reuse DelamainAdapterError
       // (these RPC channels already carry it) so no rpc.ts/client contract change is needed.
@@ -443,7 +510,9 @@ const makeWsRpcLayer = (
             (snapshot): Effect.Effect<A, E | DelamainAdapterError, R> =>
               snapshot.policy.killSwitchEnabled
                 ? Effect.fail(
-                    new DelamainAdapterError({ message: "Blocked by the automode kill switch." }),
+                    new DelamainAdapterError({
+                      message: "Blocked by the automode kill switch.",
+                    }),
                   )
                 : action,
           ),
@@ -862,7 +931,10 @@ const makeWsRpcLayer = (
               } else {
                 yield* Effect.logWarning(
                   "worktree.record-owner skipped: no projectId available at bootstrap (orphan adopter will bind at startup)",
-                  { threadId: command.threadId, worktreePath: targetWorktreePath },
+                  {
+                    threadId: command.threadId,
+                    worktreePath: targetWorktreePath,
+                  },
                 );
               }
               yield* refreshGitStatus(targetWorktreePath);
@@ -1014,7 +1086,10 @@ const makeWsRpcLayer = (
                 }),
               );
             }
-            return Effect.succeed({ instance, adapter: instance.adapter.providerAuth });
+            return Effect.succeed({
+              instance,
+              adapter: instance.adapter.providerAuth,
+            });
           }),
         );
 
@@ -1022,24 +1097,35 @@ const makeWsRpcLayer = (
         [WS_METHODS.providerSteerTurn]: (input) =>
           Option.match(providerService, {
             onNone: () =>
-              Effect.fail(new ProviderOperationError({ message: "Provider service unavailable" })),
+              Effect.fail(
+                new ProviderOperationError({
+                  message: "Provider service unavailable",
+                }),
+              ),
             onSome: (service) =>
               service.steerTurn
-                ? service
-                    .steerTurn(input)
-                    .pipe(
-                      Effect.mapError(
-                        (error) => new ProviderOperationError({ message: error.message }),
-                      ),
-                    )
+                ? service.steerTurn(input).pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ProviderOperationError({
+                          message: error.message,
+                        }),
+                    ),
+                  )
                 : Effect.fail(
-                    new ProviderOperationError({ message: "Active-turn steering unavailable" }),
+                    new ProviderOperationError({
+                      message: "Active-turn steering unavailable",
+                    }),
                   ),
           }),
         [WS_METHODS.providerGenerateFollowUpSuggestions]: (input) =>
           Option.match(textGeneration, {
             onNone: () =>
-              Effect.fail(new ProviderOperationError({ message: "Text generation unavailable" })),
+              Effect.fail(
+                new ProviderOperationError({
+                  message: "Text generation unavailable",
+                }),
+              ),
             onSome: (service) =>
               service
                 .generateFollowUpSuggestions(input)
@@ -1052,48 +1138,71 @@ const makeWsRpcLayer = (
         [WS_METHODS.providerCodexAccountUsage]: (input) =>
           Option.match(providerService, {
             onNone: () =>
-              Effect.fail(new ProviderOperationError({ message: "Provider service unavailable" })),
+              Effect.fail(
+                new ProviderOperationError({
+                  message: "Provider service unavailable",
+                }),
+              ),
             onSome: (service) =>
               service.readCodexAccountUsage
-                ? service
-                    .readCodexAccountUsage(input)
-                    .pipe(
-                      Effect.mapError(
-                        (error) => new ProviderOperationError({ message: error.message }),
-                      ),
-                    )
+                ? service.readCodexAccountUsage(input).pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ProviderOperationError({
+                          message: error.message,
+                        }),
+                    ),
+                  )
                 : Effect.fail(
-                    new ProviderOperationError({ message: "Codex account usage unavailable" }),
+                    new ProviderOperationError({
+                      message: "Codex account usage unavailable",
+                    }),
                   ),
           }),
         [WS_METHODS.providerConsumeCodexResetCredit]: (input) =>
           Option.match(providerService, {
             onNone: () =>
-              Effect.fail(new ProviderOperationError({ message: "Provider service unavailable" })),
+              Effect.fail(
+                new ProviderOperationError({
+                  message: "Provider service unavailable",
+                }),
+              ),
             onSome: (service) =>
               service.consumeCodexResetCredit
-                ? service
-                    .consumeCodexResetCredit(input)
-                    .pipe(
-                      Effect.mapError(
-                        (error) => new ProviderOperationError({ message: error.message }),
-                      ),
-                    )
+                ? service.consumeCodexResetCredit(input).pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ProviderOperationError({
+                          message: error.message,
+                        }),
+                    ),
+                  )
                 : Effect.fail(
-                    new ProviderOperationError({ message: "Codex reset credits unavailable" }),
+                    new ProviderOperationError({
+                      message: "Codex reset credits unavailable",
+                    }),
                   ),
           }),
         [WS_METHODS.usageModelBreakdown]: (input) =>
           projectionSnapshotQuery.getUsageModelBreakdown
             ? projectionSnapshotQuery.getUsageModelBreakdown(input).pipe(
                 Effect.tapError((cause) =>
-                  Effect.logError("usage model breakdown load failed", { cause }),
+                  Effect.logError("usage model breakdown load failed", {
+                    cause,
+                  }),
                 ),
                 Effect.mapError(
-                  () => new ProviderOperationError({ message: "Failed to load usage breakdown" }),
+                  () =>
+                    new ProviderOperationError({
+                      message: "Failed to load usage breakdown",
+                    }),
                 ),
               )
-            : Effect.fail(new ProviderOperationError({ message: "Usage breakdown unavailable" })),
+            : Effect.fail(
+                new ProviderOperationError({
+                  message: "Usage breakdown unavailable",
+                }),
+              ),
         [WS_METHODS.providerAuthStart]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerAuthStart,
@@ -1899,9 +2008,12 @@ const makeWsRpcLayer = (
         [WS_METHODS.critSidecarStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.critSidecarStatus,
-            critSidecarManager
-              .sidecar_status(input.workspaceRoot)
-              .pipe(Effect.map((handle) => ({ status: handle.status, url: handle.url }))),
+            critSidecarManager.sidecar_status(input.workspaceRoot).pipe(
+              Effect.map((handle) => ({
+                status: handle.status,
+                url: handle.url,
+              })),
+            ),
             { "rpc.aggregate": "crit" },
           ),
         [WS_METHODS.critReleaseSidecar]: (input) =>
@@ -2261,6 +2373,62 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.gitsAutomodeGoalsKill, automodeSupervisor.killGoal(input), {
             "rpc.aggregate": "gits",
           }),
+        [WS_METHODS.gitsCockpitInboxList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxList,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(
+                  new CockpitInboxError({
+                    message: "Cockpit Inbox unavailable.",
+                  }),
+                ),
+              onSome: (inbox) => inbox.list(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsCockpitInboxMarkRead]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxMarkRead,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(
+                  new CockpitInboxError({
+                    message: "Cockpit Inbox unavailable.",
+                  }),
+                ),
+              onSome: (inbox) => inbox.markRead(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsCockpitInboxMarkAllRead]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxMarkAllRead,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(
+                  new CockpitInboxError({
+                    message: "Cockpit Inbox unavailable.",
+                  }),
+                ),
+              onSome: (inbox) => inbox.markAllRead(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsCockpitInboxPin]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxPin,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(
+                  new CockpitInboxError({
+                    message: "Cockpit Inbox unavailable.",
+                  }),
+                ),
+              onSome: (inbox) => inbox.setPinned(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsCapacityGetSnapshot]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsCapacityGetSnapshot,
@@ -2324,17 +2492,55 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitsHermesInspectGits]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesInspectGits,
-            hermesAdapter.inspectGitsAndPropose(input),
+            hermesAdapter.inspectGitsAndPropose(input).pipe(Effect.tap(notifyProposal)),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesChat]: (input) =>
-          observeRpcEffect(WS_METHODS.gitsHermesChat, hermesAdapter.chat(input), {
-            "rpc.aggregate": "gits",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitsHermesChat,
+            hermesAdapter
+              .chat(input)
+              .pipe(
+                Effect.tap((result) =>
+                  result.proposal === null ? Effect.void : notifyProposal(result.proposal),
+                ),
+              ),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsHermesDecideProposal]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesDecideProposal,
-            decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input),
+            (Option.isNone(cockpitInbox)
+              ? Effect.fail(
+                  new HermesAdapterError({
+                    message: "Cockpit Inbox is unavailable; proposal decisions are disabled.",
+                  }),
+                )
+              : decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input, {
+                  scheduler: gitsSlotScheduler,
+                  inbox: cockpitInbox.value,
+                })
+            ).pipe(
+              Effect.tap((proposal) =>
+                input.decision !== "approve"
+                  ? Effect.void
+                  : automodeSupervisor.getSnapshot().pipe(
+                      Effect.flatMap((snapshot) =>
+                        hasLiveGoalForEpisode(snapshot.goals, proposal.episodeId)
+                          ? automodeNotifications.notify({
+                              key: `proposal:${proposal.id}:approve`,
+                              subject: "Motoko proposal queued",
+                              text: proposal.title,
+                              url: `/gits?panel=autopilot&proposal=${encodeURIComponent(proposal.id)}`,
+                              gitsEnabled: snapshot.policy.gitsNotificationsEnabled,
+                              telegramEnabled: snapshot.policy.telegramNotificationsEnabled,
+                            })
+                          : Effect.void,
+                      ),
+                      Effect.catchCause(() => Effect.void),
+                    ),
+              ),
+            ),
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesWriteProjectContext]: (input) =>
@@ -2350,9 +2556,13 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "gits" },
           ),
         [WS_METHODS.gitsHermesRunSchedule]: (input) =>
-          observeRpcEffect(WS_METHODS.gitsHermesRunSchedule, hermesAdapter.runSchedule(input), {
-            "rpc.aggregate": "gits",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitsHermesRunSchedule,
+            hermesAdapter
+              .runSchedule(input)
+              .pipe(Effect.tap((result) => Effect.forEach(result.proposals, notifyProposal))),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

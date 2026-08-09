@@ -8,6 +8,8 @@ import type {
   CodexModelTier,
   GitsCockpitProject,
   GitsSchedulerSnapshot,
+  HermesProposalCard,
+  HermesProposalListResult,
   MotokoAuthority,
 } from "@t3tools/contracts";
 import { CODEX_MODEL_TIER_LABELS, CODEX_MODEL_TIERS } from "@t3tools/contracts";
@@ -51,6 +53,11 @@ import {
 } from "~/components/ui/combobox";
 import { Input } from "~/components/ui/input";
 import {
+  MotokoProposalReview,
+  type MotokoProposalDecision,
+  type MotokoProposalEdits,
+} from "./MotokoPanel";
+import {
   Select,
   SelectGroup,
   SelectItem,
@@ -61,6 +68,7 @@ import {
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
+import { InboxSection } from "./InboxSection";
 
 import {
   type AutopilotPolicyForm,
@@ -125,6 +133,8 @@ const SWITCHBOARD_FIELDS: ReadonlyArray<{
     | "sweepRequiresConfirmation"
     | "autoEnqueueApprovedProposals"
     | "telegramDigestEnabled"
+    | "gitsNotificationsEnabled"
+    | "telegramNotificationsEnabled"
   >;
   label: string;
   description: string;
@@ -144,6 +154,16 @@ const SWITCHBOARD_FIELDS: ReadonlyArray<{
     label: "Auto-enqueue approved proposals",
     description:
       "Approved Motoko proposals join the goal queue automatically (autonomous mode only).",
+  },
+  {
+    field: "gitsNotificationsEnabled",
+    label: "GITS/PWA notifications",
+    description: "Notify this device about proposals and Automode attention states.",
+  },
+  {
+    field: "telegramNotificationsEnabled",
+    label: "Telegram notifications",
+    description: "Send proposal and Automode attention notifications through Telegram.",
   },
   {
     field: "telegramDigestEnabled",
@@ -276,6 +296,9 @@ export function AutopilotPanel({
   goalModel,
   goalPrompt,
   projects,
+  proposals,
+  focusedProposalId,
+  onProposalDecision,
   onRefresh,
   onKillSwitchChange,
   onGoalTitleChange,
@@ -305,6 +328,13 @@ export function AutopilotPanel({
   /** Not sent by the shell today (only Motoko/GSD panels get it) — falls back to a
    *  textarea for repo entry until `GitsCockpit.tsx` is updated to pass it. */
   projects?: ReadonlyArray<GitsCockpitProject>;
+  proposals: HermesProposalListResult | undefined;
+  focusedProposalId: string | null;
+  onProposalDecision: (
+    proposal: HermesProposalCard,
+    decision: MotokoProposalDecision,
+    edits: MotokoProposalEdits,
+  ) => void;
   onRefresh: () => void;
   onKillSwitchChange: (value: boolean) => void;
   onGoalTitleChange: (value: string) => void;
@@ -466,6 +496,12 @@ export function AutopilotPanel({
 
   return (
     <section className="border-b border-border bg-background">
+      <MotokoProposalReview
+        proposals={proposals}
+        proposalId={focusedProposalId}
+        actionPending={actionPending}
+        onDecision={onProposalDecision}
+      />
       <div className="flex flex-col gap-3 border-b border-border/70 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
@@ -574,6 +610,8 @@ export function AutopilotPanel({
           ) : null}
         </div>
       ) : null}
+
+      <InboxSection readGitsClient={readGitsClient} environmentId={targetEnvironmentId} />
 
       <h3 className="border-b border-border/60 px-4 py-2.5 text-xs font-semibold uppercase text-muted-foreground/80 sm:px-5">
         Automation switchboard

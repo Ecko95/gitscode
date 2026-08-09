@@ -147,6 +147,38 @@ describe("createWsRpcClient", () => {
     expect(request.mock.calls[0]?.[0]?.(transportClient)).toBe(WS_METHODS.gitsPortsList);
   });
 
+  it("routes Cockpit Inbox requests through their matching RPC methods", () => {
+    const request = vi.fn();
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      isHeartbeatFresh: vi.fn(() => true),
+      request,
+      requestStream: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    } satisfies Pick<
+      WsTransport,
+      "dispose" | "isHeartbeatFresh" | "reconnect" | "request" | "requestStream" | "subscribe"
+    >;
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+
+    client.gits.cockpitInbox.list({ filter: "unread" });
+    client.gits.cockpitInbox.markRead({ id: "epi-1" });
+    client.gits.cockpitInbox.markAllRead({ filter: "waiting" });
+    client.gits.cockpitInbox.pin({ id: "epi-1", pinned: true });
+
+    const transportClient = new Proxy({}, { get: (_target, method) => () => method }) as Record<
+      string,
+      () => string
+    >;
+    expect(request.mock.calls.map(([send]) => send(transportClient))).toEqual([
+      WS_METHODS.gitsCockpitInboxList,
+      WS_METHODS.gitsCockpitInboxMarkRead,
+      WS_METHODS.gitsCockpitInboxMarkAllRead,
+      WS_METHODS.gitsCockpitInboxPin,
+    ]);
+  });
+
   it("reduces vcs status stream events into flat status snapshots", () => {
     const subscribe = vi.fn(<TValue>(_connect: unknown, listener: (value: TValue) => void) => {
       for (const event of [

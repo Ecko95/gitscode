@@ -23,7 +23,6 @@ import {
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
-import { PushNotificationService } from "../../push/Services/PushNotificationService.ts";
 import { GitsCapacityMonitor } from "../Services/GitsCapacityMonitor.ts";
 import {
   GitsSlotScheduler,
@@ -71,7 +70,11 @@ export function london_instant(epochMs: number): LondonInstant {
     Number.parseInt(parts.get("hour") ?? "0", 10) * 60 +
     Number.parseInt(parts.get("minute") ?? "0", 10);
   const weekday = parts.get("weekday");
-  return { dateKey, minutesOfDay, isWeekend: weekday === "Sat" || weekday === "Sun" };
+  return {
+    dateKey,
+    minutesOfDay,
+    isWeekend: weekday === "Sat" || weekday === "Sun",
+  };
 }
 
 // --- Slot model (decision 6) ----------------------------------------------------------------
@@ -108,7 +111,11 @@ export function parse_scheduler_slots(raw: string | undefined): {
       throw new Error("expected a non-empty array of slots");
     }
     const slots = parsed.map((entry): GitsSchedulerSlotWindow => {
-      const candidate = entry as { days?: unknown; start?: unknown; end?: unknown } | null;
+      const candidate = entry as {
+        days?: unknown;
+        start?: unknown;
+        end?: unknown;
+      } | null;
       const days = candidate?.days;
       const start = candidate?.start;
       const end = candidate?.end;
@@ -209,6 +216,21 @@ export function next_slot_start(
   return tomorrowStarts[0] ?? "00:00";
 }
 
+export function next_slot_start_at(
+  slots: ReadonlyArray<GitsSchedulerSlotWindow>,
+  epochMs: number,
+): string | null {
+  let wasInSlot = current_slot(slots, epochMs) !== null;
+  const minute = Math.floor(epochMs / 60_000) * 60_000;
+  for (let offset = 1; offset <= 48 * 60; offset += 1) {
+    const candidate = minute + offset * 60_000;
+    const inSlot = current_slot(slots, candidate) !== null;
+    if (inSlot && !wasInSlot) return DateTime.formatIso(DateTime.makeUnsafe(candidate));
+    wasInSlot = inSlot;
+  }
+  return null;
+}
+
 // --- Persisted state ------------------------------------------------------------------------
 
 const DEFAULT_SCHEDULER_CONFIG: GitsSchedulerConfig = {
@@ -240,6 +262,7 @@ const PersistedSchedulerState = Schema.Struct({
   arming: GitsSchedulerArmingSchema.pipe(
     Schema.withDecodingDefault(Effect.succeed(DISARMED_ARMING)),
   ),
+  automaticArmingAuthorized: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   nightLog: Schema.Array(PersistedNightLogEntry).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -258,6 +281,7 @@ const decodePersistedSchedulerState = Schema.decodeUnknownEffect(
 interface SchedulerState {
   readonly config: GitsSchedulerConfig;
   readonly arming: GitsSchedulerArming;
+  readonly automaticArmingAuthorized: boolean;
   readonly nightLog: ReadonlyArray<PersistedNightLogEntry>;
   readonly lastGateDecision: GitsSchedulerGateDecision | null;
   readonly lastEvent: string | null;
@@ -278,6 +302,7 @@ function default_state(updatedAt: string): SchedulerState {
   return {
     config: DEFAULT_SCHEDULER_CONFIG,
     arming: DISARMED_ARMING,
+    automaticArmingAuthorized: false,
     nightLog: [],
     lastGateDecision: null,
     lastEvent: "Scheduler initialized (disabled).",
@@ -332,6 +357,7 @@ function loadSchedulerState(statePath: string, fallback: SchedulerState) {
           Effect.succeed<SchedulerState>({
             config: state.config,
             arming: state.arming,
+            automaticArmingAuthorized: state.automaticArmingAuthorized,
             nightLog: state.nightLog,
             lastGateDecision: state.lastGateDecision,
             lastEvent: state.lastEvent,
@@ -351,7 +377,6 @@ export const GitsSlotSchedulerLive = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const capacityMonitor = yield* GitsCapacityMonitor;
-    const push = yield* PushNotificationService;
 
     const slotsParse = parse_scheduler_slots(process.env.GITS_SCHEDULER_SLOTS_JSON);
     if (slotsParse.error !== null) {
@@ -383,18 +408,13 @@ export const GitsSlotSchedulerLive = Layer.effect(
           armedAt: null,
           disarmedReason: BOOT_DISARM_REASON,
         },
+        automaticArmingAuthorized: false,
         lastEvent: BOOT_DISARM_REASON,
         updatedAt: initializedAt,
       };
       yield* persistedIn(initialState);
       yield* Effect.logWarning("gits.scheduler.boot-disarmed", {
         nightKey: loaded.arming.nightKey,
-      });
-      yield* push.sendToAll({
-        title: "GITS autonomy disarmed",
-        body: BOOT_DISARM_REASON,
-        tag: "gits-scheduler-boot",
-        url: "/gits",
       });
     }
 
@@ -423,9 +443,14 @@ export const GitsSlotSchedulerLive = Layer.effect(
       if (state.arming.status !== "armed") {
         return state.arming;
       }
-      return state.arming.nightKey === current_night_key(slots, epochMs)
+      const currentNightKey = current_night_key(slots, epochMs);
+      return state.arming.nightKey === null || state.arming.nightKey >= currentNightKey
         ? state.arming
-        : { ...state.arming, status: "disarmed", disarmedReason: "Armed night ended." };
+        : {
+            ...state.arming,
+            status: "disarmed",
+            disarmedReason: "Armed night ended.",
+          };
     };
 
     const goalsStartedTonight = (state: SchedulerState, epochMs: number): number => {
@@ -440,6 +465,7 @@ export const GitsSlotSchedulerLive = Layer.effect(
     ): GitsSchedulerSnapshot => ({
       config: state.config,
       arming: effectiveArming(state, epochMs),
+      automaticArmingAuthorized: state.automaticArmingAuthorized,
       currentSlot: current_slot(slots, epochMs),
       slotRemainingMs: slot_remaining_ms(slots, epochMs),
       goalsStartedTonight: goalsStartedTonight(state, epochMs),
@@ -459,33 +485,89 @@ export const GitsSlotSchedulerLive = Layer.effect(
       return snapshot;
     });
 
-    // Decision 20 capacity check. Fail-open on missing telemetry: post-idle-evening night
-    // starts structurally lack rate_limits; the goal-count + runtime caps bound the burn.
     const capacityDecision = (weeklyMaxUsedPercent: number) =>
       Effect.gen(function* () {
+        const epochMs = yield* nowEpochMs;
         const result = yield* readCapacity.pipe(Effect.result);
         if (Result.isFailure(result)) {
           yield* Effect.logWarning("gits.scheduler.capacity-check-failed", {
             error: result.failure.message,
           });
-          return { deny: null, note: "capacity monitor error" } as const;
-        }
-        const windows = result.success.codex.windows;
-        const fiveHourUsed = windows.find((window) => window.label === "5h")?.usedPercent ?? null;
-        const weeklyUsed = windows.find((window) => window.label === "weekly")?.usedPercent ?? null;
-        if (fiveHourUsed !== null && fiveHourUsed >= CAPACITY_MAX_USED_PERCENT_5H) {
-          return { deny: `Codex 5h window at ${fiveHourUsed}%`, note: null } as const;
-        }
-        if (weeklyUsed !== null && weeklyUsed >= weeklyMaxUsedPercent) {
           return {
-            deny: `Codex weekly window at ${weeklyUsed}% (reserve ${100 - weeklyMaxUsedPercent}%)`,
-            note: null,
+            deny: "Codex quota telemetry unavailable (capacity monitor error)",
+            retryAt: null,
           } as const;
         }
-        if (fiveHourUsed === null || weeklyUsed === null) {
-          return { deny: null, note: "capacity unknown (no telemetry)" } as const;
+        const windows = result.success.codex.windows;
+        const fiveHour = windows.find((window) => window.label === "5h");
+        const weekly = windows.find((window) => window.label === "weekly");
+        const missing = [["5h", fiveHour] as const, ["weekly", weekly] as const].filter(
+          ([, window]) => {
+            const resetAt =
+              window?.resetAt === null ? Number.NaN : Date.parse(window?.resetAt ?? "");
+            return (
+              window?.usedPercent === null ||
+              window?.usedPercent === undefined ||
+              !Number.isFinite(resetAt) ||
+              resetAt <= epochMs
+            );
+          },
+        );
+        if (missing.length > 0) {
+          return {
+            deny: `Codex ${missing.map(([label]) => label).join(" and ")} quota telemetry is missing or stale`,
+            retryAt: null,
+          } as const;
         }
-        return { deny: null, note: null } as const;
+        const fiveHourBlocked = fiveHour!.usedPercent! >= CAPACITY_MAX_USED_PERCENT_5H;
+        const weeklyBlocked = weekly!.usedPercent! >= weeklyMaxUsedPercent;
+        if (fiveHourBlocked && weeklyBlocked) {
+          return {
+            deny: "Codex 5h and weekly windows exceed their limits",
+            retryAt: [fiveHour!.resetAt!, weekly!.resetAt!].sort().at(-1)!,
+          } as const;
+        }
+        if (fiveHourBlocked) {
+          return {
+            deny: `Codex 5h window at ${fiveHour!.usedPercent}%`,
+            retryAt: fiveHour!.resetAt!,
+          } as const;
+        }
+        if (weeklyBlocked) {
+          return {
+            deny: `Codex weekly window at ${weekly!.usedPercent}% (reserve ${100 - weeklyMaxUsedPercent}%)`,
+            retryAt: weekly!.resetAt!,
+          } as const;
+        }
+        return { deny: null, retryAt: null } as const;
+      });
+
+    const scheduleGoal = (input: { readonly eligibleAt: string | null }, authorize: boolean) =>
+      Effect.gen(function* () {
+        const epochMs = yield* nowEpochMs;
+        const armedAt = yield* nowIso;
+        const eligibleAtMs = input.eligibleAt === null ? epochMs : Date.parse(input.eligibleAt);
+        if (!Number.isFinite(eligibleAtMs)) {
+          return yield* toSchedulerError("Approved goal has an invalid eligibility time.");
+        }
+        const nextState = yield* commitState((state) => {
+          if (!authorize && !state.automaticArmingAuthorized) return Effect.succeed(state);
+          const nightKey = current_night_key(slots, Math.max(epochMs, eligibleAtMs));
+          return Effect.succeed({
+            ...state,
+            config: { ...state.config, enabled: true },
+            arming: {
+              status: "armed",
+              nightKey,
+              armedAt,
+              disarmedReason: null,
+            } as const,
+            automaticArmingAuthorized: authorize || state.automaticArmingAuthorized,
+            lastEvent: `Approved work scheduled for ${nightKey}.`,
+            updatedAt: armedAt,
+          });
+        });
+        return snapshotFromState(nextState, epochMs, armedAt);
       });
 
     const scheduler: GitsSlotSchedulerShape = {
@@ -530,7 +612,12 @@ export const GitsSlotSchedulerLive = Layer.effect(
               }
               return {
                 ...state,
-                arming: { status: "armed", nightKey, armedAt, disarmedReason: null } as const,
+                arming: {
+                  status: "armed",
+                  nightKey,
+                  armedAt,
+                  disarmedReason: null,
+                } as const,
                 lastEvent: `Scheduler armed for ${nightKey}.`,
                 updatedAt: armedAt,
               };
@@ -553,12 +640,26 @@ export const GitsSlotSchedulerLive = Layer.effect(
                 armedAt: null,
                 disarmedReason: reason,
               } as const,
+              automaticArmingAuthorized: false,
               lastEvent: `Scheduler disarmed: ${reason}`,
               updatedAt,
             }),
           );
           return snapshotFromState(nextState, epochMs, updatedAt);
         }),
+      scheduleApprovedGoal: (input) =>
+        scheduleGoal(input, true).pipe(
+          Effect.map((snapshot) => ({
+            snapshot,
+            targetsCurrentNight:
+              snapshot.arming.nightKey ===
+              current_night_key(
+                slots,
+                DateTime.toEpochMillis(DateTime.makeUnsafe(snapshot.checkedAt)),
+              ),
+          })),
+        ),
+      retargetApprovedGoal: (input) => scheduleGoal(input, false),
       checkStartAllowed: (input) =>
         Effect.gen(function* () {
           const epochMs = yield* nowEpochMs;
@@ -567,29 +668,40 @@ export const GitsSlotSchedulerLive = Layer.effect(
           // 1. Disabled scheduler = bypass (today's interactive behavior). Records nothing;
           // the bypassed flag tells the driver not to count the start against the night cap.
           if (!state.config.enabled) {
-            return { allowed: true, bypassed: true } as const satisfies GitsSchedulerGateResult;
+            return {
+              allowed: true,
+              bypassed: true,
+            } as const satisfies GitsSchedulerGateResult;
           }
 
           let reason: string | null = null;
-          let note: string | null = null;
+          let category: "schedule" | "quota" | "policy" = "schedule";
+          let retryAt: string | null = null;
+          const currentNightKey = current_night_key(slots, epochMs);
 
           if (effectiveArming(state, epochMs).status !== "armed") {
             // 2. Effective arming for tonight (reuses the derived-expiry helper): a persisted
             // arm that is no longer effective means the armed night ended.
             reason =
               state.arming.status === "armed" ? "Armed night ended" : "Not armed for tonight";
+          } else if (state.arming.nightKey !== currentNightKey) {
+            reason = `Armed for future night ${state.arming.nightKey}`;
           } else if (current_slot(slots, epochMs) === null) {
             // 3. Slot window.
+            retryAt = next_slot_start_at(slots, epochMs);
             reason = `Outside slot window (next slot ${next_slot_start(slots, epochMs)})`;
           } else if (goalsStartedTonight(state, epochMs) >= state.config.maxGoalsPerNight) {
             // 4. Night goal cap (decision 11).
             reason = `Night goal cap reached (${state.config.maxGoalsPerNight})`;
           } else if (input.maxActivePeers > 1) {
+            category = "policy";
             // 5. Envelope (decision 11).
             reason = `Autonomy envelope requires maxActivePeers=1 (policy has ${input.maxActivePeers})`;
           } else if (input.expectedRuntimeMinutes === null) {
+            category = "policy";
             reason = "No runtime cap configured";
           } else if (input.expectedRuntimeMinutes > NIGHT_MAX_RUNTIME_MINUTES) {
+            category = "policy";
             reason = `Runtime cap exceeds the night envelope (~${NIGHT_MAX_RUNTIME_MINUTES}m)`;
           } else if (
             input.expectedRuntimeMinutes * 60_000 >
@@ -597,17 +709,19 @@ export const GitsSlotSchedulerLive = Layer.effect(
           ) {
             // 6. Runway (decision 7).
             reason = "Insufficient slot runway";
+            retryAt = next_slot_start_at(slots, epochMs);
           } else {
             // 7. Capacity (decision 20).
             const capacity = yield* capacityDecision(state.config.weeklyMaxUsedPercent);
             reason = capacity.deny;
-            note = capacity.note;
+            category = "quota";
+            retryAt = capacity.retryAt;
           }
 
           const decision: GitsSchedulerGateDecision = {
             at: yield* nowIso,
             allowed: reason === null,
-            reason: reason ?? note,
+            reason,
           };
           const previous = state.lastGateDecision;
           if (
@@ -617,15 +731,35 @@ export const GitsSlotSchedulerLive = Layer.effect(
           ) {
             // Persist only when the decision changes; same-reason ticks update the live Ref only.
             yield* commitState((current) =>
-              Effect.succeed({ ...current, lastGateDecision: decision, updatedAt: decision.at }),
+              Effect.succeed({
+                ...current,
+                lastGateDecision: decision,
+                updatedAt: decision.at,
+              }),
             );
           } else {
-            yield* Ref.update(stateRef, (current) => ({ ...current, lastGateDecision: decision }));
+            yield* Ref.update(stateRef, (current) => ({
+              ...current,
+              lastGateDecision: decision,
+            }));
           }
 
           return reason === null
             ? ({ allowed: true } as const)
-            : ({ allowed: false, reason } as const);
+            : ({
+                allowed: false,
+                category,
+                reason,
+                retryAt,
+                ...(reason.startsWith("Outside slot window") ||
+                reason.startsWith("Armed for future night")
+                  ? {
+                      targetsCurrentNight:
+                        effectiveArming(state, epochMs).status === "armed" &&
+                        state.arming.nightKey === currentNightKey,
+                    }
+                  : {}),
+              } as const);
         }),
       recordGoalStart: (input) =>
         Effect.gen(function* () {
@@ -639,7 +773,12 @@ export const GitsSlotSchedulerLive = Layer.effect(
               ...state,
               nightLog: [
                 ...state.nightLog.filter((entry) => entry.nightKey >= cutoff),
-                { nightKey, goalId: input.goalId, episodeId: input.episodeId, startedAt },
+                {
+                  nightKey,
+                  goalId: input.goalId,
+                  episodeId: input.episodeId,
+                  startedAt,
+                },
               ],
               lastEvent: `Recorded goal start ${input.goalId} for ${nightKey}.`,
               updatedAt: startedAt,
