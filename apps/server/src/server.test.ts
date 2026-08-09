@@ -253,6 +253,8 @@ const defaultAutomodeGoal: AutomodeGoal = {
   maxRuntimeMinutes: null,
   verificationCommands: [],
   integrationBranch: null,
+  planningNotes: null,
+  planningBoundary: null,
   status: "queued",
   peerId: null,
   blockedReason: null,

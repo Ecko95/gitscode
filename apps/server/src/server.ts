@@ -84,6 +84,7 @@ import { AutomodeProposalSweepLive } from "./gits/Layers/AutomodeProposalSweep.t
 import { AutomodeNotificationsLive } from "./gits/Layers/AutomodeNotifications.ts";
 import { AutomodeTelegramDigestLive } from "./gits/Layers/AutomodeTelegramDigest.ts";
 import { GitsSlotSchedulerLive } from "./gits/Layers/GitsSlotScheduler.ts";
+import { CockpitInboxLive } from "./gits/Layers/CockpitInbox.ts";
 import { HermesTelegramNotifierLive } from "./gits/Layers/HermesTelegramNotifier.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { GraveyardOrphanAdopterLive } from "./vcs/GraveyardOrphanAdopter.ts";
@@ -408,7 +409,7 @@ const CodexMcpAuthLayerLive = CodexMcpAuthLive.pipe(
 );
 
 const GitsLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(GitsBuildInfoResolverLive),
+  Layer.provideMerge(Layer.merge(GitsBuildInfoResolverLive, CockpitInboxLive)),
   Layer.provideMerge(GitsNotesLive),
   Layer.provideMerge(GitsCapacityMonitorLive),
   Layer.provideMerge(GitsCodexVerifierAdapterLive),

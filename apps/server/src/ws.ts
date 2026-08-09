@@ -34,6 +34,7 @@ import {
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   AutomodeSupervisorError,
+  CockpitInboxError,
   BrowserPreviewError,
   CritError,
   DelamainAdapterError,
@@ -101,6 +102,7 @@ import { GitsPlanningScanner } from "./gits/Services/GitsPlanningScanner.ts";
 import { DelamainAdapter } from "./gits/Services/DelamainAdapter.ts";
 import { GitsCapacityMonitor } from "./gits/Services/GitsCapacityMonitor.ts";
 import { GitsSlotScheduler } from "./gits/Services/GitsSlotScheduler.ts";
+import { CockpitInbox } from "./gits/Services/CockpitInbox.ts";
 import { HermesAdapter } from "./gits/Services/HermesAdapter.ts";
 import { OpenGsdAdapter } from "./gits/Services/OpenGsdAdapter.ts";
 import { AutomodeSupervisor } from "./gits/Services/AutomodeSupervisor.ts";
@@ -430,6 +432,7 @@ const makeWsRpcLayer = (
       const automodeSupervisor = yield* AutomodeSupervisor;
       const automodeEpisodeLedger = yield* AutomodeEpisodeLedger;
       const automodeNotifications = yield* AutomodeNotifications;
+      const cockpitInbox = yield* Effect.serviceOption(CockpitInbox);
       const notifyProposal = (proposal: { readonly id: string; readonly title: string }) =>
         Effect.gen(function* () {
           const policy = yield* automodeSupervisor.getPolicy();
@@ -2282,6 +2285,46 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.gitsAutomodeGoalsKill, automodeSupervisor.killGoal(input), {
             "rpc.aggregate": "gits",
           }),
+        [WS_METHODS.gitsCockpitInboxList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxList,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(new CockpitInboxError({ message: "Cockpit Inbox unavailable." })),
+              onSome: (inbox) => inbox.list(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsCockpitInboxMarkRead]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxMarkRead,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(new CockpitInboxError({ message: "Cockpit Inbox unavailable." })),
+              onSome: (inbox) => inbox.markRead(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsCockpitInboxMarkAllRead]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxMarkAllRead,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(new CockpitInboxError({ message: "Cockpit Inbox unavailable." })),
+              onSome: (inbox) => inbox.markAllRead(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
+        [WS_METHODS.gitsCockpitInboxPin]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitsCockpitInboxPin,
+            Option.match(cockpitInbox, {
+              onNone: () =>
+                Effect.fail(new CockpitInboxError({ message: "Cockpit Inbox unavailable." })),
+              onSome: (inbox) => inbox.setPinned(input),
+            }),
+            { "rpc.aggregate": "gits" },
+          ),
         [WS_METHODS.gitsCapacityGetSnapshot]: (_input) =>
           observeRpcEffect(
             WS_METHODS.gitsCapacityGetSnapshot,

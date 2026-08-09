@@ -710,6 +710,8 @@ export const AutomodeSupervisorLive = Layer.effect(
             maxRuntimeMinutes: input.maxRuntimeMinutes ?? null,
             verificationCommands: input.verificationCommands ?? [],
             integrationBranch: input.integrationBranch ?? null,
+            planningNotes: null,
+            planningBoundary: null,
           };
           const nextState = yield* commitState((state) => ({
             ...state,
