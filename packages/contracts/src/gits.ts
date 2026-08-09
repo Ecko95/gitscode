@@ -1101,6 +1101,12 @@ export const AutomodeSnapshot = Schema.Struct({
 });
 export type AutomodeSnapshot = typeof AutomodeSnapshot.Type;
 
+export const AutopilotConfigureInput = Schema.Struct({
+  enabled: Schema.Boolean,
+  repositories: Schema.Array(PathString),
+});
+export type AutopilotConfigureInput = typeof AutopilotConfigureInput.Type;
+
 export const AutomodePolicyUpdateInput = Schema.Struct({
   mode: Schema.optional(AutomodeMode),
   killSwitchEnabled: Schema.optional(Schema.Boolean),
@@ -1234,6 +1240,12 @@ export const GitsSchedulerSnapshot = Schema.Struct({
   checkedAt: IsoDateTime,
 });
 export type GitsSchedulerSnapshot = typeof GitsSchedulerSnapshot.Type;
+
+export const AutopilotControlSnapshot = Schema.Struct({
+  automode: AutomodeSnapshot,
+  scheduler: GitsSchedulerSnapshot,
+});
+export type AutopilotControlSnapshot = typeof AutopilotControlSnapshot.Type;
 
 export const GitsSchedulerSetConfigInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),

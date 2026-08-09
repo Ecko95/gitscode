@@ -32,3 +32,18 @@ export const WebPushPublicConfig = Schema.Struct({
   publicKey: Schema.NullOr(PushKey),
 });
 export type WebPushPublicConfig = typeof WebPushPublicConfig.Type;
+
+export const WebPushTestKind = Schema.Literals(["delivery", "proposal"]);
+export type WebPushTestKind = typeof WebPushTestKind.Type;
+
+export const WebPushTestInput = Schema.Struct({
+  endpoint: PushEndpoint,
+  kind: WebPushTestKind,
+});
+export type WebPushTestInput = typeof WebPushTestInput.Type;
+
+export const WebPushTestResult = Schema.Struct({
+  accepted: Schema.Literal(true),
+  url: TrimmedNonEmptyString,
+});
+export type WebPushTestResult = typeof WebPushTestResult.Type;

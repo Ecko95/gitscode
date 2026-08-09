@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
 import {
+  AutopilotConfigureInput,
   AutomodeGoal,
   CockpitInboxFilter,
   CockpitInboxItem,
@@ -24,6 +25,7 @@ import {
 } from "./gits.ts";
 
 const decodeGitsBuildInfo = Schema.decodeUnknownSync(GitsBuildInfo);
+const decodeAutopilotConfigureInput = Schema.decodeUnknownSync(AutopilotConfigureInput);
 const decodeGitsNoteSummary = Schema.decodeUnknownSync(GitsNoteSummary);
 const decodeGitsNote = Schema.decodeUnknownSync(GitsNote);
 const decodeGitsNoteWriteInput = Schema.decodeUnknownSync(GitsNoteWriteInput);
@@ -40,6 +42,18 @@ const decodeHermesChatResult = Schema.decodeUnknownSync(HermesChatResult);
 const decodeHermesProposal = Schema.decodeUnknownSync(HermesProposalCard);
 const decodeHermesDraft = Schema.decodeUnknownSync(HermesExecutionDraft);
 const decodeHermesScheduleRun = Schema.decodeUnknownSync(HermesScheduleRunResult);
+
+describe("AutopilotConfigureInput", () => {
+  it("accepts enabled state with zero or more repositories", () => {
+    expect(decodeAutopilotConfigureInput({ enabled: true, repositories: ["/srv/repo"] })).toEqual({
+      enabled: true,
+      repositories: ["/srv/repo"],
+    });
+    expect(() =>
+      decodeAutopilotConfigureInput({ enabled: true, repositories: [] }),
+    ).not.toThrow();
+  });
+});
 
 describe("GitsBuildInfo", () => {
   it("accepts nullable build provenance fields", () => {

@@ -16,6 +16,8 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  AutopilotConfigureInput,
+  AutopilotControlSnapshot,
   AutomodeDispatchResult,
   AutomodeEnqueueGoalInput,
   AutomodeEpisode,
@@ -319,6 +321,7 @@ export const WS_METHODS = {
   gitsOpenGsdInitProject: "gits.openGsd.init",
   gitsOpenGsdRunAuto: "gits.openGsd.auto",
   gitsAutomodeGetSnapshot: "gits.automode.snapshot",
+  gitsAutomodeConfigure: "gits.automode.configure",
   gitsAutomodeUpdatePolicy: "gits.automode.policy.update",
   gitsAutomodeEnqueueGoal: "gits.automode.goals.enqueue",
   gitsAutomodeApproveGoal: "gits.automode.goals.approve",
@@ -945,6 +948,12 @@ export const WsGitsAutomodeGetSnapshotRpc = Rpc.make(WS_METHODS.gitsAutomodeGetS
   error: AutomodeSupervisorError,
 });
 
+export const WsGitsAutomodeConfigureRpc = Rpc.make(WS_METHODS.gitsAutomodeConfigure, {
+  payload: AutopilotConfigureInput,
+  success: AutopilotControlSnapshot,
+  error: AutomodeSupervisorError,
+});
+
 export const WsGitsAutomodeUpdatePolicyRpc = Rpc.make(WS_METHODS.gitsAutomodeUpdatePolicy, {
   payload: AutomodePolicyUpdateInput,
   success: AutomodeSnapshot,
@@ -1359,6 +1368,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitsOpenGsdInitProjectRpc,
   WsGitsOpenGsdRunAutoRpc,
   WsGitsAutomodeGetSnapshotRpc,
+  WsGitsAutomodeConfigureRpc,
   WsGitsAutomodeUpdatePolicyRpc,
   WsGitsAutomodeEnqueueGoalRpc,
   WsGitsAutomodeApproveGoalRpc,
