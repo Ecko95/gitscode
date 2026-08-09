@@ -33,6 +33,12 @@ export interface AutomodeSupervisorShape {
   readonly enqueueGoal: (
     input: AutomodeEnqueueGoalInput,
   ) => Effect.Effect<AutomodeSnapshot, AutomodeSupervisorError>;
+  readonly deferGoal: (input: {
+    readonly goalId: string;
+    readonly notBefore: string;
+    readonly planningNotes: string | null;
+    readonly planningBoundary: string;
+  }) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
   readonly approveGoal: (
     input: AutomodeGoalInput,
   ) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;

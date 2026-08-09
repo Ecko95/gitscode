@@ -11,6 +11,7 @@ import {
   buildHermesCockpitChatArgs,
   buildHermesCockpitChatPrompt,
   buildHermesInspectGitsArgs,
+  buildHermesPlanRefinementPrompt,
   HERMES_ACP_CHECK_ARGS,
   HERMES_ACP_START_ARGS,
   HERMES_CODEX_OAUTH_ARGS,
@@ -53,6 +54,17 @@ afterEach(() => {
 });
 
 describe("HermesCliAdapter command construction", () => {
+  it("keeps quota plan refinement observe-only", () => {
+    const prompt = buildHermesPlanRefinementPrompt({
+      title: "Bound the retry fix",
+      prompt: "Fix retry behavior",
+      boundary: "2026-01-02T00:00:00.000Z",
+    });
+    expect(prompt).toContain("observe-only");
+    expect(prompt).toContain("Do not use shell commands, alter files, create worktrees");
+    expect(prompt).toContain("2026-01-02T00:00:00.000Z");
+  });
+
   it("uses the isolated GITS Hermes home by default", () => {
     vi.stubEnv("GITS_HERMES_HOME", undefined);
 

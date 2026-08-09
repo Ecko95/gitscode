@@ -25,6 +25,8 @@ import { AutomodeUsageMeter } from "../Services/AutomodeUsageMeter.ts";
 import { AutomodeDriver } from "../Services/AutomodeDriver.ts";
 import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
+import { CockpitInbox, type CockpitInboxRecordInput } from "../Services/CockpitInbox.ts";
+import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import {
   HermesTelegramNotifier,
   HermesTelegramNotifierError,
@@ -150,6 +152,9 @@ interface MakeLayerOptions {
   readonly onDigestTick?: () => void;
   readonly onNotify?: (input: Parameters<HermesTelegramNotifierShape["notify"]>[0]) => void;
   readonly notifyError?: HermesTelegramNotifierError;
+  readonly onInbox?: (input: CockpitInboxRecordInput) => void;
+  readonly onRefinePlan?: (boundary: string) => void;
+  readonly onRetarget?: (eligibleAt: string | null) => void;
 }
 
 // Mutable holder so a test can change what listPeers returns between ticks.
@@ -254,6 +259,11 @@ function makeLayer(
           ? Effect.fail(options.recordGoalStartError)
           : Effect.void;
       }),
+    retargetApprovedGoal: ({ eligibleAt }) =>
+      Effect.sync(() => {
+        options?.onRetarget?.(eligibleAt);
+        return {} as never;
+      }),
   });
   const landing = Layer.mock(AutomodeLanding)({
     ensure_integration_branch: () =>
@@ -309,6 +319,24 @@ function makeLayer(
         return options?.notifyError === undefined ? Effect.void : Effect.die(options.notifyError);
       }),
   });
+  const inbox = Layer.mock(CockpitInbox)({
+    record: (input) =>
+      Effect.sync(() => {
+        options?.onInbox?.(input);
+        return {} as never;
+      }),
+    list: () => Effect.die("unused"),
+    markRead: () => Effect.die("unused"),
+    markAllRead: () => Effect.die("unused"),
+    setPinned: () => Effect.die("unused"),
+  });
+  const hermes = Layer.mock(HermesAdapter)({
+    refinePlan: ({ boundary }) =>
+      Effect.sync(() => {
+        options?.onRefinePlan?.(boundary);
+        return "Split the task into one bounded retry change.";
+      }),
+  });
   const config = ServerConfig.layerTest(
     process.cwd(),
     options?.baseDir ?? { prefix: "gits-automode-driver-test-" },
@@ -333,6 +361,8 @@ function makeLayer(
     Layer.provide(proposalSweep),
     Layer.provide(notifier),
     Layer.provide(notifications),
+    Layer.provide(inbox),
+    Layer.provide(hermes),
   );
 }
 
@@ -1066,6 +1096,91 @@ describe("AutomodeDriver", () => {
             retryAt: null,
           },
           onRecordGoalStart: (input) => starts.push(input),
+        }),
+      ),
+    );
+  });
+
+  it.effect("known quota reset defers and refines once without dispatching", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const resetAt = "2099-01-02T00:00:00.000Z";
+    const refinements: string[] = [];
+    const retargets: Array<string | null> = [];
+    const inbox: CockpitInboxRecordInput[] = [];
+    let spawns = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Quota wait", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+      yield* driver.tickOnce();
+
+      const goal = (yield* supervisor.getSnapshot()).goals[0]!;
+      assert.equal(goal.status, "queued");
+      assert.equal(goal.notBefore, resetAt);
+      assert.equal(goal.planningBoundary, resetAt);
+      assert.include(goal.planningNotes ?? "", "bounded retry change");
+      assert.deepEqual(refinements, [resetAt]);
+      assert.deepEqual(retargets, [resetAt]);
+      assert.deepEqual(
+        inbox.map((event) => event.state),
+        ["waiting-quota-reset"],
+      );
+      assert.equal(spawns, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          gateResult: {
+            allowed: false,
+            category: "quota",
+            reason: "Codex weekly window at 92%",
+            retryAt: resetAt,
+          },
+          onRefinePlan: (boundary) => refinements.push(boundary),
+          onRetarget: (eligibleAt) => retargets.push(eligibleAt),
+          onInbox: (event) => inbox.push(event),
+          onSpawnPeer: () => {
+            spawns += 1;
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("missing quota telemetry records a wait without guessing a reset", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const inbox: CockpitInboxRecordInput[] = [];
+    let refinements = 0;
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({
+        title: "Telemetry wait",
+        repo: "/tmp/source-repo",
+        prompt: "x",
+      });
+      yield* driver.tickOnce();
+
+      const goal = (yield* supervisor.getSnapshot()).goals[0]!;
+      assert.equal(goal.notBefore, null);
+      assert.equal(refinements, 0);
+      assert.equal(inbox[0]?.eventKey, `goal:${goal.id}:waiting:telemetry`);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          gateResult: {
+            allowed: false,
+            category: "quota",
+            reason: "Codex quota telemetry is missing or stale",
+            retryAt: null,
+          },
+          onRefinePlan: () => {
+            refinements += 1;
+          },
+          onInbox: (event) => inbox.push(event),
         }),
       ),
     );

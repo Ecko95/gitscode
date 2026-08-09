@@ -305,6 +305,20 @@ describe("GitsSlotScheduler arming", () => {
       assert.equal(snapshot.arming.nightKey, "2026-01-11");
     }).pipe(Effect.provide(makeLayer())),
   );
+
+  it.effect("manual disarm prevents driver retargeting", () =>
+    Effect.gen(function* () {
+      const scheduler = yield* GitsSlotScheduler;
+      yield* TestClock.setTime(WED_2200);
+      yield* scheduler.scheduleApprovedGoal({ eligibleAt: null });
+      yield* scheduler.disarm({ reason: "operator stop" });
+      const snapshot = yield* scheduler.retargetApprovedGoal({
+        eligibleAt: "2026-01-10T20:00:00.000Z",
+      });
+      assert.equal(snapshot.automaticArmingAuthorized, false);
+      assert.equal(snapshot.arming.status, "disarmed");
+    }).pipe(Effect.provide(makeLayer())),
+  );
 });
 
 describe("GitsSlotScheduler gate", () => {
@@ -368,7 +382,7 @@ describe("GitsSlotScheduler gate", () => {
         allowed: false,
         category: "schedule",
         reason: "Outside slot window (next slot 00:00)",
-        retryAt: null,
+        retryAt: "2026-01-08T00:00:00.000Z",
       });
     }).pipe(Effect.provide(makeLayer())),
   );
@@ -434,7 +448,7 @@ describe("GitsSlotScheduler gate", () => {
         allowed: false,
         category: "schedule",
         reason: "Insufficient slot runway",
-        retryAt: null,
+        retryAt: "2026-01-08T00:00:00.000Z",
       });
     }).pipe(Effect.provide(makeLayer())),
   );

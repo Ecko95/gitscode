@@ -185,7 +185,7 @@ export const CockpitInboxLive = Layer.effect(
             } as const;
             const item: CockpitInboxItem = {
               id: input.episodeId,
-              proposalId: input.proposalId,
+              proposalId: existing?.proposalId ?? input.proposalId,
               goalId: input.goalId ?? existing?.goalId ?? null,
               title: input.title,
               repository: input.repository,

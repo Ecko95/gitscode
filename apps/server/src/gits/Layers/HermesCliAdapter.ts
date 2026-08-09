@@ -870,6 +870,21 @@ export function buildHermesCockpitChatArgs(prompt: string): string[] {
   ];
 }
 
+export function buildHermesPlanRefinementPrompt(input: {
+  readonly title: string;
+  readonly prompt: string;
+  readonly boundary: string;
+}): string {
+  return [
+    "Analyze this queued task in observe-only mode.",
+    "Do not use shell commands, alter files, create worktrees, or start execution.",
+    `Task: ${input.title}`,
+    `Current request: ${input.prompt}`,
+    `Earliest execution boundary: ${input.boundary}`,
+    "Return concise planning notes that reduce the work to a safe bounded slice.",
+  ].join("\n");
+}
+
 export function classifyHermesChatAction(message: string): HermesProposalActionKind {
   const normalized = message.toLowerCase();
   if (
@@ -2390,6 +2405,23 @@ function makeHermesCliAdapterShape(
   notifier: HermesTelegramNotifierShape,
 ): HermesAdapterShape {
   const notifyAuthFailure = makeCodexChainAlert(notifier);
+  const refinePlan: HermesAdapterShape["refinePlan"] = (input) =>
+    Effect.gen(function* () {
+      const config = yield* getConfig();
+      yield* Effect.tryPromise({
+        try: () => ensureSoul(config),
+        catch: (cause) => toHermesError("Failed to prepare Hermes plan refinement.", cause),
+      });
+      const result = yield* execHermes(
+        buildHermesInspectGitsArgs(buildHermesPlanRefinementPrompt(input)),
+        { cwd: input.repo, timeoutMs: PROPOSAL_TIMEOUT_MS },
+      );
+      const notes = nonEmpty(result.stdout) ?? nonEmpty(result.stderr);
+      if (result.exitCode !== 0 || notes === null) {
+        return yield* toHermesError("Hermes plan refinement did not complete.");
+      }
+      return notes;
+    });
   return {
     getStatus,
     getConfig,
@@ -2401,6 +2433,7 @@ function makeHermesCliAdapterShape(
     listProposals,
     inspectGitsAndPropose: makeInspectGitsAndPropose(notifyAuthFailure),
     chat: makeChat(capacityMonitor, notifyAuthFailure),
+    refinePlan,
     decideProposal,
     writeProjectContext: makeWriteProjectContext(
       capacityMonitor,

@@ -209,6 +209,21 @@ export function next_slot_start(
   return tomorrowStarts[0] ?? "00:00";
 }
 
+export function next_slot_start_at(
+  slots: ReadonlyArray<GitsSchedulerSlotWindow>,
+  epochMs: number,
+): string | null {
+  let wasInSlot = current_slot(slots, epochMs) !== null;
+  const minute = Math.floor(epochMs / 60_000) * 60_000;
+  for (let offset = 1; offset <= 48 * 60; offset += 1) {
+    const candidate = minute + offset * 60_000;
+    const inSlot = current_slot(slots, candidate) !== null;
+    if (inSlot && !wasInSlot) return DateTime.formatIso(DateTime.makeUnsafe(candidate));
+    wasInSlot = inSlot;
+  }
+  return null;
+}
+
 // --- Persisted state ------------------------------------------------------------------------
 
 const DEFAULT_SCHEDULER_CONFIG: GitsSchedulerConfig = {
@@ -523,6 +538,32 @@ export const GitsSlotSchedulerLive = Layer.effect(
         return { deny: null, retryAt: null } as const;
       });
 
+    const scheduleApprovedGoal = (
+      input: { readonly eligibleAt: string | null },
+      authorize: boolean,
+    ) =>
+      Effect.gen(function* () {
+        const epochMs = yield* nowEpochMs;
+        const armedAt = yield* nowIso;
+        const eligibleAtMs = input.eligibleAt === null ? epochMs : Date.parse(input.eligibleAt);
+        if (!Number.isFinite(eligibleAtMs)) {
+          return yield* toSchedulerError("Approved goal has an invalid eligibility time.");
+        }
+        const nextState = yield* commitState((state) => {
+          if (!authorize && !state.automaticArmingAuthorized) return Effect.succeed(state);
+          const nightKey = current_night_key(slots, Math.max(epochMs, eligibleAtMs));
+          return Effect.succeed({
+            ...state,
+            config: { ...state.config, enabled: true },
+            arming: { status: "armed", nightKey, armedAt, disarmedReason: null } as const,
+            automaticArmingAuthorized: authorize || state.automaticArmingAuthorized,
+            lastEvent: `Approved work scheduled for ${nightKey}.`,
+            updatedAt: armedAt,
+          });
+        });
+        return snapshotFromState(nextState, epochMs, armedAt);
+      });
+
     const scheduler: GitsSlotSchedulerShape = {
       getSnapshot: () =>
         Effect.gen(function* () {
@@ -595,27 +636,8 @@ export const GitsSlotSchedulerLive = Layer.effect(
           );
           return snapshotFromState(nextState, epochMs, updatedAt);
         }),
-      scheduleApprovedGoal: (input) =>
-        Effect.gen(function* () {
-          const epochMs = yield* nowEpochMs;
-          const armedAt = yield* nowIso;
-          const eligibleAtMs = input.eligibleAt === null ? epochMs : Date.parse(input.eligibleAt);
-          if (!Number.isFinite(eligibleAtMs)) {
-            return yield* toSchedulerError("Approved goal has an invalid eligibility time.");
-          }
-          const nightKey = current_night_key(slots, Math.max(epochMs, eligibleAtMs));
-          const nextState = yield* commitState((state) =>
-            Effect.succeed({
-              ...state,
-              config: { ...state.config, enabled: true },
-              arming: { status: "armed", nightKey, armedAt, disarmedReason: null } as const,
-              automaticArmingAuthorized: true,
-              lastEvent: `Approved work scheduled for ${nightKey}.`,
-              updatedAt: armedAt,
-            }),
-          );
-          return snapshotFromState(nextState, epochMs, armedAt);
-        }),
+      scheduleApprovedGoal: (input) => scheduleApprovedGoal(input, true),
+      retargetApprovedGoal: (input) => scheduleApprovedGoal(input, false),
       checkStartAllowed: (input) =>
         Effect.gen(function* () {
           const epochMs = yield* nowEpochMs;
@@ -641,6 +663,7 @@ export const GitsSlotSchedulerLive = Layer.effect(
             reason = `Armed for future night ${state.arming.nightKey}`;
           } else if (current_slot(slots, epochMs) === null) {
             // 3. Slot window.
+            retryAt = next_slot_start_at(slots, epochMs);
             reason = `Outside slot window (next slot ${next_slot_start(slots, epochMs)})`;
           } else if (goalsStartedTonight(state, epochMs) >= state.config.maxGoalsPerNight) {
             // 4. Night goal cap (decision 11).
@@ -661,6 +684,7 @@ export const GitsSlotSchedulerLive = Layer.effect(
           ) {
             // 6. Runway (decision 7).
             reason = "Insufficient slot runway";
+            retryAt = next_slot_start_at(slots, epochMs);
           } else {
             // 7. Capacity (decision 20).
             const capacity = yield* capacityDecision(state.config.weeklyMaxUsedPercent);

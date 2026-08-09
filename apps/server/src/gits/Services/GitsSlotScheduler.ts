@@ -48,6 +48,9 @@ export interface GitsSlotSchedulerShape {
   readonly scheduleApprovedGoal: (
     input: GitsSchedulerScheduleApprovedGoalInput,
   ) => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;
+  readonly retargetApprovedGoal: (
+    input: GitsSchedulerScheduleApprovedGoalInput,
+  ) => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;
   readonly checkStartAllowed: (
     input: GitsSchedulerStartCheckInput,
   ) => Effect.Effect<GitsSchedulerGateResult, GitsSlotSchedulerError>;

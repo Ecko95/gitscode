@@ -721,6 +721,32 @@ export const AutomodeSupervisorLive = Layer.effect(
           }));
           return yield* snapshotFromState(nextState);
         }),
+      deferGoal: (input) =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const nextState = yield* commitState((state) =>
+            updateGoal(
+              {
+                ...state,
+                lastEvent: `Deferred queued work until ${input.notBefore}.`,
+                updatedAt,
+              },
+              input.goalId,
+              (goal) => ({
+                ...goal,
+                notBefore: input.notBefore,
+                planningNotes: input.planningNotes,
+                planningBoundary: input.planningBoundary,
+                updatedAt,
+              }),
+            ),
+          );
+          const goal = findGoal(nextState, input.goalId);
+          if (goal === null) {
+            return yield* toAutomodeError(`Automode goal ${input.goalId} was not found.`);
+          }
+          return goal;
+        }),
       approveGoal: (input) =>
         Effect.gen(function* () {
           const approvedAt = yield* nowIso;
@@ -895,7 +921,13 @@ export const AutomodeSupervisorLive = Layer.effect(
           });
 
           // Episode threading v1: traceability via the prompt (delamain untouched).
-          const episodePrompt = `Episode: ${goal.episodeId}\n${goal.prompt}`;
+          const episodePrompt = [
+            `Episode: ${goal.episodeId}`,
+            goal.prompt,
+            ...(goal.planningNotes === null
+              ? []
+              : [`Motoko planning notes for ${goal.planningBoundary}:\n${goal.planningNotes}`]),
+          ].join("\n");
           const peer = yield* delamainAdapter
             .spawnPeer({
               repo: goal.repo,

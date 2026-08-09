@@ -21,6 +21,8 @@ import { AutomodeProposalSweep } from "../Services/AutomodeProposalSweep.ts";
 import { AutomodeTelegramDigest } from "../Services/AutomodeTelegramDigest.ts";
 import { GitsReviewPipeline } from "../Services/GitsReviewPipeline.ts";
 import { GitsSlotScheduler } from "../Services/GitsSlotScheduler.ts";
+import { CockpitInbox } from "../Services/CockpitInbox.ts";
+import { HermesAdapter } from "../Services/HermesAdapter.ts";
 import { AUTOMODE_BASE_REF, AutomodeLanding } from "../Services/AutomodeLanding.ts";
 import { AutomodeHeldPr } from "../Services/AutomodeHeldPr.ts";
 import { AutomodeEpisodeLedger } from "../../persistence/Services/AutomodeEpisodeLedger.ts";
@@ -93,9 +95,31 @@ export const AutomodeDriverLive = Layer.effect(
     const telegramDigest = yield* AutomodeTelegramDigest;
     const proposalSweep = yield* AutomodeProposalSweep;
     const notifications = yield* AutomodeNotifications;
+    const inbox = yield* CockpitInbox;
+    const hermes = yield* HermesAdapter;
 
     const toDriverError = (message: string) => (cause: unknown) =>
       new AutomodeSupervisorError({ message, cause });
+
+    const recordInbox = (
+      goal: AutomodeGoal,
+      state: "waiting-quota-reset" | "running" | "attention-required" | "completed",
+      eventKey: string,
+      reason: string,
+    ) =>
+      inbox
+        .record({
+          episodeId: goal.episodeId,
+          proposalId: goal.episodeId,
+          goalId: goal.id,
+          title: goal.title,
+          repository: goal.repo,
+          eventKey,
+          state,
+          reason,
+          deepLink: `/gits?panel=autopilot&goal=${encodeURIComponent(goal.id)}`,
+        })
+        .pipe(Effect.mapError(toDriverError("Failed to record Automode Inbox transition.")));
 
     const notify = (input: {
       readonly subject: string;
@@ -131,6 +155,7 @@ export const AutomodeDriverLive = Layer.effect(
 
     const failGoal = (goal: AutomodeGoal, reason: string) =>
       supervisor.failGoal({ goalId: goal.id, reason }).pipe(
+        Effect.tap(() => recordInbox(goal, "attention-required", `goal:${goal.id}:failed`, reason)),
         Effect.tap(() =>
           notify({
             subject: "GITS automode goal failed",
@@ -148,6 +173,16 @@ export const AutomodeDriverLive = Layer.effect(
     const lastHaltAlertRef = yield* Ref.make<{ reason: string; at: number } | null>(null);
     const halt = (goal: AutomodeGoal | null, reason: string) =>
       supervisor.haltDriver({ reason }).pipe(
+        Effect.tap(() =>
+          goal === null
+            ? Effect.void
+            : recordInbox(
+                goal,
+                "attention-required",
+                `goal:${goal.id}:attention:${reason}`,
+                reason,
+              ),
+        ),
         Effect.tap(() =>
           Effect.gen(function* () {
             const now = yield* Clock.currentTimeMillis;
@@ -422,6 +457,12 @@ export const AutomodeDriverLive = Layer.effect(
             }
 
             yield* supervisor.completeGoal({ goalId: running.id });
+            yield* recordInbox(
+              running,
+              "completed",
+              `goal:${running.id}:completed`,
+              "Implementation completed and landed.",
+            );
 
             // Record the episode (verifier output) for rehydrate. A ledger hiccup
             // must not halt the run — the slice already landed and the goal is done.
@@ -529,6 +570,37 @@ export const AutomodeDriverLive = Layer.effect(
           })
           .pipe(Effect.mapError(toDriverError("Scheduler start gate check failed.")));
         if (!gate.allowed) {
+          if (gate.retryAt !== null) {
+            const refinement =
+              next.planningBoundary === gate.retryAt
+                ? next.planningNotes
+                : yield* hermes
+                    .refinePlan({
+                      title: next.title,
+                      prompt: next.prompt,
+                      repo: next.repo,
+                      boundary: gate.retryAt,
+                    })
+                    .pipe(Effect.result, Effect.map(Result.getOrNull));
+            yield* supervisor.deferGoal({
+              goalId: next.id,
+              notBefore: gate.retryAt,
+              planningNotes: refinement,
+              planningBoundary: gate.retryAt,
+            });
+            yield* scheduler
+              .retargetApprovedGoal({ eligibleAt: gate.retryAt })
+              .pipe(Effect.mapError(toDriverError("Failed to retarget approved work.")));
+          }
+          const boundary = gate.retryAt ?? "telemetry";
+          yield* recordInbox(
+            next,
+            gate.category === "quota" || gate.retryAt !== null
+              ? "waiting-quota-reset"
+              : "attention-required",
+            `goal:${next.id}:waiting:${boundary}`,
+            gate.reason,
+          );
           // A denied night still maintains the held PR for already-landed slices —
           // otherwise a night-capped run would never open/poll it while goals stay queued.
           yield* maintainHeldPr(snapshot);
@@ -564,6 +636,14 @@ export const AutomodeDriverLive = Layer.effect(
           return;
         }
         const result = dispatched.success;
+        if (result.peer !== null) {
+          yield* recordInbox(
+            result.goal,
+            "running",
+            `goal:${next.id}:running`,
+            `Started peer ${result.peer.id}.`,
+          );
+        }
         if (result.peer === null) {
           yield* notify({
             subject: result.approvalRequired
