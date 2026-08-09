@@ -63,6 +63,7 @@
 ### Task 1: Add Narrow Contracts and Client Method
 
 **Files:**
+
 - Modify: `packages/contracts/src/gits.ts`
 - Modify: `packages/contracts/src/push.ts`
 - Modify: `packages/contracts/src/rpc.ts`
@@ -71,6 +72,7 @@
 - Modify: `packages/client-runtime/src/wsRpcClient.ts`
 
 **Interfaces:**
+
 - Produces: `AutopilotConfigureInput`, `AutopilotControlSnapshot`, `WebPushTestKind`, `WebPushTestInput`, `WebPushTestResult`, and `WsGitsAutomodeConfigureRpc`.
 - Produces client call: `client.gits.automode.configure(input)`.
 
@@ -144,12 +146,14 @@ git commit -m "feat: add guided autopilot contracts"
 ### Task 2: Add Fail-Closed Autopilot Controls
 
 **Files:**
+
 - Create: `apps/server/src/gits/Layers/AutopilotControl.ts`
 - Create: `apps/server/src/gits/Layers/AutopilotControl.test.ts`
 - Modify: `apps/server/src/ws.ts`
 - Modify: `apps/server/src/server.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AutopilotConfigureInput`, `AutopilotControlSnapshot`.
 - Produces: `configureAutopilot(dependencies, input)` and `emergencyStopAutopilot(dependencies)`.
 
@@ -160,27 +164,33 @@ Cover these observable calls:
 ```ts
 expect(onCalls).toEqual([
   ["scheduler.setConfig", { enabled: true }],
-  ["supervisor.updatePolicy", {
-    mode: "autonomous",
-    killSwitchEnabled: false,
-    maxActivePeers: 1,
-    allowedRepos: [repo],
-    proposalRepos: [repo],
-    nightlyProposalSweep: true,
-    sweepRequiresConfirmation: true,
-    autoEnqueueApprovedProposals: true,
-    gitsNotificationsEnabled: true,
-  }],
+  [
+    "supervisor.updatePolicy",
+    {
+      mode: "autonomous",
+      killSwitchEnabled: false,
+      maxActivePeers: 1,
+      allowedRepos: [repo],
+      proposalRepos: [repo],
+      nightlyProposalSweep: true,
+      sweepRequiresConfirmation: true,
+      autoEnqueueApprovedProposals: true,
+      gitsNotificationsEnabled: true,
+    },
+  ],
 ]);
 
 expect(pauseCalls).toEqual([
   ["scheduler.disarm", { reason: "Autopilot paused." }],
-  ["supervisor.updatePolicy", {
-    mode: "manual",
-    allowedRepos: [repo],
-    proposalRepos: [repo],
-    nightlyProposalSweep: false,
-  }],
+  [
+    "supervisor.updatePolicy",
+    {
+      mode: "manual",
+      allowedRepos: [repo],
+      proposalRepos: [repo],
+      nightlyProposalSweep: false,
+    },
+  ],
 ]);
 ```
 
@@ -205,12 +215,10 @@ export function configureAutopilot(
   input: AutopilotConfigureInput,
 ): Effect.Effect<AutopilotControlSnapshot, AutomodeSupervisorError>;
 
-export function emergencyStopAutopilot(
-  dependencies: {
-    supervisor: Pick<AutomodeSupervisorShape, "stopAll">;
-    scheduler: Pick<GitsSlotSchedulerShape, "disarm">;
-  },
-): Effect.Effect<AutomodeStopAllResult, AutomodeSupervisorError>;
+export function emergencyStopAutopilot(dependencies: {
+  supervisor: Pick<AutomodeSupervisorShape, "stopAll">;
+  scheduler: Pick<GitsSlotSchedulerShape, "disarm">;
+}): Effect.Effect<AutomodeStopAllResult, AutomodeSupervisorError>;
 ```
 
 Map scheduler errors into `AutomodeSupervisorError`. Do not arm on On; accepted work remains the authorization point through `scheduleApprovedGoal`.
@@ -235,10 +243,12 @@ git commit -m "feat: add simple autopilot controls"
 ### Task 3: Make Acceptance Recovery Visible and Idempotent
 
 **Files:**
+
 - Modify: `apps/server/src/gits/Layers/HermesAutomodeBridge.ts`
 - Modify: `apps/server/src/gits/Layers/HermesAutomodeBridge.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `decideProposalWithAutomodeBridge` dependencies.
 - Produces: the same external result with a new recovery invariant: approval failure records `attention-required` when the Proposal is known.
 
@@ -287,6 +297,7 @@ git commit -m "fix: make proposal launch retries visible"
 ### Task 4: Add Current-Device Push Tests
 
 **Files:**
+
 - Modify: `apps/server/src/push/Services/PushNotificationService.ts`
 - Modify: `apps/server/src/push/Layers/PushNotificationService.ts`
 - Modify: `apps/server/src/push/Layers/PushNotificationService.test.ts`
@@ -295,6 +306,7 @@ git commit -m "fix: make proposal launch retries visible"
 - Modify: `apps/server/src/server.ts`
 
 **Interfaces:**
+
 - Produces: `sendToEndpoint(endpoint, payload): Effect<"sent" | "disabled" | "not-found" | "failed">`.
 - Produces: authenticated `POST /api/push/test` accepting only `WebPushTestInput`.
 
@@ -303,7 +315,7 @@ git commit -m "fix: make proposal launch retries visible"
 Create two registered subscriptions, call `sendToEndpoint` for one, and assert only that endpoint is sent. Cover disabled VAPID, missing endpoint, sender failure, and expired-subscription deletion.
 
 ```ts
-const result = yield* service.sendToEndpoint(active.endpoint, payload);
+const result = yield * service.sendToEndpoint(active.endpoint, payload);
 assert.strictEqual(result, "sent");
 assert.deepStrictEqual(sentEndpoints, [active.endpoint]);
 ```
@@ -360,10 +372,12 @@ git commit -m "feat: add targeted PWA notification tests"
 ### Task 5: Build Guided Launch Logic Test-First
 
 **Files:**
+
 - Create: `apps/web/src/components/gits/cockpit/proposal-launch/proposalLaunch.logic.ts`
 - Create: `apps/web/src/components/gits/cockpit/proposal-launch/proposalLaunch.logic.test.ts`
 
 **Interfaces:**
+
 - Produces: `LaunchStep`, `ProposalLaunchForm`, `launchModelOptions`, `initialProposalLaunchForm`, `validateProposalLaunchForm`, `proposalLaunchEdits`, and `TEST_PROPOSAL`.
 
 - [ ] **Step 1: Write failing pure tests**
@@ -411,11 +425,13 @@ git commit -m "feat: add guided proposal launch logic"
 ### Task 6: Build the Three-Step Launch Sheet
 
 **Files:**
+
 - Create: `apps/web/src/components/gits/cockpit/ProposalLaunchSheet.tsx`
 - Create: `apps/web/src/components/gits/cockpit/ProposalLaunchSheet.browser.tsx`
 - Modify: `apps/web/src/components/gits/GitsCockpit.tsx`
 
 **Interfaces:**
+
 - Consumes: Task 5 launch logic and existing `onDecision(proposal, decision, edits)` callback.
 - Produces: `ProposalLaunchSheet` supporting real Proposal IDs and `testMode="proposal"`.
 - Produces callback: `onDecision(...): Promise<AutomodeGoal | null>` so the sheet can render the actual queued Goal.
@@ -465,6 +481,7 @@ git commit -m "feat: add guided proposal launch sheet"
 ### Task 7: Replace the Autopilot Policy Dashboard
 
 **Files:**
+
 - Rewrite: `apps/web/src/components/gits/cockpit/AutopilotPanel.tsx`
 - Create: `apps/web/src/components/gits/cockpit/AutopilotPanel.browser.tsx`
 - Modify: `apps/web/src/components/gits/GitsCockpit.tsx`
@@ -472,6 +489,7 @@ git commit -m "feat: add guided proposal launch sheet"
 - Delete: `apps/web/src/components/gits/cockpit/autopilot/autopilot.logic.test.ts`
 
 **Interfaces:**
+
 - Consumes: `automode.configure`, `ProposalLaunchSheet`, `InboxSection`, existing `stopAll`.
 - Produces: compact Autopilot operator surface.
 
@@ -522,6 +540,7 @@ git commit -m "feat: simplify autopilot around the inbox"
 ### Task 8: Add PWA Diagnostics UI and Test Routing
 
 **Files:**
+
 - Modify: `apps/web/src/lib/webPush.ts`
 - Create: `apps/web/src/lib/webPush.test.ts`
 - Modify: `apps/web/src/components/settings/SettingsPanels.tsx`
@@ -530,6 +549,7 @@ git commit -m "feat: simplify autopilot around the inbox"
 - Modify: `apps/web/src/service-worker.ts`
 
 **Interfaces:**
+
 - Produces: `readWebPushDiagnostics()` and `sendWebPushTest(kind)`.
 - Consumes: `POST /api/push/test` and `notificationTest` query values.
 
@@ -589,10 +609,12 @@ git commit -m "feat: add Android PWA notification diagnostics"
 ### Task 9: Integration Audit, Verification, and Documentation
 
 **Files:**
+
 - Modify as failures require: files already listed above
 - Modify: `docs/superpowers/specs/2026-08-09-guided-autopilot-inbox-design.md`
 
 **Interfaces:**
+
 - Verifies the complete Proposal → Inbox → PWA → guided Acceptance → Queue path and notification-test isolation.
 
 - [ ] **Step 1: Run focused integration suites**

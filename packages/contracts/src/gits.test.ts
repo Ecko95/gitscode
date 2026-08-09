@@ -49,9 +49,7 @@ describe("AutopilotConfigureInput", () => {
       enabled: true,
       repositories: ["/srv/repo"],
     });
-    expect(() =>
-      decodeAutopilotConfigureInput({ enabled: true, repositories: [] }),
-    ).not.toThrow();
+    expect(() => decodeAutopilotConfigureInput({ enabled: true, repositories: [] })).not.toThrow();
   });
 });
 

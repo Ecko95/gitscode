@@ -5045,7 +5045,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 calls.push(`scheduler:${input.enabled}`);
                 return {
                   ...defaultGitsSchedulerSnapshot,
-                  config: { ...defaultGitsSchedulerSnapshot.config, enabled: input.enabled ?? false },
+                  config: {
+                    ...defaultGitsSchedulerSnapshot.config,
+                    enabled: input.enabled ?? false,
+                  },
                 };
               }),
           },

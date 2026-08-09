@@ -62,10 +62,8 @@ export function emergencyStopAutopilot(dependencies: {
   readonly supervisor: Pick<AutomodeSupervisorShape, "stopAll">;
   readonly scheduler: Pick<GitsSlotSchedulerShape, "disarm">;
 }): Effect.Effect<AutomodeStopAllResult, AutomodeSupervisorError> {
-  return dependencies.scheduler
-    .disarm({ reason: "Autopilot emergency stop." })
-    .pipe(
-      Effect.mapError(schedulerError("Failed to disarm the Autopilot scheduler.")),
-      Effect.flatMap(() => dependencies.supervisor.stopAll()),
-    );
+  return dependencies.scheduler.disarm({ reason: "Autopilot emergency stop." }).pipe(
+    Effect.mapError(schedulerError("Failed to disarm the Autopilot scheduler.")),
+    Effect.flatMap(() => dependencies.supervisor.stopAll()),
+  );
 }

@@ -265,7 +265,8 @@ export const decideProposalWithAutomodeBridge = (
               repository: decided.projectDir,
               eventKey: `proposal:${decided.id}:acceptance-failed`,
               state: "attention-required",
-              reason: "Acceptance did not finish. Retry Accept & Queue; any existing Goal will be reused.",
+              reason:
+                "Acceptance did not finish. Retry Accept & Queue; any existing Goal will be reused.",
               deepLink:
                 goal === undefined
                   ? `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`

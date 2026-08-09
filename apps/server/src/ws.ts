@@ -113,10 +113,7 @@ import {
   hasLiveGoalForEpisode,
 } from "./gits/Layers/HermesAutomodeBridge.ts";
 import { AutomodeNotifications } from "./gits/Layers/AutomodeNotifications.ts";
-import {
-  configureAutopilot,
-  emergencyStopAutopilot,
-} from "./gits/Layers/AutopilotControl.ts";
+import { configureAutopilot, emergencyStopAutopilot } from "./gits/Layers/AutopilotControl.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import {
   denyThreadAccess,

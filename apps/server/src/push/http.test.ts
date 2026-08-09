@@ -58,7 +58,8 @@ const execute = (
 
 it.effect("push test route uses fixed server payload and a unique test tag", () =>
   Effect.gen(function* () {
-    const sent: Array<{ readonly endpoint: string; readonly payload: PushNotificationPayload }> = [];
+    const sent: Array<{ readonly endpoint: string; readonly payload: PushNotificationPayload }> =
+      [];
     const response = yield* execute(
       "owner",
       {
@@ -77,17 +78,15 @@ it.effect("push test route uses fixed server payload and a unique test tag", () 
     assert.equal(sent[0]!.endpoint, "https://push.example/device");
     assert.equal(sent[0]!.payload.title, "Test proposal ready");
     assert.equal(sent[0]!.payload.body, "Tap to test the guided proposal launch.");
-    assert.equal(
-      sent[0]!.payload.url,
-      "/gits?panel=autopilot&notificationTest=proposal",
-    );
+    assert.equal(sent[0]!.payload.url, "/gits?panel=autopilot&notificationTest=proposal");
     assert.match(sent[0]!.payload.tag, /^gits:test:proposal:/);
   }),
 );
 
 it.effect("push test route rejects thread-scoped sessions before sending", () =>
   Effect.gen(function* () {
-    const sent: Array<{ readonly endpoint: string; readonly payload: PushNotificationPayload }> = [];
+    const sent: Array<{ readonly endpoint: string; readonly payload: PushNotificationPayload }> =
+      [];
     const response = yield* execute(
       "thread-scoped",
       { endpoint: "https://push.example/device", kind: "delivery" },

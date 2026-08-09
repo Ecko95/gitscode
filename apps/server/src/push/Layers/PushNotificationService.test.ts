@@ -203,7 +203,10 @@ it.effect("sends a test only to the exact registered endpoint", () => {
     const service = yield* PushNotificationService;
     const payload = { title: "Test", body: "Body", tag: "test-1", url: "/gits" };
     assert.strictEqual(yield* service.sendToEndpoint(active.endpoint, payload), "sent");
-    assert.strictEqual(yield* service.sendToEndpoint("https://push.example.test/missing", payload), "not-found");
+    assert.strictEqual(
+      yield* service.sendToEndpoint("https://push.example.test/missing", payload),
+      "not-found",
+    );
     assert.deepStrictEqual(sentEndpoints, [active.endpoint]);
   }).pipe(Effect.provide(layer));
 });
@@ -220,16 +223,17 @@ it.effect("reports disabled and failed targeted delivery and deletes expired end
     list: () => Effect.succeed([persisted(expired)]),
   });
   const senderLayer = Layer.succeed(WebPushSender, {
-    send: () =>
-      Effect.fail(new WebPushSendError({ endpoint: expired.endpoint, statusCode: 410 })),
+    send: () => Effect.fail(new WebPushSendError({ endpoint: expired.endpoint, statusCode: 410 })),
   });
   const payload = { title: "Test", body: "Body", tag: "test-2", url: "/gits" };
 
   return Effect.gen(function* () {
     const configuredService = yield* PushNotificationService;
-    assert.strictEqual(yield* configuredService.sendToEndpoint(expired.endpoint, payload), "failed");
+    assert.strictEqual(
+      yield* configuredService.sendToEndpoint(expired.endpoint, payload),
+      "failed",
+    );
     assert.deepStrictEqual(deletedEndpoints, [expired.endpoint]);
-
   }).pipe(
     Effect.provide(
       PushNotificationServiceLive.pipe(

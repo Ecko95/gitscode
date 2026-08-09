@@ -1,4 +1,8 @@
-import { CODEX_MODEL_TIERS, type AutomodePolicy, type HermesProposalCard } from "@t3tools/contracts";
+import {
+  CODEX_MODEL_TIERS,
+  type AutomodePolicy,
+  type HermesProposalCard,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -46,9 +50,11 @@ describe("guided proposal launch logic", () => {
 
   it("uses allowed models or the three built-in tiers without duplicates", () => {
     expect(launchModelOptions(policy).map((item) => item.value)).toEqual(["model-a", "model-b"]);
-    expect(
-      launchModelOptions({ ...policy, allowedModels: [] }).map((item) => item.value),
-    ).toEqual([CODEX_MODEL_TIERS.light, CODEX_MODEL_TIERS.medium, CODEX_MODEL_TIERS.high]);
+    expect(launchModelOptions({ ...policy, allowedModels: [] }).map((item) => item.value)).toEqual([
+      CODEX_MODEL_TIERS.light,
+      CODEX_MODEL_TIERS.medium,
+      CODEX_MODEL_TIERS.high,
+    ]);
   });
 
   it("validates repository, model, runtime, and start time", () => {

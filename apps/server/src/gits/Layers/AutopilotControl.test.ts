@@ -64,7 +64,10 @@ describe("AutopilotControl", () => {
     const exit = await Effect.runPromiseExit(
       configureAutopilot(
         {
-          scheduler: { setConfig: () => Effect.succeed(scheduler), disarm: () => Effect.succeed(scheduler) },
+          scheduler: {
+            setConfig: () => Effect.succeed(scheduler),
+            disarm: () => Effect.succeed(scheduler),
+          },
           supervisor: { updatePolicy: () => Effect.succeed(automode) },
         },
         { enabled: true, repositories: [] },

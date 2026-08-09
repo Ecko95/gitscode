@@ -200,9 +200,6 @@ export const pushTestRouteLayer = HttpRouter.add(
         : result === "not-found"
           ? [404, "This device subscription is not registered."]
           : [502, "The push provider rejected the test notification."];
-    return HttpServerResponse.jsonUnsafe(
-      { error },
-      { status, headers: browserApiCorsHeaders },
-    );
+    return HttpServerResponse.jsonUnsafe({ error }, { status, headers: browserApiCorsHeaders });
   }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
 );
