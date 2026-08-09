@@ -6,6 +6,7 @@ import {
   type AutomodeDispatchResult,
   type AutomodeGoal,
   type AutomodeSnapshot,
+  type CockpitInboxItem,
   type DelamainPeer,
   type GitsBuildInfo,
   type GitsCapacitySnapshot,
@@ -140,6 +141,7 @@ import {
   type GitsSlotSchedulerShape,
 } from "./gits/Services/GitsSlotScheduler.ts";
 import { HermesAdapter, type HermesAdapterShape } from "./gits/Services/HermesAdapter.ts";
+import { CockpitInbox, type CockpitInboxShape } from "./gits/Services/CockpitInbox.ts";
 import { AutomodeNotifications } from "./gits/Layers/AutomodeNotifications.ts";
 import { setVisualPlanState } from "./gits/mcp/VisualPlanMcpRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -874,6 +876,7 @@ const buildAppUnderTest = (options?: {
     openGsdAdapter?: Partial<OpenGsdAdapterShape>;
     automodeSupervisor?: Partial<AutomodeSupervisorShape>;
     gitsSlotScheduler?: Partial<GitsSlotSchedulerShape>;
+    cockpitInbox?: Partial<CockpitInboxShape>;
     gitsCapacityMonitor?: Partial<GitsCapacityMonitorShape>;
     hermesAdapter?: Partial<HermesAdapterShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
@@ -1179,6 +1182,22 @@ const buildAppUnderTest = (options?: {
         arm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
         disarm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
         ...options?.layers?.gitsSlotScheduler,
+      }),
+      Layer.mock(CockpitInbox)({
+        list: () =>
+          Effect.succeed({
+            items: [],
+            counts: { unread: 0, pending: 0, approved: 0, waiting: 0, completed: 0 },
+          }),
+        markRead: () => Effect.die("not configured"),
+        markAllRead: () =>
+          Effect.succeed({
+            items: [],
+            counts: { unread: 0, pending: 0, approved: 0, waiting: 0, completed: 0 },
+          }),
+        setPinned: () => Effect.die("not configured"),
+        record: () => Effect.die("not configured"),
+        ...options?.layers?.cockpitInbox,
       }),
       Layer.mock(GitsCapacityMonitor)({
         getSnapshot: () => Effect.succeed(defaultGitsCapacitySnapshot),
@@ -5223,6 +5242,81 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(resumed.driverHalted, false);
 
       assert.deepEqual(calls, ["snapshot", "setConfig:true", "arm", "disarm:test", "resume"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc Cockpit Inbox mutations", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const item: CockpitInboxItem = {
+        id: "epi-1",
+        proposalId: "proposal-1",
+        goalId: null,
+        title: "Review proposal",
+        repository: "/tmp/repo",
+        state: "pending-review",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        terminalAt: null,
+        readAt: null,
+        pinned: false,
+        reason: "Ready for review.",
+        deepLink: "/gits?panel=autopilot&proposal=proposal-1",
+        timeline: [],
+      };
+      const result = {
+        items: [item],
+        counts: { unread: 1, pending: 1, approved: 0, waiting: 0, completed: 0 },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          cockpitInbox: {
+            list: ({ filter }) =>
+              Effect.sync(() => {
+                calls.push(`list:${filter}`);
+                return result;
+              }),
+            markRead: ({ id }) =>
+              Effect.sync(() => {
+                calls.push(`read:${id}`);
+                return { ...item, readAt: "2026-01-02T00:00:00.000Z" };
+              }),
+            markAllRead: ({ filter }) =>
+              Effect.sync(() => {
+                calls.push(`readAll:${filter}`);
+                return result;
+              }),
+            setPinned: ({ id, pinned }) =>
+              Effect.sync(() => {
+                calls.push(`pin:${id}:${pinned}`);
+                return { ...item, pinned };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxList]({ filter: "pending" }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxMarkRead]({ id: "epi-1" }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxMarkAllRead]({ filter: "pending" }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitsCockpitInboxPin]({ id: "epi-1", pinned: true }),
+        ),
+      );
+      assert.deepEqual(calls, ["list:pending", "read:epi-1", "readAll:pending", "pin:epi-1:true"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
