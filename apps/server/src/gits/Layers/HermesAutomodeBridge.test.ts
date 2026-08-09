@@ -12,6 +12,7 @@ import type {
   HermesProposalDecisionInput,
   HermesProposalStatus,
 } from "@t3tools/contracts";
+import { AutomodeSupervisorError, GitsSlotSchedulerError } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { AutomodeLanding } from "../Services/AutomodeLanding.ts";
@@ -553,6 +554,110 @@ describe("decideProposalWithAutomodeBridge", () => {
       }
 
       assert.equal((yield* supervisor.getSnapshot()).goals.length, 0);
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
+  it.effect("records enqueue failure for retry and remains idempotent", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      const { hermes } = makeFakeHermes();
+      const events: CockpitInboxRecordInput[] = [];
+      let enqueueCalls = 0;
+      const automode = {
+        getSnapshot: supervisor.getSnapshot,
+        updateQueuedGoal: supervisor.updateQueuedGoal,
+        enqueueGoal: (input: Parameters<typeof supervisor.enqueueGoal>[0]) => {
+          enqueueCalls += 1;
+          return enqueueCalls === 1
+            ? Effect.fail(new AutomodeSupervisorError({ message: "queue unavailable" }))
+            : supervisor.enqueueGoal(input);
+        },
+      };
+      const dependencies = {
+        scheduler: {
+          scheduleApprovedGoal: () =>
+            Effect.succeed({ snapshot: {} as never, targetsCurrentNight: false }),
+        },
+        inbox: {
+          record: (input: CockpitInboxRecordInput) =>
+            Effect.sync(() => {
+              events.push(input);
+              return {} as never;
+            }),
+        },
+      };
+
+      yield* decideProposalWithAutomodeBridge(
+        hermes,
+        automode,
+        { proposalId: "proposal-1", decision: "approve" },
+        dependencies,
+      ).pipe(Effect.flip);
+      assert.deepInclude(events.at(-1)!, {
+        proposalId: "proposal-1",
+        episodeId: "epi-proposal-1",
+        goalId: null,
+        eventKey: "proposal:proposal-1:acceptance-failed",
+        state: "attention-required",
+      });
+      assert.include(events.at(-1)!.reason, "Retry");
+
+      yield* decideProposalWithAutomodeBridge(
+        hermes,
+        automode,
+        { proposalId: "proposal-1", decision: "approve" },
+        dependencies,
+      );
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+      assert.equal(events.at(-1)!.state, "approved-queued");
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
+  it.effect("records the existing goal when scheduling fails and retry does not duplicate it", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      const { hermes } = makeFakeHermes();
+      const events: CockpitInboxRecordInput[] = [];
+      let scheduleCalls = 0;
+      const dependencies = {
+        scheduler: {
+          scheduleApprovedGoal: () => {
+            scheduleCalls += 1;
+            return scheduleCalls === 1
+              ? Effect.fail(new GitsSlotSchedulerError({ message: "schedule unavailable" }))
+              : Effect.succeed({ snapshot: {} as never, targetsCurrentNight: false });
+          },
+        },
+        inbox: {
+          record: (input: CockpitInboxRecordInput) =>
+            Effect.sync(() => {
+              events.push(input);
+              return {} as never;
+            }),
+        },
+      };
+
+      yield* decideProposalWithAutomodeBridge(
+        hermes,
+        supervisor,
+        { proposalId: "proposal-1", decision: "approve" },
+        dependencies,
+      ).pipe(Effect.flip);
+      const goalId = (yield* supervisor.getSnapshot()).goals[0]!.id;
+      assert.deepInclude(events.at(-1)!, {
+        goalId,
+        eventKey: "proposal:proposal-1:acceptance-failed",
+        state: "attention-required",
+      });
+
+      yield* decideProposalWithAutomodeBridge(
+        hermes,
+        supervisor,
+        { proposalId: "proposal-1", decision: "approve" },
+        dependencies,
+      );
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+      assert.equal(events.at(-1)!.state, "approved-queued");
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 });

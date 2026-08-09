@@ -128,119 +128,154 @@ export const decideProposalWithAutomodeBridge = (
       }
     }
     const decided = yield* hermes.decideProposal(input);
-    if (snapshot !== null && priorProposal !== null) {
-      const draft = yield* hermes.draftFromProposal({
-        proposalId: input.proposalId,
-      });
-      if (draft.kind === "delamain-peer" && draft.status === "draft" && draft.repo !== null) {
-        const existing = snapshot.goals.find(
-          (goal) =>
-            goal.episodeId === priorProposal.episodeId && !TERMINAL_GOAL_STATUSES.has(goal.status),
-        );
-        const editable =
-          existing !== undefined && ["queued", "waiting-approval"].includes(existing.status);
-        const update = {
-          title: draft.title,
-          prompt: draft.prompt,
-          repo: draft.repo,
-          notBefore: decided.notBefore,
-          maxRuntimeMinutes: decided.maxRuntimeMinutes,
-          verificationCommands: decided.verificationCommands,
-          integrationBranch: decided.integrationBranch,
-        };
-        if (existing === undefined) {
-          yield* automode
-            .enqueueGoal({
-              ...update,
-              ...(decided.model === null ? {} : { model: decided.model }),
-              origin: "proposal",
-              episodeId: priorProposal.episodeId,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new HermesAdapterError({
-                    message: "Failed to queue approved proposal.",
-                    cause,
-                  }),
-              ),
-            );
-        } else if (editable) {
-          yield* automode
-            .updateQueuedGoal({
-              ...update,
-              goalId: existing.id,
-              model: decided.model,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new HermesAdapterError({
-                    message: "Failed to queue approved proposal.",
-                    cause,
-                  }),
-              ),
-            );
+    yield* Effect.gen(function* () {
+      if (snapshot !== null && priorProposal !== null) {
+        const draft = yield* hermes.draftFromProposal({
+          proposalId: input.proposalId,
+        });
+        if (draft.kind === "delamain-peer" && draft.status === "draft" && draft.repo !== null) {
+          const existing = snapshot.goals.find(
+            (goal) =>
+              goal.episodeId === priorProposal.episodeId &&
+              !TERMINAL_GOAL_STATUSES.has(goal.status),
+          );
+          const editable =
+            existing !== undefined && ["queued", "waiting-approval"].includes(existing.status);
+          const update = {
+            title: draft.title,
+            prompt: draft.prompt,
+            repo: draft.repo,
+            notBefore: decided.notBefore,
+            maxRuntimeMinutes: decided.maxRuntimeMinutes,
+            verificationCommands: decided.verificationCommands,
+            integrationBranch: decided.integrationBranch,
+          };
+          if (existing === undefined) {
+            yield* automode
+              .enqueueGoal({
+                ...update,
+                ...(decided.model === null ? {} : { model: decided.model }),
+                origin: "proposal",
+                episodeId: priorProposal.episodeId,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new HermesAdapterError({
+                      message: "Failed to queue approved proposal.",
+                      cause,
+                    }),
+                ),
+              );
+          } else if (editable) {
+            yield* automode
+              .updateQueuedGoal({
+                ...update,
+                goalId: existing.id,
+                model: decided.model,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new HermesAdapterError({
+                      message: "Failed to queue approved proposal.",
+                      cause,
+                    }),
+                ),
+              );
+          }
         }
       }
-    }
-    if (dependencies !== undefined) {
-      const current =
-        input.decision === "approve"
-          ? (yield* automode.getSnapshot()).goals.find(
-              (goal) =>
-                goal.episodeId === decided.episodeId && !TERMINAL_GOAL_STATUSES.has(goal.status),
-            )
-          : undefined;
-      if (input.decision !== "approve" || current !== undefined) {
-        let targetsCurrentNight = false;
-        if (input.decision === "approve") {
-          const scheduled = yield* dependencies.scheduler.scheduleApprovedGoal({
-            eligibleAt: decided.notBefore,
-          });
-          targetsCurrentNight = scheduled.targetsCurrentNight;
-        }
-        const eventKey = `proposal:${decided.id}:${input.decision}`;
-        const deepLink =
-          current === undefined
-            ? `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`
-            : `/gits?panel=autopilot&goal=${encodeURIComponent(current.id)}`;
-        yield* dependencies.inbox.record({
-          episodeId: decided.episodeId,
-          proposalId: decided.id,
-          goalId: current?.id ?? null,
-          title: decided.title,
-          repository: decided.projectDir,
-          eventKey,
-          state:
-            input.decision === "approve"
-              ? "approved-queued"
-              : input.decision === "reject"
-                ? "rejected"
-                : "deferred",
-          reason:
-            input.decision === "approve"
-              ? "Approved and queued for autonomous work."
-              : input.decision === "reject"
-                ? "Proposal rejected."
-                : "Proposal deferred.",
-          deepLink,
-        });
-        if (targetsCurrentNight) {
+      if (dependencies !== undefined) {
+        const current =
+          input.decision === "approve"
+            ? (yield* automode.getSnapshot()).goals.find(
+                (goal) =>
+                  goal.episodeId === decided.episodeId && !TERMINAL_GOAL_STATUSES.has(goal.status),
+              )
+            : undefined;
+        if (input.decision !== "approve" || current !== undefined) {
+          let targetsCurrentNight = false;
+          if (input.decision === "approve") {
+            const scheduled = yield* dependencies.scheduler.scheduleApprovedGoal({
+              eligibleAt: decided.notBefore,
+            });
+            targetsCurrentNight = scheduled.targetsCurrentNight;
+          }
+          const eventKey = `proposal:${decided.id}:${input.decision}`;
+          const deepLink =
+            current === undefined
+              ? `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`
+              : `/gits?panel=autopilot&goal=${encodeURIComponent(current.id)}`;
           yield* dependencies.inbox.record({
             episodeId: decided.episodeId,
             proposalId: decided.id,
-            goalId: current!.id,
+            goalId: current?.id ?? null,
             title: decided.title,
             repository: decided.projectDir,
-            eventKey: `goal:${current!.id}:scheduled`,
-            state: "scheduled-tonight",
-            reason: "Scheduled for the current autonomy night.",
+            eventKey,
+            state:
+              input.decision === "approve"
+                ? "approved-queued"
+                : input.decision === "reject"
+                  ? "rejected"
+                  : "deferred",
+            reason:
+              input.decision === "approve"
+                ? "Approved and queued for autonomous work."
+                : input.decision === "reject"
+                  ? "Proposal rejected."
+                  : "Proposal deferred.",
             deepLink,
           });
+          if (targetsCurrentNight) {
+            yield* dependencies.inbox.record({
+              episodeId: decided.episodeId,
+              proposalId: decided.id,
+              goalId: current!.id,
+              title: decided.title,
+              repository: decided.projectDir,
+              eventKey: `goal:${current!.id}:scheduled`,
+              state: "scheduled-tonight",
+              reason: "Scheduled for the current autonomy night.",
+              deepLink,
+            });
+          }
         }
       }
-    }
+    }).pipe(
+      Effect.tapError(() => {
+        if (input.decision !== "approve" || dependencies === undefined || priorProposal === null) {
+          return Effect.void;
+        }
+        return automode.getSnapshot().pipe(
+          Effect.map((currentSnapshot) =>
+            currentSnapshot.goals.find(
+              (goal) =>
+                goal.episodeId === decided.episodeId && !TERMINAL_GOAL_STATUSES.has(goal.status),
+            ),
+          ),
+          Effect.catch(() => Effect.succeed(undefined)),
+          Effect.flatMap((goal) =>
+            dependencies.inbox.record({
+              episodeId: decided.episodeId,
+              proposalId: decided.id,
+              goalId: goal?.id ?? null,
+              title: decided.title,
+              repository: decided.projectDir,
+              eventKey: `proposal:${decided.id}:acceptance-failed`,
+              state: "attention-required",
+              reason: "Acceptance did not finish. Retry Accept & Queue; any existing Goal will be reused.",
+              deepLink:
+                goal === undefined
+                  ? `/gits?panel=autopilot&proposal=${encodeURIComponent(decided.id)}`
+                  : `/gits?panel=autopilot&goal=${encodeURIComponent(goal.id)}`,
+            }),
+          ),
+          Effect.catch(() => Effect.void),
+        );
+      }),
+    );
     return decided;
   }).pipe(
     Effect.mapError((cause) =>
