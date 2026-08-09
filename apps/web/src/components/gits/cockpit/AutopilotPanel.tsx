@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { useMutation } from "@tanstack/react-query";
 import { OctagonAlertIcon, RefreshCwIcon, RocketIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -160,6 +160,7 @@ export function AutopilotPanel({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   const [selectedProposal, setSelectedProposal] = useState<HermesProposalCard | null>(null);
+  const consumedFocus = useRef<string | null>(null);
   const notificationTest =
     typeof window === "undefined"
       ? null
@@ -190,13 +191,14 @@ export function AutopilotPanel({
   useEffect(() => setRepositories(repositoryKey.split("\n").filter(Boolean)), [repositoryKey]);
 
   useEffect(() => {
-    if (!focusedProposalId) return;
+    if (!focusedProposalId || consumedFocus.current === focusedProposalId) return;
     const proposal = proposals?.proposals.find((candidate) => candidate.id === focusedProposalId);
     if (
       proposal &&
       ["proposed", "approved"].includes(proposal.status) &&
       isGuidedAutopilotProposal(proposal)
     ) {
+      consumedFocus.current = focusedProposalId;
       openProposal(proposal, false);
     }
   }, [focusedProposalId, proposals, openProposal]);

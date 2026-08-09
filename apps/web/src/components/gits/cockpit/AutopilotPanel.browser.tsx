@@ -1,6 +1,6 @@
 import "../../../index.css";
 
-import type { AutomodeSnapshot } from "@t3tools/contracts";
+import type { AutomodeSnapshot, HermesProposalListResult } from "@t3tools/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +25,7 @@ vi.mock("~/gitsClient", () => ({
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
 import { AutopilotPanel } from "./AutopilotPanel";
+import { TEST_PROPOSAL } from "./proposal-launch/proposalLaunch.logic";
 
 const snapshot = (on: boolean, repositories = ["/srv/project"]): AutomodeSnapshot =>
   ({
@@ -52,23 +53,31 @@ const snapshot = (on: boolean, repositories = ["/srv/project"]): AutomodeSnapsho
     pendingApprovalCount: 0,
   }) as unknown as AutomodeSnapshot;
 
-function renderPanel(value: AutomodeSnapshot) {
-  return render(
+function panel(
+  value: AutomodeSnapshot,
+  focusedProposalId: string | null = null,
+  proposals: HermesProposalListResult | undefined = undefined,
+) {
+  return (
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
       <AutopilotPanel
         error={null}
-        focusedProposalId={null}
+        focusedProposalId={focusedProposalId}
         loading={false}
         onProposalDecision={vi.fn()}
         onRefresh={vi.fn()}
         projects={[]}
-        proposals={undefined}
+        proposals={proposals}
         snapshot={value}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+}
+
+function renderPanel(value: AutomodeSnapshot) {
+  return render(panel(value));
 }
 
 beforeEach(() => {
@@ -113,5 +122,24 @@ describe("AutopilotPanel", () => {
     await page.getByRole("button", { name: "Turn on" }).click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Choose at least one");
     expect(automode.configure).not.toHaveBeenCalled();
+  });
+
+  it("does not reopen a consumed deep-linked proposal after polling", async () => {
+    const proposals = {
+      proposals: [TEST_PROPOSAL],
+      checkedAt: "2026-08-09T00:00:00.000Z",
+    } satisfies HermesProposalListResult;
+    const screen = await render(panel(snapshot(false), TEST_PROPOSAL.id, proposals));
+    await expect.element(page.getByText("Validate and queue")).toBeVisible();
+    await page.getByRole("button", { name: "Close" }).click();
+    await expect.element(page.getByText("Validate and queue")).not.toBeInTheDocument();
+
+    await screen.rerender(
+      panel(snapshot(false), TEST_PROPOSAL.id, {
+        ...proposals,
+        checkedAt: "2026-08-09T00:01:00.000Z",
+      }),
+    );
+    await expect.element(page.getByText("Validate and queue")).not.toBeInTheDocument();
   });
 });
