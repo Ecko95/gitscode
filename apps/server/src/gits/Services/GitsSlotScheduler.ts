@@ -19,6 +19,7 @@ export type GitsSchedulerGateResult =
       readonly category: "schedule" | "quota" | "policy";
       readonly reason: string;
       readonly retryAt: string | null;
+      readonly targetsCurrentNight?: boolean;
     };
 
 export interface GitsSchedulerScheduleApprovedGoalInput {

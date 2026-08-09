@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 
 import {
   AutomodeSupervisorError,
+  CockpitInboxError,
   GitsReviewError,
   GitsSlotSchedulerError,
   type DelamainPeer,
@@ -153,6 +154,7 @@ interface MakeLayerOptions {
   readonly onNotify?: (input: Parameters<HermesTelegramNotifierShape["notify"]>[0]) => void;
   readonly notifyError?: HermesTelegramNotifierError;
   readonly onInbox?: (input: CockpitInboxRecordInput) => void;
+  readonly inboxError?: CockpitInboxError;
   readonly onRefinePlan?: (boundary: string) => void;
   readonly onRetarget?: (eligibleAt: string | null) => void;
 }
@@ -251,6 +253,7 @@ function makeLayer(
       }),
   });
   const scheduler = Layer.mock(GitsSlotScheduler)({
+    getSnapshot: () => Effect.succeed({ arming: { disarmedReason: null } } as never),
     checkStartAllowed: () => Effect.succeed(options?.gateResult ?? { allowed: true as const }),
     recordGoalStart: (input) =>
       Effect.suspend(() => {
@@ -321,9 +324,10 @@ function makeLayer(
   });
   const inbox = Layer.mock(CockpitInbox)({
     record: (input) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
+        if (options?.inboxError !== undefined) return Effect.fail(options.inboxError);
         options?.onInbox?.(input);
-        return {} as never;
+        return Effect.succeed({} as never);
       }),
     list: () => Effect.die("unused"),
     markRead: () => Effect.die("unused"),
@@ -628,6 +632,34 @@ describe("AutomodeDriver", () => {
       assert.equal(snapshot.goals.find((g) => g.title === "Bad")?.status, "failed");
       assert.equal(snapshot.driverHalted, true);
     }).pipe(Effect.provide(makeLayer(peerStatus, { review: failingReview })));
+  });
+
+  it.effect("Inbox failure never blocks halt and suppresses external failure alerts", () => {
+    const peerStatus = { current: "absent" as PeerStatus | "absent" };
+    const notifications: Parameters<HermesTelegramNotifierShape["notify"]>[0][] = [];
+    return Effect.gen(function* () {
+      const supervisor = yield* AutomodeSupervisor;
+      const driver = yield* AutomodeDriver;
+      yield* armAutonomous(supervisor);
+      yield* supervisor.enqueueGoal({ title: "Bad", repo: "/tmp/source-repo", prompt: "x" });
+
+      yield* driver.tickOnce();
+      peerStatus.current = "done";
+      yield* driver.tickOnce();
+
+      const snapshot = yield* supervisor.getSnapshot();
+      assert.equal(snapshot.goals[0]?.status, "failed");
+      assert.equal(snapshot.driverHalted, true);
+      assert.equal(notifications.length, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer(peerStatus, {
+          review: failingReview,
+          inboxError: new CockpitInboxError({ message: "Inbox disk full" }),
+          onNotify: (input) => notifications.push(input),
+        }),
+      ),
+    );
   });
 
   it.effect("on done: integration skipped (nothing pushed) → goal failed and chain halts", () => {
@@ -1093,7 +1125,7 @@ describe("AutomodeDriver", () => {
       assert.equal(starts.length, 0);
       assert.equal(refinements, 0);
       assert.equal(retargets, 0);
-      assert.equal(inbox[0]?.state, "approved-queued");
+      assert.equal(inbox[0]?.state, "scheduled-tonight");
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
@@ -1102,6 +1134,7 @@ describe("AutomodeDriver", () => {
             category: "schedule",
             reason: "Outside slot window (next slot 00:00)",
             retryAt: "2099-01-02T00:00:00.000Z",
+            targetsCurrentNight: true,
           },
           onRecordGoalStart: (input) => starts.push(input),
           onRefinePlan: () => {

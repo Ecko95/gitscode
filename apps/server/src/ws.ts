@@ -2510,13 +2510,16 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitsHermesDecideProposal]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitsHermesDecideProposal,
-            decideProposalWithAutomodeBridge(
-              hermesAdapter,
-              automodeSupervisor,
-              input,
-              Option.isSome(cockpitInbox)
-                ? { scheduler: gitsSlotScheduler, inbox: cockpitInbox.value }
-                : undefined,
+            (Option.isNone(cockpitInbox)
+              ? Effect.fail(
+                  new HermesAdapterError({
+                    message: "Cockpit Inbox is unavailable; proposal decisions are disabled.",
+                  }),
+                )
+              : decideProposalWithAutomodeBridge(hermesAdapter, automodeSupervisor, input, {
+                  scheduler: gitsSlotScheduler,
+                  inbox: cockpitInbox.value,
+                })
             ).pipe(
               Effect.tap((proposal) =>
                 input.decision !== "approve"

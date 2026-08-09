@@ -403,6 +403,7 @@ describe("GitsSlotScheduler gate", () => {
         category: "schedule",
         reason: "Outside slot window (next slot 00:00)",
         retryAt: "2026-01-08T00:00:00.000Z",
+        targetsCurrentNight: true,
       });
     }).pipe(Effect.provide(makeLayer())),
   );

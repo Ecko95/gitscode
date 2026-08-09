@@ -746,7 +746,20 @@ export const GitsSlotSchedulerLive = Layer.effect(
 
           return reason === null
             ? ({ allowed: true } as const)
-            : ({ allowed: false, category, reason, retryAt } as const);
+            : ({
+                allowed: false,
+                category,
+                reason,
+                retryAt,
+                ...(reason.startsWith("Outside slot window") ||
+                reason.startsWith("Armed for future night")
+                  ? {
+                      targetsCurrentNight:
+                        effectiveArming(state, epochMs).status === "armed" &&
+                        state.arming.nightKey === currentNightKey,
+                    }
+                  : {}),
+              } as const);
         }),
       recordGoalStart: (input) =>
         Effect.gen(function* () {

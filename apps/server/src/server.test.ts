@@ -1160,8 +1160,10 @@ const buildAppUnderTest = (options?: {
       }),
       Layer.mock(AutomodeSupervisor)({
         getSnapshot: () => Effect.succeed(defaultAutomodeSnapshot),
+        getPolicy: () => Effect.succeed(defaultAutomodeSnapshot.policy),
         updatePolicy: () => Effect.succeed(defaultAutomodeSnapshot),
         enqueueGoal: () => Effect.succeed(defaultAutomodeSnapshot),
+        updateQueuedGoal: () => Effect.succeed(defaultAutomodeGoal),
         approveGoal: () => Effect.succeed(defaultAutomodeGoal),
         rejectGoal: () =>
           Effect.succeed({
@@ -1181,6 +1183,11 @@ const buildAppUnderTest = (options?: {
         setConfig: () => Effect.succeed(defaultGitsSchedulerSnapshot),
         arm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
         disarm: () => Effect.succeed(defaultGitsSchedulerSnapshot),
+        scheduleApprovedGoal: () =>
+          Effect.succeed({
+            snapshot: defaultGitsSchedulerSnapshot,
+            targetsCurrentNight: false,
+          }),
         ...options?.layers?.gitsSlotScheduler,
       }),
       Layer.mock(CockpitInbox)({
@@ -1196,7 +1203,7 @@ const buildAppUnderTest = (options?: {
             counts: { unread: 0, pending: 0, approved: 0, waiting: 0, completed: 0 },
           }),
         setPinned: () => Effect.die("not configured"),
-        record: () => Effect.die("not configured"),
+        record: () => Effect.succeed({} as never),
         ...options?.layers?.cockpitInbox,
       }),
       Layer.mock(GitsCapacityMonitor)({

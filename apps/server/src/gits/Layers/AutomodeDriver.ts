@@ -106,6 +106,7 @@ export const AutomodeDriverLive = Layer.effect(
       state:
         | "approved-queued"
         | "waiting-quota-reset"
+        | "scheduled-tonight"
         | "running"
         | "attention-required"
         | "completed",
@@ -125,12 +126,13 @@ export const AutomodeDriverLive = Layer.effect(
           deepLink: `/gits?panel=autopilot&goal=${encodeURIComponent(goal.id)}`,
         })
         .pipe(
+          Effect.as(true),
           Effect.catch((error) =>
             Effect.logError("gits.automode.inbox-record-failed", {
               goalId: goal.id,
               eventKey,
               error: error.message,
-            }),
+            }).pipe(Effect.as(false)),
           ),
         );
 
@@ -168,14 +170,19 @@ export const AutomodeDriverLive = Layer.effect(
 
     const failGoal = (goal: AutomodeGoal, reason: string) =>
       supervisor.failGoal({ goalId: goal.id, reason }).pipe(
-        Effect.tap(() => recordInbox(goal, "attention-required", `goal:${goal.id}:failed`, reason)),
         Effect.tap(() =>
-          notify({
-            subject: "GITS automode goal failed",
-            title: goal.title,
-            goalId: goal.id,
-            reason,
-          }),
+          recordInbox(goal, "attention-required", `goal:${goal.id}:failed`, reason).pipe(
+            Effect.flatMap((recorded) =>
+              recorded
+                ? notify({
+                    subject: "GITS automode goal failed",
+                    title: goal.title,
+                    goalId: goal.id,
+                    reason,
+                  })
+                : Effect.void,
+            ),
+          ),
         ),
       );
 
@@ -188,34 +195,33 @@ export const AutomodeDriverLive = Layer.effect(
       at: number;
     } | null>(null);
     const halt = (goal: AutomodeGoal | null, reason: string) =>
-      supervisor.haltDriver({ reason }).pipe(
-        Effect.tap(() =>
+      Effect.gen(function* () {
+        const snapshot = yield* supervisor.haltDriver({ reason });
+        const recorded =
           goal === null
-            ? Effect.void
-            : recordInbox(
+            ? true
+            : yield* recordInbox(
                 goal,
                 "attention-required",
                 `goal:${goal.id}:attention:${reason}`,
                 reason,
-              ),
-        ),
-        Effect.tap(() =>
-          Effect.gen(function* () {
-            const now = yield* Clock.currentTimeMillis;
-            const last = yield* Ref.get(lastHaltAlertRef);
-            if (!shouldSendHaltAlert(last, reason, now)) {
-              return yield* Effect.logInfo("gits.automode.halt-alert-suppressed", { reason });
-            }
-            yield* Ref.set(lastHaltAlertRef, { reason, at: now });
-            yield* notify({
-              subject: "GITS automode halted",
-              title: goal?.title ?? "Automode driver",
-              goalId: goal?.id ?? null,
-              reason,
-            });
-          }),
-        ),
-      );
+              );
+        if (!recorded) return snapshot;
+        const now = yield* Clock.currentTimeMillis;
+        const last = yield* Ref.get(lastHaltAlertRef);
+        if (!shouldSendHaltAlert(last, reason, now)) {
+          yield* Effect.logInfo("gits.automode.halt-alert-suppressed", { reason });
+          return snapshot;
+        }
+        yield* Ref.set(lastHaltAlertRef, { reason, at: now });
+        yield* notify({
+          subject: "GITS automode halted",
+          title: goal?.title ?? "Automode driver",
+          goalId: goal?.id ?? null,
+          reason,
+        });
+        return snapshot;
+      });
 
     // Held-PR lifecycle: open exactly once after ≥1 landed slice, then poll for the merge.
     // Runs on queue-drained ticks AND gate-denied ticks — a night-capped run (goals still
@@ -622,7 +628,9 @@ export const AutomodeDriverLive = Layer.effect(
             gate.category === "quota" || shouldRefine
               ? "waiting-quota-reset"
               : gate.category === "schedule"
-                ? "approved-queued"
+                ? gate.targetsCurrentNight === true
+                  ? "scheduled-tonight"
+                  : "approved-queued"
                 : "attention-required",
             `goal:${next.id}:waiting:${boundary}`,
             gate.reason,
@@ -671,20 +679,28 @@ export const AutomodeDriverLive = Layer.effect(
           );
         }
         if (result.peer === null) {
-          yield* notify({
-            subject: result.approvalRequired
-              ? "GITS automode goal waiting"
-              : "GITS automode goal blocked",
-            title: next.title,
-            goalId: next.id,
-            reason: result.blockedReason ?? "Automode dispatch did not start.",
-          });
           yield* halt(
             next,
             result.blockedReason ?? `Dispatch of ${next.title} did not spawn a peer.`,
           );
         }
       }).pipe(Effect.ensuring(proposalSweep.tick()), Effect.ensuring(telegramDigest.tick()));
+
+    const bootScheduler = yield* scheduler.getSnapshot();
+    if (bootScheduler.arming.disarmedReason === "Server restarted mid-night — re-arm required.") {
+      const bootSnapshot = yield* supervisor.getSnapshot();
+      yield* Effect.forEach(
+        bootSnapshot.goals.filter((goal) => ["queued", "waiting-approval"].includes(goal.status)),
+        (goal) =>
+          recordInbox(
+            goal,
+            "attention-required",
+            `goal:${goal.id}:scheduler-restart-disarmed`,
+            bootScheduler.arming.disarmedReason!,
+          ),
+        { discard: true },
+      );
+    }
 
     // Forked, scoped polling fiber — runs for the lifetime of the layer.
     // Sleep first so that tests can call tickOnce() directly without

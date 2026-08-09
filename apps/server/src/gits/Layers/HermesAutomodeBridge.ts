@@ -76,6 +76,7 @@ export const decideProposalWithAutomodeBridge = (
         input.maxRuntimeMinutes === undefined
           ? priorProposal.maxRuntimeMinutes
           : input.maxRuntimeMinutes;
+      const effectiveRuntime = runtime ?? snapshot.policy.maxRuntimeMinutes;
       const verification = input.verificationCommands ?? priorProposal.verificationCommands;
       const integrationBranch =
         input.integrationBranch === undefined
@@ -97,7 +98,8 @@ export const decideProposalWithAutomodeBridge = (
       }
       if (
         snapshot.policy.maxRuntimeMinutes !== null &&
-        (runtime === null || runtime > snapshot.policy.maxRuntimeMinutes)
+        effectiveRuntime !== null &&
+        effectiveRuntime > snapshot.policy.maxRuntimeMinutes
       ) {
         return yield* new HermesAdapterError({
           message: "Proposal runtime exceeds the Automode policy limit.",

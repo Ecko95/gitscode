@@ -461,6 +461,21 @@ describe("decideProposalWithAutomodeBridge", () => {
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
+  it.effect("allows a proposal to inherit the policy runtime cap", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      yield* supervisor.updatePolicy({ maxRuntimeMinutes: 30 });
+      const { hermes } = makeFakeHermes({ proposal: { maxRuntimeMinutes: null } });
+
+      yield* decideProposalWithAutomodeBridge(hermes, supervisor, {
+        proposalId: "proposal-1",
+        decision: "approve",
+      });
+
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
   it.effect("does not double-enqueue a card the sweep already enqueued (episode dedup)", () =>
     Effect.gen(function* () {
       const supervisor = yield* armAutonomous;
