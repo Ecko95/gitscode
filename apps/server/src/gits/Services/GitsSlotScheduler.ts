@@ -25,6 +25,11 @@ export interface GitsSchedulerScheduleApprovedGoalInput {
   readonly eligibleAt: string | null;
 }
 
+export interface GitsSchedulerScheduleApprovedGoalResult {
+  readonly snapshot: GitsSchedulerSnapshot;
+  readonly targetsCurrentNight: boolean;
+}
+
 export interface GitsSchedulerStartCheckInput {
   /** policy.maxRuntimeMinutes at gate time; null = no cap configured (fail closed). */
   readonly expectedRuntimeMinutes: number | null;
@@ -47,7 +52,7 @@ export interface GitsSlotSchedulerShape {
   ) => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;
   readonly scheduleApprovedGoal: (
     input: GitsSchedulerScheduleApprovedGoalInput,
-  ) => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;
+  ) => Effect.Effect<GitsSchedulerScheduleApprovedGoalResult, GitsSlotSchedulerError>;
   readonly retargetApprovedGoal: (
     input: GitsSchedulerScheduleApprovedGoalInput,
   ) => Effect.Effect<GitsSchedulerSnapshot, GitsSlotSchedulerError>;

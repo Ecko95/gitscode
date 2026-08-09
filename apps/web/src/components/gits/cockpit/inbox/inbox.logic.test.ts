@@ -60,9 +60,8 @@ describe("Cockpit Inbox logic", () => {
     expect(orderedInboxTimeline(item).map((event) => event.eventKey)).toEqual(["newer", "older"]);
   });
 
-  it("derives unread and chooses proposal or goal deep links", () => {
+  it("derives unread and uses the persisted deep link", () => {
     expect(isInboxItemUnread(item)).toBe(true);
-    expect(inboxItemDeepLink(item)).toContain("proposal=proposal-1");
-    expect(inboxItemDeepLink({ ...item, goalId: "goal-1" })).toContain("goal=goal-1");
+    expect(inboxItemDeepLink(item)).toBe("/stale");
   });
 });

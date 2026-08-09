@@ -1074,6 +1074,9 @@ describe("AutomodeDriver", () => {
   it.effect("scheduler deny → no dispatch, goal stays queued, no halt", () => {
     const peerStatus = { current: "absent" as PeerStatus | "absent" };
     const starts: GitsSchedulerGoalStartInput[] = [];
+    const inbox: CockpitInboxRecordInput[] = [];
+    let refinements = 0;
+    let retargets = 0;
     return Effect.gen(function* () {
       const supervisor = yield* AutomodeSupervisor;
       const driver = yield* AutomodeDriver;
@@ -1083,9 +1086,14 @@ describe("AutomodeDriver", () => {
       yield* driver.tickOnce();
 
       const snapshot = yield* supervisor.getSnapshot();
-      assert.equal(snapshot.goals.find((g) => g.title === "Gated")?.status, "queued");
+      const goal = snapshot.goals.find((g) => g.title === "Gated")!;
+      assert.equal(goal.status, "queued");
+      assert.equal(goal.notBefore, null);
       assert.equal(snapshot.driverHalted, false);
       assert.equal(starts.length, 0);
+      assert.equal(refinements, 0);
+      assert.equal(retargets, 0);
+      assert.equal(inbox[0]?.state, "approved-queued");
     }).pipe(
       Effect.provide(
         makeLayer(peerStatus, {
@@ -1093,9 +1101,16 @@ describe("AutomodeDriver", () => {
             allowed: false,
             category: "schedule",
             reason: "Outside slot window (next slot 00:00)",
-            retryAt: null,
+            retryAt: "2099-01-02T00:00:00.000Z",
           },
           onRecordGoalStart: (input) => starts.push(input),
+          onRefinePlan: () => {
+            refinements += 1;
+          },
+          onRetarget: () => {
+            retargets += 1;
+          },
+          onInbox: (event) => inbox.push(event),
         }),
       ),
     );

@@ -322,7 +322,10 @@ function evaluatePolicyGate(
           : resourceScoped && !modelAllowed(policy, args.model)
             ? "Model is outside the automode allowlist."
             : budgetReason;
-  return { blockedReason, needsApproval: promptNeedsApproval(policy, args.prompt) };
+  return {
+    blockedReason,
+    needsApproval: promptNeedsApproval(policy, args.prompt),
+  };
 }
 
 function updateGoal(
@@ -607,7 +610,9 @@ export const AutomodeSupervisorLive = Layer.effect(
         // Workflow-dispatched goals track the workflow run's id as peerId; kill the whole
         // run (runner + live leaves), not the run record as if it were a leaf peer.
         if (currentGoal.workflowId !== null) {
-          yield* delamainAdapter.workflowKill({ workflowId: currentGoal.workflowId });
+          yield* delamainAdapter.workflowKill({
+            workflowId: currentGoal.workflowId,
+          });
         } else {
           yield* delamainAdapter.killPeer({ peerId, signal: "SIGTERM" });
         }
@@ -746,6 +751,44 @@ export const AutomodeSupervisorLive = Layer.effect(
             return yield* toAutomodeError(`Automode goal ${input.goalId} was not found.`);
           }
           return goal;
+        }),
+      updateQueuedGoal: (input) =>
+        Effect.gen(function* () {
+          const updatedAt = yield* nowIso;
+          const nextState = yield* commitStateOrFail((state) => {
+            const current = findGoal(state, input.goalId);
+            if (current === null) {
+              return toAutomodeError(`Automode goal ${input.goalId} was not found.`);
+            }
+            if (!["queued", "waiting-approval", "blocked"].includes(current.status)) {
+              return toAutomodeError(
+                `Automode goal ${input.goalId} cannot be edited while ${current.status}.`,
+              );
+            }
+            return Effect.succeed(
+              updateGoal(
+                { ...state, lastEvent: `Updated ${input.title}.`, updatedAt },
+                input.goalId,
+                (goal) => ({
+                  ...goal,
+                  title: input.title,
+                  prompt: input.prompt,
+                  repo: normalizePath(input.repo),
+                  model: input.model,
+                  notBefore: input.notBefore,
+                  maxRuntimeMinutes: input.maxRuntimeMinutes,
+                  verificationCommands: input.verificationCommands,
+                  integrationBranch: input.integrationBranch,
+                  planningNotes: null,
+                  planningBoundary: null,
+                  blockedReason: null,
+                  status: "queued",
+                  updatedAt,
+                }),
+              ),
+            );
+          });
+          return findGoal(nextState, input.goalId)!;
         }),
       approveGoal: (input) =>
         Effect.gen(function* () {
@@ -965,7 +1008,10 @@ export const AutomodeSupervisorLive = Layer.effect(
                 runtimeDeadlines:
                   deadlineEpochMs === null
                     ? current.runtimeDeadlines
-                    : { ...current.runtimeDeadlines, [goal.id]: deadlineEpochMs },
+                    : {
+                        ...current.runtimeDeadlines,
+                        [goal.id]: deadlineEpochMs,
+                      },
                 lastEvent:
                   workflowId === null
                     ? `Spawned peer ${peer.id} for ${goal.title}.`

@@ -12,6 +12,7 @@ import {
   buildHermesCockpitChatPrompt,
   buildHermesInspectGitsArgs,
   buildHermesPlanRefinementPrompt,
+  buildHermesPlanRefinementArgs,
   HERMES_ACP_CHECK_ARGS,
   HERMES_ACP_START_ARGS,
   HERMES_CODEX_OAUTH_ARGS,
@@ -63,6 +64,8 @@ describe("HermesCliAdapter command construction", () => {
     expect(prompt).toContain("observe-only");
     expect(prompt).toContain("Do not use shell commands, alter files, create worktrees");
     expect(prompt).toContain("2026-01-02T00:00:00.000Z");
+    expect(buildHermesPlanRefinementArgs(prompt)).toContain("none");
+    expect(buildHermesPlanRefinementArgs(prompt)).toContain("--ignore-rules");
   });
 
   it("uses the isolated GITS Hermes home by default", () => {
@@ -188,7 +191,9 @@ describe("HermesCliAdapter cockpit chat", () => {
         Effect.provideService(DelamainAdapter, unusedDelamainAdapter),
         Effect.provideService(OpenGsdAdapter, unusedOpenGsdAdapter),
         Effect.provideService(AutomodeSupervisor, unusedAutomodeSupervisor),
-        Effect.provideService(HermesTelegramNotifier, { notify: () => Effect.void }),
+        Effect.provideService(HermesTelegramNotifier, {
+          notify: () => Effect.void,
+        }),
       ),
     );
 
@@ -549,7 +554,10 @@ describe("HermesCliAdapter codex chain health", () => {
       version: 1,
       providers: {
         "openai-codex": {
-          tokens: { access_token: "SECRET-ACCESS", refresh_token: "SECRET-REFRESH" },
+          tokens: {
+            access_token: "SECRET-ACCESS",
+            refresh_token: "SECRET-REFRESH",
+          },
           last_auth_error: { code: "transient", relogin_required: false },
         },
       },
@@ -569,7 +577,11 @@ describe("HermesCliAdapter codex chain health", () => {
 
   it("reports a dead pool entry as needs-reauth with the pool entry's own error reason", () => {
     const result = parseCodexChainHealth(
-      poolAuthFixture({ ...POOL_ENTRY, last_status: "dead", last_error_reason: "token_revoked" }),
+      poolAuthFixture({
+        ...POOL_ENTRY,
+        last_status: "dead",
+        last_error_reason: "token_revoked",
+      }),
     );
     expect(result.kind).toBe("needs-reauth");
     expect(result.kind === "needs-reauth" && result.reason).toContain("pool entry dead");
@@ -626,7 +638,10 @@ describe("HermesCliAdapter codex auth status", () => {
     const codexCliAuthPath = Path.join(tmp, "codex-cli-auth.json");
     await Fs.writeFile(codexCliAuthPath, "{}", "utf8");
 
-    const status = await readCodexAuthStatus({ hermesHome: tmp, codexCliAuthPath });
+    const status = await readCodexAuthStatus({
+      hermesHome: tmp,
+      codexCliAuthPath,
+    });
 
     expect(status.state).toBe("missing");
     expect(status.source).toBe("missing");
@@ -642,7 +657,10 @@ describe("HermesCliAdapter codex chain preflight", () => {
     await Fs.writeFile(configPath, "model:\n  provider: openrouter\n  default: gpt-5.4\n", "utf8");
     await Fs.writeFile(Path.join(tmp, "auth.json"), HEALTHY_AUTH, "utf8");
 
-    const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
+    const preflight = await codexChainPreflight({
+      hermesHome: tmp,
+      configPath,
+    });
 
     expect(preflight?.kind).toBe("wrong-provider");
     expect(preflight?.reason).toContain("openrouter");
@@ -664,7 +682,10 @@ describe("HermesCliAdapter codex chain preflight", () => {
     await Fs.writeFile(noModelConfigPath, "approvals:\n  mode: manual\n", "utf8");
     await Fs.writeFile(Path.join(noModelTmp, "auth.json"), DEAD_AUTH, "utf8");
     expect(
-      await codexChainPreflight({ hermesHome: noModelTmp, configPath: noModelConfigPath }),
+      await codexChainPreflight({
+        hermesHome: noModelTmp,
+        configPath: noModelConfigPath,
+      }),
     ).toBeNull();
   });
 
@@ -674,7 +695,10 @@ describe("HermesCliAdapter codex chain preflight", () => {
     await Fs.writeFile(configPath, CODEX_PROVIDER_CONFIG, "utf8");
     await Fs.writeFile(Path.join(tmp, "auth.json"), DEAD_AUTH, "utf8");
 
-    const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
+    const preflight = await codexChainPreflight({
+      hermesHome: tmp,
+      configPath,
+    });
 
     expect(preflight?.kind).toBe("needs-reauth");
     expect(preflight?.command).toBe(codexReauthCommand(tmp));
@@ -685,7 +709,10 @@ describe("HermesCliAdapter codex chain preflight", () => {
     const configPath = Path.join(tmp, "config.yaml");
     await Fs.writeFile(configPath, CODEX_PROVIDER_CONFIG, "utf8");
 
-    const preflight = await codexChainPreflight({ hermesHome: tmp, configPath });
+    const preflight = await codexChainPreflight({
+      hermesHome: tmp,
+      configPath,
+    });
 
     expect(preflight).not.toBeNull();
     expect(preflight?.reason).toBe("no Codex OAuth chain in HERMES_HOME");
@@ -712,7 +739,9 @@ describe("HermesCliAdapter chat preflight", () => {
       {
         getSnapshot: () => Effect.die(new Error("capacity must not be consulted before preflight")),
       },
-      makeCodexChainAlert({ notify: ({ text }) => Effect.sync(() => alerts.push(text)) }),
+      makeCodexChainAlert({
+        notify: ({ text }) => Effect.sync(() => alerts.push(text)),
+      }),
     );
 
     await Effect.runPromise(chat({ message: "inspect the project status" }));
@@ -792,7 +821,10 @@ describe("HermesCliAdapter proposal helpers", () => {
   });
 
   it("normalizeProposal backfills a legacy card without episodeId", () => {
-    const normalized = normalizeProposal({ id: "hermes-old", title: "Old card" });
+    const normalized = normalizeProposal({
+      id: "hermes-old",
+      title: "Old card",
+    });
     expect(normalized?.episodeId).toBe("epi-legacy-hermes-old");
     expect(normalized).toMatchObject({
       model: null,

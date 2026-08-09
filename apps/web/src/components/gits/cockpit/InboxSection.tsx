@@ -34,7 +34,9 @@ export function InboxSection({
     refetchInterval: 10_000,
   });
   const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: ["gits", "cockpit-inbox", environmentId] });
+    queryClient.invalidateQueries({
+      queryKey: ["gits", "cockpit-inbox", environmentId],
+    });
   const markRead = useMutation({
     mutationFn: (id: string) => readGitsClient().cockpitInbox.markRead({ id }),
     onSuccess: refresh,
@@ -49,8 +51,11 @@ export function InboxSection({
     onSuccess: refresh,
   });
   const openItem = async (item: CockpitInboxItem) => {
-    if (isInboxItemUnread(item)) await markRead.mutateAsync(item.id);
-    window.location.assign(inboxItemDeepLink(item));
+    try {
+      if (isInboxItemUnread(item)) await markRead.mutateAsync(item.id);
+    } finally {
+      window.location.assign(inboxItemDeepLink(item));
+    }
   };
 
   return (

@@ -17,6 +17,7 @@ import type {
   AutomodeSupervisorError,
   DelamainSendMessageInput,
   DelamainSendMessageResult,
+  GitsVerifyCommand,
 } from "@t3tools/contracts";
 
 export interface AutomodeSupervisorShape {
@@ -38,6 +39,17 @@ export interface AutomodeSupervisorShape {
     readonly notBefore: string;
     readonly planningNotes: string | null;
     readonly planningBoundary: string;
+  }) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
+  readonly updateQueuedGoal: (input: {
+    readonly goalId: string;
+    readonly title: string;
+    readonly prompt: string;
+    readonly repo: string;
+    readonly model: string | null;
+    readonly notBefore: string | null;
+    readonly maxRuntimeMinutes: number | null;
+    readonly verificationCommands: ReadonlyArray<GitsVerifyCommand>;
+    readonly integrationBranch: string | null;
   }) => Effect.Effect<AutomodeGoal, AutomodeSupervisorError>;
   readonly approveGoal: (
     input: AutomodeGoalInput,

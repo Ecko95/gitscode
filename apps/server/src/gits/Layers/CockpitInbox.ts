@@ -111,7 +111,10 @@ export const CockpitInboxLive = Layer.effect(
         .readFileString(filePath)
         .pipe(Effect.flatMap(decodePersistedState), Effect.result);
       if (decoded._tag === "Success") {
-        return { items: decoded.success.items, loadError: null } satisfies InboxState;
+        return {
+          items: decoded.success.items,
+          loadError: null,
+        } satisfies InboxState;
       }
       yield* Effect.logWarning("gits.cockpit-inbox.load-failed", {
         path: filePath,
@@ -158,7 +161,9 @@ export const CockpitInboxLive = Layer.effect(
       );
 
     const list = (filter?: CockpitInboxFilter) =>
-      Ref.get(stateRef).pipe(Effect.map((state) => result(state.items, filter)));
+      Ref.get(stateRef).pipe(
+        Effect.flatMap((state) => writable(state).pipe(Effect.as(result(state.items, filter)))),
+      );
 
     return {
       record: (input: CockpitInboxRecordInput) =>
@@ -209,7 +214,11 @@ export const CockpitInboxLive = Layer.effect(
               Effect.provideService(Path.Path, path),
             );
             yield* Ref.set(stateRef, { items: pruned, loadError: null });
-            return { item, event, created: true } satisfies CockpitInboxRecordResult;
+            return {
+              item,
+              event,
+              created: true,
+            } satisfies CockpitInboxRecordResult;
           }),
         ),
       list: (input) => list(input.filter),

@@ -103,7 +103,12 @@ export const AutomodeDriverLive = Layer.effect(
 
     const recordInbox = (
       goal: AutomodeGoal,
-      state: "waiting-quota-reset" | "running" | "attention-required" | "completed",
+      state:
+        | "approved-queued"
+        | "waiting-quota-reset"
+        | "running"
+        | "attention-required"
+        | "completed",
       eventKey: string,
       reason: string,
     ) =>
@@ -119,7 +124,15 @@ export const AutomodeDriverLive = Layer.effect(
           reason,
           deepLink: `/gits?panel=autopilot&goal=${encodeURIComponent(goal.id)}`,
         })
-        .pipe(Effect.mapError(toDriverError("Failed to record Automode Inbox transition.")));
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logError("gits.automode.inbox-record-failed", {
+              goalId: goal.id,
+              eventKey,
+              error: error.message,
+            }),
+          ),
+        );
 
     const notify = (input: {
       readonly subject: string;
@@ -170,7 +183,10 @@ export const AutomodeDriverLive = Layer.effect(
     // re-halts into the same failure (e.g. operator keeps resuming, or a gate keeps
     // denying) must not flood Telegram with identical messages.
     // ponytail: in-memory, resets on restart — acceptable, restarts re-arm the kill switch.
-    const lastHaltAlertRef = yield* Ref.make<{ reason: string; at: number } | null>(null);
+    const lastHaltAlertRef = yield* Ref.make<{
+      reason: string;
+      at: number;
+    } | null>(null);
     const halt = (goal: AutomodeGoal | null, reason: string) =>
       supervisor.haltDriver({ reason }).pipe(
         Effect.tap(() =>
@@ -237,7 +253,10 @@ export const AutomodeDriverLive = Layer.effect(
             yield* halt(null, `Halted: could not open held PR — ${result.reason}`);
             return;
           }
-          yield* supervisor.recordHeldPr({ url: result.url, number: result.number });
+          yield* supervisor.recordHeldPr({
+            url: result.url,
+            number: result.number,
+          });
           yield* notify({
             subject: "GITS automode held PR created",
             title: `automode: held PR for ${policy.integrationBranch}`,
@@ -255,7 +274,9 @@ export const AutomodeDriverLive = Layer.effect(
         });
         if (detect.merged) {
           yield* supervisor.markRunMerged();
-          yield* Effect.logInfo("gits.automode.run-merged", { heldPrUrl: snapshot.heldPrUrl });
+          yield* Effect.logInfo("gits.automode.run-merged", {
+            heldPrUrl: snapshot.heldPrUrl,
+          });
         }
       });
 
@@ -570,7 +591,10 @@ export const AutomodeDriverLive = Layer.effect(
           })
           .pipe(Effect.mapError(toDriverError("Scheduler start gate check failed.")));
         if (!gate.allowed) {
-          if (gate.retryAt !== null) {
+          const shouldRefine =
+            gate.retryAt !== null &&
+            (gate.category === "quota" || gate.reason === "Insufficient slot runway");
+          if (shouldRefine) {
             const refinement =
               next.planningBoundary === gate.retryAt
                 ? next.planningNotes
@@ -595,9 +619,11 @@ export const AutomodeDriverLive = Layer.effect(
           const boundary = gate.retryAt ?? "telemetry";
           yield* recordInbox(
             next,
-            gate.category === "quota" || gate.retryAt !== null
+            gate.category === "quota" || shouldRefine
               ? "waiting-quota-reset"
-              : "attention-required",
+              : gate.category === "schedule"
+                ? "approved-queued"
+                : "attention-required",
             `goal:${next.id}:waiting:${boundary}`,
             gate.reason,
           );
@@ -671,7 +697,9 @@ export const AutomodeDriverLive = Layer.effect(
         // interruption untouched, so a scope-close/shutdown interrupt tears the
         // loop down cleanly instead of being swallowed and restarting forever.
         Effect.catch((error) =>
-          Effect.logWarning("gits.automode.driver.tick-failed", { error: error.message }),
+          Effect.logWarning("gits.automode.driver.tick-failed", {
+            error: error.message,
+          }),
         ),
         Effect.catchDefect((defect) =>
           Effect.logWarning("gits.automode.driver.tick-defect", { defect }),
@@ -679,7 +707,9 @@ export const AutomodeDriverLive = Layer.effect(
       ),
     ).pipe(Effect.forkScoped);
 
-    yield* Effect.logInfo("gits.automode.driver.started", { tickIntervalMs: TICK_INTERVAL_MS });
+    yield* Effect.logInfo("gits.automode.driver.started", {
+      tickIntervalMs: TICK_INTERVAL_MS,
+    });
 
     return { tickOnce } satisfies AutomodeDriverShape;
   }),

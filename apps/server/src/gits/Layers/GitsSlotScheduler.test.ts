@@ -44,13 +44,21 @@ const SAT_1200 = Date.UTC(2026, 0, 10, 12, 0); // Sat 12:00, in weekend 10:00-15
 describe("london_instant", () => {
   it("formats a GMT winter instant", () => {
     const instant = london_instant(WED_0230);
-    assert.deepEqual(instant, { dateKey: "2026-01-07", minutesOfDay: 150, isWeekend: false });
+    assert.deepEqual(instant, {
+      dateKey: "2026-01-07",
+      minutesOfDay: 150,
+      isWeekend: false,
+    });
   });
 
   it("shifts a BST summer instant across midnight", () => {
     // 23:30 UTC on Tue 2026-07-14 is 00:30 on Wed 2026-07-15 in London (BST = UTC+1).
     const instant = london_instant(Date.UTC(2026, 6, 14, 23, 30));
-    assert.deepEqual(instant, { dateKey: "2026-07-15", minutesOfDay: 30, isWeekend: false });
+    assert.deepEqual(instant, {
+      dateKey: "2026-07-15",
+      minutesOfDay: 30,
+      isWeekend: false,
+    });
   });
 
   it("yields minute 0 at midnight (hourCycle h23 sanity)", () => {
@@ -68,13 +76,22 @@ describe("slot math", () => {
   const slots = DEFAULT_SCHEDULER_SLOTS;
 
   it("finds the weekday night slots", () => {
-    assert.deepEqual(current_slot(slots, WED_0230), { start: "00:00", end: "05:00" });
-    assert.deepEqual(current_slot(slots, WED_0945), { start: "05:00", end: "10:00" });
+    assert.deepEqual(current_slot(slots, WED_0230), {
+      start: "00:00",
+      end: "05:00",
+    });
+    assert.deepEqual(current_slot(slots, WED_0945), {
+      start: "05:00",
+      end: "10:00",
+    });
     assert.equal(current_slot(slots, WED_1200), null);
   });
 
   it("includes the weekend day slot only on weekends", () => {
-    assert.deepEqual(current_slot(slots, SAT_1200), { start: "10:00", end: "15:00" });
+    assert.deepEqual(current_slot(slots, SAT_1200), {
+      start: "10:00",
+      end: "15:00",
+    });
     assert.equal(current_slot(slots, WED_1200), null);
   });
 
@@ -215,7 +232,9 @@ function makeLayer(options?: MakeLayerOptions) {
   const config = (
     options?.baseDir !== undefined
       ? ServerConfig.layerTest(process.cwd(), options.baseDir)
-      : ServerConfig.layerTest(process.cwd(), { prefix: "gits-slot-scheduler-test-" })
+      : ServerConfig.layerTest(process.cwd(), {
+          prefix: "gits-slot-scheduler-test-",
+        })
   ).pipe(Layer.provide(NodeServices.layer));
   return Layer.mergeAll(
     GitsSlotSchedulerLive.pipe(
@@ -296,13 +315,14 @@ describe("GitsSlotScheduler arming", () => {
     Effect.gen(function* () {
       const scheduler = yield* GitsSlotScheduler;
       yield* TestClock.setTime(WED_2200);
-      const snapshot = yield* scheduler.scheduleApprovedGoal({
+      const { snapshot, targetsCurrentNight } = yield* scheduler.scheduleApprovedGoal({
         eligibleAt: "2026-01-10T20:00:00.000Z",
       });
       assert.equal(snapshot.config.enabled, true);
       assert.equal(snapshot.automaticArmingAuthorized, true);
       assert.equal(snapshot.arming.status, "armed");
       assert.equal(snapshot.arming.nightKey, "2026-01-11");
+      assert.equal(targetsCurrentNight, false);
     }).pipe(Effect.provide(makeLayer())),
   );
 
@@ -391,7 +411,10 @@ describe("GitsSlotScheduler gate", () => {
     Effect.gen(function* () {
       const scheduler = yield* armTonight;
       for (const goalId of ["g1", "g2", "g3"]) {
-        yield* scheduler.recordGoalStart({ goalId, episodeId: `epi-${goalId}` });
+        yield* scheduler.recordGoalStart({
+          goalId,
+          episodeId: `epi-${goalId}`,
+        });
       }
       const result = yield* scheduler.checkStartAllowed(envelope);
       assert.deepEqual(result, {
@@ -407,7 +430,10 @@ describe("GitsSlotScheduler gate", () => {
     Effect.gen(function* () {
       const scheduler = yield* armTonight;
 
-      const peers = yield* scheduler.checkStartAllowed({ ...envelope, maxActivePeers: 2 });
+      const peers = yield* scheduler.checkStartAllowed({
+        ...envelope,
+        maxActivePeers: 2,
+      });
       assert.deepEqual(peers, {
         allowed: false,
         category: "policy",
@@ -596,14 +622,18 @@ describe("GitsSlotScheduler gate", () => {
 });
 
 describe("GitsSlotScheduler persistence", () => {
-  it.effect("boot with a persisted armed state forces a disarm and notifies", () => {
+  it.effect("boot with a persisted armed state forces a disarm without bypassing the Inbox", () => {
     const baseDir = mkdtempSync(join(tmpdir(), "gits-slot-scheduler-boot-"));
     mkdirSync(join(baseDir, "userdata", "gits"), { recursive: true });
     writeFileSync(
       schedulerStatePath(baseDir),
       JSON.stringify({
         version: 1,
-        config: { enabled: true, maxGoalsPerNight: 3, weeklyMaxUsedPercent: 80 },
+        config: {
+          enabled: true,
+          maxGoalsPerNight: 3,
+          weeklyMaxUsedPercent: 80,
+        },
         arming: {
           status: "armed",
           nightKey: "2026-01-07",
@@ -623,13 +653,7 @@ describe("GitsSlotScheduler persistence", () => {
       assert.equal(snapshot.arming.status, "disarmed");
       assert.equal(snapshot.arming.disarmedReason, "Server restarted mid-night — re-arm required.");
       assert.equal(snapshot.lastEvent, "Server restarted mid-night — re-arm required.");
-      assert.equal(pushes.length, 1);
-      assert.deepEqual(pushes[0], {
-        title: "GITS autonomy disarmed",
-        body: "Server restarted mid-night — re-arm required.",
-        tag: "gits-scheduler-boot",
-        url: "/gits",
-      });
+      assert.equal(pushes.length, 0);
     }).pipe(Effect.provide(makeLayer({ baseDir, pushes })));
   });
 
@@ -657,10 +681,16 @@ describe("GitsSlotScheduler persistence", () => {
     return Effect.gen(function* () {
       const scheduler = yield* GitsSlotScheduler;
       yield* TestClock.setTime(WED_0230);
-      yield* scheduler.recordGoalStart({ goalId: "goal-old", episodeId: "epi-old" });
+      yield* scheduler.recordGoalStart({
+        goalId: "goal-old",
+        episodeId: "epi-old",
+      });
 
       yield* TestClock.setTime(WED_0230 + 20 * 86_400_000);
-      yield* scheduler.recordGoalStart({ goalId: "goal-new", episodeId: "epi-new" });
+      yield* scheduler.recordGoalStart({
+        goalId: "goal-new",
+        episodeId: "epi-new",
+      });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const persisted = JSON.parse(readFileSync(schedulerStatePath(baseDir), "utf8")) as {
@@ -668,7 +698,10 @@ describe("GitsSlotScheduler persistence", () => {
       };
       assert.equal(persisted.nightLog.length, 1);
       assert.deepEqual(
-        { goalId: persisted.nightLog[0]?.goalId, episodeId: persisted.nightLog[0]?.episodeId },
+        {
+          goalId: persisted.nightLog[0]?.goalId,
+          episodeId: persisted.nightLog[0]?.episodeId,
+        },
         { goalId: "goal-new", episodeId: "epi-new" },
       );
     }).pipe(Effect.provide(makeLayer({ baseDir })));

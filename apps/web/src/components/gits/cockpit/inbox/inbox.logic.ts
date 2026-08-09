@@ -47,7 +47,5 @@ export function orderedInboxTimeline(item: CockpitInboxItem) {
 }
 
 export function inboxItemDeepLink(item: CockpitInboxItem): string {
-  return item.goalId === null
-    ? `/gits?panel=autopilot&proposal=${encodeURIComponent(item.proposalId)}`
-    : `/gits?panel=autopilot&goal=${encodeURIComponent(item.goalId)}`;
+  return item.deepLink;
 }

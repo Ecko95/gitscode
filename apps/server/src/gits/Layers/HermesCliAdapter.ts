@@ -249,7 +249,11 @@ function execHermes(
               return;
             }
 
-            reject({ error, stderr: redactSecrets(stderr), stdout: redactSecrets(stdout) });
+            reject({
+              error,
+              stderr: redactSecrets(stderr),
+              stdout: redactSecrets(stdout),
+            });
           },
         );
       }),
@@ -455,7 +459,10 @@ function codexPoolStatus(parsed: unknown): {
     }
     return { usable: true, reason: null };
   }
-  return { usable: false, reason: `no usable credential_pool entry: ${issues.join("; ")}` };
+  return {
+    usable: false,
+    reason: `no usable credential_pool entry: ${issues.join("; ")}`,
+  };
 }
 
 export function parseCodexChainHealth(authJsonText: string | null): HermesCodexChainHealth {
@@ -506,11 +513,17 @@ export function parseCodexChainHealth(authJsonText: string | null): HermesCodexC
   if (lastAuthError?.relogin_required === true) {
     const code = typeof lastAuthError.code === "string" ? lastAuthError.code : "unknown";
     const at = typeof lastAuthError.at === "string" ? ` at ${lastAuthError.at}` : "";
-    return { kind: "needs-reauth", reason: poolStatus.reason ?? `relogin required (${code}${at})` };
+    return {
+      kind: "needs-reauth",
+      reason: poolStatus.reason ?? `relogin required (${code}${at})`,
+    };
   }
   const tokens =
     typeof record.tokens === "object" && record.tokens !== null
-      ? (record.tokens as { readonly access_token?: unknown; readonly refresh_token?: unknown })
+      ? (record.tokens as {
+          readonly access_token?: unknown;
+          readonly refresh_token?: unknown;
+        })
       : null;
   if (!hasNonEmptyToken(tokens?.access_token) || !hasNonEmptyToken(tokens?.refresh_token)) {
     return {
@@ -728,7 +741,11 @@ export async function codexChainPreflight(
     return null;
   }
   const reason = health.kind === "missing" ? "no Codex OAuth chain in HERMES_HOME" : health.reason;
-  return { kind: "needs-reauth", reason, command: codexReauthCommand(config.hermesHome) };
+  return {
+    kind: "needs-reauth",
+    reason,
+    command: codexReauthCommand(config.hermesHome),
+  };
 }
 
 type CodexChainAlert = (preflight: {
@@ -883,6 +900,24 @@ export function buildHermesPlanRefinementPrompt(input: {
     `Earliest execution boundary: ${input.boundary}`,
     "Return concise planning notes that reduce the work to a safe bounded slice.",
   ].join("\n");
+}
+
+export function buildHermesPlanRefinementArgs(prompt: string): string[] {
+  // `none` is deliberately an unknown/empty Hermes toolset: explicit toolsets skip
+  // coding-context defaults, and resolving this name yields zero tools.
+  return [
+    "chat",
+    "-Q",
+    "--source",
+    "gits-plan-refinement",
+    "--ignore-rules",
+    "--max-turns",
+    "1",
+    "-t",
+    "none",
+    "-q",
+    prompt,
+  ];
 }
 
 export function classifyHermesChatAction(message: string): HermesProposalActionKind {
@@ -2413,7 +2448,7 @@ function makeHermesCliAdapterShape(
         catch: (cause) => toHermesError("Failed to prepare Hermes plan refinement.", cause),
       });
       const result = yield* execHermes(
-        buildHermesInspectGitsArgs(buildHermesPlanRefinementPrompt(input)),
+        buildHermesPlanRefinementArgs(buildHermesPlanRefinementPrompt(input)),
         { cwd: input.repo, timeoutMs: PROPOSAL_TIMEOUT_MS },
       );
       const notes = nonEmpty(result.stdout) ?? nonEmpty(result.stderr);

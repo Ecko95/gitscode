@@ -342,9 +342,6 @@ const AutomodeHeldPrLayerLive = AutomodeHeldPrLive.pipe(Layer.provide(GitHubCli.
 // GitsLayerLive below; Effect memoizes by reference, so it is built once.
 const GitsSlotSchedulerLayerLive = GitsSlotSchedulerLive.pipe(
   Layer.provide(GitsCapacityMonitorLive),
-  Layer.provide(
-    PushNotificationLayerLive.pipe(Layer.provide(WebPushSubscriptionRepositoryLayerLive)),
-  ),
 );
 
 const AutomodeNotificationsLayerLive = AutomodeNotificationsLive.pipe(
@@ -707,7 +704,9 @@ export const makeServerLayer = Layer.unwrap(
             }),
             (configured) =>
               configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
+                ? disableTailscaleServe({
+                    servePort: configured.servePort,
+                  }).pipe(
                     Effect.tap(() =>
                       Effect.logInfo("Tailscale Serve disabled", {
                         servePort: configured.servePort,

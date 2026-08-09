@@ -96,14 +96,16 @@ describe("CockpitInbox", () => {
     });
   });
 
-  it.effect("refuses writes when persisted JSON is corrupt", () => {
+  it.effect("refuses reads and writes when persisted JSON is corrupt", () => {
     const baseDir = mkdtempSync(join(tmpdir(), "cockpit-inbox-corrupt-"));
     mkdirSync(join(baseDir, "userdata", "gits"), { recursive: true });
     writeFileSync(join(baseDir, "userdata", "gits", "cockpit-inbox.json"), "not-json\n");
     return Effect.gen(function* () {
       const inbox = yield* CockpitInbox;
-      const error = yield* Effect.flip(inbox.record(event("blocked", "pending-review")));
-      assert.match(error.message, /unavailable/i);
+      const readError = yield* Effect.flip(inbox.list({}));
+      const writeError = yield* Effect.flip(inbox.record(event("blocked", "pending-review")));
+      assert.match(readError.message, /unavailable/i);
+      assert.match(writeError.message, /unavailable/i);
     }).pipe(Effect.provide(makeLayer(baseDir)));
   });
 });

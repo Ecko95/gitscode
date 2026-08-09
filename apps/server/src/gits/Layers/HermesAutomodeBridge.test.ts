@@ -9,6 +9,7 @@ import type {
   DelamainPeerListResult,
   HermesExecutionDraft,
   HermesProposalCard,
+  HermesProposalDecisionInput,
   HermesProposalStatus,
 } from "@t3tools/contracts";
 
@@ -88,9 +89,9 @@ function makeSupervisorLayer(options?: { readonly onSpawn?: () => void }) {
       }),
     ),
     Layer.provideMerge(
-      ServerConfig.layerTest(process.cwd(), { prefix: "gits-hermes-automode-bridge-test-" }).pipe(
-        Layer.provide(NodeServices.layer),
-      ),
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "gits-hermes-automode-bridge-test-",
+      }).pipe(Layer.provide(NodeServices.layer)),
     ),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -160,19 +161,43 @@ function makeFakeHermes(options?: {
   return {
     hermes: {
       listProposals: () =>
-        Effect.succeed({ proposals: [proposal], checkedAt: "2026-01-01T00:00:00.000Z" }),
-      decideProposal: (input: { proposalId: string; decision: string }) =>
+        Effect.succeed({
+          proposals: [proposal],
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      decideProposal: (input: HermesProposalDecisionInput) =>
         Effect.sync(() => {
           proposal = {
             ...proposal,
             status: input.decision === "approve" ? ("approved" as const) : ("rejected" as const),
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.prompt === undefined ? {} : { nextCommandOrPrompt: input.prompt }),
+            ...(input.projectDir === undefined ? {} : { projectDir: input.projectDir }),
+            ...(input.model === undefined ? {} : { model: input.model }),
+            ...(input.notBefore === undefined ? {} : { notBefore: input.notBefore }),
+            ...(input.maxRuntimeMinutes === undefined
+              ? {}
+              : { maxRuntimeMinutes: input.maxRuntimeMinutes }),
+            ...(input.verificationCommands === undefined
+              ? {}
+              : { verificationCommands: input.verificationCommands }),
+            ...(input.integrationBranch === undefined
+              ? {}
+              : { integrationBranch: input.integrationBranch }),
           };
           return proposal;
         }),
       draftFromProposal: () =>
         Effect.sync(() => {
           draftCalls += 1;
-          return options?.draft ?? defaultDraft;
+          return (
+            options?.draft ?? {
+              ...defaultDraft,
+              title: proposal.title,
+              prompt: proposal.nextCommandOrPrompt ?? defaultDraft.prompt,
+              repo: proposal.projectDir,
+            }
+          );
         }),
     },
     draftCallCount: () => draftCalls,
@@ -205,7 +230,10 @@ describe("decideProposalWithAutomodeBridge", () => {
           scheduleApprovedGoal: ({ eligibleAt }: { readonly eligibleAt: string | null }) =>
             Effect.sync(() => {
               scheduled.push(eligibleAt);
-              return {} as never;
+              return {
+                snapshot: {} as never,
+                targetsCurrentNight: eligibleAt === null,
+              };
             }),
         },
         inbox: {
@@ -233,7 +261,11 @@ describe("decideProposalWithAutomodeBridge", () => {
       assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
       assert.deepEqual(scheduled, [null, null]);
       assert.deepEqual(
-        events.map(({ eventKey, state, goalId }) => ({ eventKey, state, goalId })),
+        events.map(({ eventKey, state, goalId }) => ({
+          eventKey,
+          state,
+          goalId,
+        })),
         [
           {
             eventKey: "proposal:proposal-1:approve",
@@ -286,7 +318,9 @@ describe("decideProposalWithAutomodeBridge", () => {
       assert.equal(snapshot.goals[0]!.verificationCommands.length, 1);
       assert.equal(snapshot.goals[0]!.integrationBranch, "auto/proposal-1");
 
-      const dispatched = yield* supervisor.dispatchGoal({ goalId: snapshot.goals[0]!.id });
+      const dispatched = yield* supervisor.dispatchGoal({
+        goalId: snapshot.goals[0]!.id,
+      });
       assert.equal(dispatched.goal.status, "running");
       assert.equal(spawnCount, 1);
     }).pipe(
@@ -339,7 +373,7 @@ describe("decideProposalWithAutomodeBridge", () => {
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
-  it.effect("re-approving an already approved proposal does not enqueue a duplicate", () =>
+  it.effect("re-approving updates the queued goal without enqueuing a duplicate", () =>
     Effect.gen(function* () {
       const supervisor = yield* armAutonomous;
       const { hermes } = makeFakeHermes();
@@ -348,12 +382,82 @@ describe("decideProposalWithAutomodeBridge", () => {
         proposalId: "proposal-1",
         decision: "approve",
       });
+      const goalId = (yield* supervisor.getSnapshot()).goals[0]!.id;
+      yield* supervisor.deferGoal({
+        goalId,
+        notBefore: "2026-01-03T00:00:00.000Z",
+        planningNotes: "Old planning notes",
+        planningBoundary: "2026-01-03T00:00:00.000Z",
+      });
       yield* decideProposalWithAutomodeBridge(hermes, supervisor, {
         proposalId: "proposal-1",
         decision: "approve",
+        title: "Fix bounded retry test",
+        prompt: "Bound and deflake the retry test.",
       });
 
-      assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
+      const goals = (yield* supervisor.getSnapshot()).goals;
+      assert.equal(goals.length, 1);
+      assert.equal(goals[0]!.title, "Fix bounded retry test");
+      assert.equal(goals[0]!.prompt, "Bound and deflake the retry test.");
+      assert.isNull(goals[0]!.planningNotes);
+      assert.isNull(goals[0]!.planningBoundary);
+    }).pipe(Effect.provide(makeSupervisorLayer())),
+  );
+
+  it.effect("rejects runtime, verification, and branch edits outside Automode policy", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* armAutonomous;
+      yield* supervisor.updatePolicy({
+        maxRuntimeMinutes: 30,
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        integrationBranch: "auto/integration",
+      });
+      const proposal = {
+        maxRuntimeMinutes: 30,
+        verificationCommands: [{ label: "typecheck", cmd: ["bun", "typecheck"] }],
+        integrationBranch: "auto/integration",
+      } as const;
+      const cases: ReadonlyArray<{
+        readonly input: HermesProposalDecisionInput;
+        readonly message: string;
+      }> = [
+        {
+          input: {
+            proposalId: "proposal-1",
+            decision: "approve",
+            maxRuntimeMinutes: 31,
+          },
+          message: "runtime",
+        },
+        {
+          input: {
+            proposalId: "proposal-1",
+            decision: "approve",
+            verificationCommands: [{ label: "lint", cmd: ["bun", "lint"] }],
+          },
+          message: "verification",
+        },
+        {
+          input: {
+            proposalId: "proposal-1",
+            decision: "approve",
+            integrationBranch: "auto/other",
+          },
+          message: "integration branch",
+        },
+      ];
+
+      for (const testCase of cases) {
+        const { hermes } = makeFakeHermes({ proposal });
+        const error = yield* decideProposalWithAutomodeBridge(
+          hermes,
+          supervisor,
+          testCase.input,
+        ).pipe(Effect.flip);
+        assert.include(error.message.toLowerCase(), testCase.message);
+      }
+      assert.equal((yield* supervisor.getSnapshot()).goals.length, 0);
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
@@ -367,7 +471,9 @@ describe("decideProposalWithAutomodeBridge", () => {
         repo: "/tmp/source-repo",
         episodeId: "epi-proposal-1",
       });
-      const { hermes, draftCallCount } = makeFakeHermes({ initialStatus: "proposed" });
+      const { hermes, draftCallCount } = makeFakeHermes({
+        initialStatus: "proposed",
+      });
 
       // A cockpit approve of the same (still-"proposed") card must not add a second goal.
       yield* decideProposalWithAutomodeBridge(hermes, supervisor, {
@@ -376,7 +482,7 @@ describe("decideProposalWithAutomodeBridge", () => {
       });
 
       assert.equal((yield* supervisor.getSnapshot()).goals.length, 1);
-      assert.equal(draftCallCount(), 0);
+      assert.equal(draftCallCount(), 1);
     }).pipe(Effect.provide(makeSupervisorLayer())),
   );
 
@@ -416,7 +522,11 @@ describe("decideProposalWithAutomodeBridge", () => {
       const variants: ReadonlyArray<HermesExecutionDraft> = [
         { ...defaultDraft, kind: "open-gsd" },
         { ...defaultDraft, kind: "verification" },
-        { ...defaultDraft, status: "blocked", blockedReason: "Blocked by policy." },
+        {
+          ...defaultDraft,
+          status: "blocked",
+          blockedReason: "Blocked by policy.",
+        },
         { ...defaultDraft, repo: null },
       ];
       for (const draft of variants) {
