@@ -199,7 +199,7 @@ export const AutomodeDriverLive = Layer.effect(
         const snapshot = yield* supervisor.haltDriver({ reason });
         const recorded =
           goal === null
-            ? true
+            ? false
             : yield* recordInbox(
                 goal,
                 "attention-required",
@@ -263,13 +263,24 @@ export const AutomodeDriverLive = Layer.effect(
             url: result.url,
             number: result.number,
           });
-          yield* notify({
-            subject: "GITS automode held PR created",
-            title: `automode: held PR for ${policy.integrationBranch}`,
-            goalId: snapshot.goals.find((goal) => goal.status === "completed")?.id ?? null,
-            reason: "Landed slices are held for human review.",
-            prUrl: result.url,
-          });
+          const completedGoal = snapshot.goals.find((goal) => goal.status === "completed");
+          if (
+            completedGoal !== undefined &&
+            (yield* recordInbox(
+              completedGoal,
+              "completed",
+              `goal:${completedGoal.id}:held-pr-created`,
+              "Held PR created for landed slices.",
+            ))
+          ) {
+            yield* notify({
+              subject: "GITS automode held PR created",
+              title: `automode: held PR for ${policy.integrationBranch}`,
+              goalId: completedGoal.id,
+              reason: "Landed slices are held for human review.",
+              prUrl: result.url,
+            });
+          }
           return;
         }
 
@@ -336,12 +347,6 @@ export const AutomodeDriverLive = Layer.effect(
             return;
           }
           if (peer.status === "waiting") {
-            yield* notify({
-              subject: "GITS automode goal waiting",
-              title: running.title,
-              goalId: running.id,
-              reason: `Peer ${peer.id} is waiting on input.`,
-            });
             yield* halt(
               running,
               `Halted: peer ${peer.id} is waiting on input for ${running.title}.`,
@@ -484,7 +489,7 @@ export const AutomodeDriverLive = Layer.effect(
             }
 
             yield* supervisor.completeGoal({ goalId: running.id });
-            yield* recordInbox(
+            const completionRecorded = yield* recordInbox(
               running,
               "completed",
               `goal:${running.id}:completed`,
@@ -552,13 +557,15 @@ export const AutomodeDriverLive = Layer.effect(
                 );
                 return;
               }
-              yield* notify({
-                subject: "GITS automode goal landed",
-                title: running.title,
-                goalId: running.id,
-                reason: "Landed on its own branch; the held PR awaits review.",
-                prUrl: prResult.success.url,
-              });
+              if (completionRecorded) {
+                yield* notify({
+                  subject: "GITS automode goal landed",
+                  title: running.title,
+                  goalId: running.id,
+                  reason: "Landed on its own branch; the held PR awaits review.",
+                  prUrl: prResult.success.url,
+                });
+              }
             }
             yield* Effect.logInfo("gits.automode.driver.goal-landed", {
               goalId: running.id,
